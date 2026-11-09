@@ -1,14 +1,26 @@
 # An example agent-sandbox setup that plimsoll's read-back accepts (docs/agentsandbox.md):
 # the service account plimsolld runs as, with only the access the provider uses; a gVisor
-# template whose pods sandboxd serves; and a warm pool of two. Replace the digest
-# placeholder with the SHA-256, in hex, of the token in SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE,
-# and give plimsolld's own pods the label app.kubernetes.io/name: plimsolld, which the
-# template's policy admits to sandboxd's port. The RuntimeClass assumes nodes whose
-# containerd has a runsc handler (gVisor's installation guide).
+# template whose pods serve sandboxd behind plimsoll's TLS terminator; and a warm pool of
+# two. Replace the digest placeholder with the SHA-256, in hex, of the token in
+# SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE, and give plimsolld's own pods the label
+# app.kubernetes.io/name: plimsolld, which the template's policy admits to the terminator's
+# port. The RuntimeClass assumes nodes whose containerd has a runsc handler (gVisor's
+# installation guide).
+#
+# The TLS Secret the template mounts, from a CA of the deployment's own (OpenSSL 3):
+#   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
+#     -subj /CN=plimsoll-sandboxd-ca -keyout ca.key -out ca.crt
+#   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=sandboxd \
+#     -addext subjectAltName=DNS:sandboxd.plimsoll.invalid -keyout tls.key -out tls.csr
+#   openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 90 \
+#     -copy_extensions copy -out tls.crt
+#   kubectl -n default create secret tls plimsoll-sandboxd-tls --cert=tls.crt --key=tls.key
+# ca.crt goes to plimsolld; keep ca.key off the cluster.
 #
 #   plimsolld: SANDBOX_PROVIDER=agentsandbox SANDBOX_AGENTSANDBOX_NAMESPACE=default
 #              SANDBOX_AGENTSANDBOX_WARM_POOL=plimsoll-run SANDBOX_AGENTSANDBOX_RUNTIME_CLASS=gvisor
 #              SANDBOX_AGENTSANDBOX_IMAGE=<the image> SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE=<file>
+#              SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE=<ca.crt>
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata: {name: gvisor}
@@ -93,7 +105,8 @@ spec:
       containers:
       - name: sandboxd
         image: plimsoll/sandbox-agentsandbox:dev  # built from docker/agentsandbox.Dockerfile; pin it by @sha256: in production
-        command: ["/usr/local/bin/sandboxd", "--root-dir=/work", "--rest-port=8080", "--grpc-port=9090", "--auth-token-sha256=<sha256 of the sandboxd token, hex>"]
+        # The TLS terminator, then sandboxd's flags: sandboxd on loopback port 9091, behind it.
+        command: ["/usr/local/bin/plimsoll-sandboxd-tls", "--root-dir=/work", "--listen-host=127.0.0.1", "--rest-port=8080", "--grpc-port=9091", "--auth-token-sha256=<sha256 of the sandboxd token, hex>"]
         securityContext:
           runAsUser: 0
           runAsGroup: 0
@@ -110,9 +123,11 @@ spec:
         volumeMounts:
         - {name: work, mountPath: /work}
         - {name: tmp, mountPath: /tmp}
+        - {name: sandboxd-tls, mountPath: /etc/plimsoll/sandboxd-tls, readOnly: true}
       volumes:
       - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
       - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
+      - {name: sandboxd-tls, secret: {secretName: plimsoll-sandboxd-tls, defaultMode: 0400}}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool

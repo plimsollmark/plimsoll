@@ -60,7 +60,9 @@ func TestDockerSessionConformance(t *testing.T) {
 	if !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}) {
 		t.Fatalf("the language probe found %v in %s", langs, d.ProjectImage)
 	}
-	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget})
+	// A docker session opens in about a second, so the lifetime case waits 8 s, not 20,
+	// and the cases run side by side.
+	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 8 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget, Parallel: true})
 	dctx, dcancel := context.WithTimeout(context.Background(), time.Minute)
 	defer dcancel()
 	if err := d.Drain(dctx); err != nil {
@@ -87,38 +89,36 @@ func sessionJS(t *testing.T, s sandbox.Session, code string) (sandbox.Result, er
 	return s.RunJavaScript(ctx, sandbox.Request{Code: code, Timeout: 10 * time.Second})
 }
 
-// sessionContainer names the one session container whose files hold marker. The
-// sweep after a call runs off the caller's path and kills every process it does not
-// keep, a probe exec'd from the host included (exit 137), so a killed probe is retried.
+// sessionContainer names s's container, and proves it is the one the session's calls
+// run in: a call writes marker there, and a probe from the host finds it. The name
+// comes from the session, not a listing of every session container on the host, so the
+// probe never runs in another test's container and a test that uses it can run in
+// parallel. The sweep after a call runs off the caller's path and kills every process
+// it does not keep, a probe exec'd from the host included (exit 137), so a killed probe
+// is retried.
 func sessionContainer(t *testing.T, s sandbox.Session, marker string) string {
 	t.Helper()
 	if _, err := sessionJS(t, s, `require("fs").writeFileSync("/tmp/`+marker+`","1")`); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("docker", "ps", "--filter", "label=io.plimsoll.session", "--format", "{{.Names}}").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range strings.Fields(string(out)) {
-		for try := 0; ; try++ {
-			err := exec.Command("docker", "exec", name, "test", "-e", "/tmp/"+marker).Run()
-			if err == nil {
-				return name
-			}
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) || exit.ExitCode() != 137 || try == 20 {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
+	name := sandbox.DockerSessionContainer(s)
+	for try := 0; ; try++ {
+		err := exec.Command("docker", "exec", name, "test", "-e", "/tmp/"+marker).Run()
+		if err == nil {
+			return name
 		}
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 137 || try == 20 {
+			t.Fatalf("the session's container %s does not hold the marker its call wrote: %v", name, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatal("no session container holds the marker")
-	return ""
 }
 
 // Done closes only once the container is removed (review F9): a session layer gives
 // back the session's capacity on Done, and the container holds its memory until then.
 func TestDockerSessionDoneWaitsForTheContainerRemoval(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	name := sessionContainer(t, s, "done-after-removal")
@@ -138,6 +138,7 @@ func TestDockerSessionDoneWaitsForTheContainerRemoval(t *testing.T) {
 // A suspend pauses the container and reports its memory as held; the next call
 // resumes it.
 func TestDockerSessionSuspendPausesAndHoldsMemory(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	name := sessionContainer(t, s, "suspend-marker")
@@ -205,6 +206,7 @@ func TestDockerSessionGivingUpOnPauseOrResumeKeepsTheSession(t *testing.T) {
 // Anyone who can reach the docker daemon can connect a running container to a
 // network. The read-back before the next call refuses it and ends the session.
 func TestDockerSessionRefusesAContainerGivenANetwork(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	name := sessionContainer(t, s, "network-marker")
@@ -225,6 +227,7 @@ func TestDockerSessionRefusesAContainerGivenANetwork(t *testing.T) {
 
 // A changed resource limit (docker update) is caught the same way.
 func TestDockerSessionRefusesAChangedLimit(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	name := sessionContainer(t, s, "update-marker")
@@ -245,6 +248,7 @@ func TestDockerSessionRefusesAChangedLimit(t *testing.T) {
 // docker reports the container stopped, the session has ended or the next call is
 // refused with that reason.
 func TestDockerSessionMainProcessKilled(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	name := sessionContainer(t, s, "main-process-marker")
@@ -502,6 +506,7 @@ globalThis.timer = setInterval(() => {
 // itself must come back with the session's end naming the limit, not a bare exit 1 with the
 // end found only by the next call. Under runc only the interpreter dies and the session goes on.
 func TestDockerSessionCellOutOfMemoryEndsTheCall(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	ctx := context.Background()
@@ -527,6 +532,7 @@ func TestDockerSessionCellOutOfMemoryEndsTheCall(t *testing.T) {
 }
 
 func TestDockerSessionOutOfMemoryIsNamed(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	res, err := sessionJS(t, s, `const b = Buffer.alloc(1024 * 1024 * 1024); b.fill(7); console.log(b.length)`)

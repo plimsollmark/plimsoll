@@ -109,9 +109,9 @@ for (const afterHeaders of [false, true]) {
     const { url, server } = await stalling(afterHeaders);
     try {
       const c = new PlimsollClient({ baseUrl: url, requestTimeoutMs: 200 });
-      const start = Date.now();
+      const start = performance.now();
       await assert.rejects(c.describe(), (e: unknown) => e instanceof PlimsollError && e.code === "deadline_exceeded" && e.notDispatched === undefined);
-      assert.ok(Date.now() - start < 5_000, `took ${Date.now() - start} ms against a 200 ms deadline`);
+      assert.ok(performance.now() - start < 5_000, `took ${Math.round(performance.now() - start)} ms against a 200 ms deadline`);
       // The caller's own signal still wins, as canceled.
       const ac = new AbortController();
       setTimeout(() => ac.abort(), 50);

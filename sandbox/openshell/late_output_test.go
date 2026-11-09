@@ -11,6 +11,7 @@ import (
 // follows the last output frame, so output that arrives after it is kept, not dropped
 // (external review of v0.10.0, documentation item 3, 2026-09-28).
 func TestOutputAfterTheExitEventIsKept(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error {
 		e.readAll()

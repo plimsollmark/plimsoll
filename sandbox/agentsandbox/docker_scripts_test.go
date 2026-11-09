@@ -30,7 +30,7 @@ func TestDockerRunsTheAgentSandboxBoundaryScript(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	const tmpSize = 16 << 20 // docker's default /tmp, which the snippet container mounts
-	code := fmt.Sprintf(boundaryScript, `[]`, fmt.Sprintf(`[["/tmp", %d]]`, tmpSize), 9090, processv1connect.ProcessServiceStartProcedure)
+	code := fmt.Sprintf(boundaryScript, `[]`, fmt.Sprintf(`[["/tmp", %d]]`, tmpSize), sandboxdPort, frontPort, processv1connect.ProcessServiceStartProcedure, tlsKeyPath)
 	res, err := d.RunJavaScript(ctx, sandbox.Request{Code: code, Timeout: 60 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +79,9 @@ func TestDockerRunsTheAgentSandboxBoundaryScript(t *testing.T) {
 
 // TestDockerRunsTheAgentSandboxRunnerScript runs the runner script as a project step
 // under docker's /runner.mjs: it must find the runner among its ancestors and be refused
-// the runner's plan and report descriptors and memory. In a pod, pid 1 is sandboxd, run as
-// root; under docker run it is the runner itself, so every check meets the guard.
+// the runner's plan and report descriptors and memory. In a pod, pid 1 is the TLS
+// terminator and sandboxd its child, both root; under docker run pid 1 is the runner
+// itself and there is no sandboxd, so every check meets the guard.
 func TestDockerRunsTheAgentSandboxRunnerScript(t *testing.T) {
 	d := dockertest.Sandbox(t)
 	t.Parallel()

@@ -348,8 +348,10 @@ func TestLoadPaidConfig(t *testing.T) {
 	}
 }
 
-// sandboxd's channel is cleartext, so hardened mode serves agentsandbox only once the
-// operator states the pod network is encrypted (Claude Security scan, 2026-10-27).
+// Every pod's TLS terminator serves the same certificate, so the channel to sandboxd does
+// not tie a connection to the pod dialed; hardened mode serves agentsandbox only once the
+// operator states the pod network is authenticated and encrypted, until each pod has a key
+// of its own (Claude Security scan, 2026-11-07, finding F1).
 func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "agentsandbox", sandbox.IsolationKernel
@@ -373,5 +375,9 @@ func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
 	env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = "yes please"
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK") {
 		t.Fatalf("an unreadable value: err = %v, want it reported", err)
+	}
+	delete(env, "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK")
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1") {
+		t.Fatalf("variable unset: err = %v, want the encrypted-pod-network violation", err)
 	}
 }

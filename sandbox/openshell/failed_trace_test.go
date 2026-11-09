@@ -26,6 +26,7 @@ func brokeredThenLost(fw *fakeForwarding) func(e *fakeExec) error {
 // the exec stream afterwards, so a run that fails after dispatch still returns its
 // call trace (external review of v0.10.0, finding 12, 2026-09-28).
 func TestAFailedRunKeepsTheCallsItBrokered(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, calls := liveUpstream(t)
@@ -41,6 +42,7 @@ func TestAFailedRunKeepsTheCallsItBrokered(t *testing.T) {
 
 // TestAFailedSessionCallKeepsTheCallsItBrokered is the same for a session call.
 func TestAFailedSessionCallKeepsTheCallsItBrokered(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	fw := withForwarding(t, f)
 	up, calls := liveUpstream(t)

@@ -14,7 +14,7 @@ import (
 
 func TestConfigRefuses(t *testing.T) {
 	good := Config{APIServer: "https://k8s.example:6443", CAFile: "ca", TokenFile: "tok", Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken}
+		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: "sandboxd-ca"}
 	if err := good.validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,8 @@ func TestConfigRefuses(t *testing.T) {
 		"unpinned image":      func(c *Config) { c.Image = "plimsoll/sandbox-agentsandbox:dev" },
 		"short token":         func(c *Config) { c.SandboxdToken = "short" },
 		"token with a space":  func(c *Config) { c.SandboxdToken = strings.Repeat("a", 20) + " " + strings.Repeat("b", 20) },
-		"bad port":            func(c *Config) { c.SandboxdPort = 70000 },
+		"no sandboxd CA":      func(c *Config) { c.SandboxdCAFile = "" },
+		"an address as name":  func(c *Config) { c.SandboxdServerName = "10.0.0.1" },
 	} {
 		c := good
 		edit(&c)
@@ -120,19 +121,53 @@ func TestReadBackRefuses(t *testing.T) {
 			c := p.Spec.Containers[0].SecurityContext.Capabilities
 			c.Add = append(c.Add, "NET_ADMIN")
 		}, want: "capability"},
-		"privilege escalation": {pod: func(p *pod) { p.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = &escalate }, want: "allowPrivilegeEscalation"},
-		"another token":        {pod: func(p *pod) { p.Spec.Containers[0].Command[3] = "--auth-token-sha256=" + digestOf("other") }, want: "another token"},
-		"no token":             {pod: func(p *pod) { p.Spec.Containers[0].Command = p.Spec.Containers[0].Command[:3] }, want: "0 --auth-token-sha256"},
-		"another command":      {pod: func(p *pod) { p.Spec.Containers[0].Command[0] = "/bin/sh" }, want: "command"},
-		"a token file":         {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"--auth-token-file=/t"} }, want: "file"},
-		"another gRPC port":    {pod: func(p *pod) { p.Spec.Containers[0].Command[2] = "--grpc-port=9091" }, want: "gRPC port"},
+		"privilege escalation":      {pod: func(p *pod) { p.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = &escalate }, want: "allowPrivilegeEscalation"},
+		"another token":             {pod: func(p *pod) { p.Spec.Containers[0].Command[4] = "--auth-token-sha256=" + digestOf("other") }, want: "another token"},
+		"no token":                  {pod: func(p *pod) { p.Spec.Containers[0].Command = p.Spec.Containers[0].Command[:4] }, want: "0 --auth-token-sha256"},
+		"another command":           {pod: func(p *pod) { p.Spec.Containers[0].Command[0] = "/bin/sh" }, want: "command"},
+		"a token file":              {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"--auth-token-file=/t"} }, want: "file"},
+		"another gRPC port":         {pod: func(p *pod) { p.Spec.Containers[0].Command[3] = "--grpc-port=9090" }, want: "gRPC port"},
+		"sandboxd as the command":   {pod: func(p *pod) { p.Spec.Containers[0].Command[0] = sandboxdPath }, want: "TLS terminator"},
+		"sandboxd on every address": {pod: func(p *pod) { p.Spec.Containers[0].Command[2] = "--listen-host=0.0.0.0" }, want: "listen on 127.0.0.1 alone"},
+		"no listen host": {pod: func(p *pod) {
+			c := p.Spec.Containers[0].Command
+			p.Spec.Containers[0].Command = append(c[:2:2], c[3:]...)
+		}, want: "exactly one --listen-host"},
+		"a second listen host": {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"-listen-host=127.0.0.1"} }, want: "exactly one --listen-host"},
+		"no TLS Secret": {pod: func(p *pod) {
+			p.Spec.Volumes = p.Spec.Volumes[:1]
+			p.Spec.Containers[0].VolumeMounts = p.Spec.Containers[0].VolumeMounts[:1]
+		}, want: "0 Secret volumes"},
+		"two TLS Secrets": {pod: func(p *pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, volume{"name": json.RawMessage(`"tls2"`), "secret": p.Spec.Volumes[1]["secret"]})
+		}, want: "2 Secret volumes"},
+		"a group-readable key":        {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":288}`) }, want: "defaultMode 0440"},
+		"the default key mode":        {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":420}`) }, want: "defaultMode 0644"},
+		"no key mode":                 {pod: func(p *pod) { tlsSource(p, `{"secretName":"s"}`) }, want: "sets no defaultMode"},
+		"a key its owner cannot read": {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":128}`) }, want: "defaultMode 0200"},
+		"an optional Secret":          {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":256,"optional":true}`) }, want: "optional"},
+		"Secret items": {pod: func(p *pod) {
+			tlsSource(p, `{"secretName":"s","defaultMode":256,"items":[{"key":"tls.key","path":"k","mode":420}]}`)
+		}, want: "no items"},
+		"a Secret with no name":           {pod: func(p *pod) { tlsSource(p, `{"defaultMode":256}`) }, want: "names Secret"},
+		"a Secret beside another source":  {pod: func(p *pod) { p.Spec.Volumes[1]["emptyDir"] = json.RawMessage(`{}`) }, want: "another source"},
+		"the Secret mounted writable":     {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].ReadOnly = false }, want: "mount it whole and read-only"},
+		"the Secret mounted in /work":     {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].MountPath = "/work/tls" }, want: "mount it whole and read-only"},
+		"the Secret mounted by a subPath": {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].SubPath = "tls.key" }, want: "mount it whole and read-only"},
+		"the Secret mounted twice": {pod: func(p *pod) {
+			m := p.Spec.Containers[0].VolumeMounts
+			p.Spec.Containers[0].VolumeMounts = append(m, m[1])
+		}, want: "mounted 2 times"},
+		"a volume over the key's directory": {pod: func(p *pod) { scratchAt(p, "/etc/plimsoll") }, want: "root-only directory"},
+		"a volume over /etc":                {pod: func(p *pod) { scratchAt(p, "/etc") }, want: "root-only directory"},
+		"a volume beside the key":           {pod: func(p *pod) { scratchAt(p, "/etc/plimsoll/other") }, want: "root-only directory"},
 		"the token after --": {pod: func(p *pod) {
 			c := p.Spec.Containers[0].Command
-			p.Spec.Containers[0].Command = append(c[:3:3], "--", c[3])
+			p.Spec.Containers[0].Command = append(c[:4:4], "--", c[4])
 		}, want: "not a --name=value"},
 		"the token as another flag's value": {pod: func(p *pod) {
 			c := p.Spec.Containers[0].Command
-			p.Spec.Containers[0].Command = append(c[:3:3], "--metadata-env-prefix", c[3])
+			p.Spec.Containers[0].Command = append(c[:4:4], "--metadata-env-prefix", c[4])
 		}, want: "not a --name=value"},
 		"a positional argument":         {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"serve"} }, want: "not a --name=value"},
 		"the default termination log":   {pod: func(p *pod) { p.Spec.Containers[0].TerminationMessagePath = defaultTerminationLog }, want: "terminationMessagePath"},
@@ -157,9 +192,10 @@ func TestReadBackRefuses(t *testing.T) {
 			np.Spec.Egress = []json.RawMessage{json.RawMessage(`{}`)}
 			*ps = append(*ps, np)
 		}, want: "allows egress"},
-		"no policy denies egress": {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.PolicyTypes = []string{"Ingress"} }, want: "denies the pod's egress"},
-		"ingress from anywhere":   {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.Ingress[0].From = nil }, want: "every source"},
-		"ingress to the file API": {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.Ingress[0].Ports[0].Port = json.RawMessage(`8080`) }, want: "8080"},
+		"no policy denies egress":                   {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.PolicyTypes = []string{"Ingress"} }, want: "denies the pod's egress"},
+		"ingress from anywhere":                     {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.Ingress[0].From = nil }, want: "every source"},
+		"ingress to the file API":                   {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.Ingress[0].Ports[0].Port = json.RawMessage(`8080`) }, want: "8080"},
+		"ingress to sandboxd behind the terminator": {policy: func(ps *[]networkPolicy) { (*ps)[0].Spec.Ingress[0].Ports[0].Port = json.RawMessage(`9091`) }, want: "9091"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -595,4 +631,13 @@ func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
 		t.Fatalf("a stream that ended after its exit event: cut %v and %v, %v", res.StdoutTruncated, res.StderrTruncated, err)
 	}
 	drained(t, p)
+}
+
+// tlsSource replaces the TLS Secret volume's source in a pod.
+func tlsSource(p *pod, src string) { p.Spec.Volumes[1]["secret"] = json.RawMessage(src) }
+
+// scratchAt mounts a writable memory volume at path.
+func scratchAt(p *pod, at string) {
+	p.Spec.Volumes = append(p.Spec.Volumes, volume{"name": json.RawMessage(`"scratch"`), "emptyDir": json.RawMessage(`{"medium":"Memory","sizeLimit":"1Mi"}`)})
+	p.Spec.Containers[0].VolumeMounts = append(p.Spec.Containers[0].VolumeMounts, volumeMount{Name: "scratch", MountPath: at})
 }

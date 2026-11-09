@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -31,26 +30,16 @@ const (
 	postExitGrace = time.Second
 )
 
-// h2cClient speaks HTTP/2 without TLS, with prior knowledge, which is what sandboxd's
-// gRPC server accepts. sandboxd serves no TLS: its protection is the network policy that
-// admits only plimsoll's source to its port, and the token it checks.
-func h2cClient() *http.Client {
-	protocols := new(http.Protocols)
-	protocols.SetUnencryptedHTTP2(true)
-	return &http.Client{
-		Transport:     &http.Transport{Protocols: protocols, Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-}
-
-// process returns a ProcessService client for sandboxd at ip, every request carrying the
-// token.
+// process returns a ProcessService client for sandboxd in the pod at ip, through the
+// pod's TLS terminator on frontPort and the pinned channel (channel.go), every request
+// carrying the token. The URL is https and the transport speaks nothing else, so there is
+// no cleartext path to fall back to.
 func (p *Provider) process(ip string) processv1connect.ProcessServiceClient {
-	if p.dialProcess != nil {
-		return p.dialProcess(ip)
+	addr := net.JoinHostPort(ip, strconv.Itoa(frontPort))
+	if p.dialAddr != nil {
+		addr = p.dialAddr(ip)
 	}
-	base := "http://" + net.JoinHostPort(ip, strconv.Itoa(p.cfg.sandboxdPort()))
-	return processv1connect.NewProcessServiceClient(p.h2c, base, connect.WithGRPC(),
+	return processv1connect.NewProcessServiceClient(p.sandboxd, "https://"+addr, connect.WithGRPC(),
 		connect.WithReadMaxBytes(maxMessageBytes), connect.WithInterceptors(bearer(p.cfg.SandboxdToken)))
 }
 
@@ -108,7 +97,7 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 	cwd := workDir
 	stream, err := c.Start(streamCtx, connect.NewRequest(&processv1.StartRequest{Config: &processv1.ProcessConfig{Command: argv, Cwd: &cwd}}))
 	if err != nil {
-		return execOutput{}, fmt.Errorf("sandboxd start: %w", err)
+		return execOutput{}, p.channelRefusal(fmt.Errorf("sandboxd start: %w", err))
 	}
 	defer stream.Close()
 
@@ -171,7 +160,7 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 	case out.exited:
 		return out, nil
 	case recvErr != nil && !errors.Is(recvErr, io.EOF):
-		return out, fmt.Errorf("sandboxd stream: %w", recvErr)
+		return out, p.channelRefusal(fmt.Errorf("sandboxd stream: %w", recvErr))
 	case sendErr != nil:
 		return out, fmt.Errorf("sandboxd stream ended without an exit status: %w", sendErr)
 	default:

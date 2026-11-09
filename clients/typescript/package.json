@@ -1,6 +1,6 @@
 {
   "name": "@plimsollmark/client",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "TypeScript client for plimsolld, with AI SDK, Trigger.dev and Mastra executeCode add-ons",
   "license": "Apache-2.0",
   "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/typescript#readme",
@@ -57,7 +57,7 @@
     "@mastra/core": ">=1.73.0 <2",
     "@trigger.dev/sdk": ">=4.7.0 <5",
     "ai": ">=7.0.126 <8",
-    "zod": ">=4.6.5 <5"
+    "zod": ">=4.6.6 <5"
   },
   "peerDependenciesMeta": {
     "@mastra/core": {
@@ -79,7 +79,7 @@
     "@types/node": "^22.20.4",
     "ai": "^7.0.126",
     "typescript": "^7.0.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "overrides": {
     "engine.io-client": "^6.6.7"

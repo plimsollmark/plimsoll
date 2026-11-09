@@ -18,7 +18,11 @@ func publish(dir string, ev *evidence, repo string) error {
 	if err := noLocalPaths(raw, repo); err != nil {
 		return err
 	}
-	page, err := render(ev)
+	live, err := loadLive(dir)
+	if err != nil {
+		return err
+	}
+	page, err := render(ev, live)
 	if err != nil {
 		return err
 	}
@@ -78,7 +82,14 @@ func verifyPublished(dir string) error {
 			return fmt.Errorf("the check %q does not hold: %s", c.ID, c.Detail)
 		}
 	}
-	page, err := render(got)
+	live, err := loadLive(dir)
+	if err != nil {
+		return err
+	}
+	if err := verifyLive(dir, live); err != nil {
+		return err
+	}
+	page, err := render(got, live)
 	if err != nil {
 		return err
 	}
@@ -98,7 +109,11 @@ func renderPublished(dir string) error {
 	if err != nil {
 		return err
 	}
-	page, err := render(ev)
+	live, err := loadLive(dir)
+	if err != nil {
+		return err
+	}
+	page, err := render(ev, live)
 	if err != nil {
 		return err
 	}

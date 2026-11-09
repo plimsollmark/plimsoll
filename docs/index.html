@@ -40,6 +40,10 @@
       <li><a href="notes/index.html">Notes</a>: what building plimsoll turned up, with the
       measurements; first, <a href="notes/pids-limit/index.html">Docker's --pids-limit under
       runc, gVisor and Kata</a>.</li>
+      <li><a href="examples/what-a-sandbox-is/index.html">What a sandbox is</a> and
+      <a href="examples/proof-of-what-ran/index.html">proof of what ran</a>: for newcomers,
+      five real runs of misbehaving code on the wasm provider, the isolation tiers as rooms
+      with different locks, and the runs' signed records checked in the browser.</li>
       <li><a href="examples/oracle/index.html">The physics oracle</a> — one real
       run, not a lesson: an agent-written controller sent as the only file of a
       sandbox run, run against a cart-pole plant compiled to WebAssembly and
@@ -61,6 +65,14 @@
       <li><a href="examples/envs/index.html">Simulation replay pages</a>: all eight
       plants in the sim image, from a delayed shower to a black hole orbit, each
       with a failing and a passing controller replayed.</li>
+      <li><a href="examples/squeeze-recipe/index.html">Does a fresh agent follow the plan it
+      is handed?</a> Forty fresh agents built a drone controller from an honest recipe,
+      the same words shuffled, or nothing; the recipe's order moved the landings, and every
+      number comes from signed run records.</li>
+      <li><a href="examples/memory-grant/index.html">Agent memory through a grant</a>:
+      agent-written code stores and recalls a memory in a hosted memory API through a grant
+      built from the API's OpenAPI document, with the key left in the broker and two calls
+      outside the grant refused. The API is a local fake: no account, nothing spent.</li>
       <li><a href="https://github.com/plimsollmark/plimsoll#readme">README on
       GitHub</a> — what this is, the isolation tiers, and how to run it.</li>
       <li><a href="https://github.com/plimsollmark/plimsoll/blob/main/SECURITY.md">SECURITY.md</a>

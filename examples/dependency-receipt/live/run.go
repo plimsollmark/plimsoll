@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +34,7 @@ import (
 	"github.com/plimsollmark/plimsoll/examples/dependency-receipt/runsclog"
 	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/agentsandbox"
 )
 
 //go:embed cluster.yaml
@@ -255,9 +262,19 @@ func runLive(ctx context.Context, c config) (err error) {
 	step("making the namespace " + namespace + ": service account, template under " + c.runtimeClass + ", warm pool")
 	var manifest bytes.Buffer
 	sum := sha256.Sum256([]byte(sandboxdToken))
+	// The key goes to the cluster in the manifest on kubectl's stdin and nowhere else; the
+	// CA certificate, which plimsolld pins, beside the other secrets.
+	tlsCA, tlsCert, tlsKey, err := sandboxdTLS(agentsandbox.DefaultServerName)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(secrets, "sandboxd-ca.crt"), tlsCA, 0o600); err != nil {
+		return err
+	}
 	if err := template.Must(template.New("cluster").Parse(clusterYAML)).Execute(&manifest, map[string]any{
 		"Namespace": namespace, "Pool": pool, "Ingress": ingress, "RuntimeClass": c.runtimeClass,
 		"Image": c.image, "TokenSHA256": hex.EncodeToString(sum[:]), "MemoryMB": memoryMB,
+		"TLSCert": base64.StdEncoding.EncodeToString(tlsCert), "TLSKey": base64.StdEncoding.EncodeToString(tlsKey),
 	}); err != nil {
 		return err
 	}
@@ -315,6 +332,7 @@ func runLive(ctx context.Context, c config) (err error) {
 		"SANDBOX_AGENTSANDBOX_CA_FILE":             "/cfg/ca.crt",
 		"SANDBOX_AGENTSANDBOX_TOKEN_FILE":          "/cfg/api.token",
 		"SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE": "/cfg/sandboxd.token",
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE":    "/cfg/sandboxd-ca.crt",
 		"PLIMSOLL_CLIENTS_FILE":                    "/cfg/clients.json",
 		"PLIMSOLL_ADDR":                            "0.0.0.0:8080",
 		"PLIMSOLL_METRICS_ADDR":                    "off",
@@ -843,3 +861,41 @@ func readPrivateKey(path string) (ed25519.PrivateKey, error) {
 }
 
 func step(s string) { fmt.Println("==", s) }
+
+// sandboxdTLS makes a CA for one run and a serving certificate for name signed by it, for
+// the TLS Secret the template mounts: the CA certificate, the certificate and its key, in
+// PEM. The CA's key is dropped when this returns.
+func sandboxdTLS(name string) (caPEM, certPEM, keyPEM []byte, err error) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	now := time.Now()
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dependency-receipt sandboxd CA"}, IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour)}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if ca, err = x509.ParseCertificate(caDER); err != nil {
+		return nil, nil, nil, err
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature,
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour)}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), nil
+}

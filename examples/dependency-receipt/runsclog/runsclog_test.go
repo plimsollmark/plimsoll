@@ -471,6 +471,7 @@ func TestBoot(t *testing.T) {
 // allocate without bound. Without the limits, a 204 KB gzip file holding one 200 MiB entry
 // took the checker to 685 MB resident (2026-10-28).
 func TestReadRefusesOversize(t *testing.T) {
+	t.Parallel() // the package's longest test (about 12 s under the race detector): the rest run beside it
 	good := fixture(t, "quiet")
 	// An entry is measured with the space before it: for runsc's log, the newline ending the
 	// entry before.
@@ -485,6 +486,11 @@ func TestReadRefusesOversize(t *testing.T) {
 	if _, err := readLimited(bytes.NewReader(good), int64(len(good)), int64(longest)); err != nil {
 		t.Fatalf("a log exactly at both limits: %v", err)
 	}
+	// A log of many short entries, as a log of small events is, is refused by the log's limit
+	// alone. Tried against a 4 MiB limit: parsing 256 MiB of them took 54 s under the race
+	// detector (2026-10-29); the default limit is held below with fewer, longer entries.
+	short := []byte(`{"msg":"strace.go:1] x"}` + "\n")
+	const shortLimit = 4 << 20
 	for _, tc := range []struct {
 		name            string
 		log             []byte
@@ -494,28 +500,39 @@ func TestReadRefusesOversize(t *testing.T) {
 		{"an entry one byte over", good, MaxLogBytes, int64(longest) - 1},
 		{"one entry over the default, first in the log", slices.Concat([]byte(`{"msg":"`), bytes.Repeat([]byte("A"), MaxEntryBytes), []byte("\"}\n")), MaxLogBytes, MaxEntryBytes},
 		{"one entry over the default, spread over short lines", slices.Concat([]byte(`{"msg":"x"`), bytes.Repeat([]byte(",\n\"a\":1"), MaxEntryBytes/6), []byte("}\n")), MaxLogBytes, MaxEntryBytes},
-		{"a log over the default made of short entries", nil, MaxLogBytes, MaxEntryBytes},
+		{"a log over its limit made of short entries", nil, shortLimit, MaxEntryBytes},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var r io.Reader = bytes.NewReader(tc.log)
 			var src *repeat
 			if tc.log == nil {
-				src = &repeat{line: []byte(`{"msg":"strace.go:1] x"}` + "\n"), n: MaxLogBytes + 1}
+				src = &repeat{line: short, n: tc.maxLog + 1}
 				r = src
 			}
 			tr, err := readLimited(r, tc.maxLog, tc.maxLine)
 			if !errors.Is(err, ErrTooLarge) || tr != nil {
 				t.Fatalf("got a trace: %v, error %v; want ErrTooLarge and no trace", tr != nil, err)
 			}
-			if src != nil && src.read > MaxLogBytes+1<<20 {
-				t.Fatalf("read %d bytes of a log refused at %d", src.read, MaxLogBytes)
+			if src != nil && src.read > tc.maxLog+1<<20 {
+				t.Fatalf("read %d bytes of a log refused at %d", src.read, tc.maxLog)
 			}
 		})
 	}
-	// Read applies the defaults.
+	// Read applies the defaults: an entry over MaxEntryBytes, and a log over MaxLogBytes whose
+	// every entry is under the entry limit (each padded to 64 KiB with the whitespace JSON
+	// allows between values, so 256 MiB takes 10 s under the race detector, not 54), read no
+	// further than the limit.
 	big := slices.Concat([]byte(`{"msg":"`), bytes.Repeat([]byte("A"), MaxEntryBytes), []byte("\"}\n"))
 	if _, err := Read(bytes.NewReader(big)); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("Read of an entry over the default: %v, want ErrTooLarge", err)
+	}
+	padded := slices.Concat(short[:len(short)-1], bytes.Repeat([]byte(" "), 64<<10-len(short)), []byte("\n"))
+	src := &repeat{line: padded, n: MaxLogBytes + 1}
+	if tr, err := Read(src); !errors.Is(err, ErrTooLarge) || tr != nil {
+		t.Fatalf("Read of a log over the default: a trace %v, error %v; want ErrTooLarge and no trace", tr != nil, err)
+	}
+	if src.read > MaxLogBytes+1<<20 {
+		t.Fatalf("read %d bytes of a log refused at %d", src.read, MaxLogBytes)
 	}
 }
 

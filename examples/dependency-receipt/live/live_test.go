@@ -20,6 +20,7 @@ const published = "../../../docs/examples/dependency-receipt"
 // The published directory verifies, and the page's fixed sentences hold for its evidence: a
 // rerun that changes one of them fails here, so the text is reread before it is published.
 func TestPublishedFilesVerify(t *testing.T) {
+	t.Parallel()
 	if err := verifyPublished(published); err != nil {
 		t.Fatalf("%v; run go run ./examples/dependency-receipt/live -render, or the whole program", err)
 	}
@@ -175,6 +176,7 @@ func checkPage(t *testing.T, page []byte) {
 
 // -verify refuses the published directory with any one of its files changed.
 func TestVerifyRefusesChangedFiles(t *testing.T) {
+	t.Parallel()
 	for name, change := range map[string]func(t *testing.T, dir string){
 		"one byte of a log": func(t *testing.T, dir string) {
 			raw, _, err := readPublishedLog(dir, logFile("quiet"))
@@ -225,6 +227,7 @@ func TestVerifyRefusesChangedFiles(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel() // each changes a copy of its own; a verify takes about 5 s under -race
 			// The unchanged copy verifies: TestPublishedFilesVerify, on the same files.
 			dir := t.TempDir()
 			copyDir(t, published, dir)

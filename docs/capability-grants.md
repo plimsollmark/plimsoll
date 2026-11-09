@@ -101,7 +101,12 @@ plimsoll-specgen -emit health        api.openapi.json  # the recovery probe, if 
 **It handles part of OpenAPI, and says so when your document goes beyond that part.** A
 grant permits literal path templates only, so an operation that *requires* a query,
 header, or cookie parameter cannot be called through the broker at all: it is skipped
-with its reason, rather than granted as a route the agent can never use. An operation
+with its reason, rather than granted as a route the agent can never use. The path part of
+the document's server URL starts every route (`/client/v4` for
+`https://api.cloudflare.com/client/v4`), because OpenAPI appends each path to that URL and
+a profile's `base_url` is an origin only; servers that disagree on that path, or put a
+variable in it, fail generation, and an operation served from servers of its own is
+skipped, since a grant reaches one origin. An operation
 with optional ones is generated with a warning that the method always calls the bare
 route. A `$ref` path item or parameter (a pointer to a definition elsewhere in the
 document) is an error, not a silent omission. The project's own tests run the generated
@@ -550,6 +555,39 @@ bare, and the client's retry policy toward the API stays the client's. A request
 its own destination, an absolute-form target such as `GET http://other.example/v1/items`, a
 `CONNECT` to a host, or a doubled leading slash, is refused before anything is sent: the only
 origin the broker ever dials is the profile's `base_url`.
+
+### Where the credential goes: a named header or basic authentication
+
+By default the broker sends the run's credential as `Authorization: Bearer <token>`. Some
+APIs read it elsewhere: the Gemini API from `x-goog-api-key`, Azure OpenAI from `api-key`,
+Azure API Management from `ocp-apim-subscription-key`, and many older APIs from HTTP basic
+authentication. A profile's `token` says where, with `place`:
+
+```json
+"token": {"type": "static", "env": "GEMINI_API_KEY", "place": "header", "header": "x-goog-api-key"}
+"token": {"type": "static", "env": "LEGACY_API_KEY", "place": "basic", "username": "svc"}
+```
+
+- `"bearer"` (the default when `place` is absent): `Authorization: Bearer <token>`.
+- `"header"`: the bare token as the value of the header `header` names.
+- `"basic"`: `Authorization: Basic base64(username:token)`; `username` may be empty, and the
+  token is the password. An API that wants the key as the user name with an empty password is
+  not covered yet.
+
+The value still comes only from the daemon's environment through the token minter (`static`
+or `jwt`); no key is ever written in the profile file. It applies to the host-side health
+probe too, so both places the broker sets the credential agree. A bad setting fails at load: an unknown
+`place`, `header` with no name or with a name the broker or the transport owns (`Authorization`
+has its own two places; `Host`, `Content-Type`, `Content-Length`, `Cookie`, `Transfer-Encoding`,
+`X-Plimsoll-*` and `X-Forwarded-*` are refused), a `username` containing `:` or a byte outside
+visible ASCII, a `header` or `username` that does not belong to the chosen `place`, and a
+non-bearer place with no token at all. A header named here cannot also be in `pass_headers` or
+`set_headers`: a header has one owner. `pass_headers` and `set_headers` still refuse every
+API key header. The guest's own copy of the credential header is dropped like every guest
+header that is not passed, because the upstream request starts empty
+(`TestCredentialPlacementHeader`, `TestCredentialPlacementBasic`); the planted-credential
+test (`TestCredentialCanary`) checks the value appears in no answer, trace, log line or
+error.
 
 ### Prior art, and what differs here
 

@@ -35,6 +35,7 @@ func unstartedPool(t *testing.T, d *DockerSandbox, stated ...string) *dockerPool
 // does not run is dropped, since a hint changes latency, never behavior; what is left
 // comes back in the environment's order without repeats.
 func TestSessionLanguagesChecksTheHint(t *testing.T) {
+	t.Parallel()
 	stated := []Language{LanguageJavaScript, LanguagePython}
 	got, err := SessionLanguages([]Language{LanguagePython, LanguageJavaScript, LanguagePython}, stated)
 	if err != nil || !slices.Equal(got, stated) {
@@ -60,6 +61,7 @@ func TestSessionLanguagesChecksTheHint(t *testing.T) {
 // the filler with no bound, and a pool whose first member failed never closed done,
 // so a Drain racing StartSessionPool never returned.
 func TestDrainIsBoundedWhileThePoolFillerRuns(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	unstartedPool(t, d, "javascript")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -81,6 +83,7 @@ func TestDrainIsBoundedWhileThePoolFillerRuns(t *testing.T) {
 // member it was making once it sees the pool stopped), and a WaitGroup must not be
 // added to from zero while it is waited on. Before the fix Drain went on to wait.
 func TestDrainLeavesNoWaitBehindAPoolStillFilling(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	unstartedPool(t, d, "javascript")
 	removed := d.sessions.Removal() // a removal still in flight
@@ -99,6 +102,7 @@ func TestDrainLeavesNoWaitBehindAPoolStillFilling(t *testing.T) {
 // A pool started after Drain is refused: nothing would stop its filler, which would
 // keep making containers for a daemon that is shutting down.
 func TestPoolStartedAfterDrainIsRefused(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.projectLanguages = []Language{LanguageJavaScript}
 	if err := d.Drain(context.Background()); err != nil {
@@ -115,6 +119,7 @@ func TestPoolStartedAfterDrainIsRefused(t *testing.T) {
 // draining), and the open ones would otherwise be left to the reaper. Before the fix
 // Drain returned at once and left them open.
 func TestDrainEndsOpenSessionsWhileAnOpenIsInFlight(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	b, err := startDockerSessionBroker()
 	if err != nil {
@@ -145,6 +150,7 @@ func TestDrainEndsOpenSessionsWhileAnOpenIsInFlight(t *testing.T) {
 // capacity) would otherwise move the pool toward its languages, away from the callers
 // it serves. Before the fix the hint was recorded before the floor was checked.
 func TestRefusedOpenLeavesPoolDemandUnchanged(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.ready, d.daemonHost, d.verifiedRuntime, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.Runtime, d.guestUID()
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}

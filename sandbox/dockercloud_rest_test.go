@@ -618,6 +618,7 @@ func (f *dcFake) handleRESTEndpoint(w http.ResponseWriter, r *http.Request) {
 // ---- REST-only behavior ----
 
 func TestDockerCloudRESTCreateAndCredentials(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	d := f.provider()
 	f.files = map[string][]byte{"/tmp/plimsoll-project/out.txt": []byte("x")}
@@ -652,6 +653,7 @@ func TestDockerCloudRESTCreateAndCredentials(t *testing.T) {
 }
 
 func TestDockerCloudRESTCredentialRules(t *testing.T) {
+	t.Parallel()
 	run := func(t *testing.T, tweak func(*dcRESTFake)) (*dcFake, Result, error) {
 		f := newDCFakeAPI(t, dcAPIREST)
 		tweak(f.restState())
@@ -693,6 +695,7 @@ func TestDockerCloudRESTCredentialRules(t *testing.T) {
 }
 
 func TestDockerCloudRESTWaitsForTheSandboxToRun(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	f.opPending = true // 202, still creating; the next read finds it running
 	if _, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
@@ -704,6 +707,7 @@ func TestDockerCloudRESTWaitsForTheSandboxToRun(t *testing.T) {
 }
 
 func TestDockerCloudRESTDeleteProvesTheSandboxGone(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	rs := f.restState()
 	rs.staleOnce = true // the first DELETE meets a changed ETag: 412, then a fresh read
@@ -725,6 +729,7 @@ func TestDockerCloudRESTDeleteProvesTheSandboxGone(t *testing.T) {
 }
 
 func TestDockerCloudRESTRefusesAnUnusableEndpoint(t *testing.T) {
+	t.Parallel()
 	for name, tweak := range map[string]func(*dcRESTFake){
 		"no exec":     func(rs *dcRESTFake) { rs.endpointCaps = []string{"upload", "download"} },
 		"unix socket": func(rs *dcRESTFake) { rs.endpointProto = "unixSocket" },
@@ -760,6 +765,7 @@ func TestDockerCloudRESTRefusesAnUnusableEndpoint(t *testing.T) {
 }
 
 func TestDockerCloudRESTIncompleteExecIsAFlood(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	f.restState().incomplete = true
 	res, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"})
@@ -769,6 +775,7 @@ func TestDockerCloudRESTIncompleteExecIsAFlood(t *testing.T) {
 }
 
 func TestDockerCloudRESTDownloadNeedsItsClosingDelimiter(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	f.restState().downloadCut = true
 	f.files = map[string][]byte{"/tmp/plimsoll-project/out.txt": []byte("x")}
@@ -783,6 +790,7 @@ func TestDockerCloudRESTDownloadNeedsItsClosingDelimiter(t *testing.T) {
 }
 
 func TestDockerCloudRESTRetriesARateLimitedRead(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	f.restState().rateLimitReads = 2
 	if _, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
@@ -791,6 +799,7 @@ func TestDockerCloudRESTRetriesARateLimitedRead(t *testing.T) {
 }
 
 func TestDockerCloudRESTGrantsAreRefusedBeforeAnyCall(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	d := f.provider()
 	grant, _ := dcGrant(t)
@@ -818,6 +827,7 @@ func TestDockerCloudRESTGrantsAreRefusedBeforeAnyCall(t *testing.T) {
 }
 
 func TestDockerCloudRESTErrorCodes(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status int
 		body   string
@@ -837,6 +847,7 @@ func TestDockerCloudRESTErrorCodes(t *testing.T) {
 }
 
 func TestDockerCloudRefusesAnUnknownAPI(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.API = "grpc"
@@ -846,6 +857,7 @@ func TestDockerCloudRefusesAnUnknownAPI(t *testing.T) {
 }
 
 func TestBuildDockerCloudREST(t *testing.T) {
+	t.Parallel()
 	pinned := "registry.example/plimsoll/sandbox@sha256:" + strings.Repeat("b", 64)
 	env := map[string]string{
 		"SANDBOX_PROVIDER":          "dockercloud",
@@ -892,6 +904,7 @@ func TestBuildDockerCloudREST(t *testing.T) {
 }
 
 func TestDockerCloudRESTCapsTheRunCeiling(t *testing.T) {
+	t.Parallel()
 	f := newDCFakeAPI(t, dcAPIREST)
 	d := f.provider()
 	d.MaxTimeout = dcRESTMaxRun

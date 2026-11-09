@@ -2,12 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"mime"
 	"net"
+	"net/http"
 	"net/url"
 	"path"
 	"slices"
@@ -63,12 +65,15 @@ type HostRoute struct {
 // must be minimally scoped: Validate rejects a grant whose declared Scopes include
 // code:run or "*".
 type HostAPIGrant struct {
-	BaseURL  string
-	Allow    []HostRoute // routes the sandbox may reach; empty = deny everything
-	Minter   TokenMinter // mints the per-run credential; nil = no Authorization header
-	Scopes   []string    // declared scopes of the credential; must exclude code:run / "*"
-	Global   string      // JS global exposing the client; "" defaults to "host"
-	Preamble string      // optional extra JS appended after the client (domain SDK)
+	BaseURL string
+	Allow   []HostRoute // routes the sandbox may reach; empty = deny everything
+	Minter  TokenMinter // mints the per-run credential; nil = no credential header
+	// CredentialPlacement says where the minted credential goes on the upstream request.
+	// The zero value is "Authorization: Bearer <token>".
+	CredentialPlacement CredentialPlacement
+	Scopes              []string // declared scopes of the credential; must exclude code:run / "*"
+	Global              string   // JS global exposing the client; "" defaults to "host"
+	Preamble            string   // optional extra JS appended after the client (domain SDK)
 
 	// HealthCheck, when set, names a concrete GET route the per-run broker probes to
 	// decide whether the host API is degraded. It is broker-operated backpressure, not
@@ -313,6 +318,89 @@ func passHeaderRefused(name string) bool {
 // guest, not the profile, could choose the account the upstream acts for, and through an
 // upload route put data into an account of its own.
 var providerKeyHeaders = []string{"x-api-key", "x-goog-api-key", "api-key", "ocp-apim-subscription-key"}
+
+// Credential placements. The zero Kind is CredentialBearer.
+const (
+	CredentialBearer = "bearer" // Authorization: Bearer <token>
+	CredentialHeader = "header" // <Header>: <token>, the bare token
+	CredentialBasic  = "basic"  // Authorization: Basic base64(<Username>:<token>)
+)
+
+// CredentialPlacement says where the broker puts the credential its Minter issued: in
+// the Authorization header as a bearer token (the default), as the whole value of a named
+// header (x-goog-api-key, api-key), or as the password of HTTP basic authentication. The
+// value always comes from the Minter, never from this struct. It is set last on the
+// upstream request, on a fresh header set that holds no guest header outside PassHeaders,
+// and Validate keeps a header it names out of PassHeaders and SetHeaders, so the guest
+// has no way to put a value beside it.
+type CredentialPlacement struct {
+	Kind     string // "", CredentialBearer, CredentialHeader or CredentialBasic
+	Header   string // CredentialHeader: the field name
+	Username string // CredentialBasic: the user name; may be empty; no ':' and visible ASCII
+}
+
+// validate checks a placement against the grant that holds it. A name the broker or the
+// transport owns is refused whatever the placement, so a credential can not be pointed at
+// Host or Content-Length; Authorization has its own two placements.
+func (p CredentialPlacement) validate(g *HostAPIGrant) error {
+	switch p.Kind {
+	case "", CredentialBearer:
+		if p.Header != "" || p.Username != "" {
+			return errors.New("host-api grant: CredentialPlacement bearer takes no header or username")
+		}
+		return nil
+	case CredentialHeader:
+		if p.Username != "" {
+			return errors.New("host-api grant: CredentialPlacement header takes no username")
+		}
+		if !utf8.ValidString(p.Header) || !validFieldName(p.Header) {
+			return errors.New("host-api grant: CredentialPlacement header is not a field name")
+		}
+		lower := strings.ToLower(p.Header)
+		if lower == "authorization" || (passHeaderRefused(p.Header) && !slices.Contains(providerKeyHeaders, lower)) {
+			return fmt.Errorf("host-api grant: CredentialPlacement header %q is one the broker or the transport owns (use bearer or basic for Authorization)", p.Header)
+		}
+		for _, name := range g.PassHeaders {
+			if strings.EqualFold(name, p.Header) {
+				return fmt.Errorf("host-api grant: %q is both the credential header and passed from the guest; a header has one owner", p.Header)
+			}
+		}
+		for name := range g.SetHeaders {
+			if strings.EqualFold(name, p.Header) {
+				return fmt.Errorf("host-api grant: %q is both the credential header and set by the grant; a header has one owner", p.Header)
+			}
+		}
+	case CredentialBasic:
+		if p.Header != "" {
+			return errors.New("host-api grant: CredentialPlacement basic takes no header")
+		}
+		if strings.IndexFunc(p.Username, func(r rune) bool { return r < 0x21 || r > 0x7e || r == ':' }) >= 0 || len(p.Username) > maxPassHeaderValueBytes/2 {
+			return errors.New("host-api grant: CredentialPlacement username must be visible ASCII without ':'")
+		}
+	default:
+		return fmt.Errorf("host-api grant: unknown CredentialPlacement kind %q (want bearer|header|basic)", p.Kind)
+	}
+	if g.Minter == nil {
+		return errors.New("host-api grant: CredentialPlacement other than bearer needs a Minter")
+	}
+	return nil
+}
+
+// applyCredential sets the credential on h, replacing anything under the same name. A grant with no
+// token sets nothing.
+func (g *HostAPIGrant) applyCredential(h http.Header, token string) {
+	if token == "" {
+		return
+	}
+	switch g.CredentialPlacement.Kind {
+	case CredentialHeader:
+		h.Set(g.CredentialPlacement.Header, token)
+	case CredentialBasic:
+		h.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(g.CredentialPlacement.Username+":"+token)))
+	default:
+		h.Set("Authorization", "Bearer "+token)
+	}
+}
 
 // validFieldName reports whether name is an RFC 9110 token: one or more of the
 // characters allowed in a header field name.
@@ -672,6 +760,9 @@ func (g *HostAPIGrant) Validate() error {
 				return fmt.Errorf("host-api grant: RouteContentTypes for %s %q lists %q twice", route.Method, route.Path, t)
 			}
 		}
+	}
+	if err := g.CredentialPlacement.validate(g); err != nil {
+		return err
 	}
 	seenHeaders := make(map[string]struct{}, len(g.PassHeaders))
 	for _, name := range g.PassHeaders {

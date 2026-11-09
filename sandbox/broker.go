@@ -575,9 +575,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if requestBody != nil {
 		req.Header.Set("Content-Type", contentType)
 	}
-	if b.token != "" {
-		req.Header.Set("Authorization", "Bearer "+b.token)
-	}
+	b.grant.applyCredential(req.Header, b.token)
 
 	// SEAM(forensic-logging): this is the only shared point where an authorized
 	// call's request and response bytes are both in scope. Any future opt-in sink
@@ -775,9 +773,7 @@ func (b *brokerSession) probeHealth(ctx context.Context) (healthy bool, cooldown
 	}
 	req.Header = make(http.Header)
 	req.Header.Set("Accept", "application/json")
-	if b.token != "" {
-		req.Header.Set("Authorization", "Bearer "+b.token)
-	}
+	b.grant.applyCredential(req.Header, b.token)
 	resp, err := b.transport.RoundTrip(req)
 	if err != nil || resp == nil || resp.Body == nil {
 		return false, breakerDefaultCooldown

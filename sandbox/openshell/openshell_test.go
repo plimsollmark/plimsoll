@@ -54,6 +54,7 @@ func echoScript(e *fakeExec) error {
 }
 
 func TestConfigValidate(t *testing.T) {
+	t.Parallel()
 	good := Config{GatewayURL: "https://127.0.0.1:17670", CAFile: "ca", CertFile: "c", KeyFile: "k", Image: "plimsoll/sandbox:latest"}
 	if err := good.validate(); err != nil {
 		t.Fatalf("good config: %v", err)
@@ -101,6 +102,7 @@ func TestConfigValidate(t *testing.T) {
 // protobuf encoding change that broke the equality would fail every run closed; this
 // catches it first.
 func TestPolicyHashMatchesTheGateway(t *testing.T) {
+	t.Parallel()
 	sys := []string{"/bin", "/usr", "/lib", "/proc", "/dev/urandom", "/etc"}
 	for _, tc := range []struct {
 		name   string
@@ -138,6 +140,7 @@ func TestPolicyHashMatchesTheGateway(t *testing.T) {
 }
 
 func TestResourceLimits(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mem  int
 		cpus float64
@@ -158,6 +161,7 @@ func TestResourceLimits(t *testing.T) {
 }
 
 func TestRunJavaScript(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	if p.IsolationClass() != sandbox.IsolationUnknown {
@@ -193,6 +197,7 @@ func TestRunJavaScript(t *testing.T) {
 // run label and the lifetime (the run's own budget, a snippet's default 5 s here), the
 // image, the limits and the run policy, in the default workspace.
 func TestCreateRequest(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	var spec *openshellv1.Sandbox
 	f.run = func(e *fakeExec) error {
@@ -224,6 +229,7 @@ func TestCreateRequest(t *testing.T) {
 }
 
 func TestRunJavaScriptCapsOutput(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error {
 		e.readAll()
@@ -250,6 +256,7 @@ func TestRunJavaScriptCapsOutput(t *testing.T) {
 // TestRunJavaScriptTimeout requires the deadline to cancel the exec stream (on the
 // docker driver, the kill) and the run to report a timeout with the output so far.
 func TestRunJavaScriptTimeout(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error {
 		e.readAll()
@@ -259,15 +266,18 @@ func TestRunJavaScriptTimeout(t *testing.T) {
 		return e.hang()
 	}
 	start := time.Now()
-	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "for(;;){}", Timeout: 300 * time.Millisecond})
+	// The budget also covers the provider's checks before the exec, so a short one on a
+	// busy host can run out before the fake's first output, which is a correct timeout
+	// with nothing to report and not the case this test is for.
+	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "for(;;){}", Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("RunJavaScript: %v", err)
 	}
 	if !res.TimedOut || res.ExitCode != 124 || res.Stdout != "started\n" {
 		t.Fatalf("got %+v", res)
 	}
-	if took := time.Since(start); took > 3*time.Second {
-		t.Fatalf("a 300ms budget took %v", took)
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("a 2s budget took %v", took)
 	}
 	e := f.lastExec()
 	deadline := time.Now().Add(2 * time.Second)
@@ -281,6 +291,7 @@ func TestRunJavaScriptTimeout(t *testing.T) {
 
 // TestCallerCancellation is not a timeout: the caller's own cancellation is an error.
 func TestCallerCancellation(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	started := make(chan struct{})
 	f.run = func(e *fakeExec) error {
@@ -298,6 +309,7 @@ func TestCallerCancellation(t *testing.T) {
 // TestExitStatusBeatsSendFailure: a command that exits without reading its stdin makes
 // the send side fail, and the exit status still decides the result.
 func TestExitStatusBeatsSendFailure(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error {
 		if err := e.stderr([]byte("bye")); err != nil {
@@ -327,6 +339,7 @@ func TestExitStatusBeatsSendFailure(t *testing.T) {
 }
 
 func TestStreamWithoutExitIsAnError(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		run  func(e *fakeExec) error
@@ -348,6 +361,7 @@ func TestStreamWithoutExitIsAnError(t *testing.T) {
 // stdinBytes sends n bytes of stdin and requires the fake to receive them all, in
 // frames no larger than the gateway's per-message limit allows.
 func TestStdinFramesAndHalfClose(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	var got []byte
 	f.run = func(e *fakeExec) error {
@@ -421,6 +435,7 @@ func fakeRunner(t *testing.T, report func(wirePlan) (stdout, stderr string, exit
 }
 
 func TestRunProject(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	// Pinned by digest, so the result names the image: a completed run's result is the
 	// runner's report, and it once came back without the provider's image (2026-10-29),
@@ -466,6 +481,7 @@ func TestRunProject(t *testing.T) {
 }
 
 func TestRunProjectOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		stdout      string
@@ -509,6 +525,7 @@ func TestRunProjectOutcomes(t *testing.T) {
 // TestRunProjectDeadline: when the run's outer deadline ends a runner that never
 // reports, the outcome is timed_out.
 func TestRunProjectDeadline(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error { e.readAll(); return e.hang() }
 	// The budget covers creating the sandbox and the ready poll as well as the hanging
@@ -530,6 +547,7 @@ func TestRunProjectDeadline(t *testing.T) {
 // gateway reads back refuses the run before any code executes, and the sandbox is
 // deleted.
 func TestReadBackRefusals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		bend   func(f *fakeGateway)
@@ -635,6 +653,7 @@ func TestReadBackRefusals(t *testing.T) {
 }
 
 func TestDriverEvidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		info   func() (*openshellv1.GetGatewayInfoResponse, error)
@@ -691,6 +710,7 @@ func TestDriverEvidence(t *testing.T) {
 // TestRefusalsBeforeDispatch: refusals that run nothing are marked as not dispatched
 // and cost no sandbox.
 func TestRefusalsBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	// Cleartext off loopback: the grant itself is invalid, so it is refused before
@@ -733,6 +753,7 @@ func TestRefusalsBeforeDispatch(t *testing.T) {
 // gateway's creation time; nothing in flight, already deleting, undeclared or
 // unlabelled is touched.
 func TestReconcileOrphans(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	p.noteSkew(0) // the reaper has measured the gateway's clock, as any create does
 	run := func(instance, lifetime string) map[string]string {
@@ -786,6 +807,7 @@ func TestReconcileOrphans(t *testing.T) {
 // during an in-flight check answers at once (not ready, before any check has
 // finished), and a burst of calls afterwards costs one gateway call.
 func TestPreflightIsCached(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	p.pf.TTL = preflightTTL
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -815,7 +837,9 @@ func TestPreflightIsCached(t *testing.T) {
 }
 
 // TestTierLossIsLogged: a driver check that fails after one passed logs once, further
-// failures stay quiet, and the next pass logs the recovery.
+// failures stay quiet, and the next pass logs the recovery. It stays serial: it replaces the
+// process-wide slog default and counts lines, and any provider running beside it logs into the
+// same buffer (made parallel once, it failed 4 runs in 8 with a second provider's loss line).
 func TestTierLossIsLogged(t *testing.T) {
 	f, p := newFake(t)
 	var logs bytes.Buffer
@@ -850,6 +874,7 @@ func TestTierLossIsLogged(t *testing.T) {
 // TestDeleteWaitsUntilGone: an accepted deletion is watched until the record is gone,
 // and the name stays tracked (so Drain waits) until then.
 func TestDeleteWaitsUntilGone(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	f.deletePolls = 5
@@ -875,6 +900,7 @@ func TestDeleteWaitsUntilGone(t *testing.T) {
 // confirms it gone (review, 2026-10-23). Before, the name was
 // untracked and the capacity given back while the sandbox lived on.
 func TestDeleteGivesUp(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	f.deleteErr = connect.NewError(connect.CodeUnavailable, errors.New("gateway busy"))
@@ -916,6 +942,7 @@ func TestDeleteGivesUp(t *testing.T) {
 }
 
 func TestEnvironments(t *testing.T) {
+	t.Parallel()
 	_, p := newFake(t)
 	env := p.Environments()
 	if env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != snippetMax || env.Project.MaxTimeout != projectMax || !reflect.DeepEqual(env.Module, sandbox.PayloadEnvironment{}) {
@@ -929,6 +956,7 @@ func TestEnvironments(t *testing.T) {
 }
 
 func TestSmokeChecks(t *testing.T) {
+	t.Parallel()
 	if err := checkWritable(500, []string{"/tmp", "/tmp/x"}, nil); err != nil {
 		t.Errorf("only /tmp: %v", err)
 	}
@@ -1050,6 +1078,7 @@ func goodProbeReport() map[string]any {
 }
 
 func TestSmokeTestAgainstFake(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		adjust func(*smokeFake)
@@ -1090,6 +1119,7 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 // reach a gateway that verifies client certificates, and a certificate from another
 // authority to be refused.
 func TestNewSpeaksMutualTLS(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ca, caKey := newCA(t, "gateway CA")
 	serverCert := issue(t, ca, caKey, "gateway", x509.ExtKeyUsageServerAuth)
@@ -1213,6 +1243,7 @@ func issue(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, name str
 // both pass: reported with no value (the gateway's default, what a v0.1.2 gateway
 // sends when nothing set it) and an explicit boolean false.
 func TestReadBackAcceptsProposalsProvablyOff(t *testing.T) {
+	t.Parallel()
 	for name, value := range map[string]*sandboxv1.SettingValue{
 		"unset": nil,
 		"false": {Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}},
@@ -1233,6 +1264,7 @@ func TestReadBackAcceptsProposalsProvablyOff(t *testing.T) {
 // reap a live sandbox, and a reaper that has measured nothing reaps no other
 // instance's sandbox (external review of v0.10.0, documentation item 4, 2026-09-28).
 func TestReconcileReadsAgesOnTheGatewaysClock(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	labels := map[string]string{instanceLabel: "other", runLabel: "1", lifetimeLabel: "60"}
 	ready, now := openshellv1.SandboxPhase_SANDBOX_PHASE_READY, time.Now()
@@ -1254,6 +1286,7 @@ func TestReconcileReadsAgesOnTheGatewaysClock(t *testing.T) {
 }
 
 func TestClockSkew(t *testing.T) {
+	t.Parallel()
 	issued := time.Unix(1790000000, 0)
 	ready := issued.Add(2 * time.Second)
 	for name, tc := range map[string]struct {
@@ -1288,6 +1321,7 @@ func (c lateTimer) Err() error                  { return nil }
 // the context's timer runs is still reported as the deadline, not as a transport
 // error (the rule is deadline.Expired, tested there).
 func TestDeadlineAwareDoesNotWaitForTheTimer(t *testing.T) {
+	t.Parallel()
 	if err := providerkit.DeadlineAware(lateTimer{context.Background(), time.Now().Add(-time.Millisecond)}, errors.New("stream reset")); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadlineAware in the late-timer window: %v, want it to wrap DeadlineExceeded", err)
 	}
@@ -1297,6 +1331,7 @@ func TestDeadlineAwareDoesNotWaitForTheTimer(t *testing.T) {
 // returns (review F14): the delete runs off the result path, and the sandbox, with
 // anything the run left in it, lives until it is through.
 func TestRunHoldsItsCapacityUntilTheSandboxIsDeleted(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	f.mu.Lock()
@@ -1335,6 +1370,7 @@ func TestRunHoldsItsCapacityUntilTheSandboxIsDeleted(t *testing.T) {
 // states a minimum isolation. A check the
 // gateway itself fails still does, and the refusal says nothing ran.
 func TestACallerCannotChangeTheTierByHangingUp(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	if _, err := p.checkDriver(context.Background()); err != nil {
 		t.Fatal(err)
@@ -1371,6 +1407,7 @@ func TestACallerCannotChangeTheTierByHangingUp(t *testing.T) {
 // The gateway ends the stream right after the exit event, so a normal run is not
 // affected.
 func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = func(e *fakeExec) error {
 		code := e.readAll()
@@ -1397,6 +1434,7 @@ func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
 // default them to false (v0.1.2); any other release must report an explicit false
 // (review, 2026-10-23).
 func TestProposalsWithNoValueAreOffOnlyOnAMeasuredRelease(t *testing.T) {
+	t.Parallel()
 	unset := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {}}
 	off := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}}}}
 	version := func(v string) func() (string, error) { return func() (string, error) { return v, nil } }
@@ -1429,6 +1467,7 @@ func TestProposalsWithNoValueAreOffOnlyOnAMeasuredRelease(t *testing.T) {
 // of refusing a measured release as unknown (found live, 2026-10-24); if the gateway
 // still does not say, the create fails as unanswered.
 func TestPolicyReadBackLearnsAnUnknownGatewayVersion(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	ctx := context.Background()
 	p.mu.Lock()
@@ -1461,6 +1500,7 @@ func TestPolicyReadBackLearnsAnUnknownGatewayVersion(t *testing.T) {
 // explicitly: only an omitted setting needs the version (review, 2026-10-24). With the
 // setting omitted, the create fails as unanswered, naming no nil error.
 func TestAnExplicitFalseNeedsNoGatewayVersion(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	ctx := context.Background()
 	f.mu.Lock()

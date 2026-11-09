@@ -264,7 +264,7 @@ func TestDockerSessionDrainCoversAnOpenInFlight(t *testing.T) {
 	if err := d.Preflight(ctx); err != nil {
 		t.Fatal(err)
 	}
-	before := sessionContainers(t)
+	before := sessionContainers(t, d)
 	trigger("inspect-slow", "")
 	type opened struct {
 		s   sandbox.Session
@@ -280,7 +280,7 @@ func TestDockerSessionDrainCoversAnOpenInFlight(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the open never created its container")
 		}
-		for _, name := range sessionContainers(t) {
+		for _, name := range sessionContainers(t, d) {
 			if !slices.Contains(before, name) {
 				started = append(started, name)
 			}
@@ -290,7 +290,7 @@ func TestDockerSessionDrainCoversAnOpenInFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 	clear("inspect-slow")
-	for _, name := range sessionContainers(t) {
+	for _, name := range sessionContainers(t, d) {
 		if slices.Contains(started, name) {
 			t.Errorf("container %s outlived Drain", name)
 		}

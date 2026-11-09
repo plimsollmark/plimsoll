@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What a sandbox is: rooms, locks and the sign on the door</title>
+<meta name="description" content="For newcomers: what it means to run code you did not write, five real runs of a stranger's code in plimsoll's weakest room, the four isolation tiers as rooms with different locks, and why the tier a run reports is a statement, not proof.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/what-a-sandbox-is/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="What a sandbox is: rooms, locks and the sign on the door">
+<meta property="og:description" content="For newcomers: running code you did not write, five real runs of a stranger's code, the four isolation tiers as rooms with different locks, and why a reported tier is a statement, not proof.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/what-a-sandbox-is/index.html">
+<style>
+:root { color-scheme: light; --ink: #1a1a1a; --mut: #565656; --rule: #dcd7cd; --bg: #fbfaf7; --card: #ffffff;
+  --accent: #0f4a85; --soft: #e8eff7; --good: #1e6b2f; --good-bg: #e6f4ea; --bad: #8a1c1c; --bad-bg: #fdecea;
+  --warn: #7a4b00; --warn-bg: #fdf3dc; --code: #f3f0e9; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 50rem; margin: 0 auto; padding: 1.2rem 1.2rem 4rem; }
+nav.site { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline; padding: 0 0 12px; margin: 0 0 1.6rem; border-bottom: 1px solid var(--rule); font-size: 15px; }
+nav.site a { color: var(--accent); }
+nav.site a.home { font-weight: 700; text-decoration: none; }
+.eyebrow { margin: 0; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
+h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; font-size: 2.1rem; line-height: 1.2; margin: .2rem 0 .6rem; }
+h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; font-size: 1.45rem; line-height: 1.3; margin: 2.8rem 0 .6rem; }
+h3 { font-size: 1.05rem; margin: 0 0 .3rem; }
+.lede { font-size: 1.15rem; color: #2a2a2a; }
+a { color: var(--accent); }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code { background: var(--code); padding: .05rem .3rem; border-radius: 3px; font-size: .88em; overflow-wrap: anywhere; }
+pre { background: var(--code); border: 1px solid var(--rule); border-radius: 7px; padding: .65rem .8rem; margin: .4rem 0; overflow-x: auto; font-size: 13.5px; line-height: 1.45; }
+.hash { overflow-wrap: anywhere; word-break: break-all; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; margin: 1rem 0; }
+.card.warn { background: var(--warn-bg); border-color: #ecd8a6; }
+.card.good { background: var(--good-bg); border-color: #bcdcc4; }
+.note { color: var(--mut); font-size: .92rem; }
+figure { margin: 1.4rem 0; }
+figure svg { display: block; width: 100%; height: auto; max-width: 720px; margin: 0 auto; }
+figure.narrow svg { max-width: 460px; }
+.house .fig-tall { display: none; }
+@media (max-width: 600px) { .house .fig-wide { display: none; } .house .fig-tall { display: block; } }
+figcaption { font-size: .9rem; color: var(--mut); margin: .5rem auto 0; max-width: 720px; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8rem; font-weight: 700; }
+.tag.ok { background: var(--good-bg); color: var(--good); }
+.tag.no { background: var(--bad-bg); color: var(--bad); }
+.tag.tier { background: var(--soft); color: var(--accent); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: .4rem 0; font-size: .95rem; }
+dl.kv dt { color: var(--mut); }
+dl.kv dd { margin: 0; }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); font-size: .88rem; color: var(--mut); }
+ul.links { list-style: none; padding: 0; }
+ul.links li { margin: .5rem 0; }
+details { margin: .6rem 0; }
+summary { cursor: pointer; color: var(--accent); }
+
+/* The five strangers: one card each, its code and what came back. */
+.stranger { display: grid; grid-template-columns: 1fr; gap: .2rem 1rem; }
+.stranger > * { min-width: 0; }
+.stranger .who { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem .8rem; }
+.stranger .who h3 { margin: 0; }
+.stranger .label { font-size: .75rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--mut); margin: .5rem 0 0; }
+.stranger pre.out { background: #fff; border-style: dashed; }
+.stranger pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.stranger .why { margin: .5rem 0 0; }
+
+/* The four rooms. */
+.rooms { display: grid; grid-template-columns: 1fr; gap: .8rem; margin: 1rem 0; }
+.room { background: var(--card); border: 1px solid var(--rule); border-top: 5px solid var(--accent); border-radius: 10px; padding: .9rem 1rem; }
+.room h3 { font-family: Georgia, serif; font-size: 1.25rem; }
+.room .real { font-size: .85rem; color: var(--mut); margin: 0 0 .5rem; }
+.room dl { margin: 0; font-size: .93rem; }
+.room dt { font-size: .72rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--mut); margin-top: .55rem; }
+.room dd { margin: .1rem 0 0; }
+.room.p { border-top-color: #b83f43; } .room.c { border-top-color: #c27a1a; } .room.k { border-top-color: #2f7d5b; } .room.v { border-top-color: #0f4a85; }
+@media (min-width: 760px) { .rooms { grid-template-columns: 1fr 1fr; } }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; background: var(--card); }
+th, td { text-align: left; vertical-align: top; padding: .45rem .55rem; border-bottom: 1px solid var(--rule); }
+th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); }
+.wide { overflow-x: auto; }
+@media (max-width: 600px) { body { font-size: 16px; } h1 { font-size: 1.7rem; } main { padding: 1rem .9rem 3rem; } }
+</style>
+</head>
+<body>
+<main>
+<nav class="site" aria-label="Site"><a class="home" href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="../../trainers/index.html">Lessons</a><a href="../proof-of-what-ran/index.html">Next: proof of what ran</a><a href="https://github.com/plimsollmark/plimsoll">EXTERNAL · source repo ↗</a></nav>
+
+<p class="eyebrow">For newcomers · 1 of 2</p>
+<h1>What a sandbox is</h1>
+<p class="lede">Someone hands you a program and says "run this for me". You did not write it, and you
+are not going to read all of it. It is probably fine. Most code is. This page is about the
+rest, and about how plimsoll tells you which precautions a given run actually got.</p>
+
+<!-- 1 ─────────────────────────────────────────────────────────────── -->
+<h2 id="strangers-code">Running code you did not write</h2>
+<p>A program you run acts as you. It can read the files you can read, send what you can send
+over the network, and use as much memory and time as the machine will give it. That is the
+deal with every program on your computer, and it works because you chose those programs.</p>
+<p>More and more code comes from nobody you chose. An AI agent, a program that uses a language
+model to decide what to do next, writes a few lines to answer a question and wants them run.
+The model may simply be wrong. It may have read a web page with instructions planted in it, a
+trick called <dfn>prompt injection</dfn>: instructions hidden in data a model reads, written so
+that the model follows them. Either way, the code that arrives is a stranger's code, and you
+are about to let it act as you.</p>
+<p>A <dfn>sandbox</dfn> is a place where code runs with something stopping it from reaching the
+rest of the machine. Think of a room in your house set aside for a visitor: you let the
+stranger in, but only into that room, and the door locks from the outside. plimsoll's
+documentation even calls the stranger's code the <dfn>guest</dfn>: the code running inside a
+sandbox, seen from the machine that runs it.</p>
+<p>Rooms differ in their locks, and that is the whole subject of this page. plimsoll calls the
+strength of the lock the <dfn>isolation tier</dfn>: how strong the wall around a run is, one of
+four levels, weakest first: <code>process</code>, <code>container</code>, <code>kernel</code>,
+<code>vm</code>. plimsoll does not build the rooms itself. It is the doorman in front of them:
+it checks each request, sends it to the one kind of room it was set up with, and writes on
+every answer which kind of room that was.</p>
+
+<!-- 2 ─────────────────────────────────────────────────────────────── -->
+<h2 id="five-strangers">Five strangers in the cheapest room</h2>
+<p>On 2026-11-05 a plimsoll server, <code>plimsolld</code>, was started on a laptop with the
+setting <code>SANDBOX_PROVIDER=wasm</code>. The <dfn>provider</dfn> is the backend that actually
+runs the code, and each server uses exactly one. <code>wasm</code> is the cheapest room plimsoll
+has: JavaScript runs on <dfn>QuickJS</dfn>, a small JavaScript engine, compiled to
+<dfn>WebAssembly</dfn>, a portable bytecode format that runs inside a host program, which decides
+everything the code can reach. Here the host program is plimsolld itself.</p>
+<p>Five short JavaScript programs were sent to it, four of them behaving the way a badly
+behaved stranger might, and a sixth from a careful caller. What each card shows came back from the
+server unedited; it is read from the signed recording published beside the
+<a href="../proof-of-what-ran/index.html">next page (INTERNAL · plimsoll site →)</a>, which also
+shows how to check it.</p>
+
+<div class="card stranger" data-run="polite">
+  <div class="who"><h3>1. The polite one</h3><span class="tag ok">ran normally</span></div>
+  <div><p class="label">What it sent</p><pre class="code"></pre></div>
+  <div><p class="label">What came back</p><pre class="out"></pre></div>
+  <p class="why">Most code is like this. The room exists for the other kind.</p>
+</div>
+
+<div class="card stranger" data-run="network">
+  <div class="who"><h3>2. The one who wants the internet</h3><span class="tag no">stopped</span></div>
+  <div><p class="label">What it sent</p><pre class="code"></pre></div>
+  <div><p class="label">What came back</p><pre class="out"></pre></div>
+  <p class="why">It looked for every usual way to open a connection: <code>fetch</code>,
+  <code>XMLHttpRequest</code> and <code>WebSocket</code> from web browsers, and
+  <code>require</code> and <code>process</code> from Node.js, the JavaScript runtime most servers
+  use. None of them exist here. No firewall is needed when the room has no telephone: the
+  engine is started without any function that opens a connection.</p>
+</div>
+
+<div class="card stranger" data-run="files">
+  <div class="who"><h3>3. The one who goes through your drawers</h3><span class="tag no">stopped</span></div>
+  <div><p class="label">What it sent</p><pre class="code"></pre></div>
+  <div><p class="label">What came back</p><pre class="out"></pre></div>
+  <p class="why">This one did its homework. QuickJS ships modules for files and folders, and the
+  stranger found them and asked for <code>/etc/passwd</code>, the file that lists a Linux machine's user
+  accounts. It got <code>null</code>: nothing to open. Then it asked for a listing of the top
+  folder and got an empty list with error 44, which in WASI, the standard set of system functions
+  a WebAssembly program can be offered, means "no such file or directory". plimsoll starts the
+  engine with no folders handed to it at all
+  (<a href="https://github.com/plimsollmark/plimsoll/blob/main/sandbox/wasm.go">sandbox/wasm.go (EXTERNAL · source repo ↗)</a>),
+  so every path is missing. The filing cabinet is there; it has no drawers.</p>
+</div>
+
+<div class="card stranger" data-run="memory">
+  <div class="who"><h3>4. The one who eats everything</h3><span class="tag no">stopped</span></div>
+  <div><p class="label">What it sent</p><pre class="code"></pre></div>
+  <div><p class="label">What came back</p><pre class="out"></pre></div>
+  <p class="why">The engine's memory is capped at 256 MiB, and the cap is enforced by the
+  WebAssembly runtime underneath, not by asking nicely. Thirty-one piles of a million numbers
+  is about 248 million bytes (8 bytes a number); the thirty-second pile did not fit, the engine
+  said "out of memory", and the program's own <code>catch</code> printed it. plimsoll exists
+  partly because a popular JavaScript sandbox library once advertised a memory limit that did
+  nothing at all
+  (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/isolation-tiers.md#the-problem">the story in docs/isolation-tiers.md (EXTERNAL · official docs ↗)</a>).</p>
+</div>
+
+<div class="card stranger" data-run="forever">
+  <div class="who"><h3>5. The one who never leaves</h3><span class="tag no">stopped</span></div>
+  <div><p class="label">What it sent</p><pre class="code"></pre></div>
+  <div><p class="label">What came back</p><pre class="out"></pre></div>
+  <p class="why">The request allowed 2 seconds (<code>"timeoutMs": 2000</code>). The loop promised
+  to run forever and was stopped at the deadline. The answer says so in two ways: the run is
+  marked timed out, and its exit code is 124, the number the Unix <code>timeout</code> command
+  uses for the same thing. A non-zero exit code is a normal answer in plimsoll, not an error: the
+  code ran, and this is how it ended.</p>
+</div>
+
+<div class="card stranger" data-recorded="floor">
+  <div class="who"><h3>6. The careful caller</h3><span class="tag tier">refused, nothing ran</span></div>
+  <div><p class="label">What it sent</p><pre class="code">{
+  "protocol": 5,
+  "minimumIsolation": "kernel",
+  "javascript": {
+    "code": "console.log(\"hello\");\n"
+  }
+}</pre></div>
+  <div><p class="label">What came back (recorded output of plimsoll-attest)</p><pre class="out">plimsoll-attest: refused before dispatch (reason isolation), so nothing ran; the bundle is unchanged: sandbox isolation requirement not met
+failed_precondition: sandbox isolation requirement not met: provider isolation process is below requested minimum kernel</pre></div>
+  <p class="why">Not a stranger: a caller who reads the sign before going in. Its request names a
+  <dfn>floor</dfn>, the weakest isolation tier it will accept, here <code>kernel</code>. This room
+  is <code>process</code>, so plimsoll refused before <dfn>dispatch</dfn>, the handover that
+  starts the code. Nothing ran, and the answer is marked so, which tells the caller it is safe to
+  send the same request to a stronger room. Because nothing ran, there is no
+  <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a> for it either. The request is <a href="../proof-of-what-ran/requests/floor.json">requests/floor.json</a>.</p>
+</div>
+
+<div class="card warn">
+  <h3>What this room does not stop</h3>
+  <p>Every stranger above was stopped by the engine. But the engine runs inside plimsolld, the
+  plimsoll server's own program. A stranger who found a bug in QuickJS or in the WebAssembly
+  runtime could make an <dfn>escape</dfn>, a bug that lets code inside a sandbox act outside it,
+  and it would land inside plimsolld, with plimsolld's permissions. That is why this room's tier
+  is called <code>process</code>, and why plimsoll's own documentation says not to point it at
+  hostile code. It is for speed and for development: the first three runs above took
+  <span data-duration="polite"></span>, <span data-duration="network"></span> and
+  <span data-duration="files"></span>.</p>
+  <p>These five strangers tried the obvious doors. None tried to break the engine, so this page
+  shows the room's rules being kept, not that the engine has no bugs.</p>
+</div>
+
+<!-- 3 ─────────────────────────────────────────────────────────────── -->
+<h2 id="four-rooms">Four rooms, four locks</h2>
+<p>Each provider restricts memory, run time, files and network access. For providers whose walls
+depend on the host or a remote service, a startup test checks the promised restrictions; the
+in-process wasm provider relies on the project's own tests. (A run can be given one narrow exception, a
+<dfn>grant</dfn>: permission, attached to one run, for its code to call listed routes of one
+HTTP API through plimsoll, which adds the credential itself, so the code never sees it.) Where rooms
+differ is what happens when the lock itself has a bug. The picture puts each room where its
+escape would land.</p>
+
+<figure class="house">
+<svg class="fig-wide" viewBox="0 0 480 480" role="img" aria-labelledby="house-title house-desc" style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <title id="house-title">Four rooms, drawn as places in and around your house</title>
+  <desc id="house-desc">Your machine is a house. Inside it: plimsolld's own program with a playpen in it, the process room; a spare room that talks to the house's wiring directly, the container room; and the same spare room with a receptionist, gVisor, between the stranger and the wiring, the kernel room. Outside, on someone else's machine, a cabin with its own wiring, the vm room. A red dot marks the stranger's code in each.</desc>
+  <rect x="6" y="6" width="468" height="318" rx="14" fill="#fbfaf6" stroke="#9c958a" stroke-width="2"/>
+  <text x="20" y="28" font-size="13" font-weight="700" fill="#565656">YOUR MACHINE (the house)</text>
+  <rect x="16" y="282" width="448" height="30" rx="7" fill="#efe6d5" stroke="#b59e73" stroke-width="1.5"/>
+  <text x="240" y="301" font-size="12.5" font-weight="700" fill="#6b5326" text-anchor="middle">the Linux kernel: the house's wiring, shared by every room</text>
+  <rect x="16" y="40" width="144" height="226" rx="10" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="88" y="60" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">plimsolld's own</text>
+  <text x="88" y="75" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">program</text>
+  <text x="88" y="90" font-size="11" fill="#565656" text-anchor="middle">(your living room)</text>
+  <rect x="30" y="104" width="116" height="74" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2" stroke-dasharray="5 3"/>
+  <text x="88" y="124" font-size="11" font-weight="700" fill="#b83f43" text-anchor="middle">playpen:</text>
+  <text x="88" y="139" font-size="11" font-weight="700" fill="#b83f43" text-anchor="middle">the wasm engine</text>
+  <circle cx="88" cy="159" r="9" fill="#b83f43"/>
+  <text x="88" y="202" font-size="13" font-weight="800" fill="#b83f43" text-anchor="middle">process</text>
+  <text x="88" y="220" font-size="10.5" fill="#565656" text-anchor="middle">an escape lands</text>
+  <text x="88" y="234" font-size="10.5" fill="#565656" text-anchor="middle">in plimsolld itself</text>
+  <line x1="88" y1="242" x2="88" y2="280" stroke="#1a1a1a" stroke-width="1.5"/>
+  <rect x="168" y="40" width="144" height="226" rx="10" fill="#ffffff" stroke="#c27a1a" stroke-width="2.5"/>
+  <text x="240" y="60" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">a container</text>
+  <text x="240" y="75" font-size="11" fill="#565656" text-anchor="middle">(a spare room</text>
+  <text x="240" y="90" font-size="11" fill="#565656" text-anchor="middle">with its own lock)</text>
+  <circle cx="240" cy="140" r="9" fill="#b83f43"/>
+  <line x1="240" y1="150" x2="240" y2="184" stroke="#b83f43" stroke-width="3"/>
+  <text x="240" y="202" font-size="13" font-weight="800" fill="#c27a1a" text-anchor="middle">container</text>
+  <text x="240" y="220" font-size="10.5" fill="#565656" text-anchor="middle">talks to the wiring</text>
+  <text x="240" y="234" font-size="10.5" fill="#565656" text-anchor="middle">directly</text>
+  <line x1="240" y1="242" x2="240" y2="280" stroke="#b83f43" stroke-width="3"/>
+  <rect x="320" y="40" width="144" height="226" rx="10" fill="#ffffff" stroke="#2f7d5b" stroke-width="2.5"/>
+  <text x="392" y="60" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">a container</text>
+  <text x="392" y="75" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">under gVisor</text>
+  <text x="392" y="90" font-size="11" fill="#565656" text-anchor="middle">(plus a receptionist)</text>
+  <circle cx="392" cy="114" r="9" fill="#b83f43"/>
+  <rect x="330" y="132" width="124" height="42" rx="7" fill="#e3f1ea" stroke="#2f7d5b" stroke-width="1.5"/>
+  <text x="392" y="149" font-size="10.5" font-weight="700" fill="#2f7d5b" text-anchor="middle">gVisor answers</text>
+  <text x="392" y="164" font-size="10.5" font-weight="700" fill="#2f7d5b" text-anchor="middle">almost every request</text>
+  <text x="392" y="202" font-size="13" font-weight="800" fill="#2f7d5b" text-anchor="middle">kernel</text>
+  <text x="392" y="220" font-size="10.5" fill="#565656" text-anchor="middle">a short, fixed list of</text>
+  <text x="392" y="234" font-size="10.5" fill="#565656" text-anchor="middle">calls reaches the wiring</text>
+  <line x1="392" y1="242" x2="392" y2="280" stroke="#2f7d5b" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <rect x="6" y="344" width="468" height="130" rx="14" fill="#f3f6fa" stroke="#9c958a" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="20" y="366" font-size="13" font-weight="700" fill="#565656">SOMEONE ELSE'S MACHINE (across town)</text>
+  <rect x="40" y="378" width="400" height="84" rx="10" fill="#ffffff" stroke="#0f4a85" stroke-width="2.5"/>
+  <circle cx="72" cy="420" r="9" fill="#b83f43"/>
+  <text x="245" y="404" font-size="12" font-weight="700" fill="#1a1a1a" text-anchor="middle">a rented cabin: a small virtual machine</text>
+  <text x="245" y="422" font-size="11" fill="#565656" text-anchor="middle">with its own kernel (its own wiring),</text>
+  <text x="245" y="438" font-size="11" fill="#565656" text-anchor="middle">made for one run and destroyed after it</text>
+  <text x="426" y="452" font-size="13" font-weight="800" fill="#0f4a85" text-anchor="end">vm</text>
+</svg>
+<svg class="fig-tall" viewBox="0 0 340 690" role="img" aria-labelledby="house-title-t house-desc-t" style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <title id="house-title-t">Four rooms, drawn as places in and around your house</title>
+  <desc id="house-desc-t">The same picture stacked for a narrow screen: inside the house, the process, container and kernel rooms, each with its path to the shared wiring; below, the vm cabin on someone else's machine.</desc>
+  <rect x="4" y="4" width="332" height="484" rx="14" fill="#fbfaf6" stroke="#9c958a" stroke-width="2"/>
+  <text x="18" y="27" font-size="14" font-weight="700" fill="#565656">YOUR MACHINE (the house)</text>
+  <rect x="286" y="40" width="40" height="436" rx="8" fill="#efe6d5" stroke="#b59e73" stroke-width="1.5"/>
+  <text transform="translate(311 258) rotate(-90)" font-size="13" font-weight="700" fill="#6b5326" text-anchor="middle">the Linux kernel: the house's wiring</text>
+  <rect x="14" y="40" width="262" height="134" rx="10" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="26" y="62" font-size="13.5" font-weight="700" fill="#1a1a1a">plimsolld's own program</text>
+  <text x="26" y="80" font-size="12.5" fill="#565656">(your living room)</text>
+  <rect x="26" y="90" width="132" height="72" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2" stroke-dasharray="5 3"/>
+  <text x="92" y="110" font-size="12.5" font-weight="700" fill="#b83f43" text-anchor="middle">playpen:</text>
+  <text x="92" y="126" font-size="12.5" font-weight="700" fill="#b83f43" text-anchor="middle">the wasm engine</text>
+  <circle cx="92" cy="146" r="9" fill="#b83f43"/>
+  <text x="168" y="112" font-size="14.5" font-weight="800" fill="#b83f43">process</text>
+  <text x="168" y="132" font-size="12" fill="#565656">an escape lands</text>
+  <text x="168" y="148" font-size="12" fill="#565656">in plimsolld itself</text>
+  <line x1="276" y1="107" x2="286" y2="107" stroke="#1a1a1a" stroke-width="1.5"/>
+  <rect x="14" y="186" width="262" height="134" rx="10" fill="#ffffff" stroke="#c27a1a" stroke-width="2.5"/>
+  <text x="26" y="208" font-size="13.5" font-weight="700" fill="#1a1a1a">a container</text>
+  <text x="26" y="226" font-size="12.5" fill="#565656">(a spare room with its own lock)</text>
+  <circle cx="40" cy="268" r="9" fill="#b83f43"/>
+  <line x1="50" y1="268" x2="286" y2="268" stroke="#b83f43" stroke-width="3"/>
+  <text x="62" y="258" font-size="14.5" font-weight="800" fill="#c27a1a">container</text>
+  <text x="62" y="292" font-size="12" fill="#565656">talks to the wiring directly</text>
+  <rect x="14" y="332" width="262" height="144" rx="10" fill="#ffffff" stroke="#2f7d5b" stroke-width="2.5"/>
+  <text x="26" y="354" font-size="13.5" font-weight="700" fill="#1a1a1a">a container under gVisor</text>
+  <text x="26" y="372" font-size="12.5" fill="#565656">(plus a receptionist)</text>
+  <circle cx="40" cy="414" r="9" fill="#b83f43"/>
+  <rect x="58" y="390" width="140" height="48" rx="7" fill="#e3f1ea" stroke="#2f7d5b" stroke-width="1.5"/>
+  <text x="128" y="410" font-size="12" font-weight="700" fill="#2f7d5b" text-anchor="middle">gVisor answers</text>
+  <text x="128" y="427" font-size="12" font-weight="700" fill="#2f7d5b" text-anchor="middle">almost every request</text>
+  <line x1="198" y1="414" x2="286" y2="414" stroke="#2f7d5b" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <text x="206" y="404" font-size="14.5" font-weight="800" fill="#2f7d5b">kernel</text>
+  <text x="26" y="458" font-size="12" fill="#565656">a short, fixed list of calls reaches the wiring</text>
+  <rect x="4" y="504" width="332" height="180" rx="14" fill="#f3f6fa" stroke="#9c958a" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="18" y="527" font-size="13.5" font-weight="700" fill="#565656">SOMEONE ELSE'S MACHINE</text>
+  <text x="18" y="545" font-size="12.5" fill="#565656">(across town)</text>
+  <rect x="18" y="558" width="304" height="114" rx="10" fill="#ffffff" stroke="#0f4a85" stroke-width="2.5"/>
+  <circle cx="44" cy="588" r="9" fill="#b83f43"/>
+  <text x="62" y="593" font-size="14.5" font-weight="800" fill="#0f4a85">vm</text>
+  <text x="32" y="620" font-size="13" font-weight="700" fill="#1a1a1a">a rented cabin: a small virtual machine</text>
+  <text x="32" y="638" font-size="12.5" fill="#565656">with its own kernel (its own wiring),</text>
+  <text x="32" y="655" font-size="12.5" fill="#565656">made for one run and destroyed after it</text>
+</svg>
+<figcaption>The red dot is the stranger's code. The thinner the path from it to the house's
+wiring, the more an escape has to break. The cabin can also be on your own machines: a
+Kubernetes cluster (software that runs containers across machines) running
+<a href="../../trainers/glossary.html#kata-containers">Kata Containers (INTERNAL · glossary →)</a>
+makes the same kind of small virtual machine for each sandbox.</figcaption>
+</figure>
+
+<div class="rooms">
+  <div class="room p">
+    <h3>The playpen</h3>
+    <p class="real">Tier <code>process</code> · provider <code>wasm</code></p>
+    <dl>
+      <dt>What it is</dt><dd>A playpen in your living room. QuickJS runs inside plimsolld's own program, behind the walls the WebAssembly engine draws: no files, no network, a hard memory cap, a deadline.</dd>
+      <dt>If the lock breaks</dt><dd>The stranger is loose in your living room: inside plimsolld, with its permissions. There is no operating-system wall at all.</dd>
+      <dt>Runs</dt><dd>One JavaScript snippet at a time. No files, packages or build steps.</dd>
+      <dt>For hostile code?</dt><dd><span class="tag no">no</span> Fast and free, for code you mostly trust.</dd>
+    </dl>
+  </div>
+  <div class="room c">
+    <h3>The spare room</h3>
+    <p class="real">Tier <code>container</code> · providers <code>docker</code> under <code>runc</code>, <code>openshell</code>, <code>agentsandbox</code> under <code>runc</code></p>
+    <dl>
+      <dt>What it is</dt><dd>A spare room with its own lock, sharing the house's wiring. A container is a process started with its own view of files, network and other processes, while still sharing the machine's kernel. Docker's default runtime, <dfn>runc</dfn>, builds those walls with the kernel's own features. plimsoll's docker room adds a read-only root, small writable areas held in memory where a written file cannot be started as a program by its path, no network but the container's own loopback (a connection only to itself), and root's special powers taken away.</dd>
+      <dt>If the lock breaks</dt><dd>The stranger talks to the shared kernel directly, so a bug in the Linux kernel is a way into the whole house.</dd>
+      <dt>Runs</dt><dd>Snippets and whole projects with files and build steps; compiled simulators on the docker provider only.</dd>
+      <dt>For hostile code?</dt><dd><span class="tag no">no, not alone</span> Solid hardening, but standing on a shared foundation.</dd>
+    </dl>
+  </div>
+  <div class="room k">
+    <h3>The spare room with a receptionist</h3>
+    <p class="real">Tier <code>kernel</code> · providers <code>docker</code> under <code>runsc</code>, once checked, <code>agentsandbox</code> under <code>runsc</code></p>
+    <dl>
+      <dt>What it is</dt><dd>The same room, with someone at the door who takes every request. <dfn>gVisor</dfn> is Google's open-source stand-in kernel, written in Go (the programming language) and running as an ordinary program, that handles almost every request a container's code makes itself and uses only a short, locked-down list of real kernel calls. Docker starts a container under it through gVisor's runtime, <dfn>runsc</dfn>: the program docker calls instead of runc.</dd>
+      <dt>If the lock breaks</dt><dd>The stranger has to get past gVisor and then through the short list of calls gVisor still makes. Two bugs, in a row, and it is still your house.</dd>
+      <dt>Runs</dt><dd>The same as the spare room (compiled simulators on docker only), a little slower to start.</dd>
+      <dt>For hostile code?</dt><dd><span class="tag ok">yes</span> The weakest room plimsoll calls good enough for hostile code on your own machine, when its startup check passes.</dd>
+    </dl>
+  </div>
+  <div class="room v">
+    <h3>The cabin across town</h3>
+    <p class="real">Tier <code>vm</code> · providers <code>e2b</code>, <code>dockercloud</code>, <code>agentsandbox</code> under <code>kata</code></p>
+    <dl>
+      <dt>What it is</dt><dd>A whole separate small computer. A <dfn>microVM</dfn> is a small virtual machine with its own kernel, started for one run and destroyed after it, kept apart from its neighbors by the processor itself. <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn> are hosted services that rent them out by the second.</dd>
+      <dt>If the lock breaks</dt><dd>The stranger is in a throwaway machine with its own wiring. To go further it must break the <dfn>hypervisor</dfn>, the program that runs virtual machines and keeps them apart. On a hosted service, that machine is not yours.</dd>
+      <dt>Runs</dt><dd>Snippets and whole projects. Hosted E2B and Docker Cloud Sandboxes bill by the second; a Kata cluster you run yourself has infrastructure costs, without a plimsoll fee per run.</dd>
+      <dt>For hostile code?</dt><dd><span class="tag ok">yes</span> The strongest wall plimsoll reports, still a statement from its checks rather than independent proof from the machine itself. A hosting company can read what it runs, so keep secrets out of the image.</dd>
+    </dl>
+  </div>
+</div>
+<p>There is a fifth setting, and it is the default: no room at all. With
+<code>SANDBOX_PROVIDER</code> unset, plimsoll runs nothing and says so. The front door stays
+bricked up until somebody chooses a room on purpose.</p>
+
+<p>The other rooms are not drawn from imagination. On 2026-09-28 the same program, one that
+balances a simulated pole on a cart, was sent to five rooms with nothing changed but the
+provider setting, and each answer stated its room. One of them was a sandbox from
+<dfn>OpenShell</dfn>, NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and
+deletes sandboxes on request
+(<a href="../providers/index.html">same run, different sandboxes (INTERNAL · plimsoll site →)</a>):</p>
+<div class="wide"><table>
+  <thead><tr><th>Room</th><th>Where it ran</th><th>Tier the answer stated</th></tr></thead>
+  <tbody>
+    <tr><td>Docker, locked down (runc)</td><td>the same machine</td><td><code>container</code></td></tr>
+    <tr><td>Docker with gVisor (runsc)</td><td>the same machine</td><td><code>kernel</code></td></tr>
+    <tr><td>NVIDIA OpenShell sandbox</td><td>an OpenShell gateway, docker inside</td><td><code>container</code></td></tr>
+    <tr><td>E2B microVM</td><td>E2B's cloud</td><td><code>vm</code></td></tr>
+    <tr><td>Docker Cloud Sandboxes microVM</td><td>Docker's cloud</td><td><code>vm</code></td></tr>
+  </tbody>
+</table></div>
+<p class="note">All five produced the same result, byte for byte. The process room was not in
+that recording: it runs single snippets, and that program is a project with several files.</p>
+
+<!-- 4 ─────────────────────────────────────────────────────────────── -->
+<h2 id="the-sign">The sign on the door</h2>
+<p>Every answer above says <code>process</code>. Where does that word come from? Not from an
+inspector. It is plimsoll's statement, assembled from what it can check, and it is worth knowing
+exactly what goes into it.</p>
+
+<figure class="narrow">
+<svg viewBox="0 0 360 546" role="img" aria-labelledby="sign-title sign-desc" style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <title id="sign-title">What the tier on an answer is made of</title>
+  <desc id="sign-desc">Three boxes feed the sign on the door: the operator's settings, the provider's own word, and a startup smoke test that tries a throwaway room from inside. They produce the line "isolation: kernel" printed on every answer. A fourth box, attestation, is greyed out: plimsoll does not supply it.</desc>
+  <rect x="10" y="8" width="340" height="92" rx="10" fill="#ffffff" stroke="#0f4a85" stroke-width="2"/>
+  <text x="24" y="32" font-size="14" font-weight="800" fill="#0f4a85">1 · The settings</text>
+  <text x="24" y="52" font-size="12.5" fill="#1a1a1a">what the operator chose:</text>
+  <text x="24" y="70" font-size="12" fill="#1a1a1a" font-family="ui-monospace,Menlo,monospace">SANDBOX_PROVIDER=docker</text>
+  <text x="24" y="86" font-size="12" fill="#1a1a1a" font-family="ui-monospace,Menlo,monospace">SANDBOX_DOCKER_RUNTIME=runsc</text>
+  <rect x="10" y="110" width="340" height="92" rx="10" fill="#ffffff" stroke="#0f4a85" stroke-width="2"/>
+  <text x="24" y="134" font-size="14" font-weight="800" fill="#0f4a85">2 · The provider's word</text>
+  <text x="24" y="154" font-size="12.5" fill="#1a1a1a">at startup and on every readiness poll,</text>
+  <text x="24" y="172" font-size="12.5" fill="#1a1a1a">docker's own list of runtimes is read:</text>
+  <text x="24" y="190" font-size="12.5" fill="#1a1a1a">runsc is registered there</text>
+  <rect x="10" y="212" width="340" height="132" rx="10" fill="#ffffff" stroke="#0f4a85" stroke-width="2"/>
+  <text x="24" y="236" font-size="14" font-weight="800" fill="#0f4a85">3 · The startup smoke test</text>
+  <text x="24" y="256" font-size="12.5" fill="#1a1a1a">a throwaway room is opened once and</text>
+  <text x="24" y="274" font-size="12.5" fill="#1a1a1a">tried from inside: the root is read-only,</text>
+  <text x="24" y="292" font-size="12.5" fill="#1a1a1a">writes land only where promised, loopback</text>
+  <text x="24" y="310" font-size="12.5" fill="#1a1a1a">is the only network, the process limit is</text>
+  <text x="24" y="328" font-size="12.5" fill="#1a1a1a">the one asked for. Fail, and nothing is served.</text>
+  <path d="M180 344 L180 366" stroke="#0f4a85" stroke-width="2.5"/>
+  <path d="M172 358 L180 368 L188 358" stroke="#0f4a85" stroke-width="2.5" fill="none"/>
+  <rect x="50" y="372" width="260" height="68" rx="6" fill="#0f4a85"/>
+  <text x="180" y="397" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">printed on every answer</text>
+  <text x="180" y="424" font-size="18" font-weight="800" fill="#ffffff" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">isolation: kernel</text>
+  <rect x="10" y="458" width="340" height="80" rx="10" fill="#f1f1ef" stroke="#a9a9a4" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="180" y="483" font-size="14" font-weight="800" fill="#6f6f69" text-anchor="middle">not in it: attestation</text>
+  <text x="180" y="503" font-size="12.5" fill="#6f6f69" text-anchor="middle">a cryptographic proof, rooted in the</text>
+  <text x="180" y="521" font-size="12.5" fill="#6f6f69" text-anchor="middle">hardware, of what software is running now</text>
+</svg>
+<figcaption>The example is the kernel tier on docker. Each provider has its own startup checks;
+the e2b and dockercloud providers each open a real microVM at startup and check, among other
+things, that it cannot reach the internet.</figcaption>
+</figure>
+
+<p>Think of a hotel. The hotel set the room up, checked at opening time that the deadbolt turns
+and the window does not open, and prints "deadbolt" on your bill. That is worth a good deal more
+than a brochure. It is still the hotel's word: nobody from outside inspected the lock this
+morning, and nothing on the bill would change if someone swapped the lock after opening time.</p>
+<p>The exact term for the inspector's certificate is <dfn>attestation</dfn>: cryptographic proof,
+usually rooted in the hardware, of exactly what software a machine is running. plimsoll does not
+have it, and says so wherever it reports a tier. Concretely:</p>
+<ul>
+  <li><b>kernel</b> on docker rests on docker's own registration of the <code>runsc</code> runtime,
+  checked by the <dfn>preflight</dfn> (the configuration check a provider runs at startup and on
+  each readiness poll), plus the smoke test. The code says in so many words that this is not proof
+  that the wall actually running is gVisor
+  (<a href="https://github.com/plimsollmark/plimsoll/blob/main/sandbox/docker_preflight.go">sandbox/docker_preflight.go (EXTERNAL · source repo ↗)</a>).</li>
+  <li><b>vm</b> on E2B and Docker Cloud Sandboxes follows from which service it is. Their smoke
+  tests prove the microVM behaves as promised, network blocked included; they do not prove a
+  hypervisor is there.</li>
+  <li><b>process</b>, the runs on this page, has no smoke test at all, because its walls are library
+  code built into plimsolld and the same on every machine. The project's own tests prove the memory
+  cap and the missing network functions, and at startup the wasm provider only reads its
+  settings.</li>
+  <li>If the machine is changed after startup, or plimsolld itself is taken over, the sign can be
+  wrong. A compromised server can state anything.</li>
+</ul>
+<p>The full account, provider by provider, is
+<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/isolation-tiers.md">docs/isolation-tiers.md (EXTERNAL · official docs ↗)</a>.
+If the attacks you must hold out against need attestation, no room here supplies it.</p>
+
+<div class="card good">
+  <h3>What you can do with the sign</h3>
+  <p>Read it, and refuse to go in below the room you need. A request can name its floor, as the
+  careful caller above did, and anything weaker is refused before a single line runs. The operator
+  can set a floor for the whole server (<code>SANDBOX_MIN_ISOLATION</code>), and plimsoll's
+  <dfn>hardened mode</dfn>, the startup setting <code>PLIMSOLL_HARDENED=1</code>, refuses to start
+  unless every production safeguard is configured and refuses any run below <code>kernel</code>.
+  The official clients also compare the tier that comes back with the floor that went out.</p>
+</div>
+
+<!-- 5 ─────────────────────────────────────────────────────────────── -->
+<h2 id="not-shown">What this page does not show</h2>
+<ul>
+  <li><b>The other rooms, tonight.</b> Only the process room ran for this page. The other rooms'
+  tiers come from the 2026-09-28 recording linked above.</li>
+  <li><b>That the code's answer is right.</b> A sandbox limits what wrong code can damage. It does
+  nothing to make a wrong answer right.</li>
+  <li><b>An attack on the engine.</b> The strangers tried the doors, not the hinges.</li>
+  <li><b>Proof of the room.</b> Every tier here is plimsoll's statement from its settings and its
+  checks, never attestation.</li>
+</ul>
+
+<h2 id="next">Next: the receipt</h2>
+<p>Every answer above came with a
+<a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>,
+plimsoll's written statement of what was sent, what came back and which room ran it, and the
+five were signed into one file as they came back. The next page shows what is on a run record,
+why the client checks it, who signs it and what it cannot prove, and lets you check these five
+in your browser.</p>
+<ul class="links">
+  <li><a href="../proof-of-what-ran/index.html"><b>Proof of what ran (INTERNAL · plimsoll site →)</b></a>: the signed records of the five runs on this page.</li>
+  <li><a href="../../trainers/plain-english.html">Plain English (INTERNAL · trainer site →)</a>: the same walls as an interactive cross-section, and the words decoded.</li>
+  <li><a href="../../trainers/concepts.html#marks">Concepts: read the mark, not the name (INTERNAL · trainer site →)</a>: each tier with its real checks.</li>
+  <li><a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/limitations.md">What plimsoll does not do (EXTERNAL · official docs ↗)</a>: the limits, stated plainly.</li>
+</ul>
+
+<footer>
+<p>Recorded 2026-11-05 on one laptop: plimsolld built from this repository's source and started
+with <code>SANDBOX_PROVIDER=wasm</code> on a loopback address (one that reaches only the same machine), each request sent with
+<code>plimsoll-attest run</code>, the command-line program that signs what comes back (explained on the next page). The six
+requests, as sent: <a href="../proof-of-what-ran/requests/polite.json">polite.json</a>,
+<a href="../proof-of-what-ran/requests/network.json">network.json</a>,
+<a href="../proof-of-what-ran/requests/files.json">files.json</a>,
+<a href="../proof-of-what-ran/requests/memory.json">memory.json</a>,
+<a href="../proof-of-what-ran/requests/forever.json">forever.json</a> and
+<a href="../proof-of-what-ran/requests/floor.json">floor.json</a>. The signed recording of the
+five that ran is <a href="../proof-of-what-ran/bundle.jsonl">bundle.jsonl</a>. The cards read what they show from
+the evidence block below, which a test in <code>docs/trainers</code> rebuilds from that file and
+checks against it. The room picture and the sign are drawings, not recordings.</p>
+</footer>
+</main>
+
+<script type="application/json" id="evidence">
+{
+ "note": "Generated from bundle.jsonl by docs/trainers/sandbox_basics_test.go; run it with -update after a new recording, never edit by hand.",
+ "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEACX/V+aIEeHOXVg+2tHQ1Y91NBlG53xKcJE54sTVFAGw=\n-----END PUBLIC KEY-----\n",
+ "key_id": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+ "runs": [
+  {
+   "name": "polite",
+   "line": 1,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "console.log(\"Hello from a stranger. 2 + 2 = \" + (2 + 2));\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "Hello from a stranger. 2 + 2 = 4\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "5bebf95b29019438733e7b1513257db73a30fd7ad7ad0f414f27423b4e85fa67",
+    "result_sha256": "5729016f7460d2a08282c51e8b8a2b320a4d20622a11eba110f1411497cb2f9a",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643157,
+    "ended_unix_ms": 1793945643168,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "64689226ce8c10948473e856dc2f88e4411aedf15f1c82faeedbc21985f0514f"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI2NDY4OTIyNmNlOGMxMDk0ODQ3M2U4NTZkYzJmODhlNDQxMWFlZGYxNWYxYzgyZmFlZWRiYzIxOTg1ZjA1MTRmIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiNWJlYmY5NWIyOTAxOTQzODczM2U3YjE1MTMyNTdkYjczYTMwZmQ3YWQ3YWQwZjQxNGYyNzQyM2I0ZTg1ZmE2NyIsInJlc3VsdF9zaGEyNTYiOiI1NzI5MDE2Zjc0NjBkMmEwODI4MmM1MWU4YjhhMmIzMjBhNGQyMDYyMmExMWViYTExMGYxNDExNDk3Y2IyZjlhIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTU3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTY4LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI2NDY4OTIyNmNlOGMxMDk0ODQ3M2U4NTZkYzJmODhlNDQxMWFlZGYxNWYxYzgyZmFlZWRiYzIxOTg1ZjA1MTRmIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "f/vR20+5voAztiKLBleviIgKCCmmRMwwQBLHG9I7oZcNiotJIk/fN0PfI0nZfowXiZfC70Q0PMlmbRBOTKpfCQ=="
+   }
+  },
+  {
+   "name": "network",
+   "line": 3,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "[\"fetch\", \"XMLHttpRequest\", \"WebSocket\", \"require\", \"process\"].forEach(function (name) {\n  console.log(name + \": \" + typeof globalThis[name]);\n});\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "fetch: undefined\nXMLHttpRequest: undefined\nWebSocket: undefined\nrequire: undefined\nprocess: undefined\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "e5dcc730cae6e03f2afe75474c877a2025f4565fe9def5fb8568cedc9935c0aa",
+    "result_sha256": "010e91949552438e2ce4fb596f1f2520c2a4be72a3d773c46494af4798054065",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643181,
+    "ended_unix_ms": 1793945643191,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "e2c35d0320900a33756848f34f9ccb03cdf6217e92366f8784db5a62e87ce218"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiJlMmMzNWQwMzIwOTAwYTMzNzU2ODQ4ZjM0ZjljY2IwM2NkZjYyMTdlOTIzNjZmODc4NGRiNWE2MmU4N2NlMjE4In19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiZTVkY2M3MzBjYWU2ZTAzZjJhZmU3NTQ3NGM4NzdhMjAyNWY0NTY1ZmU5ZGVmNWZiODU2OGNlZGM5OTM1YzBhYSIsInJlc3VsdF9zaGEyNTYiOiIwMTBlOTE5NDk1NTI0MzhlMmNlNGZiNTk2ZjFmMjUyMGMyYTRiZTcyYTNkNzczYzQ2NDk0YWY0Nzk4MDU0MDY1IiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTgxLCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTkxLCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiJlMmMzNWQwMzIwOTAwYTMzNzU2ODQ4ZjM0ZjljY2IwM2NkZjYyMTdlOTIzNjZmODc4NGRiNWE2MmU4N2NlMjE4In19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "Ch+tzkyFqbcK3Ch16m82LVpe4WJhPa4RLXHoh7GPWNwdr1o9bKzJxkkd6VR1EOzl/fzewln3BIkn1SXyqdP5CA=="
+   }
+  },
+  {
+   "name": "files",
+   "line": 5,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "import(\"qjs:std\").then(function (std) {\n  console.log(\"open /etc/passwd: \" + std.open(\"/etc/passwd\", \"r\"));\n  return import(\"qjs:os\");\n}).then(function (os) {\n  console.log(\"list /: \" + JSON.stringify(os.readdir(\"/\")));\n});\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "open /etc/passwd: null\nlist /: [[],44]\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "adfd9ea06434fba4438cee60370c9d9b0e35bb65a74a7065616abf101a40961b",
+    "result_sha256": "b03a54b03ee3fbba04927244c4543fb3f7dd21c76c6a166cee06d095fb539a8f",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643203,
+    "ended_unix_ms": 1793945643214,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "9ef5f788a04a600cac33ad7798706ebd40d11401827fd4f61b572fc1329ea678"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI5ZWY1Zjc4OGEwNGE2MDBjYWMzM2FkNzc5ODcwNmViZDQwZDExNDAxODI3ZmQ0ZjYxYjU3MmZjMTMyOWVhNjc4In19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiYWRmZDllYTA2NDM0ZmJhNDQzOGNlZTYwMzcwYzlkOWIwZTM1YmI2NWE3NGE3MDY1NjE2YWJmMTAxYTQwOTYxYiIsInJlc3VsdF9zaGEyNTYiOiJiMDNhNTRiMDNlZTNmYmJhMDQ5MjcyNDRjNDU0M2ZiM2Y3ZGQyMWM3NmM2YTE2NmNlZTA2ZDA5NWZiNTM5YThmIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjAzLCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjE0LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI5ZWY1Zjc4OGEwNGE2MDBjYWMzM2FkNzc5ODcwNmViZDQwZDExNDAxODI3ZmQ0ZjYxYjU3MmZjMTMyOWVhNjc4In19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "JlJBISpvneJ3LPJUyJo7vc/tXcnTxrIo0HkXDuagLT1tjBaeJPJFztKZPvpc7TcQYAofxOfhpi10gGYh7Li0DA=="
+   }
+  },
+  {
+   "name": "memory",
+   "line": 7,
+   "duration_ms": 3195,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "var piles = [];\ntry {\n  for (;;) piles.push(new Array(1e6).fill(7));\n} catch (e) {\n  console.log(\"kept \" + piles.length + \" piles of a million numbers, then: \" + e);\n}\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "kept 31 piles of a million numbers, then: InternalError: out of memory\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "9b793a5a50a1423c7bb021945c2e7f1ae975f1f37c076c06a31c9d4a34405423",
+    "result_sha256": "09235dcadd4744c77544e5a40273ab6d551523d89ea6a7147275004093300ecc",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643227,
+    "ended_unix_ms": 1793945646423,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "99fe39ca21d8bc7c2d44a726cd2cf0c40275d0d3be8e83214ab508377bcb03cc"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI5OWZlMzljYTIxZDhiYzdjMmQ0NGE3MjZjZDJjZjBjNDAyNzVkMGQzYmU4ZTgzMjE0YWI1MDgzNzdiY2IwM2NjIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiOWI3OTNhNWE1MGExNDIzYzdiYjAyMTk0NWMyZTdmMWFlOTc1ZjFmMzdjMDc2YzA2YTMxYzlkNGEzNDQwNTQyMyIsInJlc3VsdF9zaGEyNTYiOiIwOTIzNWRjYWRkNDc0NGM3NzU0NGU1YTQwMjczYWI2ZDU1MTUyM2Q4OWVhNmE3MTQ3Mjc1MDA0MDkzMzAwZWNjIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjI3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQ2NDIzLCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI5OWZlMzljYTIxZDhiYzdjMmQ0NGE3MjZjZDJjZjBjNDAyNzVkMGQzYmU4ZTgzMjE0YWI1MDgzNzdiY2IwM2NjIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "D/Dub2Qw1ukmzUb091tpHg5fhVaWO4P+1hkABxmR77/je+GbAZVNo1lINUYwMdSz+HGpsKhiQ6CPdk1sE0tpCw=="
+   }
+  },
+  {
+   "name": "forever",
+   "line": 9,
+   "duration_ms": 2021,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 2000,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "console.log(\"starting a loop that never ends\");\nfor (;;) {}\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 124,
+    "timed_out": true,
+    "stdout": "starting a loop that never ends\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "e6d3942c2b5b344f85bd23f8a558abdad8afbc4f78a0f3d436d97884bd24d6d7",
+    "result_sha256": "4687e6f2f3cf04e24b12b9c99797d830c42b0320b08c84ecd9e2658dcf4a8bae",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945646447,
+    "ended_unix_ms": 1793945648468,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "49ed23950b770c74d9fa3e3f046e8ff90449e49de1705bd2eb29d3814613c3fa"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI0OWVkMjM5NTBiNzcwYzc0ZDlmYTNlM2YwNDZlOGZmOTA0NDllNDlkZTE3MDViZDJlYjI5ZDM4MTQ2MTNjM2ZhIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiZTZkMzk0MmMyYjViMzQ0Zjg1YmQyM2Y4YTU1OGFiZGFkOGFmYmM0Zjc4YTBmM2Q0MzZkOTc4ODRiZDI0ZDZkNyIsInJlc3VsdF9zaGEyNTYiOiI0Njg3ZTZmMmYzY2YwNGUyNGIxMmI5Yzk5Nzk3ZDgzMGM0MmIwMzIwYjA4Yzg0ZWNkOWUyNjU4ZGNmNGE4YmFlIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQ2NDQ3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQ4NDY4LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI0OWVkMjM5NTBiNzcwYzc0ZDlmYTNlM2YwNDZlOGZmOTA0NDllNDlkZTE3MDViZDJlYjI5ZDM4MTQ2MTNjM2ZhIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "GT+rAnYE4uZJDmxTe4KuvGXWWmC+Sn79PTNfL+VJNXY0f/SsIzNYbSRbgrcHTDr7uyxVZXBhA8KIcqni0TAfDQ=="
+   }
+  }
+ ]
+}
+</script>
+<script>
+(function () {
+  'use strict';
+  var ev = JSON.parse(document.getElementById('evidence').textContent);
+  var byName = {};
+  (ev.runs || []).forEach(function (r) { byName[r.name] = r; });
+  function ms(n) { return n < 1000 ? n + ' ms' : (n / 1000).toFixed(2) + ' s'; }
+  document.querySelectorAll('[data-run]').forEach(function (card) {
+    var r = byName[card.getAttribute('data-run')];
+    if (!r) return;
+    card.querySelector('pre.code').textContent = r.request.code + (r.request.timeout_ms ? '// sent with "timeoutMs": ' + r.request.timeout_ms + '\n' : '');
+    var o = r.result, lines = o.stdout;
+    lines += '\nexit code ' + o.exit_code + (o.timed_out ? ', timed out' : '') + ' · ran in ' + ms(r.duration_ms);
+    lines += '\nisolation: ' + r.record.isolation + ' · provider: ' + r.record.provider;
+    card.querySelector('pre.out').textContent = lines;
+  });
+  document.querySelectorAll('[data-duration]').forEach(function (s) {
+    var r = byName[s.getAttribute('data-duration')];
+    if (r) s.textContent = ms(r.duration_ms);
+  });
+})();
+</script>
+</body>
+</html>

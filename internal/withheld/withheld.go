@@ -306,6 +306,39 @@ func (s *Set) ExemptCount() int { return len(s.exempt) }
 // list. An empty ID, an unauthenticated call's, is never exempt.
 func (s *Set) Exempt(caller string) bool { return caller != "" && s.exempt[caller] }
 
+// CleanWhere makes text safe to print in a Where: every control character (ESC and the C1
+// range included, so a terminal never reads an escape sequence out of a file name), CR, LF,
+// U+2028, U+2029, DEL and each byte that is not UTF-8 becomes an escape (\x1b, \u2028). A
+// name in an image or a directory comes from whoever built it, so the scans clean it where
+// they build a Where and Scan cleans every Part's, and every consumer (the command's output,
+// the daemon's log) gets text that cannot rewrite a screen or forge a log line. The escapes
+// hold no control character, so cleaning twice changes nothing.
+func CleanWhere(s string) string {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, needsEscape) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case !needsEscape(r):
+			b.WriteString(s[i : i+n])
+		case r < 0x100:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		}
+		i += n
+	}
+	return b.String()
+}
+
+func needsEscape(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
 // Part is one piece of what a call carries into its sandbox.
 type Part struct {
 	// Where names it in the request's own terms: "code", "files[2].content",
@@ -352,18 +385,19 @@ func (s *Set) scan(ctx context.Context, parts []Part) (Result, *scanner, error) 
 		if err := ctx.Err(); err != nil {
 			return Result{}, sc, err
 		}
+		at := CleanWhere(p.Where)
 		sc.found = func(i int) {
-			if n := len(where[i]); n == 0 || where[i][n-1] != p.Where {
-				where[i] = append(where[i], p.Where)
+			if n := len(where[i]); n == 0 || where[i][n-1] != at {
+				where[i] = append(where[i], at)
 			}
 		}
 		sc.hit = func(b Bound) {
-			for k := len(res.Incomplete) - 1; k >= 0 && res.Incomplete[k].Where == p.Where; k-- {
+			for k := len(res.Incomplete) - 1; k >= 0 && res.Incomplete[k].Where == at; k-- {
 				if res.Incomplete[k].Bound == b {
 					return
 				}
 			}
-			res.Incomplete = append(res.Incomplete, Incomplete{Where: p.Where, Bound: b})
+			res.Incomplete = append(res.Incomplete, Incomplete{Where: at, Bound: b})
 		}
 		if p.Whole {
 			sc.file(p.Data)
@@ -373,9 +407,9 @@ func (s *Set) scan(ctx context.Context, parts []Part) (Result, *scanner, error) 
 			return Result{}, sc, ctx.Err()
 		}
 	}
-	for i, at := range where {
-		if len(at) > 0 {
-			res.Found = append(res.Found, Finding{Label: s.entries[i].label, Mode: s.entries[i].mode, Where: at})
+	for i, ats := range where {
+		if len(ats) > 0 {
+			res.Found = append(res.Found, Finding{Label: s.entries[i].label, Mode: s.entries[i].mode, Where: ats})
 		}
 	}
 	return res, sc, nil

@@ -7,6 +7,10 @@ import (
 
 // Unexported values the external tests (package sandbox_test) need.
 
+// DockerInstance is the id d labels its containers with (io.plimsoll.instance), so a
+// test lists its own containers and not another run's on the same docker host.
+func DockerInstance(d *DockerSandbox) string { return d.instance() }
+
 // DockerRemoveBudget is the longest a docker session's container removal takes, so
 // the longest its Done can trail its end (sessiontest.Config.Teardown).
 const DockerRemoveBudget = dockerRemoveBudget
@@ -16,6 +20,10 @@ var HeavyDockerTest = heavyDockerTest
 
 // DockerPoolReady names the pool members of d ready to be handed over now.
 func DockerPoolReady(d *DockerSandbox) []string { return d.pool.Load().Members() }
+
+// DockerSessionContainer names a docker session's container, so a test finds its own
+// without listing every session container on the host (which a parallel test's would join).
+func DockerSessionContainer(s Session) string { return s.(*dockerSession).name }
 
 // E2BTeardown is the longest E2B's delete of a sandbox takes, retries included.
 const E2BTeardown = meteredTeardown

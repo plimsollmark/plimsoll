@@ -25,7 +25,7 @@ import (
 func TestDockerPreferWarmCell(t *testing.T) {
 	sandbox.HeavyDockerTest(t)
 	d := pythonSessionDocker(t)
-	before := sessionContainers(t)
+	before := sessionContainers(t, d)
 	startPool(t, d, 2)
 	// The pool returns once its first member is ready; the second follows. Both are
 	// waited for, so each language's call finds one (a call that found none would run
@@ -36,7 +36,7 @@ func TestDockerPreferWarmCell(t *testing.T) {
 			t.Fatalf("the pool has %v ready; want two members", members)
 		}
 	}
-	if made := newContainers(t, before); len(made) != 2 {
+	if made := newContainers(t, d, before); len(made) != 2 {
 		t.Fatalf("the pool made %v; want its two members", made)
 	}
 	svc := rpc.NewSandboxService(d)
@@ -85,7 +85,7 @@ func TestDockerPreferWarmCell(t *testing.T) {
 	}
 	// Both members ran a call each and are deleted; the pool makes their replacements.
 	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(250 * time.Millisecond) {
-		now := sessionContainers(t)
+		now := sessionContainers(t, d)
 		if !slices.Contains(now, members[0]) && !slices.Contains(now, members[1]) {
 			break
 		}

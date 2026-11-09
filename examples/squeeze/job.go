@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // Job is what one squeeze run does: for each course, the loop whose score is in question, the
@@ -22,6 +23,9 @@ type Job struct {
 	Fresh   int         `json:"fresh"` // flights in the fresh set, drawn at random by -seal
 	Courses []CourseJob `json:"courses"`
 	Rebuild Rebuild     `json:"rebuild"`
+	// NoPage: the run writes its evidence (evidence.json, agents.json) but not the hackathon's
+	// page, which tells the hackathon's story and reads only its own loops and groups.
+	NoPage bool `json:"no_page,omitempty"`
 }
 
 // CourseJob is one course: its practice set (the loop's own validation flights, which no
@@ -44,23 +48,43 @@ type Loop struct {
 	Recipe       string `json:"recipe"`
 	RecipeTokens int    `json:"recipe_tokens"`
 	Tokenizer    string `json:"tokenizer"` // how RecipeTokens was counted
+	// Items are the recipe's techniques, each with the patterns that find it in a controller's
+	// code (comments removed, case ignored): what agents.json reads as the recipe used.
+	Items []RecipeItem `json:"items,omitempty"`
+}
+
+// RecipeItem is one technique a recipe names, and the patterns any of which finds it in code.
+type RecipeItem struct {
+	Item string   `json:"item"`
+	Any  []string `json:"any"`
 }
 
 // Group is one set of rebuilds: from a loop's recipe, or from no recipe at all (the control).
 // Build rebuilds are made here by the caller's model; Import ones were made elsewhere and are
 // only graded here (their sandboxes were not plimsoll's, so the leak scan says nothing of them).
 type Group struct {
-	ID     string   `json:"id"`
-	Label  string   `json:"label"`
-	From   string   `json:"from"` // a loop's ID, or "" for no recipe
-	Build  int      `json:"build"`
-	Import []string `json:"import"` // controllers under -import; a missing file is a rebuild that produced none
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	From  string `json:"from"` // a loop's ID, or "" for no recipe
+	// Scramble gives the group its loop's recipe with the words shuffled by scrambleSeed: the
+	// same words, no plan.
+	Scramble bool     `json:"scramble,omitempty"`
+	Build    int      `json:"build"`
+	Import   []string `json:"import"` // controllers under -import; a missing file is a rebuild that produced none
 }
 
 // Rebuild is how a built rebuild works.
 type Rebuild struct {
 	Turns         int `json:"turns"`           // model turns per rebuild at most
 	FlightsPerFly int `json:"flights_per_fly"` // new flights a fly call may ask for at most
+	FlyCalls      int `json:"fly_calls"`       // fly calls per rebuild at most: every group's practice budget
+	MaxTokens     int `json:"max_tokens"`      // the most output tokens one model answer may use
+	PromptCap     int `json:"prompt_cap"`      // the most prompt tokens one call may hold; past it the rebuild ends
+	// Effort is the Messages API's effort level (low, medium, high, xhigh, max); "" sends none.
+	Effort string `json:"effort,omitempty"`
+	// AskAfter: once a rebuild's controller is read, the model is asked, with no tool run, why it
+	// did or did not follow its recipe (or, with none, what it did and why).
+	AskAfter bool `json:"ask_after,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
@@ -114,15 +138,80 @@ func (j *Job) check() error {
 			if g.From != "" && !loops[g.From] {
 				return fmt.Errorf("course %s: group %s rebuilds from loop %q, which the course does not list", c.ID, g.ID, g.From)
 			}
+			if g.Scramble && (g.From == "" || len(g.Import) > 0) {
+				return fmt.Errorf("course %s: group %s scrambles a recipe, so it builds from a loop's recipe and imports nothing", c.ID, g.ID)
+			}
 			if g.Build < 0 || g.Build > 64 || g.Build+len(g.Import) == 0 {
 				return fmt.Errorf("course %s: group %s builds %d and imports %d; give it 1 to 64 rebuilds", c.ID, g.ID, g.Build, len(g.Import))
 			}
 		}
+		for _, l := range c.Loops {
+			for _, it := range l.Items {
+				if it.Item == "" || len(it.Any) == 0 {
+					return fmt.Errorf("course %s: loop %s has a recipe item with no name or no pattern", c.ID, l.ID)
+				}
+				for _, p := range it.Any {
+					if _, err := regexp.Compile(p); err != nil {
+						return fmt.Errorf("course %s: loop %s, item %q: %w", c.ID, l.ID, it.Item, err)
+					}
+				}
+			}
+		}
 	}
-	if j.builds() > 0 && (j.Rebuild.Turns < 1 || j.Rebuild.Turns > 200 || j.Rebuild.FlightsPerFly < 1 || j.Rebuild.FlightsPerFly > 64) {
-		return fmt.Errorf("rebuild: %d turns and %d flights per fly call; use 1 to 200 and 1 to 64", j.Rebuild.Turns, j.Rebuild.FlightsPerFly)
+	if j.builds() == 0 {
+		return nil
+	}
+	r := j.Rebuild
+	switch {
+	case r.Turns < 1 || r.Turns > 200 || r.FlightsPerFly < 1 || r.FlightsPerFly > 64:
+		return fmt.Errorf("rebuild: %d turns and %d flights per fly call; use 1 to 200 and 1 to 64", r.Turns, r.FlightsPerFly)
+	case r.FlyCalls < 1 || r.FlyCalls > 60:
+		return fmt.Errorf("rebuild: %d fly calls; use 1 to 60", r.FlyCalls)
+	case r.MaxTokens < 1024 || r.MaxTokens > 64000:
+		return fmt.Errorf("rebuild: max_tokens %d; use 1,024 to 64,000", r.MaxTokens)
+	case r.PromptCap < 0 || r.PromptCap > 900_000:
+		return fmt.Errorf("rebuild: prompt_cap %d; use 0 (none) to 900,000", r.PromptCap)
+	case !slices.Contains([]string{"", "low", "medium", "high", "xhigh", "max"}, r.Effort):
+		return fmt.Errorf("rebuild: effort %q; use low, medium, high, xhigh or max", r.Effort)
 	}
 	return nil
+}
+
+// recipeFor is the recipe group g's rebuilds are given: its loop's, shuffled when the group
+// scrambles, or "" for the control.
+func (c CourseJob) recipeFor(g Group) string {
+	if g.From == "" {
+		return ""
+	}
+	l, _ := c.loop(g.From)
+	if g.Scramble {
+		return scramble(l.Recipe)
+	}
+	return l.Recipe
+}
+
+// scrambleSeed is the fixed seed the scrambled-recipe groups shuffle with, so the scrambled
+// recipe is the same on every run and anyone can rebuild it.
+const scrambleSeed uint64 = 20261106
+
+// scramble shuffles a recipe's words (split at white space, punctuation kept on its word) by a
+// Fisher-Yates shuffle driven by splitmix64 from scrambleSeed: written out here, so the result
+// never depends on a library's generator.
+func scramble(recipe string) string {
+	words := strings.Fields(recipe)
+	x := scrambleSeed
+	next := func() uint64 {
+		x += 0x9e3779b97f4a7c15
+		z := x
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+		z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+		return z ^ (z >> 31)
+	}
+	for i := len(words) - 1; i > 0; i-- {
+		j := int(next() % uint64(i+1))
+		words[i], words[j] = words[j], words[i]
+	}
+	return strings.Join(words, " ")
 }
 
 // builds is how many rebuilds the caller's model makes in this job.

@@ -25,6 +25,10 @@ func podBoundary(s podSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	tls, err := tlsVolume(s)
+	if err != nil {
+		return "", err
+	}
 	mounts := slices.Clone(c.VolumeMounts)
 	slices.SortFunc(mounts, func(a, b volumeMount) int {
 		if a.MountPath < b.MountPath {
@@ -59,7 +63,8 @@ func podBoundary(s podSpec) (string, error) {
 		Volumes                map[string]int64
 		Mounts                 []volumeMount
 		TerminationMessagePath string
-	}{c.Image, c.Command, c.Args, sc, podSeccomp, volumes, mounts, c.TerminationMessagePath})
+		TLS                    tlsSecret
+	}{c.Image, c.Command, c.Args, sc, podSeccomp, volumes, mounts, c.TerminationMessagePath, tls})
 	if err != nil {
 		return "", err
 	}
@@ -75,8 +80,16 @@ func podMounts(s podSpec) (map[string]int64, error) {
 	if len(s.Containers) != 1 {
 		return nil, errors.New("the execution boundary requires one container")
 	}
+	tls, err := tlsVolume(s)
+	if err != nil {
+		return nil, err
+	}
+	// The writable mounts: every one but the TLS Secret's, which is read-only and closed.
 	mounts := map[string]int64{}
 	for _, m := range s.Containers[0].VolumeMounts {
+		if m.Name == tls.Volume {
+			continue
+		}
 		size, ok := sizes[m.Name]
 		if !ok {
 			return nil, fmt.Errorf("volume %s is mounted but not declared", m.Name)

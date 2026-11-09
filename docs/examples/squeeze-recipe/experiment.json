@@ -1,0 +1,83 @@
+{
+ "format": "plimsoll.squeeze-staged/1",
+ "about": "The recipe experiment on the easy drone course: does a fresh agent follow the plan it is handed? One job (examples/squeeze/jobs/recipe-scramble-easy.json) run in two stages on one sealed set of fresh flights: the no-recipe group first, then the recipe and scrambled groups. The rule below was written down before the first agent ran; the page's numbers are computed from the stages' files by examples/squeeze -staged.",
+ "stages": [
+  "baseline",
+  "recipe"
+ ],
+ "rule": {
+  "about": "Two measures an agent, both read by code. Each pair's difference (the treatment's mean minus the base's) gets a 95% and a 90% interval from resampling the agents within each group. Landings are not read when the untreated group is at or above the ceiling line, since then no difference in them could show.",
+  "ceiling_base_arm": "none",
+  "ceiling": 0.9,
+  "primary": [
+   "scrambled",
+   "recipe"
+  ],
+  "others": [
+   [
+    "none",
+    "recipe"
+   ],
+   [
+    "none",
+    "scrambled"
+   ]
+  ],
+  "resample": {
+   "unit": "agent, within its group",
+   "n": 10000,
+   "seed": 20261106
+  },
+  "margins": {
+   "landed": 0.1,
+   "words": 1.0
+  },
+  "measures": [
+   {
+    "name": "landed",
+    "means": "fresh flights landed, of 64: the agent's final controller graded in sandboxes of its own on the 64 sealed fresh flights, read from the signed grading runs"
+   },
+   {
+    "name": "words",
+    "means": "recipe words named in code: how many of the recipe's 7 items have a pattern that matches a name (an identifier) in the agent's final controller, comments removed, that the shared baseline controller does not already hold; a measure of the recipe's words taken up, not of what the code does"
+   }
+  ],
+  "outcomes": [
+   {
+    "name": "ORDER SHOWED",
+    "means": "recipe minus scrambled has its 95% interval above zero on recipe words named in code, or on landings when they are read: the recipe in its order moved the words the code names, or the landings, beyond the same words shuffled. It does not show the code does what the recipe says"
+   },
+   {
+    "name": "WORDS ONLY",
+    "means": "not that, but recipe minus none and scrambled minus none both have their 95% intervals above zero on recipe words named in code: the agents took up the words, and the order they came in did not show"
+   },
+   {
+    "name": "NO RECIPE EFFECT SEEN",
+    "means": "recipe minus scrambled has its 90% interval inside the margin (1 item of words; 10 points of landings, when read), and so does recipe minus none on words: the recipe moved nothing these two measures can see"
+   },
+   {
+    "name": "INCONCLUSIVE",
+    "means": "anything else"
+   }
+  ]
+ },
+ "prices": {
+  "model": "claude-sonnet-5-5",
+  "checked": "2026-11-07",
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "input": 2.0,
+  "cache_write": 2.5,
+  "cache_read": 0.1,
+  "output": 10.0
+ },
+ "before_run": [
+  {
+   "what": "a check, before the first agent, that the prompt cache worked: one no-recipe agent's first two calls, its answers not used",
+   "calls": 2,
+   "input": 6,
+   "cache_write": 3257,
+   "cache_read": 3132,
+   "output": 189
+  }
+ ]
+}

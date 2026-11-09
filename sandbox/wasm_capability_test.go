@@ -79,6 +79,7 @@ func TestWasmHostAPIGrantUsesSharedBroker(t *testing.T) {
 }
 
 func TestWasmNativeBridgeCannotBypassRawTargetChecks(t *testing.T) {
+	t.Parallel()
 	var upstreamHits atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamHits.Add(1)
@@ -111,6 +112,7 @@ func TestWasmNativeBridgeCannotBypassRawTargetChecks(t *testing.T) {
 }
 
 func TestWasmNativeBridgeWithoutGrantFailsClosed(t *testing.T) {
+	t.Parallel()
 	res, err := testWasm().RunJavaScript(context.Background(), Request{
 		Code: `var r=__coderunner_host_call(JSON.stringify({method:"GET",path:"/"}));console.log(r.status)`,
 	})

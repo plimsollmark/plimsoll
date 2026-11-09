@@ -329,6 +329,7 @@ func grantFor(base string) *sandbox.HostAPIGrant {
 }
 
 func TestGrantedSnippetReachesTheBrokerThroughTheRelay(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, calls := liveUpstream(t)
@@ -359,6 +360,7 @@ func TestGrantedSnippetReachesTheBrokerThroughTheRelay(t *testing.T) {
 }
 
 func TestGrantBrokerRefusesAnUngrantedRoute(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, calls := liveUpstream(t)
@@ -378,6 +380,7 @@ func TestGrantBrokerRefusesAnUngrantedRoute(t *testing.T) {
 // Eight calls held open at once need three gateway session tokens, since a token
 // carries at most three live connections.
 func TestGrantPoolSpreadsConnectionsOverTokens(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	// The upstream answers nothing until all eight calls are in flight together.
@@ -412,6 +415,7 @@ func TestGrantPoolSpreadsConnectionsOverTokens(t *testing.T) {
 }
 
 func TestGrantedProjectPreloadsTheClient(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, _ := liveUpstream(t)
@@ -437,6 +441,7 @@ func TestGrantedProjectPreloadsTheClient(t *testing.T) {
 // deferred waited for a "need" line that had already been read, and its call hung
 // until the run's deadline.
 func TestGrantPoolServesMoreCallsThanItsConnectionCap(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	const n = maxForwardConns + 12
@@ -486,6 +491,7 @@ func TestGrantPoolServesMoreCallsThanItsConnectionCap(t *testing.T) {
 // the sandbox that opens its stdout) cannot make plimsoll hold more than maxRelayLine
 // bytes of an unfinished line, and a line longer than that is dropped whole.
 func TestRelayLinesBoundsAnUnfinishedLine(t *testing.T) {
+	t.Parallel()
 	var r relayLines
 	var got []string
 	for _, chunk := range []string{"rea", "dy\nne", "ed\n", "\n"} {
@@ -508,6 +514,8 @@ func TestRelayLinesBoundsAnUnfinishedLine(t *testing.T) {
 // count and a bounded buffer, not a goroutine, a dial or a token each: the gateway
 // never sees more than maxForwardConns streams, the run mints at most
 // maxForwardConns/perTokenConns tokens, and the guest's own calls are still answered.
+//
+// Not parallel: it counts the process's goroutines, which a parallel test's would join.
 func TestGrantPoolIgnoresForgedDemand(t *testing.T) {
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
@@ -562,6 +570,7 @@ func TestGrantPoolIgnoresForgedDemand(t *testing.T) {
 // the run's lifetime: each refusal puts the guest connection's need back after a delay
 // that doubles.
 func TestGrantPoolBacksOffARefusingGateway(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	fw.refuseAll = true
@@ -586,6 +595,7 @@ func TestGrantPoolBacksOffARefusingGateway(t *testing.T) {
 // control. Ending the run must not wait for them: before, Close waited on the stuck
 // write for good, the sandbox was never deleted, and the run held its slot forever.
 func TestGrantRunEndsWhenTheGuestStopsReading(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, _ := liveUpstream(t)
@@ -632,6 +642,7 @@ func TestGrantRunEndsWhenTheGuestStopsReading(t *testing.T) {
 // killed) cost a burst of at most maxForwardConns dials and then the pool's backoff,
 // not a dial per line.
 func TestGrantPoolBacksOffForgedDemandPoolWide(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	fw.refuseAll = true
@@ -656,6 +667,7 @@ func TestGrantPoolBacksOffForgedDemandPoolWide(t *testing.T) {
 // A token the gateway stops accepting mid-run is replaced, not reused: the call after
 // the revocation is served on a new one.
 func TestGrantPoolReplacesARevokedToken(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	fw := withForwarding(t, f)
 	up, _ := liveUpstream(t)
@@ -692,6 +704,7 @@ func TestGrantPoolReplacesARevokedToken(t *testing.T) {
 // unanswered, and a failed dial gives its count back (external review of v0.10.0,
 // finding 10, 2026-09-28).
 func TestForwardPoolCapsDialsPerRun(t *testing.T) {
+	t.Parallel()
 	f := &forwardPool{done: make(chan struct{}), live: map[net.Conn]*forwardToken{}, maxDials: 2, pending: 10}
 	f.wake = sync.NewCond(&f.mu)
 	for i := range 2 {

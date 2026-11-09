@@ -244,7 +244,11 @@ func publish(c config, ev *evidence) error {
 	if err := os.WriteFile(filepath.Join(c.out, "evidence.json"), raw, 0o644); err != nil {
 		return err
 	}
-	page, err := render(ev)
+	real, err := loadReal(c.out)
+	if err != nil {
+		return err
+	}
+	page, err := render(ev, real)
 	if err != nil {
 		return err
 	}
@@ -324,7 +328,14 @@ func verifyPublished(dir string) error {
 			return fmt.Errorf("the census counts %d of %d tasks", n, cs.Tasks)
 		}
 	}
-	page, err := render(ev)
+	real, err := loadReal(dir)
+	if err != nil {
+		return err
+	}
+	if err := verifyReal(dir, real); err != nil {
+		return err
+	}
+	page, err := render(ev, real)
 	if err != nil {
 		return err
 	}
@@ -344,7 +355,11 @@ func renderPublished(dir string) error {
 	if err != nil {
 		return err
 	}
-	page, err := render(ev)
+	real, err := loadReal(dir)
+	if err != nil {
+		return err
+	}
+	page, err := render(ev, real)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,136 @@
+{
+ "job": "recipe-scramble-easy",
+ "started": "2026-11-07T12:31:35Z",
+ "sealed": "2026-11-07T12:31:35Z",
+ "ended": "2026-11-07T12:42:42Z",
+ "fresh_sha256": "d81c7b18c6cf2ade2d4cbab4178a4957b2a0fc78a23ee59db7c16ce5d230819b",
+ "fresh_given": true,
+ "model": "claude-sonnet-5-5",
+ "model_base": "http://127.0.0.1:37749",
+ "api": "messages",
+ "design_sha256": "21e2f11c9c62cab0ce7e63f8b567a2e663f56e3bd9a3c4ef053c02959210f2e5",
+ "groups": [
+  "none"
+ ],
+ "harness": {
+  "commit": "bea0998062c9ae65f6af5074048929e8d1410b40",
+  "clean": true,
+  "from": "git"
+ },
+ "grading_seconds": 230.5,
+ "usage": {
+  "prompt": 1572559,
+  "completion": 98489,
+  "cache_read": 1421588,
+  "cache_write": 150713,
+  "calls": 113
+ },
+ "built": [
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 0,
+   "session": "216a01b71cdad39f95a96a9a92f9800001649cd9df2e5f1585868d8d05fdef6a",
+   "turns": 10,
+   "runs": 8,
+   "fly_calls": 6,
+   "flights": 26,
+   "final": "`controller.js` passes all four smoke flights, and it passed both seeds that had crashed earlier. It has not yet flown a fresh batch of random flights since the final change.\n\nOn an earlier version of the controller, 6 of 8 random flights passed. The two failures were gate-frame collisions at gate 0, one at about 1 s and one at about 4 s. I changed the approach to hold further back from the gate until the drone is lined up. After that change, both seeds passed, finishing in 16.3 s and 20.7 s.\n\nLanding times in the smoke flights ranged from 13.7 s to 20.4 s. Some earlier random flights ran as l…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 1,
+   "session": "92e2668b82798da5c700dc1a3202e6536ac6a193bad66af7f547943bf8d992bf",
+   "turns": 13,
+   "runs": 12,
+   "fly_calls": 8,
+   "flights": 30,
+   "final": "`controller.js` is finished. It passed all 4 smoke flights and 8 of 8 new random flights, and every run landed within 25 s (the slowest took about 14.4 s).\n\nIt is a waypoint follower with a velocity loop on each axis. It holds back until it is lined up with the next gate, then crosses. After the last gate it flies over the pad and descends slowly.\n\nThe earlier versions were less reliable. In the earlier 8-flight batch, 2 of 8 flights hit the time limit. One of those was stuck before the first gate, and I loosened the alignment test to fix it. The same seed then ran out of time once, still on t…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 2,
+   "session": "42535f99df9c00c0de86fff39d583199ad25bf210b2c674d05851ebe585bb324",
+   "turns": 13,
+   "runs": 11,
+   "fly_calls": 6,
+   "flights": 28,
+   "final": "`controller.js` passes all four smoke flights. It also passed 8 of 8 on new random flights. The flights I saw landed in about 14 to 17 seconds, against the 25-second limit. Landing errors were 0.05 m or less, inside the 0.15 m allowed.\n\nI started from the baseline stabilizer and changed five things:\n- **Climb and transit:** The drone starts near the pad, which is on the far side of all three gates. It now climbs to 2.1 m and flies back at that height to x = -1.85 before lining up with gate 0. The baseline tried to fly straight at gate 0 and hit the frame.\n- **Climb overshoot:** The climb used …",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 3,
+   "session": "f52bae8ddd87c4452d42a6035b252e08eec59df898a0b77bd101bd9013fc6e60",
+   "turns": 8,
+   "runs": 6,
+   "fly_calls": 4,
+   "flights": 20,
+   "final": "`controller.js` passes all four smoke flights. On 8 further random flights it passed 7.\n\n- **Timing:** Some landings finish close to the 25 s limit. One smoke flight landed at 24.5 s and one random flight at 24.0 s.\n- **Failure:** The one failed random flight (seed 3168081487) hit a gate frame at 0.89 s, before passing any gate. I didn't diagnose it. My guess is the drone drifted into the gate 0 frame during the initial climb.\n\nThe controller is the baseline waypoint follower reworked in three ways:\n- **Gate approach:** It lines up 0.55 m before each gate and crosses only when its y and z erro…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 4,
+   "session": "a3d136b81e9203802f9344277e7ded9a2a2cb4594452ccd4cb109e9317828dce",
+   "turns": 13,
+   "runs": 12,
+   "fly_calls": 9,
+   "flights": 48,
+   "final": "`controller.js` is the version that passed 3 of the 4 smoke flights. It also passed 8 of 8 on a separate set of random flights.\n\n- **Smoke failure:** seed 972765592 hit a gate frame at gate 0, after about 6.5 s. I never found the cause. A gust during the crossing is my guess, but I didn't confirm it.\n- **Margin on time:** one smoke flight (seed 3821313589) landed at 24.4 s, so time is tight against the 25 s deadline.\n- **Stricter gate alignment:** it fixed the collision. It made other flights run out of time, and in one random flight the drone never got through gate 0. That version passed 3 of…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 5,
+   "session": "2f531cbc7530f6718ed1acde0c92b529808de51cab0893a58a7abcb8ce87e8ec",
+   "turns": 22,
+   "runs": 19,
+   "fly_calls": 11,
+   "flights": 43,
+   "final": "`controller.js` is in its final form. It passed 3 of the 4 smoke flights and 8 of 8 on a fresh batch of random flights.\n\nThe one smoke failure (seed 249602000) is a gate-frame collision at 9.31 s, after one gate had been passed. I did not find the cause, and I made no change aimed at it.\n\nThe controller started from the baseline stabilizer, and these are the changes that made the difference:\n- **Landing bug:** the baseline's altitude integrator kept winding up during descent, so the drone climbed instead of landing. I froze the integrator once the landing phase starts.\n- **Gate crossing:** the…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 6,
+   "session": "c09207785d198b2f7495a2518455647787cb277c01770677323f7c0a72537efa",
+   "turns": 14,
+   "runs": 12,
+   "fly_calls": 7,
+   "flights": 32,
+   "final": "`controller.js` is in place. It passed 3 of the 4 smoke flights and 8 of 8 on a fresh random batch.\n\nThe failed smoke flight (seed 3821313589) hit the 25 s limit. All three gates were crossed, and the drone ended 0.085 m from the pad without finishing the landing. I couldn't see why from the results and didn't investigate further.\n\nTiming is tight on some flights. Two of the eight random flights landed at 24.2 s and 25.0 s (the second at 24.995 s), so wind that slows a flight a bit more could push it past the deadline. I stopped there rather than tuning speed further.\n\nIt started from the supp…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 7,
+   "session": "17e5d1abcb00039fb3bbde28cd500261ffd5284fa97f113bf9dad3c026a2936f",
+   "turns": 12,
+   "runs": 11,
+   "fly_calls": 10,
+   "flights": 48,
+   "final": "`controller.js` passes all four smoke flights. I'd expect it to pass most graded flights but not all, because it still fails some seeds.\n\n- **Last version:** it passed 8 of 8 new random flights.\n- **Earlier version:** it had flown 8 random flights and passed 5. The three failures were gate-frame collisions at the first or second gate.\n- **Known weak seed:** seed 871229581 still hits the first gate frame at about 5.8 s. It failed with that earlier version and again with the final one.\n- **Time margin:** the slowest landings took about 21.6 s of the 25 s allowed, so a slow run could hit the dead…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  }
+ ],
+ "missing": [],
+ "failures": []
+}

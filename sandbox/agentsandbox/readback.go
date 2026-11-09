@@ -157,16 +157,20 @@ func (p *Provider) checkPodSpec(s podSpec, tier sandbox.IsolationClass) error {
 	if err := checkSeccomp(s, c, tier); err != nil {
 		return err
 	}
-	if err := checkMounts(s, c); err != nil {
+	tls, err := tlsVolume(s)
+	if err != nil {
+		return err
+	}
+	if err := checkMounts(c, tls.Volume); err != nil {
 		return err
 	}
 	if err := checkTerminationLog(c); err != nil {
 		return err
 	}
 	// The command is named, not left to the image's entrypoint, which the read-back
-	// cannot see.
-	if len(c.Command) == 0 || c.Command[0] != sandboxdPath {
-		return fmt.Errorf("the container's command is %q, not %s", c.Command, sandboxdPath)
+	// cannot see: the TLS terminator, which starts sandboxd with the rest as its flags.
+	if len(c.Command) == 0 || c.Command[0] != frontPath {
+		return fmt.Errorf("the container's command is %q, not %s (the TLS terminator, followed by sandboxd's flags)", c.Command, frontPath)
 	}
 	if err := p.checkSandboxdArgs(append(slices.Clone(c.Command[1:]), c.Args...)); err != nil {
 		return err
@@ -239,10 +243,20 @@ func checkSeccomp(s podSpec, c container, tier sandbox.IsolationClass) error {
 // one is a virtio-fs share of the node's directory, the same channel, and a memory-backed
 // one a tmpfs of the VM's own that ignores its limit (measured 2026-10-18 under both of
 // Kata's runtimes), so the vm tier keeps the rule and promises no cap but the VM's memory.
+//
+// The one other volume is the TLS Secret (tlsVolume), which holds no guest data and is
+// outside the writable roots and the disk budget.
 func volumeSizes(s podSpec) (map[string]int64, error) {
+	tls, err := tlsVolume(s)
+	if err != nil {
+		return nil, err
+	}
 	sizes := map[string]int64{}
 	for _, v := range s.Volumes {
 		var name string
+		if v["secret"] != nil && json.Unmarshal(v["name"], &name) == nil && name == tls.Volume {
+			continue
+		}
 		var dir struct {
 			Medium    string `json:"medium"`
 			SizeLimit string `json:"sizeLimit"`
@@ -259,12 +273,90 @@ func volumeSizes(s podSpec) (map[string]int64, error) {
 	return sizes, nil
 }
 
+// tlsSecret is the TLS Secret volume as the read-back accepts it; the boundary digest
+// binds it, so a pod whose Secret, mode or mount differs from the proven template's is
+// refused.
+type tlsSecret struct {
+	Volume      string
+	SecretName  string
+	DefaultMode int
+}
+
+// tlsVolume holds the Secret the pod's TLS terminator serves from: exactly one secret
+// volume, naming its Secret and nothing else (no items, not optional), whose files are
+// closed to every user but their owner (defaultMode owner-readable with no group or other
+// bit: 0400; the API server would otherwise default it to 0644), mounted once, read-only,
+// at tlsMountPath, with no other volume mounted over, at or inside tlsGuardDir, which the
+// image makes root's, mode 0700. So the guest (another uid, no capabilities) cannot reach
+// the key; the smoke test proves it from inside. The pod-level fsGroup that would make the
+// files group-readable is refused by the closed pod schema.
+func tlsVolume(s podSpec) (tlsSecret, error) {
+	var found []tlsSecret
+	for _, v := range s.Volumes {
+		if v["secret"] == nil {
+			continue
+		}
+		var t tlsSecret
+		if len(v) != 2 || json.Unmarshal(v["name"], &t.Volume) != nil {
+			return tlsSecret{}, fmt.Errorf("volume %s is a Secret with another source beside it or no name", v["name"])
+		}
+		var src struct {
+			SecretName  string `json:"secretName"`
+			DefaultMode *int   `json:"defaultMode"`
+			Optional    *bool  `json:"optional"`
+		}
+		d := json.NewDecoder(bytes.NewReader(v["secret"]))
+		d.DisallowUnknownFields()
+		if err := d.Decode(&src); err != nil {
+			return tlsSecret{}, fmt.Errorf("Secret volume %s: %w (only secretName, defaultMode and optional are accepted; no items)", t.Volume, err)
+		}
+		switch {
+		case !validName(src.SecretName):
+			return tlsSecret{}, fmt.Errorf("Secret volume %s names Secret %q", t.Volume, src.SecretName)
+		case src.DefaultMode == nil:
+			return tlsSecret{}, fmt.Errorf("Secret volume %s sets no defaultMode; set 0400 (256), or Kubernetes makes the key readable by every user in the pod (0644)", t.Volume)
+		case *src.DefaultMode&^0o777 != 0 || *src.DefaultMode&0o077 != 0 || *src.DefaultMode&0o400 == 0:
+			return tlsSecret{}, fmt.Errorf("Secret volume %s has defaultMode %#o; it must be readable by its owner alone (0400), so the guest cannot read the TLS key", t.Volume, *src.DefaultMode)
+		case src.Optional != nil && *src.Optional:
+			return tlsSecret{}, fmt.Errorf("Secret volume %s is optional; the TLS key pair is required", t.Volume)
+		}
+		t.SecretName, t.DefaultMode = src.SecretName, *src.DefaultMode
+		found = append(found, t)
+	}
+	if len(found) != 1 {
+		return tlsSecret{}, fmt.Errorf("%d Secret volumes, want one: the TLS key pair sandboxd's terminator serves, mounted at %s", len(found), tlsMountPath)
+	}
+	if len(s.Containers) != 1 {
+		return tlsSecret{}, errors.New("the execution boundary requires one container")
+	}
+	t, mounted := found[0], 0
+	for _, m := range s.Containers[0].VolumeMounts {
+		if m.Name == t.Volume {
+			if m.MountPath != tlsMountPath || !m.ReadOnly || m.SubPath != "" {
+				return tlsSecret{}, fmt.Errorf("the TLS Secret is mounted at %q (read-only %t, subPath %q); mount it whole and read-only at %s", m.MountPath, m.ReadOnly, m.SubPath, tlsMountPath)
+			}
+			mounted++
+			continue
+		}
+		if m.MountPath == tlsGuardDir || strings.HasPrefix(m.MountPath, tlsGuardDir+"/") || strings.HasPrefix(tlsGuardDir, m.MountPath+"/") {
+			return tlsSecret{}, fmt.Errorf("volume %s is mounted at %s, at, over or inside %s, which must stay the image's root-only directory around the TLS key", m.Name, m.MountPath, tlsGuardDir)
+		}
+	}
+	if mounted != 1 {
+		return tlsSecret{}, fmt.Errorf("the TLS Secret is mounted %d times, want once at %s", mounted, tlsMountPath)
+	}
+	return t, nil
+}
+
 // checkMounts requires every volume the container mounts to be mounted whole and
 // writable at a distinct absolute path, so the smoke test's writable set is exactly
-// these paths.
-func checkMounts(s podSpec, c container) error {
+// these paths; the TLS Secret's mount, tlsVolume's to check, is the one read-only mount.
+func checkMounts(c container, tlsName string) error {
 	seen := map[string]bool{}
 	for _, m := range c.VolumeMounts {
+		if m.Name == tlsName {
+			continue
+		}
 		switch {
 		case !path.IsAbs(m.MountPath) || path.Clean(m.MountPath) != m.MountPath || m.MountPath == "/":
 			return fmt.Errorf("volume %s is mounted at %q, not a clean absolute path", m.Name, m.MountPath)
@@ -367,8 +459,10 @@ var sandboxdFlag = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9_.-]*=`)
 // checkSandboxdArgs requires sandboxd to check plimsoll's token: exactly one
 // --auth-token-sha256=<hex> naming this token's digest, and no token file, whose content
 // the read-back cannot see. Without a token, guest code could call the root sandboxd on
-// loopback and run a command as root, undoing the uid drop. The gRPC port, when set, must
-// be the one plimsoll dials.
+// loopback and run a command as root, undoing the uid drop. sandboxd must also listen on
+// loopback alone, at the port the pod's TLS terminator forwards to: exactly one
+// --listen-host=127.0.0.1 and one --grpc-port=9091, the terminator's own rule, so the
+// only way to sandboxd from outside the pod is the pinned TLS channel.
 func (p *Provider) checkSandboxdArgs(argv []string) error {
 	for _, a := range argv {
 		if !sandboxdFlag.MatchString(a) {
@@ -376,25 +470,34 @@ func (p *Provider) checkSandboxdArgs(argv []string) error {
 		}
 	}
 	want := "--auth-token-sha256=" + p.tokenDigest
-	found := 0
-	for i, a := range argv {
-		name, _, _ := strings.Cut(a, "=")
-		switch name {
-		case "--auth-token-sha256", "-auth-token-sha256":
+	found, listen, port := 0, 0, 0
+	for _, a := range argv {
+		name, value, _ := strings.Cut(a, "=")
+		switch strings.TrimPrefix(name, "-") {
+		case "-auth-token-sha256", "auth-token-sha256":
 			if a != want && !(name == "-auth-token-sha256" && a[1:] == want[2:]) {
 				return errors.New("sandboxd checks another token than plimsoll's")
 			}
 			found++
-		case "--auth-token-file", "-auth-token-file":
+		case "-auth-token-file", "auth-token-file":
 			return errors.New("sandboxd reads its token from a file; plimsoll requires --auth-token-sha256")
-		case "--grpc-port", "-grpc-port":
-			if a != name+"="+strconv.Itoa(p.cfg.sandboxdPort()) {
-				return fmt.Errorf("sandboxd's gRPC port is set by %q, not %d", strings.Join(argv[i:min(i+2, len(argv))], " "), p.cfg.sandboxdPort())
+		case "-listen-host", "listen-host":
+			if value != loopbackHost {
+				return fmt.Errorf("sandboxd listens on %q; it must listen on %s alone, behind the TLS terminator", value, loopbackHost)
 			}
+			listen++
+		case "-grpc-port", "grpc-port":
+			if value != strconv.Itoa(sandboxdPort) {
+				return fmt.Errorf("sandboxd's gRPC port is %q, not %d, where the TLS terminator forwards", value, sandboxdPort)
+			}
+			port++
 		}
 	}
-	if found != 1 {
+	switch {
+	case found != 1:
 		return fmt.Errorf("sandboxd is started with %d --auth-token-sha256 arguments, want one", found)
+	case listen != 1 || port != 1:
+		return fmt.Errorf("sandboxd needs exactly one --listen-host=%s and one --grpc-port=%d (got %d and %d), so it is reached only through the TLS terminator", loopbackHost, sandboxdPort, listen, port)
 	}
 	return nil
 }
@@ -471,11 +574,11 @@ func (p *Provider) checkIngressRule(r ingressRule) error {
 		}
 	}
 	if len(r.Ports) != 1 || r.Ports[0].EndPort != nil || (r.Ports[0].Protocol != "" && r.Ports[0].Protocol != "TCP") {
-		return fmt.Errorf("an ingress rule admits other ports than TCP %d", p.cfg.sandboxdPort())
+		return fmt.Errorf("an ingress rule admits other ports than TCP %d", frontPort)
 	}
 	var port int
-	if err := json.Unmarshal(r.Ports[0].Port, &port); err != nil || port != p.cfg.sandboxdPort() {
-		return fmt.Errorf("an ingress rule admits port %s, not %d", r.Ports[0].Port, p.cfg.sandboxdPort())
+	if err := json.Unmarshal(r.Ports[0].Port, &port); err != nil || port != frontPort {
+		return fmt.Errorf("an ingress rule admits port %s, not %d", r.Ports[0].Port, frontPort)
 	}
 	return nil
 }

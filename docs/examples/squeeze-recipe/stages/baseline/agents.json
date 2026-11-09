@@ -1,0 +1,451 @@
+[
+ {
+  "id": "easy.none.0",
+  "course": "easy",
+  "group": "none",
+  "n": 0,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "281063a2d8dd03db9cb8f5e6ce491a051a27512b696d86c6890ec5599def697d",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 52,
+  "fresh_total": 64,
+  "practice": 13,
+  "practice_total": 16,
+  "records": [
+   "4b4f2cb6c0903e953be7cf32fb414062302c9a1456364b593f46a6391d911672",
+   "2244c460499bd43e4b940791715ee097ebfb5f9e743f13e16d04eacbe867de11",
+   "91e09da70768264a518d9de6fbcc4ad85bf2bfea317ed337c2b736958c7af8a8",
+   "e5ef7ea03bc904d5f0117c4856ae66431e620d3aba681daca48255d49fff59b9",
+   "99646cd652fcfd8476a68583754e09b20255f776bd9b936ddc1c74ea6b92e539",
+   "b8cdc7624bc96e7bd06f45b42fe0ba4ff4d8dc5a5ba1e66331def196a693331d",
+   "b9e878cc6da5e6f1298d7e1c957fca11a09a5bcacbc1675764aaf55661fe2800",
+   "caf7a381c3c09c32efe987cfd4fb024103c625d707d0271b0149d640818622ec",
+   "12595357ad89fea7a87f76ac55943913dd5a878183b4a10341c6ee9393f8b89a",
+   "4830d0eab63986eca21f0419c1b21af9b16848916f664d76b79f16ae4aa5e956"
+  ],
+  "turns": 10,
+  "fly_calls": 6,
+  "flights": 26,
+  "runs": 8,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 7,
+    "run_code": 4,
+    "write_file": 4
+   },
+   "by_kind": {
+    "ok": 14,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 2578,
+  "after_answer": "The controller is a velocity-command waypoint follower. I rewrote it from the supplied `stabilizer.js` after that baseline failed all four smoke flights.\n\n- **Gates:** For each gate it first lines up at a point 0.5 m before the gate plane, at the gate's height and z. It waits until the position error is small and the drone is nearly still. Then it crosses at a limited x speed of about 1 m/s while holding y and z. If it is more than 0.25 m off in y/z, it stands off at 0.75 m instead. I added that after two gate-0 collisions on random seeds.\n- **Control law:** Position error sets a clamped desired velocity. A proportional loop on velocity error sets the desired acceleration. That acceleration becomes roll and pitch, rotated by yaw, and a thrust value scaled by tilt. Thrust has a small integral term to absorb the unknown payload and motor loss. Yaw is held at zero.\n- **Landing:** It moves over the pad at 0.6 m and starts descending once it is within 0.12 m horizontally and slow. The descent speed is limited and gets slower near the floor. It cuts thrust in half at touchdown so it doesn't bounce. It aborts the descent if it drifts more than 0.35 m off the pad.\n\nI chose velocity commands over the baseline's position PD because they let me cap speeds near the gates and descend smoothly. The earlier settle thresholds were too strict, so the drone hovered near the pad and ran out of the 25 s limit. I loosened them.\n\nI did not check the final version on a fresh random batch. The version before the last change passed 6 of 8 random flights. After the last change I flew only the two seeds that had collided and the four smoke flights, and all six passed. Some earlier runs finished at about 21 s, so timing margin may be thin on some seeds."
+ },
+ {
+  "id": "easy.none.1",
+  "course": "easy",
+  "group": "none",
+  "n": 1,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "e0af14e95898d8d0da33ffa0d18ed99fb457e90f3de4d5ebec7e8ddf65d8aee1",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 58,
+  "fresh_total": 64,
+  "practice": 15,
+  "practice_total": 16,
+  "records": [
+   "f9812c7eb2db6da63080a0e9b6214198b3915fde3f3e62f89f1bc6b6e70b4136",
+   "391612706774c87a309f4cc2c30ed91552da090ec0806f87e5c5680e3a2bdf5c",
+   "0aac9a94f09791491f506eaf8ec612d62b34285e0d6bb6336a420abd0b74ed2f",
+   "66853fca544b54191db8f426c6084a0643cd270b39f97a77dd43bb62ebae5a4c",
+   "d80586f9493c27ade175940b08982840c48add3056206b5f4356a02fa3766bcb",
+   "69cf710cddb727623183c7ebf1e4917d6773b463ac8f7788c82c5bd1fd500733",
+   "395a6e25754f57151c10bec1c98e26e508affe5d81665920f0d35b470f3db405",
+   "6135ac011bdb1e65ccfc5ce965f25f5ed6c8c1f1ca0cae93294f5a98bc13a648",
+   "d23a6d68520445a60315f5c24fd3f947fa1aed1130b22e51180b4cdf47796aa5",
+   "b35e9f433e171fd11978ff9b66934ca23545328687d5d0714cfd5a44f8c2f4a7"
+  ],
+  "turns": 13,
+  "fly_calls": 8,
+  "flights": 30,
+  "runs": 12,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 9,
+    "run_code": 6,
+    "write_file": 6
+   },
+   "by_kind": {
+    "ok": 20,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 4499,
+  "after_answer": "The controller is a cascaded waypoint follower. I started from the baseline stabilizer, which failed all 4 smoke flights, and replaced its position-PD with a velocity loop on each axis. The velocity loops set the desired tilt, and altitude is controlled by thrust with a slow integral term to absorb the unknown payload and weak motor.\n\nFor each gate it first holds about 0.4 m in front of the gate plane and lines up in y and z. Once it is within about 0.1 m laterally and moving slowly, it locks and drives straight through to 0.5 m beyond the gate at a reduced speed. Aligning first matters because the opening leaves only about ±0.125 m of lateral clearance for the body.\n\nAfter the third gate it flies to a point above the pad. It descends slowly once it is close and slow enough, and it can abort the descent if it drifts off the pad. The altitude integral is frozen near the ground.\n\nThe baseline failed because its settle conditions were too strict for gusty wind. Loosening those conditions fixed the stuck-before-gate and stuck-above-pad time-outs I saw.\n\nTwo caveats:\n- Flights were not exactly repeatable. One seed timed out and then landed on a re-fly of identical code.\n- The final version passed 4/4 smoke flights and 8/8 random flights. That is a small sample, so I can't say how often it fails on the hidden flights."
+ },
+ {
+  "id": "easy.none.2",
+  "course": "easy",
+  "group": "none",
+  "n": 2,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "a86f4d9cc3f64082609550154532ebc9c4a6ebb4afaad598369b976ddb95b8e9",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 58,
+  "fresh_total": 64,
+  "practice": 16,
+  "practice_total": 16,
+  "records": [
+   "b88a8233880ea31c4fd99e68401cdf02207eba7460eff327543d7fdee298fab0",
+   "3fed78a4fb6d505f5c0b83ecb00c2c33311207c143422e189e82c053b67e1a7c",
+   "036a47ef8ab9734c5a4698c22d93f41cc3420d5f6994fdbebc750293ef29fc54",
+   "b06fc5d5d96055be31a43816a8ac6c1977e74fdd55ccf606f05f5b4b7eedb011",
+   "191aacb16368eb464c8446849e55b6c06a24b9f673b4562c87cf75d9d3e1b72e",
+   "c6f7d1eb2d5412cdba5a64604901d37d251e62a0c99d0b5d8c8b72c2d93f3957",
+   "45ed45cf9d8f7f687cf67d516f2f2d3a858d01619dcf105b7f62995a70c16b7e",
+   "c38ecff8ea99f58af02ec52b585ca2d7d296253b0da5522c18800e6a509471b2",
+   "6bcedb24365c678580d7a3fde9fa26ca584882b97dd637e5c0956adf4258ea0a",
+   "e644c1bf31f31f79d1f17a3e339653ac582b251b1e2a06bfc4d6aadfdfbd4809"
+  ],
+  "turns": 13,
+  "fly_calls": 6,
+  "flights": 28,
+  "runs": 11,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 7,
+    "run_code": 6,
+    "write_file": 5
+   },
+   "by_kind": {
+    "ok": 17,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 3724,
+  "after_answer": "The controller is a waypoint follower built on the supplied baseline. I changed it where the early flights failed.\n\n- **Backward transit.** The drone starts near the pad, which is on the far side of all three gates. Gates only count when crossed toward +x, so it climbs to 2.1 m, flies back above the gate frames to x = -1.85, and descends to line up with gate 0. The baseline flew straight at gate 0 and hit a frame.\n- **Gate approach.** For each gate the drone lines up 0.4 m before the opening, within about 0.09 m in height and sideways and under 0.45 m/s, then pushes through toward 0.5 m past it.\n- **Velocity control.** Horizontal control tracks a capped desired velocity instead of using position-error gains, so the drone is faster. The baseline's slow settling caused time-limit failures.\n- **Altitude.** I limited the height error fed to the altitude integral. Without that, the climb overshot into the ceiling.\n- **Landing.** It descends once it is within 0.12 m of the pad and slower than 0.3 m/s.\n\nThe final version passed 4 of 4 smoke flights and 8 of 8 new random flights, landing in about 14 to 17 s. I couldn't see the graded flights, so I can't say how it does on them. The controller has no gust handling beyond feedback, so a strong gust at a gate crossing could still cause a frame collision. That failure showed up on an earlier version and I haven't ruled it out."
+ },
+ {
+  "id": "easy.none.3",
+  "course": "easy",
+  "group": "none",
+  "n": 3,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "7b5b35fdeded9465f57ee6c1872296deb7c861a902dc5756dd955e70c128fa0a",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 51,
+  "fresh_total": 64,
+  "practice": 11,
+  "practice_total": 16,
+  "records": [
+   "0f53f8878df5cff40c6cd44ae0b69340780734d18f0fc85cbb1890446e2bdf02",
+   "bfa301f07922bc375605de596a1f1a0383957ffcfcc1db9265e5e1cf076390f2",
+   "4938515506ed133f8b2681c95ed892280c8166535f8046f35549f66a9ad1879b",
+   "0bae3de49eb4b879e2169fe0505da38abb311d743833af5ee40beb8957c72b45",
+   "264465449af53f66f9639e9f51133f337433ec37df00f2328f8e29072376064a",
+   "f436c7d95aaf76c6f471cf4efcfb181a4d14a954f36f434668fccc0bdbedfe1e",
+   "609892e5996a1bc754da8cc8ca1b0c9bd1508a746f60efe12d694debdb632e6e",
+   "605a4bc9b7cd16b88704409e177ff045213f418952cda2563277659c0611287a",
+   "0febe07360f16136e9db18806e5ec191ed97b9ca3b8784b8b75026c88c329f72",
+   "1612c40648663e68082e07992c696c73faf8e388b27a2c56df36c5cc5cf03dbc"
+  ],
+  "turns": 8,
+  "fly_calls": 4,
+  "flights": 20,
+  "runs": 6,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 5,
+    "run_code": 3,
+    "write_file": 3
+   },
+   "by_kind": {
+    "ok": 10,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 2101,
+  "after_answer": "The controller is a stop-and-align waypoint follower with a cascaded velocity loop. I picked it because the supplied baseline was a working starting point, and I could tune it using only pass/fail results.\n\n**What it does**\n- **Gate approach:** The drone aligns about 0.55 m before each gate. It crosses only once its y and z errors are small (within 0.04 m in z and 0.07 m in y) and it is nearly stationary. The 0.6 m opening leaves only about 0.125 m of margin each side in z.\n- **Gate crossing:** It crosses slowly, at 0.65 m/s, with a stiff z correction. If it drifts off line before reaching the gate plane, it backs out and re-aligns.\n- **Control:** Position errors become velocity commands, which become accelerations, then tilt and thrust. A slow integral term on the vertical velocity error absorbs the unknown payload mass and motor-thrust mismatch. Thrust is also scaled by the tilt.\n- **Landing:** After the last gate it settles over the pad and descends at a limited rate. It cuts thrust near the floor to avoid bouncing.\n\n**Why this design**\n- **Baseline failures:** The baseline failed my smoke flights. Two hit gate frames, and the others ran out the 25 s clock. I read the collisions as the drone entering a gate off-line.\n- **Changes:** I tightened the alignment tolerances, added the abort-and-re-align step, and slowed the crossing.\n\n**Results and limits**\n- **Smoke flights:** The tuned version passed 4/4.\n- **Random flights:** It passed 7 of 8 additional random flights.\n- **Failure:** The one failure was a gate-frame collision at 0.89 s, which I never diagnosed. My guess is the drone drifted into the gate 0 frame during the initial climb.\n- **Timing:** Some landings finished at 24–24.5 s, so the time margin is thin.\n- **Wind:** I made no attempt to anticipate gusts. I relied on feedback alone."
+ },
+ {
+  "id": "easy.none.4",
+  "course": "easy",
+  "group": "none",
+  "n": 4,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [
+   "gate exit lock"
+  ],
+  "items_named_count": 1,
+  "items_named_raw": [
+   "yaw + local pos integrals",
+   "gate exit lock"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "1e9179e1445532a46cf8656a248b4d1a067ccce38bbad731f7ff0ccdde25b1f1",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 54,
+  "fresh_total": 64,
+  "practice": 13,
+  "practice_total": 16,
+  "records": [
+   "f65d983524472b5cfee092ecba1cf7467547122a3cefcd86d5d48c6b7da7e580",
+   "e809bb28507ce5331cab5785f4d96d78c4dc717064401b83b425e35989b3aeb2",
+   "1155e9ddd6a7d9adb071ed0282adef94f0dacc014c20b2502bd74ae481501c0e",
+   "d99f7938ab29f4e860f0ee4daf4a4b40091451b74d8ddafb591a25e0c1d24b68",
+   "f35eefffb1fdf8cadfed29c4ea810c6618478942653025e1395d39ff8556b96d",
+   "c5b069529fed6c25ac959707342053cb9447be0e966252e2ed98cc90ecbbb540",
+   "e84d8943148235aa5f0a5c54eacdc20c297fa040eecf4d8080cf997ddc20a354",
+   "e1922e0b982d15adbedda92f4b7415e0d54825f02525805b5f67cf7dd9a9a42a",
+   "f8330cbd5b7abe30aa1dcc831e860edcfe6d5f50b87dbd1dc21724845457216d",
+   "6027f1342b988c28130234ff4b6017797deb7c872aa2d67500feb0291f0fc282"
+  ],
+  "turns": 13,
+  "fly_calls": 9,
+  "flights": 48,
+  "runs": 12,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 10,
+    "run_code": 6,
+    "write_file": 6
+   },
+   "by_kind": {
+    "ok": 21,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 3251,
+  "after_answer": "The controller is a waypoint follower built on the supplied baseline. I rewrote it because the baseline failed all four smoke flights.\n\n**What it does:**\n- For each gate, it first holds a point about 0.55 m before the gate. It then moves to the gate's height and lateral position (y and z).\n- Once it is within about 7 cm of that point and nearly stationary for roughly 0.1 s, it latches onto a \"cross\" target 0.6 m past the gate. From then on it holds y and z with a stronger gain.\n- Control is a velocity loop with limited speed and acceleration. Small tilt commands handle x and z, and thrust handles altitude, with a slow integral term to absorb the unknown payload and motor loss.\n- After the last gate, it flies over the pad, descends slowly, and cuts thrust close to the floor.\n\n**Why:**\n- Most baseline failures were gate frame collisions or timeouts. The gates leave only about 12 cm of lateral margin, so lining up before crossing mattered most.\n- I loosened the alignment test to save time. Tight tolerances plus sensor noise left the drone stuck before gate 0 or running out the clock.\n\n**What it didn't fix:**\n- One smoke seed (972765592) still hits the gate 0 frame. A stricter alignment test avoided that collision, but it caused timeouts elsewhere.\n- Time is also tight. One smoke flight landed at 24.4 s against the 25 s deadline.\n- I did not use the advance knowledge of gusts at all."
+ },
+ {
+  "id": "easy.none.5",
+  "course": "easy",
+  "group": "none",
+  "n": 5,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "136ea942fba9118c6b701168c09bbd0fa965af5125d77ac9886e5dc5af11aa87",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 59,
+  "fresh_total": 64,
+  "practice": 14,
+  "practice_total": 16,
+  "records": [
+   "67fb42264375f78140a90a994dc0f6d3564a94f04a50339cfab429ffbb7a0a2f",
+   "04b1dc498b5f45be134f2ba2f74bfd555e533fc7ef7ab8f050c19ac8cd550d57",
+   "197426f08b3dab0ac322e7ea36df4892cd345ea83493a2c9db66e3a824cdc82b",
+   "865b5e4c12f2373f72275dd0d73ac5ccfbd6b35cd3e59eb5843e17c39c26472c",
+   "42704f4a65cebdd9ce9b13419326e78ad7d9508a24e0b31010df847b9079a698",
+   "b0eccc81e169faba24e979f8ad359f95b13aaf33c242191e75edc616b3d30cda",
+   "08eecfa4791fb872204148dfdd7bee8f50aad92aef269b735fa3d0ca8ea907f9",
+   "5cd0171744298803f5ee7323cdc2fb1d994794955d67e5bda9bb12bfaedeb310",
+   "114890db4e77de013bf170be911b74a0cd851d705e4e90e0a0ec3f64cb1f6ab8",
+   "af9f3245f81163f8f30ffa99d9395ff8e20aba9fce463539b6279ad5466957d9"
+  ],
+  "turns": 22,
+  "fly_calls": 11,
+  "flights": 43,
+  "runs": 19,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 12,
+    "run_code": 9,
+    "write_file": 10
+   },
+   "by_kind": {
+    "ok": 30,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 9676,
+  "after_answer": "The controller is a waypoint follower built on the supplied baseline. It uses PD position control that converts desired acceleration into roll and pitch. A slow altitude integrator supplies hover thrust, which handles the hidden payload and weak motor. I changed it because the baseline failed in three ways, and I found each from the fly results.\n\n- **Landing:** the altitude integrator kept growing during descent, so the drone climbed instead of landing. Freezing it during the landing phase fixed this. It was the biggest single fix. Landing only worked after I worked out the cause from the results. I never saw altitude directly.\n- **Gates:** for each gate the drone first lines up in y and z about 0.5 m before the gate plane, then crosses. If it drifts off-line before the plane, it backs off and re-aligns. The thresholds are tight because the horizontal clearance is only about 0.125 m.\n- **Wind:** a clamped horizontal integral term removes the steady offset from base wind. It only accumulates when the drone is near its target, so it doesn't wind up during travel.\n\nI never modelled the gusts or tried to anticipate them. I tuned by trial, since the simulator wasn't available.\n\nResults were 3 of 4 on the smoke flights and 8 of 8 on a fresh random batch. I didn't find the cause of the one remaining failure, a gate-frame collision at the second gate. Because of that, the controller may still fail occasionally on the unseen flights."
+ },
+ {
+  "id": "easy.none.6",
+  "course": "easy",
+  "group": "none",
+  "n": 6,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [
+   "yaw + local pos integrals"
+  ],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "8ae1cc83bd375c306a02557b418846fb4bfd0e6167716b9358bc75394cb19b14",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 50,
+  "fresh_total": 64,
+  "practice": 14,
+  "practice_total": 16,
+  "records": [
+   "483e0aa24b3b1659ddf482052d0a76254ab066746ccb093565dde50632d30c45",
+   "af3524bb1a49dcb684d91146b2e388f026a25b32bd1bb3f2ef2ee628bc6b196a",
+   "53a03e686d4c67a2c2e42049bdf7c63298eb152cef687fb95e024ab2274cf51f",
+   "c08caf66df7c625188237f3eb06916868683e17fc694f6275a49997e0015deff",
+   "144c70adbb9f81a510fc33a47380505eb7164ae9106e2f35dc29212dc4383231",
+   "9661c86448be3aef12ddf91327def915ccd5e3b4dbdd79742985fc183a86a0aa",
+   "e085bd74f6928d70f1c5f474b4238895df42d0beaafd8fc4f8d7bd4fede75707",
+   "56e1a408910eaaa072eef4ddac50df221bce9a6d8ff7e2d9e440744cad4067ee",
+   "d6fff1fd07312be17167dab07b55e16101828ceafc66ff7c4c08d804d8e4efbd",
+   "2b5cc4d9082b9c997823d24be42e04963635dfcd8519f75f3a37576c1630d0ce"
+  ],
+  "turns": 14,
+  "fly_calls": 7,
+  "flights": 32,
+  "runs": 12,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 8,
+    "run_code": 6,
+    "write_file": 6
+   },
+   "by_kind": {
+    "ok": 19,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 5127,
+  "after_answer": "The controller is a gate-by-gate waypoint follower built on the supplied stabilizer. It uses a position PD loop for horizontal motion and an altitude loop with an integrator, which absorbs the unknown payload and weak-motor thrust. I chose to patch the baseline rather than redesign it, because I had no simulator and could only see pass/fail results from `fly`.\n\nFor each gate, it first lines up 0.6 m before the gate plane. It crosses once its sideways and vertical error and velocity are small enough, and it falls back to lining up if it drifts too far before the plane. The z tolerance is the tightest, since the body only has about 0.125 m of margin there. For landing, it holds above the pad until it is within 0.12 m and slow. It then descends at a limited speed, slowing near the floor, and cuts thrust at contact to avoid a hard landing.\n\nEach change answered a failure I saw. A slow altitude integrator caused stalls. Overly strict alignment tolerances caused timeouts. Descending as fast as the PD loop allowed caused floor crashes. Drifting during the crossing caused frame collisions.\n\nResults were 3/4 on smoke and 8/8 on a fresh random batch of eight. One smoke flight timed out after crossing all three gates, ending 0.085 m from the pad, and I never worked out why it didn't land. A few flights also finished close to the 25 s deadline, so the controller is too slow to be robust against strong wind. I didn't use the advance knowledge of gusts or tune for speed, and I made no attempt to diagnose the timeout."
+ },
+ {
+  "id": "easy.none.7",
+  "course": "easy",
+  "group": "none",
+  "n": 7,
+  "recipe": "",
+  "quoted": 0,
+  "quoted_original": 1,
+  "quoted_recipe": false,
+  "items_named": [],
+  "items_named_count": 0,
+  "items_named_raw": [],
+  "items_of": 7,
+  "rng": false,
+  "generator_constant": false,
+  "controller_sha256": "a904c756d828e0468ca22859a6d0de2da282a60ef8fc313401c71a9889e87b7b",
+  "controller_from": "write_file",
+  "graded": true,
+  "valid": true,
+  "fresh": 56,
+  "fresh_total": 64,
+  "practice": 15,
+  "practice_total": 16,
+  "records": [
+   "2231f6310ee1fecbf9202b3efdd715ee95a0a6392f363146e73349c4e37739db",
+   "0f2055b39221cfe45ad6df56fcde5bb9b8b47a6bd7cdb1ce51d917af4778f9ba",
+   "68916b0a315035b4b2a5d2f3d7cc389706906bf3e5db8c34e957805465125d6c",
+   "e279735f6485a717d960567fcc460b41a49f828289bd3a76c3eb1bbffbc23ac6",
+   "2e8d342d0ec402a5529e007aa9a90866c85d40c3dafca8d7fc2930f91ba841ad",
+   "f0dae8f87594bcf2557fba0dc312bc2591e35347d7681307bab5eb7e77459f4b",
+   "41eb3b00646501aa2b70574eb2d868dd51a23a99b03597d6e3b124c37f1d1641",
+   "935f375f8651d72505a76ae38df443ba0cf823298300aff85c5ad3915d547434",
+   "61c644415a32d0790f239b6a15a6228bbc6e3d2151a1dde5db6109df0028de87",
+   "a41fd0876758046a2892c4b0dea813d22a6f173ee163e88dae41a0172915e3a4"
+  ],
+  "turns": 12,
+  "fly_calls": 10,
+  "flights": 48,
+  "runs": 11,
+  "ended": "answered",
+  "calls": {
+   "by_tool": {
+    "fly": 11,
+    "run_code": 5,
+    "write_file": 6
+   },
+   "by_kind": {
+    "ok": 21,
+    "refused": 1
+   }
+  },
+  "reasoning_chars": 3328,
+  "after_answer": "The controller is a gate-by-gate waypoint follower with a separate landing phase. I started from the baseline stabilizer and changed it wherever the flight results showed a problem.\n\n- **Gate approach:** for each gate it first aligns about 0.5 m before the opening. It waits until it is close in y and z and moving slowly, then crosses at a limited forward speed. The opening leaves only about 0.125 m of horizontal slack, so I traded speed for precision there. If it drifts off the opening before reaching the gate, it backs out and realigns.\n- **Wind and mass:** I added a small position integral on the horizontal axes for the base wind. I kept a slow altitude integral to learn the hover thrust, since the payload is hidden. Thrust is scaled by the current tilt.\n- **Landing:** over the pad it centres horizontally, then descends at a controlled rate with tilt limited near the floor.\n- **Landing fix:** the first versions failed with \"time limit\" while only a few centimetres from the pad. I concluded that light drones were hovering instead of descending. The fix was to keep the learned hover thrust during descent.\n\n**What held up:** the last version passed all four smoke flights and 8 of 8 new random flights.\n\n**What didn't:** seed 871229581 still hit the first gate frame at about 5.8 s. I never found the cause, and I only tested a few dozen seeds in total. The slowest landings took about 21.6 s of the 25 s allowed, so some graded flights could still fail on collisions or the deadline."
+ }
+]

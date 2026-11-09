@@ -1,0 +1,565 @@
+<!doctype html>
+{{- $r := .Group "recipe"}}{{$s := .Group "scrambled"}}{{$n := .Group "none"}}
+{{- $rs := .Pair "recipe minus scrambled"}}{{$rn := .Pair "recipe minus none"}}{{$sn := .Pair "scrambled minus none"}}
+{{- $loop := index .Course.Loops 0}}{{$t := .Totals}}
+{{- $st1 := index .Ev.Stages 0}}{{$st2 := index .Ev.Stages 1}}
+{{- $fly := .Flights}}{{$nItems := len .Items}}{{$grid := .Grid}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Does a fresh AI agent follow the plan it is handed? A scrambled-recipe test, every number</title>
+<meta name="description" content="{{$t.agents}} fresh AI agents built a drone controller from an honest 32-token recipe, the same words shuffled, or nothing. The recipe's order moved the landings; no recipe item reached the code by name; every recipe agent said it followed the recipe only partly. Every number, from signed run records.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="Does a fresh AI agent follow the plan it is handed? A scrambled-recipe test, every number">
+<meta property="og:description" content="{{$t.agents}} fresh AI agents built a drone controller from an honest 32-token recipe, the same words shuffled, or nothing. The recipe's order moved the landings; no recipe item reached the code by name; every recipe agent said it followed the recipe only partly. Every number, from signed run records.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/squeeze-recipe/index.html">
+<meta name="twitter:card" content="summary">
+<style>
+{{.CSS}}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="method.html">For readers who know AI (INTERNAL · method page →)</a><a href="../squeeze/index.html">The squeeze test (INTERNAL · example →)</a><a href="../../trainers/glossary.html">Glossary (INTERNAL · glossary →)</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<div class="prose">
+<div class="kicker">A plimsoll example · the squeeze test, with a scrambled recipe</div>
+<h1>Does a fresh AI agent follow the plan it is handed?</h1>
+<p class="lede">I gave {{$t.agents}} fresh AI <dfn data-gloss="agent">agents</dfn> (an AI left alone with a job and a terminal: it writes code, runs it, reads what happened and tries again, like a new hire on their first day) the same small job: write the program that flies a simulated drone through three gates and lands it on a pad. Of those, {{$r.Agents}} also got a plan: a short <dfn data-gloss="recipe">recipe</dfn> of {{$loop.RecipeTokens}} <dfn data-gloss="token">tokens</dfn> (the pieces a language model reads text in; a short word is usually one token, so this is about {{len .ScrambledWords}} words) left behind by an earlier AI that had learned to fly this course well. Think of it as the sticky note the last person on the job left for you. Another {{$s.Agents}} got the same sticky note with its words cut apart and glued back in a random order. And {{$n.Agents}} got no note at all. Then plimsoll, a sandbox that runs untrusted code and signs a record of every run, graded each agent's program on {{.Ev.FreshCount}} flights no agent had seen, like a final exam kept in a sealed envelope.</p>
+{{- assert (and (eq .Ev.Outcome "ORDER SHOWED") .Ev.LandedRead (.Above $rs.Landed.Interval95)) "the recipe's word order moved the landings, by the registered rule"}}
+{{- assert (and (.ZeroIn $rn.Landed.Interval95) (gt $rn.Landed.Difference 0.0) (lt $sn.Landed.Difference 0.0) (gt (sub0 $sn.Landed.Difference) $rn.Landed.Difference)) "against no recipe, the recipe's lead is within noise and the shuffled words sit further below"}}
+{{- assert (.AllZero "recipe" "scrambled") "no recipe or scrambled agent's code named a recipe item"}}
+{{- assert (eq $r.SaidPartly $r.Agents) "every recipe agent said it followed the recipe only partly or only in part"}}
+<p class="lede"><b>The short answer, in three parts.</b> First, the order of the words mattered: agents with the honest recipe landed more flights than agents with the same words shuffled, by a margin bigger than luck alone would give, under a rule for reading the result that was written down before the run. Second, the honest recipe did not clearly beat having no recipe at all; its lead there is small enough to be luck. So the shuffled words look more like they hurt than the honest recipe looks like it helped (my reading, not the registered measure). Third, when the code was searched for the recipe's own words, none of the recipe or shuffled-recipe agents had used any of the recipe's {{$nItems}} named parts, and every one of the {{$r.Agents}} honest-recipe agents, asked afterward, said it had followed the recipe "only partly" or "only in part". Every number is below, marked good, bad or inconclusive, with the agents' own words.</p>
+<div class="callout" id="whose-experiment">
+<div class="kicker">Whose experiment this is</div>
+<p>This experiment was built from three suggestions by a reader who builds AI red-team agents (programs that attack a computer network to test its defenses). Each one shaped it:</p>
+<ul>
+<li><b>Score by what changed, never by what the agent says it did.</b> The landings come from signed grading runs; the agents' own accounts are kept apart and enter no score.</li>
+<li><b>Shuffle the plan and see whether the agent's actions change.</b> That is the shuffled-recipe group, this experiment's main comparison, and it found that the order of the words mattered. The chart below shows what is compared and how to read it.</li>
+<li><b>Ask whether hiding the simulator would send agents hunting for another shortcut.</b> The simulator never entered an agent's sandbox, and no controller carried a random number generator ({{$r.RNG}} of {{$r.Agents}} honest-recipe, {{$s.RNG}} of {{$s.Agents}} shuffled-recipe and {{$n.RNG}} of {{$n.Agents}} no-recipe controllers did).</li>
+</ul>
+{{- assert (and (eq $r.RNG 0) (eq $s.RNG 0) (eq $n.RNG 0) (gt $rs.Landed.Difference 0.0) (lt $n.Agents $r.Agents) (eq $r.Agents $s.Agents)) "no controller carried a random number generator; the primary difference is positive; the smallest group is the no-recipe one"}}
+{{- $hr := .HeadBar "recipe"}}{{$hs := .HeadBar "scrambled"}}{{$hn := .HeadBar "none"}}{{$hg := .HeadGap "recipe minus scrambled"}}
+{{- assert (and (eq $hg.Treat.ID "recipe") (eq $hg.Base.ID "scrambled") $hg.Row.Above) "the box's gap is the honest recipe over the shuffled one, and its 95% interval sits above zero"}}
+<figure id="fig-headline">
+  <div class="fig-title">What the main comparison compares</div>
+  <div class="fig-sub">Each agent's program flew the same {{.Ev.FreshCount}} sealed flights; its score is how many it landed. A bar is a group's average share. Higher is better. Hover over or tap a bar for its numbers.</div>
+  <div class="tipwrap" id="headline">
+{{- range (list $hr $hs)}}
+    <div class="strip-row"><div class="lab"><b><span class="swatch" style="background:var(--{{.Group.ID}})"></span>{{$.Name .Group.ID}}</b>{{pct .Group.Landed}} landed · {{.Group.Agents}} agents</div>
+    <svg viewBox="0 0 600 34" role="img" aria-label="{{.Tip}}"><rect x="14" y="6" width="572" height="22" rx="4" fill="#eeede6"></rect><path class="dot" tabindex="0" d="{{.Path}}" fill="var(--{{.Group.ID}})" data-tip="{{.Tip}}"><title>{{.Tip}}</title></path></svg></div>
+{{- end}}
+    <div class="strip-row"><div class="lab"><b>The gap: {{printf "%.1f" (mulf $hg.Pair.Landed.Difference 100.0)}} points</b>about {{printf "%.0f" $hg.PerFresh}} more landings in {{.Ev.FreshCount}} flights</div>
+    <svg viewBox="0 0 600 34" role="img" aria-label="the gap between the two bars above"><path d="M{{$hg.From}} 6 V22 H{{$hg.To}} V6" fill="none" stroke="#11233a" stroke-width="2"></path></svg></div>
+    <div class="strip-row"><div class="lab"><b><span class="swatch" style="background:var(--{{$hn.Group.ID}})"></span>{{.Name $hn.Group.ID}}</b>{{pct $hn.Group.Landed}} landed · {{$hn.Group.Agents}} agents, for reference</div>
+    <svg viewBox="0 0 600 34" role="img" aria-label="{{$hn.Tip}}"><rect x="14" y="6" width="572" height="22" rx="4" fill="#eeede6"></rect><path class="dot" tabindex="0" d="{{$hn.Path}}" fill="var(--{{$hn.Group.ID}})" data-tip="{{$hn.Tip}}"><title>{{$hn.Tip}}</title></path></svg></div>
+    <div class="axis-row"><div class="lab">share of the {{.Ev.FreshCount}} sealed flights landed</div>
+    <svg viewBox="0 0 600 30" aria-hidden="true"><line x1="14" x2="586" y1="4" y2="4" stroke="#c3c2b7"></line>{{range .ShareTicks}}<line x1="{{.X}}" x2="{{.X}}" y1="4" y2="9" stroke="#c3c2b7"></line><text x="{{.X}}" y="26" font-size="16" text-anchor="{{.Anchor}}" fill="#52514e">{{.Label}}</text>{{end}}</svg></div>
+    <div class="fig-title head-gap-title">Could the gap be luck? Its 95% interval</div>
+    <div class="strip-row"><div class="lab"><b>Honest minus scrambled</b>{{pts $hg.Pair.Landed.Difference}} points<br><span class="small">95%: {{pts (index $hg.Pair.Landed.Interval95 0)}} to {{pts (index $hg.Pair.Landed.Interval95 1)}}</span></div>
+    <svg viewBox="0 0 600 44" role="img" aria-label="{{$hg.Row.Tip}}">
+      <line x1="{{$hg.Row.Zero}}" x2="{{$hg.Row.Zero}}" y1="0" y2="44" stroke="#898781" stroke-width="1.5" stroke-dasharray="4 4"></line>
+      <line x1="{{$hg.Row.Lo95}}" x2="{{$hg.Row.Hi95}}" y1="22" y2="22" stroke="#11233a" stroke-width="2"></line>
+      <line x1="{{$hg.Row.Lo95}}" x2="{{$hg.Row.Lo95}}" y1="15" y2="29" stroke="#11233a" stroke-width="2"></line>
+      <line x1="{{$hg.Row.Hi95}}" x2="{{$hg.Row.Hi95}}" y1="15" y2="29" stroke="#11233a" stroke-width="2"></line>
+      <circle class="dot" tabindex="0" cx="{{$hg.Row.X}}" cy="22" r="8" fill="#11233a" stroke="#fff" stroke-width="2" data-tip="{{$hg.Row.Tip}}"><title>{{$hg.Row.Tip}}</title></circle>
+    </svg></div>
+    <div class="axis-row"><div class="lab">difference, in points</div><div>
+    <svg viewBox="0 0 600 30" aria-hidden="true"><line x1="14" x2="586" y1="4" y2="4" stroke="#c3c2b7"></line>{{range .DiffTicks}}<line x1="{{.X}}" x2="{{.X}}" y1="4" y2="9" stroke="#c3c2b7"></line><text x="{{.X}}" y="26" font-size="16" text-anchor="{{.Anchor}}" fill="#52514e">{{.Label}}</text>{{end}}</svg>
+    <div class="dir"><span style="right:{{subf 100.0 $hg.ZeroPct}}%">← scrambled did better</span><span style="left:{{$hg.ZeroPct}}%">honest recipe did better →</span></div></div></div>
+    <div class="tip" id="headline-tip" role="status"></div>
+  </div>
+  <figcaption>All numbers come from the signed grading runs, through the same rule as <a href="#fig-diffs">the differences figure in section 3</a>.</figcaption>
+</figure>
+<p><b>How to read it.</b></p>
+<ul>
+<li><b>What is compared:</b> the average share of the {{.Ev.FreshCount}} sealed flights landed by the {{$r.Agents}} honest-recipe agents ({{pct $r.Landed}}) and by the {{$s.Agents}} scrambled-recipe agents ({{pct $s.Landed}}), whose recipe had the same words shuffled. Higher is better: more of the flights ended on the pad.</li>
+<li><b>The gap:</b> {{pct $r.Landed}} minus {{pct $s.Landed}} is {{printf "%.1f" (mulf $rs.Landed.Difference 100.0)}} <dfn data-gloss="percentage-points">percentage points</dfn> (the plain difference between two percentages), about {{printf "%.0f" $hg.PerFresh}} more landings for every {{.Ev.FreshCount}} flights.</li>
+<li><b>The 95% interval:</b> {{$r.Agents}} agents is a small class, so a rerun with new agents would give a somewhat different gap. The interval, {{pts (index $rs.Landed.Interval95 0)}} to {{pts (index $rs.Landed.Interval95 1)}} points, is the range the real gap plausibly sits in. Even its low end is above zero, so luck alone would rarely make the honest recipe win by this much. With groups this small, read the range as a bit optimistic (<a href="#primer">the 95% entry below</a> says why).</li>
+<li><b>No recipe:</b> {{pct $n.Landed}}, only {{printf "%.1f" (mulf $rn.Landed.Difference 100.0)}} points behind the honest recipe, and that gap's interval ({{pts (index $rn.Landed.Interval95 0)}} to {{pts (index $rn.Landed.Interval95 1)}}) holds zero, so it could be luck.</li>
+</ul>
+<p><a href="method.html">For readers who know AI: the method, the statistics and related work (INTERNAL · method page →)</a>.</p>
+</div>
+
+<div class="callout" id="why-partly">
+<div class="kicker">Why only partly? The likely reason, in the agents' own words</div>
+<p>This is a reading of what the agents wrote, not a measured result. Every agent started from the same working baseline controller, a plain program that already flies the course roughly. Most of the honest-recipe agents bolted a few of the recipe's cheapest ideas onto that baseline, flew their four smoke flights, saw them pass, and stopped. Many said they stopped once those flights passed, and some said they left parts out because they could not see inside the simulator to tune them. Two of them, in their own words:</p>
+<p class="quote recipe">{{.Quote "easy.recipe.0" "the baseline plus these small changes" "I couldn't show was needed."}}<span class="by">easy.recipe.0, honest recipe, {{(.Agent "easy.recipe.0").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote recipe">{{.Quote "easy.recipe.3" "I took the quickest route" "fly it."}}<span class="by">easy.recipe.3, honest recipe, {{(.Agent "easy.recipe.3").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p>So the most probable reason is that the course was easy enough, and the starting point good enough, that a full plan was never needed to pass the tests the agents could see. A plan gets followed when following it is the shortest road to a passing grade.</p>
+<p><b>A proposal for a next run</b> (not done here): start every agent from a baseline that cannot fly the course on its own, so that the recipe is worth more than a quick patch, and grade the practice flights on a harder course, where a patched baseline does not already land most flights. Then the recipe's costly parts, the ones every agent here skipped, would have to earn their place, and the code measure would have something to find. And give the control group a note that reads well but is wrong for the course (the harder course's recipe, say) instead of shuffled words, so that a win for the honest recipe means its content was used and not only that garbled text got in the way (<a href="#verdicts">section 5</a> says why that matters).</p>
+</div>
+
+<div class="primer" id="primer">
+<div class="kicker">Eight words this page leans on</div>
+<dl>
+<dt>Agent</dt><dd>An AI model working in a loop on its own: write code, run it, read the result, try again. <span class="like">Like a new hire left alone with a task and a terminal.</span></dd>
+<dt>Recipe</dt><dd>The plan: everything an earlier AI learned on this course, squeezed into {{$loop.RecipeTokens}} tokens, the units a language model reads and writes (a short word is usually one). <span class="like">The sticky note the last person on the job left you.</span></dd>
+<dt>Scrambled recipe, the control</dt><dd>The same words in a shuffled order, fixed by a <dfn data-gloss="seed">seed</dfn> (one number that decides a random shuffle, so anyone can redo the exact same shuffle). A <dfn data-gloss="control">control</dfn> is a group given everything except the thing being tested, so a difference shows what that thing did. <span class="like">Same ingredients, recipe card torn into strips and reglued at random.</span></dd>
+<dt>Sealed flights</dt><dd>The {{.Ev.FreshCount}} flights every program was graded on, drawn at random before the first agent ran, fixed by their <dfn data-gloss="sha-256">SHA-256</dfn> (a 64-character fingerprint of the file: change one byte and it changes) and never shown to any agent. <span class="like">The final exam in a sealed envelope.</span></dd>
+<dt>Noise</dt><dd>The part of a score that is luck: another {{$n.Agents}} fresh agents would not land exactly the same number of flights. A difference is "within noise" when luck alone could have made it. <span class="like">Weigh yourself twice a minute apart: the gap is the scale's wobble, not weight you gained.</span></dd>
+<dt>95% interval</dt><dd>The range a difference between two groups plausibly sits in, given how much the agents varied. Here it comes from <dfn data-gloss="resampling">resampling</dfn>: draw each group's agents again at random, with repeats, {{comma .Exp.Rule.Resample.N}} times, and see how far the difference moves. A difference whose interval sits wholly above zero is unlikely to be luck; one whose interval holds zero could be. One caution: with only {{$n.Agents}} to {{$r.Agents}} agents in a group, ranges made this way (the percentile bootstrap) catch the true difference somewhat less often than 95% of the time, so read them as a bit optimistic. <span class="like">Like polling a different sample of the same town, over and over, and seeing how much the answer wobbles.</span></dd>
+<dt>Points</dt><dd>Percentage points of the {{.Ev.FreshCount}} fresh flights: one flight is about 1.6 points, so a 10-point difference is about 6 flights of 64.</dd>
+<dt>Registered rule</dt><dd>The rule for reading the result, written down before the first agent ran, so the result could not choose how it was read. <span class="like">The marking scheme sealed in the envelope with the exam.</span></dd>
+</dl>
+</div>
+</div>
+
+<div class="cards" id="hero">
+{{range .Ev.Groups}}  <div class="card {{.ID}}"><h3>{{$.Name .ID}}</h3><div class="who">{{.Agents}} agents · stage {{.Stage}}</div><div class="big">{{pct .Landed}}</div><div class="small">of the {{$.Ev.FreshCount}} fresh flights landed, on average; the lowest agent landed {{.Low}}, the highest {{.High}}</div><div class="small" style="margin-top:6px">Recipe words named in code: <b>{{printf "%.3g" .Words}}</b> of {{$nItems}} on average{{if .Recipe}} · quoted its recipe: <b>{{.Quoted}} of {{.Agents}}</b>{{end}}</div></div>
+{{end}}</div>
+
+<div class="prose">
+<div class="scale" id="scale">
+<div class="kicker">How to read these numbers</div>
+<ul>
+<li><b>{{pct $n.Landed}} with no recipe is the yardstick.</b> It is what a fresh agent does on this course with the baseline and nothing else. A recipe helps only if it beats that; the gap between the groups is the story, not the size of any one number.</li>
+<li><b>{{pct0 .Exp.Rule.Ceiling}} is the "too easy" line.</b> Had the no-recipe agents landed that many, the rule would not have read landings at all, because a plan has no room to show on a course nearly everyone already passes. {{pct $n.Landed}} sits under it, but not far under: see the last verdict in <a href="#verdicts">section 5</a>.</li>
+<li><b>A difference counts when its 95% interval is wholly on one side of zero.</b> That is the registered rule's line. A difference under {{printf "%.0f" (mulf .Exp.Rule.Margins.Landed 100.0)}} points (about {{printf "%.0f" (mulf .Exp.Rule.Margins.Landed (float .Ev.FreshCount))}} flights of {{.Ev.FreshCount}}, one flight in ten) is one the rule calls too small to matter. That line is a judgment written into the rule before the run, not a measured threshold. With only {{$n.Agents}} to {{$r.Agents}} agents in a group, these ranges catch the true difference somewhat less often than 95% of the time, so read them as a bit optimistic; the method page says more.</li>
+</ul>
+</div>
+
+<ol class="toc">
+<li><a href="#question">The question</a></li>
+<li><a href="#setup">The setup</a></li>
+<li><a href="#landings">The landings</a></li>
+<li><a href="#rule">The registered rule, and what it says</a></li>
+<li><a href="#verdicts">Good, bad or inconclusive</a></li>
+<li><a href="#code">What the code measure reads</a></li>
+<li><a href="#notes">In their own words</a></li>
+<li><a href="#limits">What this does not show</a></li>
+<li><a href="#signed">On plimsoll, signed</a></li>
+<li><a href="#check">Check it yourself</a></li>
+<li><a href="#words">Words used on this page</a></li>
+</ol>
+
+<h2 id="question"><span class="num">1</span>The question</h2>
+<p>A plan only helps if it is followed. The squeeze test (<a href="../squeeze/index.html">INTERNAL · example →</a>) asks fresh agents to rebuild a working <a href="../../trainers/glossary.html#controller">controller (INTERNAL · glossary →)</a>, the program that flies the drone, from a {{$loop.RecipeTokens}}-token recipe. This experiment asks whether the recipe did anything. The control is the recipe's own words in a shuffled order: the same ingredients, no method. If the agents ignore the recipe, the shuffled one should do just as well, and their code should look the same. If they follow it, the honest order should win.</p>
+<p>Two measures, both read by code and never from an agent's own account of itself:</p>
+<ul>
+<li><b>Fresh flights landed</b>, of {{.Ev.FreshCount}}: each agent's final controller graded in sandboxes of its own on the sealed flights. What happened in the simulator is the score.</li>
+<li><b>Recipe words named in code</b>, of {{$nItems}}: the recipe lists {{$nItems}} items, each a flying technique with a name (a filter that smooths the speed reading, a part that estimates the wind, and so on). An item counts when a name in the agent's final code matches one of that item's word patterns, with comments removed and the names the shared starting controller already had left out. It measures whether the recipe's words were taken up, not whether the code does what they say (<a href="#code">section 6</a> has the patterns).</li>
+</ul>
+<p>And one thing gathered by asking. Once each session was over, the agent was asked, with no tool left to run:</p>
+<pre>{{.Question true}}</pre>
+<p>(The no-recipe agents were asked what approach their controller took, and why.) The answer changes nothing about the score. It is on the page because what an agent says it did and what its code does are different things, and the experiment can show both.</p>
+
+<h2 id="setup"><span class="num">2</span>The setup</h2>
+</div>
+
+<figure id="fig-handed">
+  <div class="fig-title">Who got what</div>
+  <div class="fig-sub">Every agent: the same job, the same starting controller, the same tools and the same practice budget. Only the note differed. Every finished program then sat the same sealed exam.</div>
+  <div class="handed">
+{{- range .Ev.Groups}}
+    <div class="col">
+      <svg viewBox="0 0 160 {{mul (div (add .Agents 7) 8) 20}}" role="img" aria-label="{{.Agents}} agents">
+{{- $g := .ID}}{{range seq .Agents}}
+        <g transform="translate({{add 10 (mul (mod . 8) 20)}} {{add 10 (mul (div . 8) 20)}})"><rect x="-7" y="-4" width="14" height="10" rx="2" fill="var(--{{$g}})"></rect><circle cx="0" cy="-6" r="3.6" fill="var(--{{$g}})"></circle></g>
+{{- end}}
+      </svg>
+      <h4>{{$.Name .ID}}</h4>
+      <div class="n">{{.Agents}} agents</div>
+{{- if .Recipe}}
+      <div class="mini sticky"><div class="label">{{if .Scrambled}}The same words, shuffled{{else}}The note{{end}}</div>{{.Recipe}}</div>
+{{- else}}
+      <div class="mini sticky empty"><div class="label">No note</div>Nothing: the course, the baseline and the tools.</div>
+{{- end}}
+    </div>
+{{- end}}
+  </div>
+  <svg viewBox="0 0 600 70" aria-hidden="true"><path d="M100 4 L100 30 L500 30 L500 4 M300 4 L300 30 M300 30 L300 46" fill="none" stroke="#c3c2b7" stroke-width="2"></path><path d="M292 42 L300 52 L308 42" fill="none" stroke="#c3c2b7" stroke-width="2"></path><rect x="150" y="52" width="300" height="16" rx="8" fill="#11233a"></rect><text x="300" y="64" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="600">{{.Ev.FreshCount}} sealed flights, the same for every program</text></svg>
+  <figcaption>The recipe is the plan an earlier AI learned on this course, {{$loop.RecipeTokens}} tokens long. The scrambled note is the same words shuffled once, by a fixed seed, so every scrambled agent read the same shuffled note.</figcaption>
+</figure>
+
+<div class="prose">
+<ul>
+<li><b>The model.</b> Claude Sonnet 5.5, model id <code>{{.Ev.Model}}</code> (the exact version name a program asks for), through the Messages API, the way a program sends the model a request over the internet and gets its answer back; each agent a fresh session with no memory of the others. The model ran on its maker's servers, outside plimsoll. The calls to it went through a small relay program on the experimenter's own machine that enforced the spending cap, which is why each stage's <code>run.json</code> names a local address as <code>model_base</code> ({{range $i, $b := .ModelBases}}{{if $i}}, then {{end}}<code>{{$b}}</code>{{end}}). plimsoll ran and signed the code the agents wrote, not their thinking.</li>
+<li><b>The job.</b> The squeeze example's easy drone course: fly through three gates in order, then land on a pad, within 25 seconds, in a simulated room with hidden wind and gusts, a hidden payload of up to 0.25 kg and one motor up to 25 percent weaker than the others. Every agent started from the same <dfn data-gloss="baseline">baseline</dfn> controller, a plain program that steers toward one waypoint after another, and the same course description.</li>
+<li><b>The tools.</b> <code>write_file</code> writes a file, <code>run_code</code> runs JavaScript or Python in the agent's own <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a>, and <code>fly</code> flies its <code>controller.js</code> in a separate sandbox that holds the simulator and answers with each flight's result. The agent's own sandbox never held the simulator, so it could practice but not peek.</li>
+<li><b>The budget, the same for every group.</b> {{.Job.Rebuild.Turns}} turns (one turn is one answer from the model, with the tool calls it makes), and up to {{.Job.Rebuild.FlyCalls}} <code>fly</code> calls of up to {{.Job.Rebuild.FlightsPerFly}} new random flights each, plus the 4 smoke flights the course names (a quick first check, open to every agent). Practice is limited, and the reason is cost.</li>
+</ul>
+</div>
+
+<figure id="fig-course">
+  <div class="fig-title">The course, and one sealed flight flown by three programs</div>
+  <div class="fig-sub">The room from above and from the side. Take off at the left, fly through gates 1, 2 and 3 in order, land on the pad at the right, within 25 seconds. The three lines are the first agent of each group flying the same sealed flight (the same wind, gusts, payload and weak motor), as recorded in the signed grading run.</div>
+  <div class="grid2">
+    <svg viewBox="0 0 {{$fly.S}} {{$fly.S}}" role="img" aria-label="the room from above, with {{numword (len $fly.Tracks)}} recorded flights">
+      <rect x="{{$fly.M}}" y="{{$fly.M}}" width="{{subf $fly.S (mulf 2.0 $fly.M)}}" height="{{subf $fly.S (mulf 2.0 $fly.M)}}" fill="#fff" stroke="#c3c2b7"></rect>
+{{- range $fly.GridXZ}}
+      <line x1="{{$fly.TX .}}" y1="{{$fly.M}}" x2="{{$fly.TX .}}" y2="{{subf $fly.S $fly.M}}" stroke="#f0efea"></line><line x1="{{$fly.M}}" y1="{{$fly.TZ .}}" x2="{{subf $fly.S $fly.M}}" y2="{{$fly.TZ .}}" stroke="#f0efea"></line>
+{{- end}}
+      <text x="{{$fly.M}}" y="22" font-size="14" fill="#52514e" font-weight="600">From above</text>
+      <text x="{{subf $fly.S $fly.M}}" y="{{addf $fly.S -10.0}}" font-size="12" fill="#898781" text-anchor="end">room 6 m × 6 m, grid 1 m</text>
+      <rect x="{{addf ($fly.TX (index $fly.Geo.Takeoff 0)) -12.0}}" y="{{addf ($fly.TZ (index $fly.Geo.Takeoff 2)) -12.0}}" width="24" height="24" rx="4" fill="#ecebe6" stroke="#c3c2b7"></rect>
+      <text x="{{$fly.TX (index $fly.Geo.Takeoff 0)}}" y="{{addf ($fly.TZ (index $fly.Geo.Takeoff 2)) -17.0}}" font-size="12" fill="#52514e" text-anchor="middle">take off</text>
+      <circle cx="{{$fly.TX (index $fly.Geo.Pad 0)}}" cy="{{$fly.TZ (index $fly.Geo.Pad 2)}}" r="{{$fly.PadR}}" fill="#e8f5e8" stroke="#7cc47c"></circle>
+      <text x="{{$fly.TX (index $fly.Geo.Pad 0)}}" y="{{addf ($fly.TZ (index $fly.Geo.Pad 2)) 32.0}}" font-size="12" fill="#52514e" text-anchor="middle">land here</text>
+{{- range $i, $g := $fly.Geo.Gates}}
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TZ (subf (index $g 2) (addf $fly.Half 7.0))}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TZ (subf (index $g 2) $fly.Half)}}" stroke="#0b0b0b" stroke-width="5"></line>
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TZ (addf (index $g 2) $fly.Half)}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TZ (addf (index $g 2) (addf $fly.Half 7.0))}}" stroke="#0b0b0b" stroke-width="5"></line>
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TZ (subf (index $g 2) $fly.Half)}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TZ (addf (index $g 2) $fly.Half)}}" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="2 3"></line>
+      <text x="{{addf ($fly.TX (index $g 0)) 9.0}}" y="{{addf ($fly.TZ (subf (index $g 2) $fly.Half)) -10.0}}" font-size="13" font-weight="700" fill="#0b0b0b">{{add $i 1}}</text>
+{{- end}}
+{{- range $fly.Tracks}}
+      <path d="{{.Top}}" fill="none" stroke="var(--{{.Group}})" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"></path>
+      <circle cx="{{.TopX}}" cy="{{.TopY}}" r="5" fill="#fff" stroke="var(--{{.Group}})" stroke-width="2.5"></circle>
+{{- end}}
+    </svg>
+    <div>
+    <svg viewBox="0 0 {{$fly.S}} {{$fly.SideH}}" role="img" aria-label="the room from the side, with the same three flights">
+      <rect x="{{$fly.M}}" y="{{$fly.M}}" width="{{subf $fly.S (mulf 2.0 $fly.M)}}" height="{{subf $fly.SideH (mulf 2.0 $fly.M)}}" fill="#fff" stroke="#c3c2b7"></rect>
+{{- range $fly.GridXZ}}
+      <line x1="{{$fly.TX .}}" y1="{{$fly.M}}" x2="{{$fly.TX .}}" y2="{{subf $fly.SideH $fly.M}}" stroke="#f0efea"></line>
+{{- end}}
+{{- range $fly.GridY}}
+      <line x1="{{$fly.M}}" y1="{{$fly.TY .}}" x2="{{subf $fly.S $fly.M}}" y2="{{$fly.TY .}}" stroke="#f0efea"></line>
+{{- end}}
+      <text x="{{$fly.M}}" y="22" font-size="14" fill="#52514e" font-weight="600">From the side</text>
+      <text x="{{subf $fly.S $fly.M}}" y="{{addf $fly.SideH -10.0}}" font-size="12" fill="#898781" text-anchor="end">height up to 3 m, grid 1 m</text>
+      <line x1="{{$fly.M}}" y1="{{$fly.TY 0.0}}" x2="{{subf $fly.S $fly.M}}" y2="{{$fly.TY 0.0}}" stroke="#c3c2b7" stroke-width="2"></line>
+      <rect x="{{subf ($fly.TX (index $fly.Geo.Pad 0)) $fly.PadR}}" y="{{addf ($fly.TY 0.0) -3.0}}" width="{{mulf 2.0 $fly.PadR}}" height="6" fill="#7cc47c"></rect>
+{{- range $i, $g := $fly.Geo.Gates}}
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TY (subf (index $g 1) $fly.Half)}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TY (addf (index $g 1) $fly.Half)}}" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="2 3"></line>
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TY (subf (index $g 1) (addf $fly.Half 7.0))}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TY (subf (index $g 1) $fly.Half)}}" stroke="#0b0b0b" stroke-width="5"></line>
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TY (addf (index $g 1) $fly.Half)}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TY (addf (index $g 1) (addf $fly.Half 7.0))}}" stroke="#0b0b0b" stroke-width="5"></line>
+      <line x1="{{$fly.TX (index $g 0)}}" y1="{{$fly.TY 0.0}}" x2="{{$fly.TX (index $g 0)}}" y2="{{$fly.TY (subf (index $g 1) (addf $fly.Half 7.0))}}" stroke="#d9d7cf" stroke-width="2"></line>
+      <text x="{{addf ($fly.TX (index $g 0)) 8.0}}" y="{{addf ($fly.TY (addf (index $g 1) $fly.Half)) -8.0}}" font-size="13" font-weight="700" fill="#0b0b0b">{{add $i 1}}</text>
+{{- end}}
+{{- range $fly.Tracks}}
+      <path d="{{.Side}}" fill="none" stroke="var(--{{.Group}})" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"></path>
+      <circle cx="{{.SideX}}" cy="{{.SideY}}" r="5" fill="#fff" stroke="var(--{{.Group}})" stroke-width="2.5"></circle>
+{{- end}}
+    </svg>
+    <ul class="readkey">
+{{- range $fly.Tracks}}
+      <li><span class="swatch" style="background:var(--{{.Group}})"></span><b>{{$.Name .Group}}</b>, agent 0: {{if .Landed}}landed after {{.Seconds}} simulated seconds{{else}}failed ({{.End}}) at {{.Seconds}} s{{end}}.</li>
+{{- end}}
+      <li>Each gate is a square frame 0.60 m across, seen edge-on: the drone must pass through the dotted opening without touching the black frame. The ring is where each flight ended. <span class="tag">seed {{(index $fly.Tracks 0).Seed}}</span></li>
+    </ul>
+    </div>
+  </div>
+  <figcaption>A flight "lands" when the drone settles on the pad slowly and level within the 25 seconds. It fails when it clips a gate's frame, hits the floor, a wall or the ceiling, flips, or runs out of time. {{if $fly.AllLanded}}All {{numword (len $fly.Tracks)}} of these landed; what differs is how directly they flew and how long they took.{{else}}Not all of these landed: the key beside the picture says which failed and how.{{end}} This is one sealed flight of {{.Ev.FreshCount}}; the picture is here to show what a flight is, not to compare the groups.</figcaption>
+</figure>
+
+<div class="prose">
+<p>The honest recipe is the note an earlier AI wrote about this course, counted at {{$loop.RecipeTokens}} tokens by {{$loop.Tokenizer}}. (That AI learned the course over many rounds of trying and fixing in the did-it-learn hackathon entry the course comes from; "honest" means it flew the course for real rather than memorizing the test flights.) The scrambled note is its words shuffled by a fixed seed. Below, the honest note is cut at its semicolons into its 7 items, and each word of the scrambled note carries the number of the item it came from, so you can see the shuffle.</p>
+</div>
+
+<figure id="fig-strips">
+  <div class="fig-title">The recipe, cut into its {{$nItems}} items, beside the same words shuffled</div>
+  <div class="strips">
+    <div class="col"><h4>The honest recipe, item by item</h4>
+{{- range .HonestStrips}}
+      <div class="strip cut"><span class="badge">{{.Item}}</span><span>{{.Text}}</span></div>
+{{- end}}
+    </div>
+    <div class="col"><h4>The scrambled recipe, as the {{$s.Agents}} scrambled agents read it</h4>
+      <div class="scrambled-words">{{range $i, $w := .ScrambledWords}}{{if $i}} {{end}}<span class="w">{{$w.Word}}<sup>{{$w.Item}}</sup></span>{{end}}</div>
+      <p class="small">Each small number says which item of the honest recipe the word came from. The words are all there; the method is not.</p>
+    </div>
+  </div>
+  <figcaption>The {{$nItems}} items are flying techniques. In plain words: smooth the speed reading; estimate the wind and the drone's own drift and correct for them; slowly correct small leftover errors in heading and position; move the target point smoothly instead of jumping it from gate to gate; once committed to a gate, hold the line until it is cleared; abort a gate crossing that is about to hit the frame; and descend onto the pad gradually. A reader who knows control engineering will recognize each; the agents were given only the words above.</figcaption>
+</figure>
+
+<div class="prose">
+{{- assert (and (eq (len $s.Recipe) (len $r.Recipe)) $s.Scrambled) "the scrambled recipe is the honest one's words in another order"}}
+<p>Each group's brief ends differently; after the course description, a recipe agent read:</p>
+<pre>{{.BriefTail "recipe"}}</pre>
+<p>and a no-recipe agent:</p>
+<pre>{{.BriefTail "none"}}</pre>
+<ul>
+<li><b>Two stages.</b> The {{$n.Agents}} no-recipe agents ran first, from {{clock $st1.Started}} to {{clock $st1.Ended}} UTC on {{day $st1.Started}}, to measure how hard the course is before anything else was spent. Had they landed {{pct0 .Exp.Rule.Ceiling}} or more of the fresh flights, the rule would not read landings at all, since a course that easy leaves no room for a plan to help. They landed {{pct $n.Landed}}, so the second stage ran: {{$r.Agents}} recipe and {{$s.Agents}} scrambled agents, started in turn, from {{clock $st2.Started}} to {{clock $st2.Ended}} UTC, {{minutes $st1.Ended $st2.Started}} minutes after the first stage ended. Same model id, same sealed flights.</li>
+{{- assert (lt $n.Landed .Exp.Rule.Ceiling) "the no-recipe group landed under the ceiling line"}}
+<li><b>The grading.</b> Every final controller was graded in sandboxes of its own, {{.RecordsPerAgent}} grading runs a controller of at most eight flights each: the {{.Ev.PracticeCount}} practice flights (the flights the earlier AI had tuned itself on) and the {{.Ev.FreshCount}} fresh ones. Each flight had a {{.Ev.CPUBudget}}-second budget of the controller's own computing time. The fresh flights were sealed by the SHA-256 <code>{{short .Ev.FreshSHA256}}</code> before the first agent ran, and both stages flew exactly that set.</li>
+<li><b>The sandboxes.</b> plimsoll's {{$st1.Provider}} provider under <a href="../../trainers/glossary.html#gvisor">gVisor (INTERNAL · glossary →)</a>, <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a> {{$st1.Tier}}. Every call into a sandbox was signed into a bundle (one file holding every run's signed record) by a <a href="../../trainers/glossary.html#signing-key">signing key (INTERNAL · glossary →)</a> made for its stage; the private half was never written.</li>
+</ul>
+{{- assert (and (eq $st1.Provider $st2.Provider) (eq $st1.Tier $st2.Tier)) "both stages ran on the same provider and tier"}}
+
+<h2 id="landings"><span class="num">3</span>The landings</h2>
+<p>Each dot below is one agent's final controller on the {{.Ev.FreshCount}} sealed fresh flights. The honest recipe's agents all landed between {{$r.Low}} and {{$r.High}}; the scrambled group spread from {{$s.Low}} to {{$s.High}}; with no recipe, {{$n.Low}} to {{$n.High}}. Read it like a class's exam marks: one dot a student, the dark line the class average.</p>
+</div>
+
+<figure id="fig-dots">
+  <div class="fig-title">Fresh flights landed, one dot an agent</div>
+  <div class="fig-sub">The dark line is the group's average. Hover over or tap a dot for the agent.</div>
+  <div class="tipwrap" id="strips">
+{{- range .Strips}}
+    <div class="strip-row"><div class="lab"><b><span class="swatch" style="background:var(--{{.Group.ID}})"></span>{{$.Name .Group.ID}}</b>{{.Group.Agents}} agents · {{pct .Group.Landed}} on average<br><span class="small">lowest {{.Group.Low}}, highest {{.Group.High}} of {{$.Ev.FreshCount}}</span></div>
+    <svg viewBox="0 0 {{.Width}} {{.Height}}" role="img" aria-label="{{.Group.Label}}: {{len .Dots}} agents, average {{pct .Group.Landed}}">
+      <line x1="{{.Mean}}" x2="{{.Mean}}" y1="2" y2="{{sub .Height 2}}" stroke="#11233a" stroke-width="2.5"></line>
+{{- $g := .Group.ID}}{{range .Dots}}
+      <circle class="dot" tabindex="0" cx="{{.X}}" cy="{{.Y}}" r="7" fill="var(--{{$g}})" stroke="#fff" stroke-width="2" data-tip="{{.Tip}}"><title>{{.Tip}}</title></circle>
+{{- end}}
+    </svg></div>
+{{- end}}
+    <div class="axis-row"><div class="lab">fresh flights landed, of {{.Ev.FreshCount}}</div>
+    <svg viewBox="0 0 600 30" aria-hidden="true"><line x1="14" x2="586" y1="4" y2="4" stroke="#c3c2b7"></line>{{range .FreshTicks}}<line x1="{{.X}}" x2="{{.X}}" y1="4" y2="9" stroke="#c3c2b7"></line><text x="{{.X}}" y="26" font-size="16" text-anchor="{{.Anchor}}" fill="#52514e">{{.Label}}</text>{{end}}</svg></div>
+    <div class="tip" id="strip-tip" role="status"></div>
+  </div>
+  <figcaption>Every score comes from the signed grading runs. A single group's average is shown without a range of its own: the registered rule puts its ranges on the differences between groups, in the next figure.</figcaption>
+</figure>
+
+<div class="prose">
+<div class="scroll"><table id="groups-table">
+<thead><tr><th>Group</th><th class="n">Agents</th><th class="n">Fresh flights landed</th><th class="n">Lowest and highest agent</th><th class="n">Recipe words named in code</th></tr></thead>
+<tbody>{{range .Ev.Groups}}<tr><td><span class="swatch" style="background:var(--{{.ID}})"></span>{{$.Name .ID}}</td><td class="n">{{.Agents}}</td><td class="n">{{pct .Landed}}</td><td class="n">{{.Low}} and {{.High}} of {{$.Ev.FreshCount}}</td><td class="n">{{printf "%.3g" .Words}}{{with .Naming}} ({{len .}} agent{{if gt (len .) 1}}s{{end}}){{end}}</td></tr>{{end}}</tbody>
+</table></div>
+
+<h3>Every flight of every agent</h3>
+<p>The picture below is the whole exam sheet: one row an agent, one column one of the {{.Ev.FreshCount}} sealed flights, in the order they were drawn. A colored cell is a landing; a gray cell is a flight that failed. The bars on top count how many of the {{$grid.Agents}} programs landed each flight, so a gray streak down the page is a flight that was hard for everyone, usually a strong gust at a bad moment.</p>
+</div>
+
+<figure id="fig-grid">
+  <div class="fig-title">{{.Ev.FreshCount}} sealed flights × {{$grid.Agents}} programs</div>
+  <div class="fig-sub">Rows are agents, best first within each group; columns are the sealed flights. Hover over or tap a row or a bar for its numbers.</div>
+  <div class="tipwrap" id="grid">
+    <svg viewBox="0 0 {{$grid.W}} {{$grid.H}}" role="img" aria-label="every fresh flight of every agent: landed or not">
+      <text x="{{$grid.Left}}" y="9" font-size="8" fill="#52514e">programs that landed each flight, of {{$grid.Agents}}</text>
+{{- range $grid.Columns}}
+      <rect class="dot" tabindex="0" x="{{.X}}" y="{{subf (subf $grid.Top 6.0) .H}}" width="{{subf $grid.CellW 1.0}}" height="{{.H}}" fill="#11233a" fill-opacity=".55" data-tip="{{.Tip}}"><title>{{.Tip}}</title></rect>
+{{- end}}
+      <line x1="{{$grid.Left}}" y1="{{subf $grid.Top 5.0}}" x2="{{subf $grid.W $grid.Right}}" y2="{{subf $grid.Top 5.0}}" stroke="#c3c2b7"></line>
+{{- range $grid.Bands}}
+      <rect x="2" y="{{.Y0}}" width="4" height="{{subf .Y1 .Y0}}" rx="2" fill="var(--{{.Group}})"></rect>
+{{- end}}
+{{- range $grid.Rows}}
+      <rect x="{{$grid.Left}}" y="{{.Y}}" width="{{mulf $grid.CellW (float $.Ev.FreshCount)}}" height="{{subf $grid.CellH 1.0}}" fill="#e6e4dd"></rect>
+{{- $y := .Y}}{{$g := .Agent.Group}}{{range .Runs}}
+      <rect x="{{.X}}" y="{{$y}}" width="{{subf .W 1.0}}" height="{{subf $grid.CellH 1.0}}" fill="var(--{{$g}})"></rect>
+{{- end}}
+      <text x="{{subf $grid.Left 6.0}}" y="{{addf .Y (subf $grid.CellH 2.0)}}" font-size="7.5" fill="#52514e" text-anchor="end">{{.Agent.ID}}</text>
+      <text x="{{addf (subf $grid.W $grid.Right) 6.0}}" y="{{addf .Y (subf $grid.CellH 2.0)}}" font-size="7.5" fill="#0b0b0b" font-weight="600">{{.Agent.Fresh}} of {{.Agent.FreshTotal}}</text>
+      <rect class="dot" tabindex="0" x="10" y="{{.Y}}" width="{{subf $grid.W 12.0}}" height="{{$grid.CellH}}" fill="transparent" data-tip="{{.Tip}}"><title>{{.Tip}}</title></rect>
+{{- end}}
+    </svg>
+    <div class="tip" id="grid-tip" role="status"></div>
+  </div>
+  <div class="legend">{{range .Ev.Groups}}<span><span class="swatch" style="background:var(--{{.ID}})"></span>{{$.Name .ID}}, {{.Agents}} agents</span>{{end}}<span><span class="swatch" style="background:#e6e4dd"></span>flight failed</span></div>
+  <figcaption>{{$grid.FlightsLandedByAll}} of the {{.Ev.FreshCount}} flights were landed by every program; {{$grid.FlightsBelowHalf}} were landed by fewer than half of them; the hardest, flight {{$grid.HardestFlight.Flight}}, was landed by {{$grid.HardestFlight.Landed}} of {{$grid.Agents}}. These are counts of the run's own flights, not a measure the rule reads. Every cell comes from the signed grading runs.</figcaption>
+</figure>
+
+<div class="prose">
+<h3>The differences between groups</h3>
+<p>A difference is one group's average minus another's, in <dfn data-gloss="percentage-points">points</dfn>: percentage points of the fresh flights, so on {{.Ev.FreshCount}} flights one flight is about 1.6 points. Each has a 95% interval and a 90% interval from the same resampling: the 90% one is narrower, and the rule uses it only to decide that a difference is too small to matter.</p>
+</div>
+
+<figure id="fig-diffs">
+  <div class="fig-title">Fresh flights landed: the three differences, in points</div>
+  <div class="fig-sub">The dot is the difference; the thin line its 95% interval; the thick bar its 90% interval; the dashed line is zero. A dot whose thin line stays clear of the dashed line is a difference that luck alone would rarely produce. Hover over or tap a dot for the numbers.</div>
+  <div class="tipwrap" id="diffs">
+{{- range .DiffRows}}
+    <div class="strip-row"><div class="lab"><b>{{upper .Pair.Name}}</b>{{pts .Pair.Landed.Difference}} points<br><span class="small">95%: {{pts (index .Pair.Landed.Interval95 0)}} to {{pts (index .Pair.Landed.Interval95 1)}}</span></div>
+    <svg viewBox="0 0 600 44" role="img" aria-label="{{.Tip}}">
+      <line x1="{{.Zero}}" x2="{{.Zero}}" y1="0" y2="44" stroke="#898781" stroke-width="1.5" stroke-dasharray="4 4"></line>
+      <line x1="{{.Lo95}}" x2="{{.Hi95}}" y1="22" y2="22" stroke="#11233a" stroke-width="2"></line>
+      <line x1="{{.Lo95}}" x2="{{.Lo95}}" y1="15" y2="29" stroke="#11233a" stroke-width="2"></line>
+      <line x1="{{.Hi95}}" x2="{{.Hi95}}" y1="15" y2="29" stroke="#11233a" stroke-width="2"></line>
+      <rect x="{{.Lo}}" y="17" width="{{printf "%.1f" (subf .Hi .Lo)}}" height="10" rx="4" fill="#11233a" fill-opacity=".28"></rect>
+      <circle class="dot" tabindex="0" cx="{{.X}}" cy="22" r="8" fill="#11233a" stroke="#fff" stroke-width="2" data-tip="{{.Tip}}"><title>{{.Tip}}</title></circle>
+    </svg></div>
+{{- end}}
+    <div class="axis-row"><div class="lab">difference, in points</div>
+    <svg viewBox="0 0 600 30" aria-hidden="true"><line x1="14" x2="586" y1="4" y2="4" stroke="#c3c2b7"></line>{{range .DiffTicks}}<line x1="{{.X}}" x2="{{.X}}" y1="4" y2="9" stroke="#c3c2b7"></line><text x="{{.X}}" y="26" font-size="16" text-anchor="{{.Anchor}}" fill="#52514e">{{.Label}}</text>{{end}}</svg></div>
+    <div class="tip" id="diff-tip" role="status"></div>
+  </div>
+  <figcaption>The intervals come from the registered rule's own resampling ({{comma .Exp.Rule.Resample.N}} draws, seed {{.Exp.Rule.Resample.Seed}}): each group's agents drawn again at random, with repeats, and the difference computed again each time.</figcaption>
+</figure>
+
+<div class="prose">
+<div class="scroll"><table id="pairs-table">
+<thead><tr><th>Difference in fresh flights landed</th><th class="n">Points</th><th class="n">95% interval</th><th class="n">90% interval</th><th>Its 95% interval</th></tr></thead>
+<tbody>{{range .DiffRows}}<tr><td>{{.Pair.Name}}</td><td class="n">{{pts .Pair.Landed.Difference}}</td><td class="n">{{pts (index .Pair.Landed.Interval95 0)}} to {{pts (index .Pair.Landed.Interval95 1)}}</td><td class="n">{{pts (index .Pair.Landed.Interval90 0)}} to {{pts (index .Pair.Landed.Interval90 1)}}</td><td>{{if .Above}}sits above zero{{else if .Below}}sits below zero{{else}}holds zero: could be noise{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+<p>On recipe words named in code, the differences are {{range $i, $p := .Ev.Pairs}}{{if $i}}{{if eq $i 2}} and {{else}}, {{end}}{{end}}{{wdiff $p.Words.Difference}} for {{$p.Name}} (95% interval {{wdiff (index $p.Words.Interval95 0)}} to {{wdiff (index $p.Words.Interval95 1)}}){{end}}: every recipe and scrambled controller names 0 items, and the only item named at all is one no-recipe agent's.</p>
+{{- assert (and (eq (len $n.Naming) 1) (eq (len .Ev.Pairs) 3)) "one no-recipe agent named an item, and the rule reads three pairs"}}
+
+<h2 id="rule"><span class="num">4</span>The registered rule, and what it says</h2>
+<p>The rule was written down before the first agent ran. Its words are in <code>experiment.json</code> beside this page, and this page's program applies them by code; the record of when they were written is not public, so you can read the rule here but not check its date from this page alone. It resamples agents within each group {{comma .Exp.Rule.Resample.N}} times (seed {{.Exp.Rule.Resample.Seed}}) and tries its four outcomes in this order, stopping at the first that fits:</p>
+<ul class="outcomes">
+{{- range .Exp.Rule.Outcomes}}
+<li{{if eq .Name $.Ev.Outcome}} class="fired"{{end}}><span class="name">{{.Name}}</span>{{if eq .Name $.Ev.Outcome}}<span class="pill">this run</span>{{end}}<br>{{.Means}}.</li>
+{{- end}}
+</ul>
+<p><b>What decided it.</b> Recipe minus scrambled, on landings: {{pts $rs.Landed.Difference}} points (about {{printf "%.0f" (mulf $rs.Landed.Difference 64.0)}} flights of {{.Ev.FreshCount}}), 95% interval {{pts (index $rs.Landed.Interval95 0)}} to {{pts (index $rs.Landed.Interval95 1)}}, wholly above zero. Landings were read, because the no-recipe group landed {{pct $n.Landed}}, under the {{pct0 .Exp.Rule.Ceiling}} line. On recipe words named in code, recipe minus scrambled was {{wdiff $rs.Words.Difference}} with a 95% interval of {{wdiff (index $rs.Words.Interval95 0)}} to {{wdiff (index $rs.Words.Interval95 1)}}, so words did not decide it: the landings did.</p>
+<p>So, in the rule's words: <b>{{.Ev.Outcome}}</b>. The recipe in its order moved the landings beyond the same words shuffled. It does not show the code does what the recipe says.</p>
+
+<h2 id="verdicts"><span class="num">5</span>Good, bad or inconclusive</h2>
+<p class="small">The scale: <b>GOOD</b> means this run gives evidence that the agents used what they were handed; <b>BAD</b> means evidence that they did not, or a weakness of this run that limits what it can say; <b>INCONCLUSIVE</b> means this run cannot tell either way. These marks are my rating of each finding, not the registered rule's outcome, which is in section 4.</p>
+<div class="verdicts">
+<div class="verdict good"><span class="mark good">GOOD</span><h3>The recipe's order moved the landings</h3>
+<p>The honest recipe's agents landed {{pct $r.Landed}} of the fresh flights; the scrambled recipe's, {{pct $s.Landed}}: {{pts $rs.Landed.Difference}} points, 95% interval {{pts (index $rs.Landed.Interval95 0)}} to {{pts (index $rs.Landed.Interval95 1)}}. By the registered rule, {{.Ev.Outcome}}: the same words did better in their honest order than shuffled, so the order of what an agent was handed changed how its program flew.</p></div>
+{{- assert (and (.ZeroIn $sn.Landed.Interval95) (.Below $sn.Landed.Interval90)) "scrambled minus none holds zero at 95% and sits below zero at 90%"}}
+<div class="verdict unclear"><span class="mark unclear">INCONCLUSIVE</span><h3>Does the honest recipe beat no recipe? Not that this run can see</h3>
+<p>Recipe minus none: {{pts $rn.Landed.Difference}} points, 95% interval {{pts (index $rn.Landed.Interval95 0)}} to {{pts (index $rn.Landed.Interval95 1)}}, which holds zero. Scrambled minus none: {{pts $sn.Landed.Difference}} points, 95% interval {{pts (index $sn.Landed.Interval95 0)}} to {{pts (index $sn.Landed.Interval95 1)}}, which holds zero too, only just: its 90% interval, {{pts (index $sn.Landed.Interval90 0)}} to {{pts (index $sn.Landed.Interval90 1)}}, does not.</p>
+<p>My reading, which is not the registered measure: the order effect looks more like the shuffled words hurting than the honest recipe helping. A shuffled plan is not nothing; it is noise the agent has to read and decide about.</p>
+<p><b>What the comparison cannot separate.</b> The control was the plan's own words shuffled into nonsense. So "the honest order won" can mean two different things: that the agents took something from the plan's content, or only that a garbled note costs an agent something (time, confusion, a worse starting idea) that a clear note does not. This run cannot tell those two apart. A next run could, by giving the control group a note that reads well but is wrong for this course: the recipe written for the harder drone course, or the same 7 items kept whole and reordered, or a plausible recipe for a different task. If the honest recipe still wins against a coherent wrong plan, the content mattered; if not, it was the garbling. That is a proposal, not something done here.</p></div>
+<div class="verdict bad"><span class="mark bad">BAD</span><h3>No recipe item reached the code by name</h3>
+<p>Of the recipe's {{$nItems}} items, the honest recipe's controllers name {{printf "%.3g" $r.Words}} on average and the scrambled recipe's {{printf "%.3g" $s.Words}}: not one controller in either group adds a name that matches any item. {{with $n.Naming}}With no recipe, {{numword (len .)}} agent{{if gt (len .) 1}}s{{end}} did, by chance: {{range $i, $id := .}}{{if $i}}, {{end}}<code>{{$id}}</code> named {{range $j, $it := ($.Agent $id).ItemsNamed}}{{if $j}}, {{end}}"{{$it}}"{{end}}{{end}}.{{end}}</p></div>
+<div class="verdict bad"><span class="mark bad">BAD</span><h3>What the agents say they used, their code does not name</h3>
+<p>Asked afterward, all {{$r.SaidPartly}} of the {{$r.Agents}} honest-recipe agents said they followed the recipe only partly or only in part, and {{.Saying "recipe" "simplified form"}} of them described pieces they used "in simplified form". ({{$s.SaidPartly}} of the {{$s.Agents}} scrambled agents also said only partly or only in part.) The code measure finds none of the pieces named. Recipe agent 0 is one case:</p>
+<p class="quote recipe">{{.Quote "easy.recipe.0" "Only partly." "full recipe."}}<span class="by">easy.recipe.0, honest recipe, {{(.Agent "easy.recipe.0").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p>It lists a velocity filter, local position integrals and "{{.Says "easy.recipe.0" "a crude version of the recipe's abort"}}". In its controller the word "abort" sits only in a comment, which the measure removes, and the filter and the integrals have names that carry none of the recipe's words (<a href="#code">section 6</a> shows the lines).</p>
+<p>Neither side of this shows behavior: an account is the agent's word, and a name is only a name. Read by eye, for this one controller and not as a measure, the code does hold a filter on velocity, x and z integrals and a step back to lining up near a gate, under short names the patterns cannot match. So the name count can miss real pieces, and it cannot confirm the accounts either. Checking whether code does what a recipe says needs a test of what the code does, which this experiment did not have.</p></div>
+<div class="verdict bad"><span class="mark bad">BAD</span><h3>One easy course, close to its ceiling</h3>
+<p>With no recipe at all, agents already landed {{pct $n.Landed}} of the fresh flights, near the {{pct0 .Exp.Rule.Ceiling}} line past which the rule would not read landings. A plan has little room to help on a course this easy. One model, one recipe and one course: the result says nothing about a harder course or another model.</p></div>
+</div>
+
+<h2 id="code"><span class="num">6</span>What the code measure reads</h2>
+<p>The recipe's {{$nItems}} items and the word patterns that count each one, the same for every group, fixed in the job file before the run. A pattern is matched, case ignored, against each name in the agent's final <code>controller.js</code> once comments are removed, skipping the names the shared baseline already holds (the baseline itself names one item, its altitude integral <code>integralY</code>, so every group starts at 0).</p>
+<div class="scroll"><table id="items-table"><thead><tr><th>Recipe item</th><th>Patterns</th></tr></thead><tbody>{{range .Items}}<tr><td>{{.Item}}</td><td><code>{{$.ItemPatterns .}}</code></td></tr>{{end}}</tbody></table></div>
+{{- assert (.CommentOnly "easy.recipe.0" "predictive cross abort") "recipe agent 0's abort is named only in a comment"}}
+<p>Recipe agent 0's controller ({{comma (.Agent "easy.recipe.0").Bytes}} characters) as graded, the lines for its velocity filter, its integrals and its abort:</p>
+<pre>{{.CodeLines "easy.recipe.0" "fv.x +=" "// abort" "if (p.x > gate.x - 0.3" "ix = clamp" "iz = clamp"}}</pre>
+<p><code>fv</code> is a filtered velocity, <code>ix</code> and <code>iz</code> are integrals, and the <code>if</code> under the comment sends the drone back to line up again. None of those names matches a pattern, and the one word that does, "abort", is in the comment.</p>
+
+<h2 id="notes"><span class="num">7</span>In their own words</h2>
+<p>Quoted exactly from each agent's answer to the question asked after its session, with the agent's score. The agents' answers are the harness's record of what the model said, outside plimsoll and unsigned; each controller's SHA-256 ties its transcript to its signed grading runs.</p>
+
+<h3>From the honest recipe</h3>
+<p class="quote recipe">{{.Quote "easy.recipe.2" "The change that made the difference" "sitting over the pad."}}<span class="by">easy.recipe.2, {{(.Agent "easy.recipe.2").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote recipe">{{.Quote "easy.recipe.14" "I can't say the recipe's parts" "not an implementation of the recipe."}}<span class="by">easy.recipe.14, {{(.Agent "easy.recipe.14").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote recipe">{{.Quote "easy.recipe.6" "I should have said up front" "listing them afterward."}}<span class="by">easy.recipe.6, {{(.Agent "easy.recipe.6").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+
+<h3>From the scrambled recipe</h3>
+<p class="quote scrambled">{{.Quote "easy.scrambled.8" "I only followed the recipe loosely." "the failures I saw."}}<span class="by">easy.scrambled.8, {{(.Agent "easy.scrambled.8").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote scrambled">{{.Quote "easy.scrambled.6" "No, I mostly didn't follow the recipe." "position error."}}<span class="by">easy.scrambled.6, {{(.Agent "easy.scrambled.6").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote scrambled">{{.Quote "easy.scrambled.9" "Most of my gains came from fixing my own mistakes" "not from the recipe."}}<span class="by">easy.scrambled.9, {{(.Agent "easy.scrambled.9").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+
+<h3>With no recipe</h3>
+<p class="quote none">{{.Quote "easy.none.5" "**Landing:** the altitude integrator" "biggest single fix."}}<span class="by">easy.none.5, {{(.Agent "easy.none.5").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote none">{{.Quote "easy.none.6" "I chose to patch the baseline" "results from `fly`."}}<span class="by">easy.none.6, {{(.Agent "easy.none.6").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+<p class="quote none">{{.Quote "easy.none.4" "I did not use the advance knowledge" "at all."}}<span class="by">easy.none.4, {{(.Agent "easy.none.4").Fresh}} of {{.Ev.FreshCount}} fresh flights</span></p>
+
+<h3 id="every-agent">Every agent, and every answer</h3>
+<p>All {{$t.agents}}, in the order they were built. Open one to read its whole answer, exactly as it came back (the model writes markdown; its bold and lists are kept, nothing else).</p>
+<div class="controls"><div class="seg" role="group" aria-label="group"><button type="button" data-show="all" aria-pressed="true">All {{$t.agents}}</button><button type="button" data-show="recipe" aria-pressed="false">Honest recipe</button><button type="button" data-show="scrambled" aria-pressed="false">Scrambled</button><button type="button" data-show="none" aria-pressed="false">No recipe</button></div><button type="button" class="btn" id="open-all">Open all shown</button><button type="button" class="btn" id="close-all">Close all</button></div>
+<ul class="agents" id="agents">
+{{- range .Ev.Agents}}
+<li data-group="{{.Group}}"><details><summary><span class="swatch" style="background:var(--{{.Group}})"></span><span class="id">{{.ID}}</span> · {{.Fresh}} of {{.FreshTotal}} fresh · {{.Practice}} of {{.PracticeTotal}} practice · {{.Turns}} turns · {{.FlyCalls}} fly calls</summary>
+<div class="meta">Quoted its recipe: {{if .QuotedRecipe}}yes{{else}}no{{end}} · recipe words named in code: {{len .ItemsNamed}}{{range $i, $it := .ItemsNamed}}{{if not $i}} ({{else}}, {{end}}{{$it}}{{end}}{{if .ItemsNamed}}){{end}} · ended: {{.Ended}} · controller <code>{{short .Controller}}</code></div>
+<div class="answer">{{$.Answer .ID}}</div></details></li>
+{{- end}}
+</ul>
+
+<h2 id="limits"><span class="num">8</span>What this does not show</h2>
+<ul>
+<li><b>That the code does what the recipe says.</b> The rule's own outcome says so. Landings are what the code did; names are what it was called. Neither is the recipe's method, read off the code.</li>
+<li><b>That the agents followed the plan's content, rather than being slowed by a garbled note.</b> The control was the same words shuffled into nonsense, so the honest order's win could come from either. A control that reads well but is wrong for this course would separate them (<a href="#verdicts">section 5</a>).</li>
+<li><b>Anything past one easy course, one model and one recipe.</b> The no-recipe agents landed {{pct $n.Landed}}; on a harder course a plan has more room to matter, or to be ignored.</li>
+<li><b>That the two stages ran under one condition.</b> The no-recipe group ran first and the other two {{minutes $st1.Ended $st2.Started}} minutes later, with the same model id and the same sealed flights. A model service can change between calls; the gap here is small, not zero. The recipe and scrambled groups, the pair the rule reads first, ran together, started in turn.</li>
+<li><b>Small effects.</b> {{$r.Agents}}, {{$s.Agents}} and {{$n.Agents}} agents are few. The intervals above say how far each difference could move; a difference smaller than a few points would not show at all.</li>
+<li><b>Why the agents did what they did.</b> Their answers are their own accounts. The page quotes them because they are part of what happened, not because they are evidence of it. The likely reason near the top is a reading of those accounts, not a measurement.</li>
+</ul>
+
+<h2 id="signed"><span class="num">9</span>On plimsoll, signed</h2>
+<p>Each stage is one run of the same job, with its own signed bundle. Every grading run held exactly its share of the practice set or the sealed fresh set, and a leak scan read every call into an agent's sandbox for the practice and fresh seeds and the simulator's files, and every practice run for the seeds.</p>
+</div>
+<div class="tiles" id="stage-tiles">
+{{range .Ev.Stages}}  <div class="tile"><div class="who">Stage {{.Name}}: {{range $i, $g := .Groups}}{{if $i}} and {{end}}{{lower ($.Name $g)}}{{end}}, {{.Agents}} agents, {{clock .Started}} to {{clock .Ended}} UTC</div><div class="big">{{comma .Lines}} <span class="small">lines signed</span></div><div class="small">by the key <code>{{short .Harness}}</code>. {{.GradingRuns}} grading runs (median {{.GradeMedianSeconds}} s, longest {{.GradeMaxSeconds}} s), {{comma .Flights}} graded flights, {{.CPUEnded}} ended by the CPU budget. {{.SessionCalls}} calls into agents' sandboxes and {{.PracticeRuns}} practice runs scanned for {{.Needles}} forbidden strings: {{if eq .Hits 0}}none found{{else}}{{.Hits}} found{{end}}. Every grading run held exactly its sets: <b>{{if .SetsHeld}}yes{{else}}no{{end}}</b>.</div></div>
+{{end}}</div>
+<div class="prose">
+<p><b>The design.</b> Both stages record the SHA-256 of the design they were made under, <code>{{short .Ev.Design}}</code>: the job, the system prompt, each group's brief and after-session question, the tools, the budgets, the request settings, the scrambled recipe and the code checks. This page's program writes that same design from the public job file and checks the digest, so every prompt the agents were given can be rebuilt from the repository:</p>
+<pre>go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -api messages -model {{.Ev.Model}} -design design.json</pre>
+<p><b>The cost.</b> The {{$t.agents}} agents' {{comma .Ev.Cost.Calls}} model calls cost {{usd .Ev.Cost.StagesUSD}} at the list prices checked on {{.Exp.Prices.Checked}} (a million tokens: ${{printf "%g" .Exp.Prices.Input}} of prompt read fresh, ${{printf "%.2f" .Exp.Prices.CacheWrite}} written to the prompt cache, ${{printf "%.2f" .Exp.Prices.CacheRead}} read from it, ${{printf "%g" .Exp.Prices.Output}} written by the model; <a href="{{.Exp.Prices.Source}}">EXTERNAL · official docs ↗</a>), computed from the token counts each stage's <code>run.json</code> records. A {{.Ev.Cost.BeforeCalls}}-call check before the run that the prompt cache worked brings it to <b>{{usd .Ev.Cost.TotalUSD}}</b>. {{.CacheShare}} of the prompt tokens were read from the <dfn data-gloss="prompt-cache">prompt cache</dfn> (the model's provider keeps the start of a long conversation it has already read, and charges a twentieth of the fresh price to read it again), which is what kept the cost low.</p>
+<p class="small">A tier is the daemon's configuration and the provider's evidence plus its startup checks, never hardware attestation.</p>
+
+<h2 id="check"><span class="num">10</span>Check it yourself</h2>
+<p>Beside this page: <code>experiment.json</code> (the stages in order, the registered rule, the list prices), <code>evidence.json</code> (every number this page states) and, under <code>stages/baseline/</code> and <code>stages/recipe/</code>, each stage's run as it wrote it: <code>bundle.jsonl.gz</code> (every run, signed), <code>harness.pub</code> (the public half of the stage's signing key), <code>fresh.json</code> (the sealed set, revealed), <code>run.json</code> (the run's own unsigned account: times, token counts, each agent's turns; its <code>model_base</code> is the local relay that enforced the spending cap, not where the model ran), <code>transcripts.jsonl.gz</code> (every agent's whole conversation, its reasoning summaries and tool calls included), and the <code>evidence.json</code> and <code>agents.json</code> derived from them. From a clone of the repository:</p>
+<pre>go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -staged -verify -out docs/examples/squeeze-recipe</pre>
+<p>That checks every signature in both bundles and every record against the request and answer stored with it, the leak scans, that every grading run held the sealed set whose SHA-256 the run committed to, that both stages were made under the design the program writes and flew the same set, that each agent's record follows from its transcript and its signed grading runs, and that <code>evidence.json</code>, this page and the method page are exactly what those files state: the intervals and the rule's outcome are computed again, not read. It starts no sandbox and calls no model. Change one byte of a bundle and it refuses.</p>
+<p><b>Run it again.</b> It needs docker with gVisor and the images <code>make docker-images</code> builds, an Anthropic API key in <code>ANTHROPIC_API_KEY</code>, and a token budget the program enforces. Seal a fresh set first, then run each stage on it; <code>-paid</code> is the program's consent to spend, and it refuses to start without it:</p>
+<pre>J=examples/squeeze/jobs/recipe-scramble-easy.json
+go run ./examples/squeeze -job $J -seal fresh.json
+go run ./examples/squeeze -job $J -api messages -model {{.Ev.Model}} -paid -max-tokens 90000000 \
+  -fresh fresh.json -fresh-sha256 &lt;its SHA-256&gt; -groups none -out baseline
+go run ./examples/squeeze -job $J -api messages -model {{.Ev.Model}} -paid -max-tokens 90000000 \
+  -fresh fresh.json -fresh-sha256 &lt;its SHA-256&gt; -groups recipe,scrambled -build 16 -out recipe</pre>
+
+<h2 id="words">Words used on this page</h2>
+<dl class="words">
+<dt>Model</dt><dd>An AI program, trained on huge piles of examples, that writes answers, text or code.</dd>
+<dt>Model id</dt><dd>The exact version name of a model that a program asks for, so the same one can be asked for again.</dd>
+<dt>Agent</dt><dd>A model working in a loop on its own: write, run, look, try again.</dd>
+<dt>Sandbox</dt><dd>The walled-off place where untrusted code runs.</dd>
+<dt>Harness</dt><dd>The program that hands out each task, runs it and grades it. Here, <code>examples/squeeze</code>.</dd>
+<dt>Controller</dt><dd>The program that flies the drone: called 100 times a simulated second with sensor readings, it answers with thrust, tilt and turn.</dd>
+<dt>Baseline</dt><dd>The plain controller every agent started from, the same for every group.</dd>
+<dt>Token</dt><dd>The unit a language model reads and writes in; a short word is usually one.</dd>
+<dt>Recipe</dt><dd>An earlier AI's whole method on this course, in {{$loop.RecipeTokens}} tokens.</dd>
+<dt>Scrambled recipe</dt><dd>The same words in a shuffled order: the control for "does the order matter?".</dd>
+<dt>Control group</dt><dd>A group given everything except the thing being tested.</dd>
+<dt>Seed</dt><dd>One number that fixes a random draw, so the same shuffle or the same flight can be made again exactly.</dd>
+<dt>Practice flights</dt><dd>The {{.Ev.PracticeCount}} flights the earlier AI tuned itself on; graded here too, but not the measure.</dd>
+<dt>Smoke flights</dt><dd>The 4 flights the course names for a quick check, open to every agent.</dd>
+<dt>Fresh, or sealed, flights</dt><dd>The {{.Ev.FreshCount}} flights no agent saw, drawn at random and fingerprinted before the run.</dd>
+<dt>SHA-256</dt><dd>A 64-character fingerprint of some bytes: the same bytes always give the same one, a changed byte a different one.</dd>
+<dt>Points</dt><dd>Percentage points of the fresh flights; one flight of {{.Ev.FreshCount}} is about 1.6.</dd>
+<dt>Noise</dt><dd>The part of a score that is luck; a difference "within noise" is one luck alone could have made.</dd>
+<dt>Resampling</dt><dd>Drawing a group's agents again at random, with repeats, many times, to see how far a difference could move.</dd>
+<dt>95% and 90% intervals</dt><dd>The ranges that hold the middle 95% and 90% of those resampled differences.</dd>
+<dt>Registered rule</dt><dd>The rule for reading the result, fixed before the run.</dd>
+<dt>Messages API</dt><dd>The way a program sends the model a request over the internet and reads its answer.</dd>
+<dt>Prompt cache</dt><dd>The provider's copy of the start of a conversation it has already read, charged at a twentieth of the fresh price.</dd>
+<dt>Bundle</dt><dd>One file holding every run's signed record for a stage, one line a record.</dd>
+<dt>Run record</dt><dd>plimsoll's signed statement of one run: digests of what went in and what came out, where it ran, and when (<a href="../../trainers/glossary.html#run-record">INTERNAL · glossary →</a>).</dd>
+</dl>
+
+<div class="foot">
+<p>Sources. The squeeze test and its drone course (<a href="../squeeze/index.html">INTERNAL · example →</a>). The hackathon entry the course and the recipe come from, did-it-learn (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>). The harness, <code>examples/squeeze</code> (<a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">EXTERNAL · source repo ↗</a>). The model's list prices (<a href="{{.Exp.Prices.Source}}">EXTERNAL · official docs ↗</a>). The shuffled-recipe test: the suggestion of a reader who builds AI red-team agents. The method, the statistics and related work: <a href="method.html">INTERNAL · method page →</a>.</p>
+<p>This page is written by <code>examples/squeeze -staged</code> from the files beside it; <code>-verify</code> checks that it still is.</p>
+</div>
+</div>
+</main>
+<script>
+(function(){
+  function tips(wrapId, tipId){
+    var wrap = document.getElementById(wrapId), tip = document.getElementById(tipId), on = null;
+    if (!wrap || !tip) return;
+    function show(el){
+      if (on) on.classList.remove('on');
+      on = el; el.classList.add('on');
+      tip.textContent = el.getAttribute('data-tip');
+      var w = wrap.getBoundingClientRect(), r = el.getBoundingClientRect();
+      var x = r.left - w.left + r.width / 2, y = r.top - w.top;
+      tip.style.opacity = '1';
+      var left = Math.max(0, Math.min(x - tip.offsetWidth / 2, w.width - tip.offsetWidth));
+      tip.style.left = left + 'px';
+      tip.style.top = Math.max(0, y - tip.offsetHeight - 8) + 'px';
+    }
+    function hide(){ if (on) on.classList.remove('on'); on = null; tip.style.opacity = '0'; }
+    wrap.querySelectorAll('.dot').forEach(function(d){
+      d.addEventListener('mouseenter', function(){ show(d); });
+      d.addEventListener('mouseleave', hide);
+      d.addEventListener('focus', function(){ show(d); });
+      d.addEventListener('blur', hide);
+      d.addEventListener('click', function(e){ e.stopPropagation(); show(d); });
+    });
+    document.addEventListener('click', hide);
+  }
+  tips('strips', 'strip-tip');
+  tips('diffs', 'diff-tip');
+  tips('grid', 'grid-tip');
+  tips('headline', 'headline-tip');
+  var buttons = document.querySelectorAll('[data-show]'), items = document.querySelectorAll('#agents > li');
+  buttons.forEach(function(b){
+    b.addEventListener('click', function(){
+      var g = b.getAttribute('data-show');
+      buttons.forEach(function(x){ x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      items.forEach(function(li){ li.hidden = !(g === 'all' || li.getAttribute('data-group') === g); });
+    });
+  });
+  document.getElementById('open-all').addEventListener('click', function(){
+    items.forEach(function(li){ if (!li.hidden) li.querySelector('details').open = true; });
+  });
+  document.getElementById('close-all').addEventListener('click', function(){
+    items.forEach(function(li){ li.querySelector('details').open = false; });
+  });
+})();
+</script>
+</body>
+</html>

@@ -339,6 +339,82 @@ archive encoded twice (base64 of base64) or in hex; and bytes the shipped code i
 enciphers or rearranges. Recognized and not read, by design: a PNG image's pixel data
 (above).
 
+## Images
+
+What is built into a provider's image reaches every sandbox without passing through a
+call, so the call scan cannot see it: the harness's source copied into the image, or a
+held-out seed left in its environment. Two checks read images.
+
+- **Before an image goes anywhere,** `plimsoll-withheld scan-image -set FILE IMAGE` (or
+  `-archive PATH` for one `docker save` already wrote) reads the image as `docker save`
+  writes it. An image is a stack of layers, each a set of files added or deleted; the
+  command scans every regular file of every layer on its own, with its path, and the
+  image's configuration (its environment, labels and build history) whole, as the daemon
+  scans a call. Every layer is read, not only the files the image ends up with, so a file
+  a later layer deletes is still found: it is still in the image's bytes, and whoever
+  holds the image can read it. It exits 1 on a find, 3 when nothing was found but some
+  file was not read whole, and 0 when the image is clean; its last line names the image's
+  ID and the set's digest, the evidence to keep beside a push.
+- **At startup,** plimsolld with the docker provider and a set scans each image it runs,
+  by the content ID it verified, and refuses to serve while a refuse-mode entry is in one;
+  an audit-mode find is logged. Measured on one machine (24 cores, a 922 MB image of
+  13,492 files in 26 layers, 2026-11-05): 12 s alone and 33 s beside other work, with at
+  most 294 MB of memory.
+
+Files not read whole include a file over 64 MiB (the per-file bound above), a layer
+compressed with zstd, and a file holding archive-like bytes past the scan's bounds or
+in a format it does not read. The measured image above had 17. Withheld material inside
+one would not be found. **Startup refuses any unreadable file not on that image's
+known-unreadable list, including with an audit-only withheld set.** An audit-mode
+find still only logs the find; it does not waive this check on unread bytes.
+
+After reviewing the unreadable files, record them with one command per image:
+
+```sh
+plimsoll-withheld known-unreadable -set withheld.json -known known-images.json plimsoll/sandbox
+```
+
+Set `PLIMSOLL_WITHHELD_KNOWN_FILE=known-images.json` for plimsolld. The command
+inspects the image's content ID and reads the image by that ID, so moving a tag during
+the scan cannot approve another image. It creates the list or replaces that image's
+entries, preserving other images. Each entry holds the file's path, the reason it was
+unreadable, and its whole size in bytes from the archive header, even when only part
+was read. A compressed layer's size is its stored size. The paths include the layer
+name, so two layers' copies of a file are separate entries. Control characters,
+invalid UTF-8 bytes, literal backslashes and separator colons are escaped in the keys
+so different names remain distinct; diagnostic names use the scan's existing safe
+escaping. One file can have several reasons, with one entry per reason; a repeated
+path and reason is an error, including repeated unreadable members in an image archive.
+
+**Listing unread bytes acknowledges a gap, not that they are free of withheld
+material.** A matching image ID, path, reason and size lets startup log the unreadable
+file as before. A changed size or reason is unknown. Rebuilding the image changes its
+content ID and needs a new list. Regenerate with the same withheld set the daemon uses:
+its entries can affect which archive bounds a file reaches. Actual refuse-mode finds
+still refuse startup, even in a listed file.
+
+With no list configured, no unreadable file is known: startup refuses an image with
+any such file. An image read completely can start without a list. A configured list
+that is missing or malformed refuses startup. The JSON format is version 1, with an
+`images` array of objects holding `image_id` and `files`; each file has `path`, `reason`
+(the scan's reason name, such as `archive_zstd`) and `size`. Unknown or repeated JSON
+fields, duplicate image IDs, duplicate path/reason pairs, missing fields, unknown
+reasons and trailing data are errors. Lists are limited to 16 MiB to bound startup's
+memory use while leaving room for many images' file lists.
+
+The command writes a private temporary file beside the destination, then replaces it
+atomically after a complete scan and successful `docker save`. A `FILE.lock` directory
+covers the read, merge and replacement; a concurrent writer refuses instead of losing
+another image's update. After a killed writer, confirm it has stopped before removing
+that lock directory and retrying the command. A failed scan or save leaves the old
+list intact. Give the daemon's user read access to the resulting file.
+
+A daemon whose image a hosted provider keeps (Docker Cloud's image store, an E2B
+template, an OpenShell or agent-sandbox cluster) cannot scan it: run `scan-image` before
+the push. A scan catches the mistake of shipping withheld material; it does not hide an
+image from its host, which can read what it stores and runs, scanned or not
+([INTERNAL · Docker Cloud →](dockercloud.md)).
+
 ## What a find does
 
 Each entry has a <dfn>*mode*</dfn>, the set's unless the entry states its own:
@@ -453,8 +529,9 @@ set states nothing.
 - Neither the response nor the run record states the scan yet: a signed record shows
   what ran, not that it was scanned. Until it does, the audit line is the operator's
   evidence, and a caller learns of a find only through a refusal.
-- The provider's image is not scanned: a harness file baked into the image reaches the
-  sandbox without passing through a request.
+- An image a hosted provider keeps is scanned only if its operator runs
+  `plimsoll-withheld scan-image` before pushing it ("Images"); the daemon scans the
+  docker provider's images alone.
 - What a run fetches through a [INTERNAL · capability grant →](capability-grants.md) is not
   scanned, nor is the client a grant places in the sandbox.
 - Archives are read within the bounds of "Archives": a call past one, or carrying an

@@ -88,16 +88,22 @@ func (o Operation) argList() []string {
 // and a required query/header/cookie parameter, which a brokered call has no way to send.
 type SkippedOp struct {
 	Method string
-	Path   string
+	Path   string // the path as the document writes it, without the servers' base path
 	Reason string
 }
 
 // Result is the generated grant description: the core artifacts, optional health probe,
 // and the parsed operations they were built from.
 type Result struct {
-	Title      string
-	Version    string
-	Global     string
+	Title   string
+	Version string
+	Global  string
+	// BasePath is the path part of the document's server URL ("/client/v4" for
+	// https://api.cloudflare.com/client/v4), which starts every route in Allow and every
+	// path the preamble calls, because OpenAPI appends each path to the server URL. A
+	// grant's base_url is an origin only, so the base path has to be in the routes. Empty
+	// when the servers have no path or the document declares none.
+	BasePath   string
 	Allow      []sandbox.HostRoute // deduped, sorted; the grant's allow list
 	Operations []Operation         // sorted by (path, method)
 	Skipped    []SkippedOp         // operations dropped as unrepresentable (with reason)
@@ -141,7 +147,14 @@ func (r *Result) AllowStrings() []string {
 type oaDoc struct {
 	OpenAPI string                `json:"openapi"`
 	Info    oaInfo                `json:"info"`
+	Servers []oaServer            `json:"servers"`
 	Paths   map[string]oaPathItem `json:"paths"`
+}
+
+// oaServer is one Server Object, read only for its URL: OpenAPI appends every path to
+// the server URL, so the URL's path part is the start of every route a grant allows.
+type oaServer struct {
+	URL string `json:"url"`
 }
 
 type oaInfo struct {
@@ -155,6 +168,7 @@ type oaPathItem struct {
 	// operations and disappear from the generated surface without a word.
 	Ref        string        `json:"$ref"`
 	Parameters []oaParameter `json:"parameters"` // apply to every operation on the path
+	Servers    []oaServer    `json:"servers"`    // replace the document's servers for this path
 	Get        *oaOperation  `json:"get"`
 	Put        *oaOperation  `json:"put"`
 	Post       *oaOperation  `json:"post"`
@@ -170,6 +184,7 @@ type oaOperation struct {
 	Summary     string          `json:"summary"`
 	RequestBody json.RawMessage `json:"requestBody"`
 	Parameters  []oaParameter   `json:"parameters"`
+	Servers     []oaServer      `json:"servers"` // replace the path's or document's servers
 	// HealthCheck is the `x-plimsoll-health-check` OpenAPI extension: an explicit
 	// operator marker designating THIS operation as the grant's backpressure health
 	// probe. It is the ONLY way to designate one, and must resolve to a concrete GET.
@@ -294,6 +309,10 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 	if len(doc.Paths) == 0 {
 		return nil, fmt.Errorf("specgen: spec declares no paths")
 	}
+	base, err := basePath(doc.Servers)
+	if err != nil {
+		return nil, fmt.Errorf("specgen: servers: %w", err)
+	}
 
 	paths := make([]string, 0, len(doc.Paths))
 	for p := range doc.Paths {
@@ -311,11 +330,17 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 	byID := map[string][]opRef{} // raw operationId -> every operation carrying it
 	var batchMarks []batchMark   // ops marked x-plimsoll-batch-of
 
-	for _, path := range paths {
-		item := doc.Paths[path]
+	for _, specPath := range paths {
+		item := doc.Paths[specPath]
 		if strings.TrimSpace(item.Ref) != "" {
-			return nil, fmt.Errorf("specgen: path %q is a $ref (%q); specgen resolves no references, so bundle/dereference the spec before generating", path, item.Ref)
+			return nil, fmt.Errorf("specgen: path %q is a $ref (%q); specgen resolves no references, so bundle/dereference the spec before generating", specPath, item.Ref)
 		}
+		if !strings.HasPrefix(specPath, "/") {
+			return nil, fmt.Errorf("specgen: path %q must start with /", specPath)
+		}
+		// The path the broker sees: OpenAPI appends the spec's path to the server URL,
+		// and a grant's base_url is an origin only, so the server's path starts the route.
+		path := base + specPath
 		route, rawParams, err := deriveRoute(path)
 		if err != nil {
 			return nil, err
@@ -335,6 +360,12 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 			skipReason, warning, err := classifyParams(m.name, path, item.Parameters, op.Parameters)
 			if err != nil {
 				return nil, err
+			}
+			if skipReason == "" {
+				skipReason, err = ownServers(doc.Servers, item.Servers, op.Servers)
+				if err != nil {
+					return nil, fmt.Errorf("specgen: %s %s: servers: %w", m.name, specPath, err)
+				}
 			}
 			ref := opRef{route: m.name + " " + route, skip: skipReason}
 			if !m.supported {
@@ -368,11 +399,11 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 				// Represent nothing we can't enforce: emitting a HEAD/OPTIONS/TRACE allow
 				// entry would be rejected by the grant validator, and a client method for it
 				// could never succeed. Report it instead of dropping it silently.
-				skipped = append(skipped, SkippedOp{Method: m.name, Path: path, Reason: "host-API grants enforce only GET/PUT/POST/DELETE/PATCH"})
+				skipped = append(skipped, SkippedOp{Method: m.name, Path: specPath, Reason: "host-API grants enforce only GET/PUT/POST/DELETE/PATCH"})
 				continue
 			}
 			if skipReason != "" {
-				skipped = append(skipped, SkippedOp{Method: m.name, Path: path, Reason: skipReason})
+				skipped = append(skipped, SkippedOp{Method: m.name, Path: specPath, Reason: skipReason})
 				continue
 			}
 			if warning != "" {
@@ -455,6 +486,7 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 		Title:       title,
 		Version:     version,
 		Global:      global,
+		BasePath:    base,
 		Allow:       allow,
 		Operations:  ops,
 		Skipped:     skipped,
@@ -521,6 +553,95 @@ func bodyAllowed(method string) bool {
 	default:
 		return false
 	}
+}
+
+// basePath returns the path every route of a server list starts with: the path part of
+// each server URL, without a trailing "/". OpenAPI appends every path to the server URL
+// as written, so for https://api.cloudflare.com/client/v4 the route of /accounts is
+// /client/v4/accounts, and a grant's base_url, an origin only, cannot carry the
+// difference. No servers means OpenAPI's default, "/", and so no prefix.
+//
+// It fails closed where the prefix is not knowable: servers that disagree on the path (a
+// grant holds one set of routes), a variable in the path (a route is literal), a URL
+// relative to the document's own location (which specgen is not told), and a query or
+// fragment (which no route can hold).
+func basePath(servers []oaServer) (string, error) {
+	var base string
+	for i, s := range servers {
+		p, err := serverPath(s.URL)
+		if err != nil {
+			return "", err
+		}
+		if i > 0 && p != base {
+			return "", fmt.Errorf("server URLs disagree on the base path (%q and %q); a grant holds one set of routes, so keep only the servers the grant will reach", base, p)
+		}
+		base = p
+	}
+	return base, nil
+}
+
+// serverPath is the path part of one server URL, without a trailing "/".
+func serverPath(raw string) (string, error) {
+	u := strings.TrimSpace(raw)
+	if hasLineBreakOrControl(u) {
+		return "", fmt.Errorf("server URL %q contains a control character or line terminator", raw)
+	}
+	if strings.ContainsAny(u, "?#") {
+		return "", fmt.Errorf("server URL %q has a query or fragment, which no route can hold", raw)
+	}
+	var p string
+	switch {
+	case strings.Contains(u, "://"), strings.HasPrefix(u, "//"):
+		rest := u[strings.Index(u, "//")+2:]
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			p = rest[i:]
+		}
+	case u == "" || strings.HasPrefix(u, "/"):
+		p = u
+	default:
+		return "", fmt.Errorf("server URL %q is relative to the document's own location, which specgen is not told; give an absolute URL or a path starting with /", raw)
+	}
+	if strings.ContainsAny(p, "{}") {
+		return "", fmt.Errorf("server URL %q has a variable in its path, and a route is literal; write the value into the URL", raw)
+	}
+	return strings.TrimRight(p, "/"), nil
+}
+
+// ownServers returns why an operation cannot share the document's grant when it, or its
+// path, declares servers of its own that differ from the document's, and "" otherwise.
+// OpenAPI lets an operation live on another host or under another base path (Cloudflare's
+// document serves its stream routes from a host of each stream's own); a grant reaches
+// one origin with one set of routes, so such an operation is reported, not emitted under
+// the document's base path, where it would not exist.
+func ownServers(doc, pathLevel, opLevel []oaServer) (string, error) {
+	own := opLevel
+	if len(own) == 0 {
+		own = pathLevel
+	}
+	if len(own) == 0 {
+		return "", nil
+	}
+	urls := func(list []oaServer) []string {
+		if len(list) == 0 {
+			return []string{""} // OpenAPI's default server, "/", without its trailing "/"
+		}
+		out := make([]string, 0, len(list))
+		for _, s := range list {
+			out = append(out, strings.TrimRight(strings.TrimSpace(s.URL), "/"))
+		}
+		sort.Strings(out)
+		return out
+	}
+	mine, theirs := urls(own), urls(doc)
+	if strings.Join(mine, "\n") == strings.Join(theirs, "\n") {
+		return "", nil
+	}
+	for _, u := range mine {
+		if hasLineBreakOrControl(u) {
+			return "", fmt.Errorf("server URL %q contains a control character or line terminator", u)
+		}
+	}
+	return fmt.Sprintf("is served from servers of its own (%s), not the document's, and a grant reaches one origin with one set of routes; generate its profile from a document whose servers are those", strings.Join(mine, ", ")), nil
 }
 
 // deriveRoute turns a spec path template into an allowlist template and the ordered

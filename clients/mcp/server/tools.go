@@ -360,6 +360,34 @@ func (s *Server) checkInput(in runInput) (sandbox.Language, []sandbox.File, *fai
 	return lang, withKit, f
 }
 
+// withCallFiles puts the embedder's call files (SetCallFiles) before a call's own. A call
+// file at one of their paths is refused, and so is a call they leave no room for.
+func (s *Server) withCallFiles(files []sandbox.File, code int) ([]sandbox.File, *failure) {
+	if s.callFiles == nil {
+		return files, nil
+	}
+	theirs := s.callFiles()
+	if len(theirs) == 0 {
+		return files, nil
+	}
+	total, at := code, map[string]bool{}
+	for _, f := range theirs {
+		at[f.Path] = true
+		total += len(f.Content)
+	}
+	for _, f := range files {
+		if at[f.Path] {
+			return nil, refused(sandbox.RefusalRequest, "%q is a file this server writes into every call; give your file another path", f.Path)
+		}
+		total += len(f.Content)
+	}
+	out := append(slices.Clone(theirs), files...)
+	if limit := sandbox.MaxProjectBytes - (16 << 10); total > limit || len(out) > MaxFiles {
+		return nil, refused(sandbox.RefusalRequest, "the files this server writes into every call and this call's files and code hold %d bytes in %d files; a call takes at most %d bytes in %d files", total, len(out), limit, MaxFiles)
+	}
+	return out, nil
+}
+
 // kit is the configured kit named name, or nil.
 func (s *Server) kit(name string) *Kit {
 	for i := range s.cfg.Kits {
@@ -400,6 +428,9 @@ func withKitFiles(k *Kit, files []sandbox.File, code int) ([]sandbox.File, *fail
 func (s *Server) runCode(ctx context.Context, in runInput) (runOutput, *failure) {
 	lang, files, f := s.checkInput(in)
 	if f != nil {
+		return runOutput{}, f
+	}
+	if files, f = s.withCallFiles(files, len(in.Code)); f != nil {
 		return runOutput{}, f
 	}
 	release, f := s.admitRun()

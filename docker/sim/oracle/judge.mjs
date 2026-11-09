@@ -29,6 +29,10 @@
 // controller that leaves a child behind can still rewrite OUT after it is written,
 // which is why the grader checks the artifact against the printed fingerprint.
 //
+// Nor can the controller read a file other than its own: it runs under node's permission model with reads allowed
+// only on the regular files beside it when it starts, so a plant module under /models, this runner and node:wasi
+// are refused to it (ERR_ACCESS_DENIED), and so are file writes, child processes, workers and addons.
+//
 // The plant says how many inputs it takes per tick (sim_nin, 1 if absent); the
 // controller answers that many numbers per line, space separated. OUT is
 // little-endian float64: per tick the state (sim_width values), then the inputs
@@ -45,7 +49,8 @@
 // state exactly after any perturbation, so the trajectory and its fingerprint are
 // the same with and without --jac for the same controller answers; the run summary
 // line names the Jacobian file, its kind and its own SHA-256.
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, lstatSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
@@ -152,7 +157,15 @@ const jacHeader = jacKind === 'state' ? `state ${nx}` : `out ${width} ${nin}`;
 const rc = sim_init(params[0], params[1], params[2], h, tEnd);
 if (rc < 0) { console.error(`plant refused to initialise: ${rc}`); process.exit(1); }
 
-const child = spawn(process.execPath, ['--no-warnings', controller], { stdio: ['pipe', 'pipe', 'inherit'] });
+// The controller reads its own files and nothing else, under node's permission model: the regular files beside it
+// as they are now (never a link; the scenario file is already gone and OUT is written after it exits), which holds
+// its code and any module of its own such as a compiled controller.wasm; and no plant module, no runner, no WASI,
+// child process, worker, addon or file write. A plant module in its reach would be simulation nobody counts or
+// sees. The permission model is node's seatbelt, not a security boundary; the container is that.
+const ownDir = dirname(resolve(controller));
+const ownCode = readdirSync(ownDir).filter((f) => lstatSync(join(ownDir, f)).isFile())
+  .map((f) => `--allow-fs-read=${join(ownDir, f)}`);
+const child = spawn(process.execPath, ['--no-warnings', '--permission', ...ownCode, controller], { stdio: ['pipe', 'pipe', 'inherit'] });
 const closed = new Promise((resolve) => child.on('close', resolve));
 const answers = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 const record = new Float64Array(ticks * (width + nin));

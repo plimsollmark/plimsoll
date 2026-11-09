@@ -39,7 +39,9 @@ plimsoll talks to the Kubernetes API over plain HTTPS with a bearer token, with 
 client library. It runs each command through sandboxd, the daemon agent-sandbox puts in every
 sandbox's pod, over sandboxd's gRPC process service: its `.proto` files are copied at v1.0.7
 under [third_party/agentsandbox](../third_party/agentsandbox/README.md) (Apache-2.0) and
-spoken through connect-go, the RPC library plimsoll already uses. The package is separate
+spoken through connect-go, the RPC library plimsoll already uses, over TLS to a terminator of
+plimsoll's in the pod, since sandboxd itself serves none ([below](#the-control-channel-is-tls)).
+The package is separate
 from package `sandbox` because the generated code registers the same protobuf names as
 agent-sandbox's own Go SDK. plimsoll is an independent project, not affiliated with or
 endorsed by the Kubernetes project.
@@ -55,6 +57,14 @@ Containers 4.2.0 with Cloud Hypervisor, under both of Kata's runtimes. On that c
 pod answered a snippet in 50 to 250 ms from claim to result (160 to 360 ms under Kata), and
 the daemon was ready, smoke test included, in about 3 seconds (about 4 under Kata). The docker suite also runs the scripts the smoke test sends
 into a pod, in docker's locked-down container, so a broken script fails the ordinary gate.
+With the TLS channel ([below](#the-control-channel-is-tls)) the whole suite passed again on
+2026-11-05 on that cluster under gVisor, and the provider's tests passed under runc and under
+Kata (`kata-clh-runtime-rs`), each smoke test reporting the guest's open of the key refused
+for permission and no answer to cleartext on the terminator's port. Under runc and Kata the
+daemon test then waited on the cluster, not the channel: with the node's CPU reserved by
+other pools, a claim's new pod was not scheduled within a snippet's 5 seconds (the daemon's
+log: "claim not ready"). The same suite with another CA pinned, and with another server
+name, refused every run at its first command, before anything was sent.
 
 [The evidence page (INTERNAL · example page →)](examples/agentsandbox/index.html) shows two
 requests on that cluster through a hardened daemon, under gVisor and again under Kata
@@ -62,7 +72,8 @@ requests on that cluster through a hardened daemon, under gVisor and again under
 materials, whose results are byte for byte those of the same requests on docker under gVisor
 and on a Docker Cloud microVM; what a Kata pod's kernel said (its Linux boot line and a boot ID
 other than the node's, the two things the per-pod check reads); and five refusals, among them
-a node whose runsc handler was remapped to runc under a running daemon.
+a node whose runsc handler was remapped to runc under a running daemon. It was recorded before
+the control channel was encrypted, so its pods ran sandboxd directly on cleartext HTTP/2.
 
 ## What the operator sets up
 
@@ -92,7 +103,11 @@ a node whose runsc handler was remapped to runc under a running daemon.
   its node's). Nothing else.
 - **An image with sandboxd and plimsoll's runner.**
   [docker/agentsandbox.Dockerfile](../docker/agentsandbox.Dockerfile) builds it from
-  `plimsoll/sandbox`: sandboxd from the v1.0.7 commit at `/usr/local/bin/sandboxd`, and
+  `plimsoll/sandbox`: sandboxd from the v1.0.7 commit at `/usr/local/bin/sandboxd`;
+  plimsoll's TLS terminator at `/usr/local/bin/plimsoll-sandboxd-tls`
+  ([docker/sandboxdtls](../docker/sandboxdtls/main.go), Go's standard library only), which
+  starts sandboxd and stands in front of it ([below](#the-control-channel-is-tls)); the
+  directory `/etc/plimsoll`, root's and mode 0700, where the TLS Secret is mounted; and
   util-linux's `setpriv` at `/bin/setpriv`, which drops every command to the guest user.
   `SANDBOX_AGENTSANDBOX_IMAGE` names it exactly as the template writes it; with
   `SANDBOX_REQUIRE_PINNED_IMAGES=1` it must be pinned by `@sha256:`, and that digest is
@@ -101,6 +116,16 @@ a node whose runsc handler was remapped to runc under a running daemon.
   `SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE`, never in the environment. The template starts
   sandboxd with `--auth-token-sha256=` and the token's SHA-256 in hex: sandboxd runs as root,
   and without a token, code in the pod could ask it on loopback to run a command as root.
+- **A TLS certificate for sandboxd, from a certificate authority of the deployment's own.**
+  Make a CA (openssl, cert-manager's CA issuer or any other tool) and one server certificate
+  for the name plimsolld checks, `sandboxd.plimsoll.invalid` unless
+  `SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME` names another (`.invalid` is a name reserved
+  never to resolve, so it can be checked but never dialed: plimsolld dials each pod's
+  address). Put the certificate and its key in a `kubernetes.io/tls` Secret in the pool's
+  namespace (keys `tls.crt` and `tls.key`), and the CA certificate in a file named by
+  `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE`, which plimsolld reads at startup: PEM certificates
+  and nothing else. plimsolld trusts that file alone, never the system's roots, and never reads
+  the Secret, so its service account needs no access to secrets.
 - **A template and a warm pool**, named by `SANDBOX_AGENTSANDBOX_WARM_POOL` (the pool, which
   names its template) in `SANDBOX_AGENTSANDBOX_NAMESPACE`, whose pods plimsoll's read-back
   accepts:
@@ -112,13 +137,18 @@ a node whose runsc handler was remapped to runc under a running daemon.
     shared process namespace, no init or ephemeral container, one container;
   - `dnsPolicy: None` with the one nameserver `127.0.0.1` and no search domain: Kubernetes'
     default writes the node's search domains into the pod;
-  - the container: the image, `/usr/local/bin/sandboxd` as its command with the token
-    digest and every argument in the `--name=value` form (sandboxd's flag parser stops at
-    `--` or a bare word, and lets a flag without `=` take the next argument as its value,
-    so any other form could make it read other flags than plimsoll checked),
-    `allowPrivilegeEscalation: false`, a read-only root filesystem, all capabilities
-    dropped but `SETUID` and `SETGID`, and memory and CPU limits equal to `SANDBOX_MEMORY_MB`
-    and `SANDBOX_CPUS` (default 256 MiB and 1 CPU);
+  - the container: the image, `/usr/local/bin/plimsoll-sandboxd-tls` as its command,
+    followed by sandboxd's flags, which the terminator passes on: the token digest, exactly
+    one `--listen-host=127.0.0.1` and one `--grpc-port=9091` (sandboxd on loopback, where only
+    the terminator forwards), and every argument in the `--name=value` form (sandboxd's flag
+    parser stops at `--` or a bare word, and lets a flag without `=` take the next argument
+    as its value, so any other form could make it read other flags than plimsoll checked;
+    the terminator refuses them too), `allowPrivilegeEscalation: false`, a read-only root
+    filesystem, all capabilities dropped but `SETUID` and `SETGID`, and memory and CPU limits
+    equal to `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` (default 256 MiB and 1 CPU). A readiness
+    probe, if any, is a TCP probe on port 9090: sandboxd's own ports, the REST one included,
+    are on loopback, and the terminator answers nothing but TLS with HTTP/2, so an HTTP
+    probe never succeeds;
   - every volume an `emptyDir` with `medium: Memory` and a `sizeLimit`, mounted whole at a
     clean path, one of them `/work`. A disk-backed one is capped only when the kubelet's
     periodic eviction notices, so a run could fill the node's disk until then; with
@@ -127,37 +157,98 @@ a node whose runsc handler was remapped to runc under a running daemon.
     when an image symlink hides the relationship from the API path check. Under Kata no volume
     keeps its size limit, so `SANDBOX_DISK_MB` fails startup there
     ([below](#kata-containers-the-vm-tier));
+  - one more volume, the TLS Secret: a `secret` volume naming its Secret, with
+    `defaultMode: 0400` (256 in JSON; unset, Kubernetes would make the key readable by every
+    user in the pod), not `optional` and with no `items`, mounted once, `readOnly: true`, at
+    `/etc/plimsoll/sandboxd-tls`, with no other volume mounted at, over or inside
+    `/etc/plimsoll`. It is outside the writable volumes and outside `SANDBOX_DISK_MB`'s sum;
   - `terminationMessagePath` somewhere the guest cannot reach, such as
     `/root/termination-log`. The default, `/dev/termination-log`, is a file the kubelet
     mounts from the node's disk, writable by every user in the container (measured: 64 MiB
     written by the guest landed on the node). Every pod is held to it, outside `/tmp`,
     `/dev` and every volume, so a warm pod made from an older template is refused too.
   - a network policy (the template's own `networkPolicy` will do) that denies egress, and
-    none in the namespace that allows any; ingress only to sandboxd's gRPC port, 9090, from
-    where plimsolld runs.
+    none in the namespace that allows any; ingress only to the TLS terminator's port, 9090,
+    from where plimsolld runs.
 
   [An example template, pool and service account](agentsandbox-example.yaml) passes the
   read-back.
 
-### The control channel is cleartext
+### Hardened mode and the pod network
 
-sandboxd serves no TLS, so plimsolld reaches it over plain HTTP/2 at the pod's address, port
-9090. Everything a run needs crosses that path unencrypted: the sandboxd token in every
-request, the code and files, each project's plan with the run's report key (the key that
-proves a result came from plimsoll's runner and not from the guest), and every byte of
-output. The network policy above decides who may connect to the port; it does not stop
-anyone on the pod network from reading or rewriting the traffic. Someone who can do that
-can read every tenant's code and output, change a result before plimsolld records it, and
-replay the token, which stays valid for every later pod until it is changed.
+With `PLIMSOLL_HARDENED=1` plimsolld refuses to serve this provider unless
+`SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1` states that the pod network between it and the
+sandbox pods is authenticated and encrypted (a network plugin with WireGuard or IPsec, or a
+service mesh with mutual TLS). The reason: the TLS channel above does not yet tie a
+connection to the one pod dialed. Every pod's terminator serves the same certificate, so the
+check proves the peer is a plimsoll sandbox pod, not which one, and someone who can rewrite
+traffic between plimsolld and the pods could send one caller's run into another caller's pod.
+The daemon cannot see whether the network beneath prevents that, so the operator states it.
+The requirement is lifted when each pod has a key of its own and the daemon checks it.
 
-So run the provider only on a pod network that encrypts traffic between nodes and pods: a
-network plugin with WireGuard or IPsec turned on, or a service mesh with mutual TLS on the
-path from plimsolld to sandboxd. The daemon cannot check this, so hardened mode requires
-the operator to state it with `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`
-([hardened mode](hardened-mode.md)). Change the sandboxd token on a schedule all the same:
-a new token file, the template's `--auth-token-sha256` of it, and a daemon restart. A local
-kind cluster's default network is not encrypted, so evidence recorded on one shows the
-boundary checks, not a protected channel.
+### The control channel is TLS
+
+Everything a run needs crosses one connection from plimsolld to the pod: the sandboxd token
+in every request, the code and files, each project's plan with the run's report key (the key
+that proves a result came from plimsoll's runner and not from the guest), and every byte of
+output. sandboxd serves no TLS (its own guide says so), and the network policy above decides
+only who may connect, not who may read or rewrite the traffic. So the channel is encrypted
+and authenticated by plimsoll itself:
+
+- In the pod, `plimsoll-sandboxd-tls` is the container's first process. It refuses to start
+  unless sandboxd's flags put it on loopback port 9091 alone and give it one token digest to
+  check (`--auth-token-sha256`, never a token file), and the key file is closed to every user
+  but root; then it starts sandboxd, waits for its port, and listens on 9090 (so a
+  readiness probe on 9090 means the whole chain is up). Each connection must finish a TLS 1.3
+  handshake within 10 seconds and agree on HTTP/2 before a byte reaches sandboxd; the bytes
+  are then copied unchanged both ways. It reads the certificate and key again at every
+  handshake, so a rotated Secret reaches warm pods without a restart. A failed handshake is
+  logged by its kind (not TLS, timed out, no protocol in common), never with the error's text,
+  which can quote what the client sent, and at most 16 lines a minute.
+- plimsolld speaks HTTP/2 over TLS 1.3 alone, to `https://<pod address>:9090`: no HTTP/1.1, no
+  cleartext HTTP/2 and no proxy. It accepts only a certificate that chains to the CA in
+  `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE` and carries the configured name, and refuses a
+  connection with no verified chain or no HTTP/2 even if a later change skipped a check.
+- A pod that cannot prove itself (a certificate from another CA, another name, an expired
+  one, a port that speaks no TLS) gets nothing: the handshake comes before any request, so
+  neither the token nor any code is sent, and the run is refused, marked not dispatched
+  (reason `environment`), with the CA file and the name in the message. At startup the smoke
+  test's own claims take the same path, so a wrong CA or name stops plimsolld from serving.
+  A terminator that refuses to start leaves its pod unready; its reason is in the pod's log.
+- The guest cannot read the key: `/etc/plimsoll` is root's with mode 0700, the key file is
+  root's and closed to group and others (0400 as the example mounts it), the guest is another user with no capabilities, and the key's only
+  other copy is in the terminator's memory, process 1, which the guest cannot open. The
+  smoke test proves both from inside the pod ([below](#startup-smoke-test)).
+
+**What it does not prove: which pod answered.** Every pod of a deployment serves the same
+certificate and key, so the certificate proves the peer is a plimsoll sandbox pod of this
+deployment, not the pod plimsolld dialed. plimsolld dials each claimed pod's address and checks
+the certificate against one fixed name, never against that address. Someone who can rewrite
+traffic on the pod network (a compromised node or network plugin component, or address or
+route manipulation on the node network) can therefore redirect plimsolld's connection for one
+caller's pod to another pod of the same deployment, for example one the attacker's own run has
+claimed. The handshake passes, the tier check passes (the other pod is a genuine pod of the
+same tier), and plimsolld then sends that run's token, code, files and plan into the wrong
+pod, where code the attacker controls could read them and shape the output returned under the
+run's record. The channel stops someone who only watches or alters the traffic without being
+able to redirect it to a pod of the deployment; it does not stop this on-path redirection. The
+fix, a certificate or key per pod bound to the pod dialed, is not built yet; until it is,
+hardened mode requires `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`, your statement that the
+network layer described next is in place ([above](#hardened-mode-and-the-pod-network)).
+
+If you fear an attacker with an on-path position on the pod network, do not rely on this
+channel alone. Run the pod network as an authenticated, encrypted one that ties traffic to the
+workload it reaches: a network plugin with WireGuard or IPsec between nodes, or a service mesh
+with mutual TLS in which each pod has its own identity, and keep the network policy above, so
+that a redirect is dropped at the network layer. plimsolld cannot check it, which is why
+hardened mode asks you to state it rather than testing for it.
+
+What else it leaves: a guest that became root in its pod (which takes a flaw in the runtime's
+boundary, not a setting) could read the shared key and, from a position on the pod network,
+pass for any pod until the Secret is replaced. Rotate the Secret and the sandboxd token on a
+schedule (a new token file, the template's `--auth-token-sha256` of it, and a daemon
+restart). To change the CA, put the old and the new certificate in the CA file, restart
+plimsolld, replace the Secret, then drop the old certificate.
 
 **A closed pod and container schema.** Both the template and each actual pod refuse unknown
 pod-spec and container fields, including unknown fields inside decoded probes, mounts and
@@ -220,7 +311,8 @@ so an operator who changes the class restarts the daemon, as for a changed templ
    server's clock is more than a minute from plimsolld's.
 3. Reads the claimed pod back (the same checks, its image by digest, every network policy
    that selects it, the runtime class again) before any code is sent.
-4. Runs one command of its own in the pod, as the guest, before any of the run's code: the
+4. Runs one command of its own in the pod, as the guest, before any of the run's code, over
+   the TLS channel, so a pod whose terminator cannot prove itself is refused here: the
    first line of the kernel log, which under the kernel tier must be gVisor's boot line and
    under Kata a Linux kernel's; the kernel's boot ID, which under Kata must differ from the
    one the pod's node reports, since a pod on the node's own kernel shares it; and the seccomp
@@ -267,8 +359,13 @@ the read-back cannot see:
   the node's; under runc, a seccomp filter is in force on the guest. Every run repeats this
   check in its own pod (step 4 above), since the smoke test sees only the nodes its two pods
   landed on;
+- sandboxd refuses the guest's process starts on its loopback port without the token and
+  with a wrong one;
+- the guest's open of the TLS key fails for lack of permission, and a cleartext process start
+  sent to the terminator's port gets no answer from sandboxd;
 - a project step cannot open the runner's plan and report descriptors or memory, nor
-  sandboxd's.
+  sandboxd's memory, environment or input, nor those of the terminator (process 1, which
+  holds the TLS key).
 
 A failure refuses startup.
 

@@ -98,3 +98,18 @@ func TestBundleJSONIncludesBatchOf(t *testing.T) {
 		t.Fatalf("bundle batch_of = %v (%v)", bundle.BatchOf, err)
 	}
 }
+
+// A programmatic consumer learns the base path the routes start with, so it does not
+// have to read the servers itself to set an origin-only base_url.
+func TestBundleJSONIncludesBasePath(t *testing.T) {
+	var got bytes.Buffer
+	if err := printBundleJSON(&got, &specgen.Result{BasePath: "/client/v4"}); err != nil {
+		t.Fatal(err)
+	}
+	var bundle struct {
+		BasePath string `json:"base_path"`
+	}
+	if err := json.Unmarshal(got.Bytes(), &bundle); err != nil || bundle.BasePath != "/client/v4" {
+		t.Fatalf("bundle base_path = %q (%v)", bundle.BasePath, err)
+	}
+}

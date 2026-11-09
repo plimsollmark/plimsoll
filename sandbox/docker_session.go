@@ -64,6 +64,11 @@ const (
 	// ReconcileOrphans reads it (review F2).
 	dockerSessionLabel = "io.plimsoll.session"
 	dockerExpiresLabel = "io.plimsoll.expires"
+	// dockerInstanceLabel names the DockerSandbox that started a container, a random id
+	// per value, so the containers of several daemons (or test runs) on one docker host
+	// can be told apart: docker ps --filter label=io.plimsoll.instance=ID. Nothing reads
+	// it to decide anything; ReconcileOrphans still reaps by lifetime alone.
+	dockerInstanceLabel = "io.plimsoll.instance"
 	// dockerReapMargin is how long past its declared lifetime a container must be
 	// before ReconcileOrphans removes it, so a clock difference between two daemons
 	// sharing a docker host never removes a live one, nor a run's container while its
@@ -285,7 +290,7 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	}
 	args := []string{"run", "-d", "--name", s.name, "--log-driver", "none", "--init",
 		"--label", dockerSessionLabel + "=1"}
-	args = append(args, expiresLabelArgs(label)...)
+	args = append(args, d.labelArgs(label)...)
 	// A session's container applies the default profile for its life: a grant with
 	// sdk_env is refused in a session (CheckSessionGrant), since a later call could not
 	// change the profile of processes already running.
@@ -319,6 +324,17 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 		return nil, err
 	}
 	return s, nil
+}
+
+// instance is d's id for dockerInstanceLabel.
+func (d *DockerSandbox) instance() string {
+	d.instanceOnce.Do(func() { d.instanceID = randID() })
+	return d.instanceID
+}
+
+// labelArgs labels a container d starts: its lifetime and d's instance.
+func (d *DockerSandbox) labelArgs(expires time.Time) []string {
+	return append(expiresLabelArgs(expires), "--label", dockerInstanceLabel+"="+d.instance())
 }
 
 // expiresLabelArgs declares t, rounded up to the second, as a container's lifetime

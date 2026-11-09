@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proof of what ran: the record plimsoll writes for every run</title>
+<meta name="description" content="For newcomers: what a run record holds (digests of what was sent and what came back, not the code), why the client recomputes both, what signing adds and who holds the key, and what a receipt cannot prove, checked in your browser against five real runs.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/proof-of-what-ran/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="Proof of what ran: the record plimsoll writes for every run">
+<meta property="og:description" content="For newcomers: what a run record holds, why the client recomputes it, who holds the signing key, and what a receipt cannot prove, checked in your browser against five real runs.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/proof-of-what-ran/index.html">
+<style>
+:root { color-scheme: light; --ink: #1a1a1a; --mut: #565656; --rule: #dcd7cd; --bg: #fbfaf7; --card: #ffffff;
+  --accent: #0f4a85; --soft: #e8eff7; --good: #1e6b2f; --good-bg: #e6f4ea; --bad: #8a1c1c; --bad-bg: #fdecea;
+  --warn: #7a4b00; --warn-bg: #fdf3dc; --code: #f3f0e9; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 50rem; margin: 0 auto; padding: 1.2rem 1.2rem 4rem; }
+nav.site { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline; padding: 0 0 12px; margin: 0 0 1.6rem; border-bottom: 1px solid var(--rule); font-size: 15px; }
+nav.site a { color: var(--accent); }
+nav.site a.home { font-weight: 700; text-decoration: none; }
+.eyebrow { margin: 0; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
+h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; font-size: 2.1rem; line-height: 1.2; margin: .2rem 0 .6rem; }
+h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; font-size: 1.45rem; line-height: 1.3; margin: 2.8rem 0 .6rem; }
+h3 { font-size: 1.05rem; margin: 0 0 .3rem; }
+.lede { font-size: 1.15rem; color: #2a2a2a; }
+a { color: var(--accent); }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code { background: var(--code); padding: .05rem .3rem; border-radius: 3px; font-size: .88em; overflow-wrap: anywhere; }
+pre { background: var(--code); border: 1px solid var(--rule); border-radius: 7px; padding: .65rem .8rem; margin: .4rem 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hash { overflow-wrap: anywhere; word-break: break-all; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; margin: 1rem 0; }
+.card > * { min-width: 0; }
+.card.warn { background: var(--warn-bg); border-color: #ecd8a6; }
+.card.good { background: var(--good-bg); border-color: #bcdcc4; }
+.note { color: var(--mut); font-size: .92rem; }
+figure { margin: 1.4rem 0; }
+figure svg { display: block; width: 100%; height: auto; max-width: 460px; margin: 0 auto; }
+figcaption { font-size: .9rem; color: var(--mut); margin: .5rem auto 0; max-width: 720px; }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); font-size: .88rem; color: var(--mut); }
+ul.links { list-style: none; padding: 0; }
+ul.links li { margin: .5rem 0; }
+details { margin: .8rem 0; }
+summary { cursor: pointer; color: var(--accent); }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; background: var(--card); }
+th, td { text-align: left; vertical-align: top; padding: .45rem .55rem; border-bottom: 1px solid var(--rule); }
+th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); }
+td code { white-space: nowrap; }
+.wide { overflow-x: auto; }
+ol.cannot > li { margin: .7rem 0; }
+
+/* The till slip: the first run's record, as a receipt. */
+.slip-wrap { display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start; margin: 1rem 0; }
+.slip-wrap > * { min-width: 0; }
+.slip { max-width: 360px; width: 100%; margin: 0 auto; background: #fffef9; border: 1px solid #d9d2c1; padding: 1.1rem 1rem 1.3rem;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; box-shadow: 0 2px 0 #e9e3d4;
+  -webkit-mask: radial-gradient(circle 6px at 50% 100%, transparent 98%, #000) 50% 100% / 14px 100% repeat-x; mask: radial-gradient(circle 6px at 50% 100%, transparent 98%, #000) 50% 100% / 14px 100% repeat-x; }
+.slip .head { text-align: center; font-weight: 800; letter-spacing: .1em; }
+.slip .sub { text-align: center; color: var(--mut); }
+.slip hr { border: 0; border-top: 1px dashed #b9b2a2; margin: .6rem 0; }
+.slip .k { color: var(--mut); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; margin-top: .45rem; }
+.slip .v { word-break: break-all; }
+.slip .foot { text-align: center; color: var(--mut); margin-top: .6rem; }
+@media (min-width: 820px) { .slip-wrap { grid-template-columns: 360px 1fr; } }
+
+/* The check-it-yourself instrument. */
+.picker { display: flex; flex-wrap: wrap; gap: 6px; margin: .4rem 0 .8rem; }
+.picker button, .btn { min-height: 40px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; background: #fff; cursor: pointer; font: inherit; font-size: .92rem; }
+.picker button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.label { font-size: .75rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--mut); margin: .7rem 0 .2rem; }
+textarea { width: 100%; min-height: 5.5em; font: 13.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: .6rem .7rem; border: 1px solid var(--rule); border-radius: 7px; background: #fff; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: .5rem 0; }
+ul.checks { list-style: none; padding: 0; margin: .8rem 0 0; }
+ul.checks li { display: grid; grid-template-columns: 1.8rem 1fr; gap: .1rem .5rem; padding: .6rem .2rem; border-top: 1px solid var(--rule); }
+ul.checks li > * { min-width: 0; }
+ul.checks .mark { font-weight: 800; font-size: 1.15rem; line-height: 1.3; }
+ul.checks li.pass .mark { color: var(--good); }
+ul.checks li.fail .mark { color: var(--bad); }
+ul.checks li.wait .mark { color: var(--mut); }
+ul.checks .digests { grid-column: 2; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--mut); word-break: break-all; }
+ul.checks .digests b { color: var(--ink); font-weight: 600; }
+.verdict { display: inline-block; margin-top: .6rem; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-size: .9rem; }
+.verdict.ok { background: var(--good-bg); color: var(--good); }
+.verdict.bad { background: var(--bad-bg); color: var(--bad); }
+@media (max-width: 600px) { body { font-size: 16px; } h1 { font-size: 1.7rem; } main { padding: 1rem .9rem 3rem; } }
+</style>
+</head>
+<body>
+<main>
+<nav class="site" aria-label="Site"><a class="home" href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="../../trainers/index.html">Lessons</a><a href="../what-a-sandbox-is/index.html">Before this: what a sandbox is</a><a href="https://github.com/plimsollmark/plimsoll">EXTERNAL · source repo ↗</a></nav>
+
+<p class="eyebrow">For newcomers · 2 of 2</p>
+<h1>Proof of what ran</h1>
+<p class="lede">You sent some code to a sandbox and got an answer back. A month later somebody asks:
+what exactly did you run, where did it run, and what came back? "I'm fairly sure it said 4" is
+not an answer anyone in an audit enjoys hearing. This page is about the written record plimsoll
+keeps instead, using the five runs from
+<a href="../what-a-sandbox-is/index.html">what a sandbox is (INTERNAL · plimsoll site →)</a>.</p>
+
+<!-- 1 ─────────────────────────────────────────────────────────────── -->
+<h2 id="what-is-on-it">A slip, not a recording</h2>
+<!-- data-terms="off": "receipt" here is the everyday store receipt of the analogy; plimsoll's
+     own term is defined where signing is introduced, in "Who holds the pen". -->
+<p data-terms="off">A store receipt does not contain the groceries. It lists what you bought,
+what it came to and when, printed by the till at the moment of sale, so that later you can
+check the bag, or the bank statement, against it. It is small, it is specific, and it is
+written by the shop.</p>
+<p>plimsoll writes the same kind of slip for every run it answers, and the slip names things by
+a short code computed from their bytes. That code is a <dfn>digest</dfn>: a SHA-256 hash of some content, used as its name. The same
+bytes always give the same digest, and changing a single byte gives a completely different one,
+with nothing in common with the first. Think of a barcode printed for one exact set of bytes,
+where a one-letter change prints an unrelated barcode.</p>
+<p>The slip is called a <dfn>run record</dfn>: the statement plimsolld (the plimsoll server)
+attaches to every answered run, holding the digests of the request and of the result, the
+isolation evidence, and the start and end times.</p>
+<p>Here is the slip for the first run, the polite stranger who printed
+<code>Hello from a stranger. 2 + 2 = 4</code>. It is the real record, read from the signed
+recording beside this page.</p>
+
+<div class="slip-wrap">
+  <div class="slip" id="slip" aria-label="The first run's record, drawn as a till slip"></div>
+  <div class="wide"><table>
+    <thead><tr><th>Line</th><th>What it says</th></tr></thead>
+    <tbody>
+      <tr><td><code>request_sha256</code></td><td>The digest of everything you sent that decides what runs: the code, the time limit, the weakest room you would accept, the version of the protocol your client speaks.</td></tr>
+      <tr><td><code>result_sha256</code></td><td>The digest of the answer as sent: the output, the exit code, whether it timed out, whether any output was cut short.</td></tr>
+      <tr><td><code>provider</code>, <code>isolation</code></td><td>Which backend ran it and which room it says that was. The <dfn>provider</dfn> is the backend that actually runs the code; the <dfn>isolation tier</dfn> is how strong the wall around the run is, weakest first <code>process</code>, <code>container</code>, <code>kernel</code>, <code>vm</code>.</td></tr>
+      <tr><td><code>environment</code></td><td>Which build of the JavaScript engine ran it, named by its digest.</td></tr>
+      <tr><td><code>started</code>, <code>ended</code></td><td>When plimsolld received the request and when it finished the answer, by plimsolld's clock. The slip shows them in UTC, where the evening of 2026-11-05 had already become the 6th.</td></tr>
+      <tr><td><code>record_sha256</code></td><td>The digest of every line above: the slip's own name. Change any line and it no longer fits.</td></tr>
+      <tr><td>the rest, empty here</td><td>A run in a <dfn>session</dfn> (one sandbox kept open for many calls) also names its place in the chain of calls; other rooms also name their sandbox policy, the software image they selected, the software rule the caller asked for, or the instance that ran it. None applies to these runs.</td></tr>
+    </tbody>
+  </table></div>
+</div>
+<p>Notice what is not on the slip: the code and the output. Only their digests. You already hold
+both; the record names exactly which bytes they were in 64 characters each, so it is small enough
+to keep beside every result. A few things are left out on purpose, such as how long the run took,
+which differs every time and would make two identical runs look different
+(<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md#fields">every field, and what is left out (EXTERNAL · official docs ↗)</a>).</p>
+
+<!-- 2 ─────────────────────────────────────────────────────────────── -->
+<h2 id="check">Check it yourself</h2>
+<p>A slip is only useful if you can hold it against the bag. Pick a run. Your browser takes what
+was sent and what came back, works out both digests from scratch, and compares them with the
+record. Then it works out the record's own digest from its lines. Nothing is fetched; everything
+is in this page.</p>
+
+<div class="card">
+  <div class="picker" id="picker" role="group" aria-label="Which run"></div>
+  <p class="label">What was sent</p>
+  <pre id="sent"></pre>
+  <p class="label">What came back (edit it)</p>
+  <textarea id="stdout" spellcheck="false" aria-label="The output that came back; edit it to see the check fail"></textarea>
+  <p class="note" id="resultMeta"></p>
+  <div class="row">
+    <button type="button" class="btn" id="tamper">Change one character</button>
+    <button type="button" class="btn" id="restore">Put it back</button>
+  </div>
+  <ul class="checks" id="checks" aria-live="polite"></ul>
+  <div class="row">
+    <button type="button" class="btn primary" id="verifySig">Check the signature too</button>
+  </div>
+  <ul class="checks" id="sigChecks" aria-live="polite"></ul>
+  <span id="verdict"></span>
+</div>
+
+<details>
+<summary>The recipe your browser just followed</summary>
+<p>Every value is written as its length (an 8-byte number) followed by its bytes. A digest is
+SHA-256 over a domain string that names what is being hashed, then each field's name and content
+in a fixed order. There is no JSON and no binary message format in it, so any language with a hash function gets
+the same answer, and the page computes SHA-256 in its own script so it works even opened from a
+file.</p>
+<ul>
+  <li><b>What was sent</b>, domain <code>plimsoll.run-request.v2</code>: <code>protocol</code>,
+  <code>minimum_isolation</code>, <code>timeout_ms</code>, <code>software_mode</code>,
+  <code>software_identities</code> (a count, then each one), <code>kind</code>, <code>code</code>,
+  <code>grant_profile</code>.</li>
+  <li><b>What came back</b>, domain <code>plimsoll.run-result.v1</code>: <code>kind</code>,
+  <code>exit_code</code>, <code>timed_out</code>, <code>stdout</code>, <code>stderr</code>,
+  <code>stdout_truncated</code>, <code>stderr_truncated</code>.</li>
+  <li><b>The record</b>, domain <code>plimsoll.run-record.v4</code>: every line of the slip in
+  the order of
+  <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md#the-encoding">the specification (EXTERNAL · official docs ↗)</a>,
+  empty ones included.</li>
+</ul>
+<p>Numbers are decimal text, true and false are the words. That is the whole recipe.</p>
+</details>
+
+<!-- 3 ─────────────────────────────────────────────────────────────── -->
+<h2 id="both">Why the client checks both</h2>
+<!-- data-terms="off": the store receipt of the analogy again. -->
+<p data-terms="off">At the door of a shop you can ask two different questions of a receipt. Did
+they ring up what I put on the belt? And is what is in my bag what the receipt says?</p>
+<p>The two digests are those two questions. If the request digest does not match what you sent,
+the record describes a different request, or the client and server encoded it differently.
+A proxy (a program between you and the server) could have rewritten it, a bug could have cut
+it short, or someone could have meddled. A result digest mismatch likewise means the recorded
+answer and your copy disagree, possibly because of a changed answer or an encoding bug.
+Neither mismatch establishes what actually ran.</p>
+<p>The official clients for Go, Python and TypeScript do what your browser just did, on every
+answer, before handing it over. In Go a mismatch is the error <code>DataLoss</code> wrapping
+<code>record.ErrMismatch</code>, and an answer with no record at all is refused the same way. A
+mismatch still hands back the result along with the error, because the code may well have run, and
+pretending otherwise would be worse. That much needs no key at all: it is arithmetic.</p>
+
+<!-- 4 ─────────────────────────────────────────────────────────────── -->
+<h2 id="pen">Who holds the pen</h2>
+<p>A record on its own is plimsolld's say-so, and anyone with a text editor can type one. Signing
+adds a name to it: a mark that only the holder of one particular key can make and that anyone can
+check. The key that makes it is a <dfn>signing key</dfn>: a private key that signs statements so
+that anyone holding the matching public key can check them.</p>
+<p>The obvious place for that key would be plimsolld. It is deliberately not there: <b>plimsolld
+holds no key</b>. It runs strangers' code, and in the cheapest room it runs it inside its own
+program. A key inside plimsolld would be one <dfn>escape</dfn>, a bug that lets code inside a
+sandbox act outside it, away from forging every record it ever wrote.</p>
+<!-- data-terms="off": the shop analogy; the term follows in the next paragraph. -->
+<p data-terms="off">So the shop's till prints the slip, but the stamp lives with your accountant
+at the door, who stamps a slip only after checking it against the bag. A thief who gets behind
+the till can print slips all day. He cannot stamp them.</p>
+<p>The accountant is the <dfn>harness</dfn>: a program outside plimsolld that drives runs and
+checks their results. Here it is <code>plimsoll-attest</code>. It sends your request, recomputes
+both digests from its own copy of the request and the answer, refuses a record that does not
+match, and signs the ones that do. A run record signed this way is what plimsoll's documentation
+calls a <dfn>receipt</dfn>: a signed claim about an operation or file, whose signature and subject
+can be checked without independently repeating the work.</p>
+
+<figure>
+<svg viewBox="0 0 360 560" role="img" aria-labelledby="pen-title pen-desc" style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <title id="pen-title">Who holds the key</title>
+  <desc id="pen-desc">Your program sends its request through the harness, which holds the signing key. The harness passes it to plimsolld, which holds no key and runs the code in its room. The answer and its run record come back to the harness, which recomputes both digests, signs the record and adds it to the bundle file. Later, anyone with the public key can check the bundle.</desc>
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#0f4a85"/></marker></defs>
+  <rect x="80" y="8" width="200" height="46" rx="10" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="180" y="36" font-size="14" font-weight="700" fill="#1a1a1a" text-anchor="middle">your program</text>
+  <line x1="180" y1="54" x2="180" y2="82" stroke="#0f4a85" stroke-width="2" marker-end="url(#ah)"/>
+  <rect x="20" y="86" width="320" height="104" rx="10" fill="#e8eff7" stroke="#0f4a85" stroke-width="2.5"/>
+  <text x="36" y="112" font-size="14" font-weight="800" fill="#0f4a85">the harness: plimsoll-attest</text>
+  <g transform="translate(286 98)"><circle cx="10" cy="12" r="8" fill="none" stroke="#7a4b00" stroke-width="3"/><path d="M18 12 H40 M32 12 V20 M38 12 V18" stroke="#7a4b00" stroke-width="3" fill="none"/></g>
+  <text x="36" y="134" font-size="12.5" fill="#1a1a1a">holds the signing key</text>
+  <text x="36" y="154" font-size="12.5" fill="#1a1a1a">recomputes both digests from its own copy,</text>
+  <text x="36" y="172" font-size="12.5" fill="#1a1a1a">refuses a mismatch, signs the rest</text>
+  <line x1="130" y1="190" x2="130" y2="226" stroke="#0f4a85" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="120" y="214" font-size="11.5" fill="#565656" text-anchor="end">request</text>
+  <line x1="230" y1="226" x2="230" y2="194" stroke="#0f4a85" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="238" y="206" font-size="11.5" fill="#565656">answer +</text>
+  <text x="238" y="221" font-size="11.5" fill="#565656">run record</text>
+  <rect x="20" y="230" width="320" height="130" rx="10" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="36" y="256" font-size="14" font-weight="800" fill="#1a1a1a">plimsolld</text>
+  <text x="36" y="276" font-size="12.5" fill="#1a1a1a">holds no key; writes the record</text>
+  <rect x="36" y="290" width="288" height="56" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2" stroke-dasharray="5 3"/>
+  <circle cx="60" cy="318" r="9" fill="#b83f43"/>
+  <text x="80" y="314" font-size="12.5" font-weight="700" fill="#b83f43">the room: the stranger's code</text>
+  <text x="80" y="332" font-size="12" fill="#b83f43">(here, inside plimsolld itself)</text>
+  <path d="M340 150 L352 150 L352 412 L304 412" stroke="#0f4a85" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+  <rect x="20" y="380" width="280" height="64" rx="10" fill="#fffef9" stroke="#b9b2a2" stroke-width="1.5"/>
+  <text x="36" y="406" font-size="13.5" font-weight="800" fill="#1a1a1a">bundle.jsonl</text>
+  <text x="36" y="426" font-size="12" fill="#565656">every signed record, in order, linked</text>
+  <line x1="160" y1="444" x2="160" y2="476" stroke="#0f4a85" stroke-width="2" marker-end="url(#ah)"/>
+  <rect x="20" y="480" width="320" height="72" rx="10" fill="#e6f4ea" stroke="#1e6b2f" stroke-width="2"/>
+  <text x="36" y="506" font-size="13.5" font-weight="800" fill="#1e6b2f">anyone, any time later</text>
+  <text x="36" y="526" font-size="12.5" fill="#1a1a1a">with harness.pub, the public half of the key:</text>
+  <text x="36" y="544" font-size="12.5" fill="#1a1a1a" font-family="ui-monospace,Menlo,monospace">plimsoll-attest verify</text>
+</svg>
+<figcaption>The key and the stranger never share a program. The harness can run anywhere the
+caller trusts; plimsolld never sees the key.</figcaption>
+</figure>
+
+<p>The harness keeps every signed record in one file, a bundle, one line per run. Each line holds
+the request and the answer in full beside the signed record, and is itself signed with a link that
+names the line before it, and the file ends with a checkpoint that says how many lines came before.
+Remove, move, add or change a line and the file fails the check, with one exception shown below. Because a bundle holds the code and
+its output in full, <code>plimsoll-attest</code> creates it readable by its owner only; this one is
+published on purpose.</p>
+<p>This recording's key was made for it, and its private half was deleted when the recording ended,
+so nobody, the author included, can sign another line with it. The public half is
+<a href="harness.pub">harness.pub</a>, beside this page; the signature check above uses it.</p>
+<details>
+<summary>The exact format, for the curious</summary>
+<p>Each signature is Ed25519. The signed form is a <dfn>DSSE</dfn> envelope (Dead Simple Signing
+Envelope, a small standard format that wraps a payload together with its signatures) around an
+<dfn>in-toto</dfn> statement (a standard format for signed statements about software) whose subject
+is the record's own digest and whose predicate is the record's fields. The key's ID is the SHA-256
+of the public key's standard encoding.
+<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md#signing-verifying-and-replaying">Signing, verifying and replaying (EXTERNAL · official docs ↗)</a>.</p>
+</details>
+
+<!-- 5 ─────────────────────────────────────────────────────────────── -->
+<h2 id="said">What the checks said</h2>
+<p>Here is what <code>plimsoll-attest</code> printed when its checks were run on the files beside
+this page on 2026-11-05. The output is as recorded, with file paths shortened to the names the files
+have here.</p>
+
+<h3>The recording, checked whole</h3>
+<pre>$ plimsoll-attest verify -pub harness.pub bundle.jsonl
+verified 10 entries signed by key 352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78, whole to its last checkpoint: 5 single runs</pre>
+<p>Ten entries for five runs: <code>plimsoll-attest run</code> adds one run each time it is called
+and closes each with a checkpoint, so every run is followed by one.</p>
+
+<h3>Someone changed the arithmetic</h3>
+<p><a href="tampered.jsonl">tampered.jsonl</a> is the same file with one byte changed: the first run's
+stored output now says <code>2 + 2 = 5</code>. Everything else, the signed record included, is
+untouched.</p>
+<pre>$ plimsoll-attest verify -pub harness.pub tampered.jsonl
+plimsoll-attest: entry 1: attest: broken bundle chain: the line's link signs other content
+
+$ plimsoll-attest verify-record -pub harness.pub -line 1 tampered.jsonl
+plimsoll-attest: attest: the stored request or response does not match the signed record: record: the run record does not match the request and result it came with: result digest 5729016f7460d2a08282c51e8b8a2b320a4d20622a11eba110f1411497cb2f9a, the result received digests to 0f11e9b9948cfd6d3b5aad752ccb4dceaf58a19b0289d8896541d5826e03689b</pre>
+<p>The whole-file check stops at the first thing wrong, the link. Checking that line alone shows the
+real damage: the answer no longer has the digest the signed record names. Press "Change one character"
+on the first run above and your browser arrives at the same <code>0f11e9b9…</code>.</p>
+
+<h3>Run it again</h3>
+<p>For code that gives the same answer every time, there is a check that does not rest on the old
+record's word: send the same request again, to the same room or another, and compare the new answer's
+digest with the old one. The bundle keeps each request in full, so it can be sent again exactly.</p>
+<pre>$ plimsoll-attest replay -daemon http://127.0.0.1:48731 -pub harness.pub bundle.jsonl
+entry 1: same result (5729016f7460d2a0)
+entry 3: same result (010e91949552438e)
+entry 5: same result (b03a54b03ee3fbba)
+entry 7: same result (09235dcadd4744c7)
+entry 9: same result (4687e6f2f3cf04e2)</pre>
+<p>All five came back byte for byte the same, the memory hog's 31 piles and the endless loop's
+timeout included. Code that reads the clock or draws random numbers will differ by design.</p>
+
+<h3>Some receipts went missing</h3>
+<p><a href="shortened.jsonl">shortened.jsonl</a> is the recording cut back to its first two lines:
+the first run and its checkpoint.</p>
+<pre>$ plimsoll-attest verify -pub harness.pub shortened.jsonl
+verified 2 entries signed by key 352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78, whole to its last checkpoint: 1 single runs
+
+$ plimsoll-attest verify -pub harness.pub -expect requests-sent.txt shortened.jsonl
+plimsoll-attest: attest: the bundle's calls are not the caller's: requests missing [9b793a5a50a1423c adfd9ea06434fba4 e5dcc730cae6e03f e6d3942c2b5b344f], not expected []</pre>
+<p>The cut file passes on its own, and that is not a bug in the check: a file that ends at a
+checkpoint looks exactly like a file that was always that short. What catches it is a list kept
+outside the file. <a href="requests-sent.txt">requests-sent.txt</a> is the caller's own note of the
+five request digests it sent, and against that list four calls are missing.</p>
+
+<!-- 6 ─────────────────────────────────────────────────────────────── -->
+<h2 id="cannot">What a receipt cannot prove</h2>
+<ol class="cannot">
+  <li><b>That the room was what it says.</b> The <code>isolation</code> line is plimsolld's statement,
+  built from its settings and its startup checks. It is never <dfn>attestation</dfn>, cryptographic
+  proof, usually rooted in the hardware, of what software a machine is running. A compromised server
+  can state anything, and the signature then faithfully vouches for a lie it was handed
+  (<a href="../what-a-sandbox-is/index.html#the-sign">the sign on the door (INTERNAL · plimsoll site →)</a>).</li>
+  <li><b>That the answer is right.</b> It proves what came back, not that it is true. In
+  <code>plimsoll-attest</code>'s own words, when it checks one line: "It authenticates the recorded
+  request and response, not that what the
+  <a href="../../trainers/glossary.html#guest">guest (INTERNAL · glossary →)</a> printed is true."</li>
+  <li><b>That you have all of them.</b> A whole file says nothing about runs the harness was never
+  handed, and a file cut back to an earlier checkpoint still checks as whole. Keep your own list of
+  request digests and hold the file to it with <code>-expect</code>, as above.</li>
+  <li><b>When, by anyone's clock but plimsolld's.</b> The start and end times are plimsolld's. An
+  outside timestamp needs an outside clock.</li>
+  <li><b>That anyone looked.</b> A signature says which key signed, not that a person checked
+  anything, or that the statement is true.</li>
+  <li><b>That your secrets are safe in it.</b> A digest hides its content only when the content is
+  hard to guess. The digest of a short answer can be found by trying likely answers until one fits,
+  and the bundle beside it holds the code and the output in full.</li>
+</ol>
+
+<!-- 7 ─────────────────────────────────────────────────────────────── -->
+<details>
+<summary>How this recording was made</summary>
+<p>On 2026-11-05, on one laptop, from a checkout of this repository. The token value is left out;
+the private key no longer exists. The <code>keygen</code> command creates the signing key and
+its public checking key. The loopback address <code>127.0.0.1</code> reaches only the same machine.</p>
+<pre>go build -o plimsolld ./cmd/plimsolld
+go build -o plimsoll-attest ./cmd/plimsoll-attest
+SANDBOX_PROVIDER=wasm PLIMSOLL_ADDR=127.0.0.1:48731 PLIMSOLL_TOKEN=... ./plimsolld &amp;
+./plimsoll-attest keygen -out harness       # harness.key (owner-only) and harness.pub
+export PLIMSOLL_CALLER_TOKEN=...
+for r in polite network files memory forever floor; do
+  ./plimsoll-attest run -daemon http://127.0.0.1:48731 -key harness.key -bundle bundle.jsonl requests/$r.json
+done                                        # floor is refused: nothing ran, nothing added
+./plimsoll-attest verify -pub harness.pub bundle.jsonl
+./plimsoll-attest replay -daemon http://127.0.0.1:48731 -pub harness.pub bundle.jsonl
+rm harness.key</pre>
+<p>The requests are in <a href="requests/polite.json">requests/</a> (<code>polite</code>, <code>network</code>, <code>files</code>, <code>memory</code>,
+<code>forever</code> and <code>floor</code>). <a href="tampered.jsonl">tampered.jsonl</a> was made by a short program that
+read line 1, changed the 4 in its stored output to a 5, and wrote the line back the way the harness
+writes it; <a href="shortened.jsonl">shortened.jsonl</a> is the first two lines of
+<a href="bundle.jsonl">bundle.jsonl</a>. A test in <code>docs/trainers</code> checks every claim on
+this page about those files, and rebuilds the evidence block the page reads from the bundle.</p>
+</details>
+
+<h2 id="more">Keep reading</h2>
+<ul class="links">
+  <li><a href="../what-a-sandbox-is/index.html">What a sandbox is (INTERNAL · plimsoll site →)</a>: the five runs, and the rooms they ran in.</li>
+  <li><a href="../../trainers/mcp.html#receipt">Run it from your agent: the receipt you check yourself (INTERNAL · trainer site →)</a>: a signed line checked in your browser, flipped bit included.</li>
+  <li><a href="../sessions/index.html">One sandbox, five calls (INTERNAL · plimsoll site →)</a>: records chained across a session, refused with one call dropped.</li>
+  <li><a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md">Run records (EXTERNAL · official docs ↗)</a>: every field, the encoding, signing, verifying and replaying.</li>
+</ul>
+
+<footer>
+<p>The slip and the check read the five runs from the evidence block in this page, which a test in
+<code>docs/trainers</code> rebuilds from <a href="bundle.jsonl">bundle.jsonl</a> and checks against
+it. The command output above is recorded, not live. The pen picture is a drawing.</p>
+</footer>
+</main>
+
+<script type="application/json" id="evidence">
+{
+ "note": "Generated from bundle.jsonl by docs/trainers/sandbox_basics_test.go; run it with -update after a new recording, never edit by hand.",
+ "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEACX/V+aIEeHOXVg+2tHQ1Y91NBlG53xKcJE54sTVFAGw=\n-----END PUBLIC KEY-----\n",
+ "key_id": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+ "runs": [
+  {
+   "name": "polite",
+   "line": 1,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "console.log(\"Hello from a stranger. 2 + 2 = \" + (2 + 2));\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "Hello from a stranger. 2 + 2 = 4\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "5bebf95b29019438733e7b1513257db73a30fd7ad7ad0f414f27423b4e85fa67",
+    "result_sha256": "5729016f7460d2a08282c51e8b8a2b320a4d20622a11eba110f1411497cb2f9a",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643157,
+    "ended_unix_ms": 1793945643168,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "64689226ce8c10948473e856dc2f88e4411aedf15f1c82faeedbc21985f0514f"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI2NDY4OTIyNmNlOGMxMDk0ODQ3M2U4NTZkYzJmODhlNDQxMWFlZGYxNWYxYzgyZmFlZWRiYzIxOTg1ZjA1MTRmIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiNWJlYmY5NWIyOTAxOTQzODczM2U3YjE1MTMyNTdkYjczYTMwZmQ3YWQ3YWQwZjQxNGYyNzQyM2I0ZTg1ZmE2NyIsInJlc3VsdF9zaGEyNTYiOiI1NzI5MDE2Zjc0NjBkMmEwODI4MmM1MWU4YjhhMmIzMjBhNGQyMDYyMmExMWViYTExMGYxNDExNDk3Y2IyZjlhIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTU3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTY4LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI2NDY4OTIyNmNlOGMxMDk0ODQ3M2U4NTZkYzJmODhlNDQxMWFlZGYxNWYxYzgyZmFlZWRiYzIxOTg1ZjA1MTRmIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "f/vR20+5voAztiKLBleviIgKCCmmRMwwQBLHG9I7oZcNiotJIk/fN0PfI0nZfowXiZfC70Q0PMlmbRBOTKpfCQ=="
+   }
+  },
+  {
+   "name": "network",
+   "line": 3,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "[\"fetch\", \"XMLHttpRequest\", \"WebSocket\", \"require\", \"process\"].forEach(function (name) {\n  console.log(name + \": \" + typeof globalThis[name]);\n});\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "fetch: undefined\nXMLHttpRequest: undefined\nWebSocket: undefined\nrequire: undefined\nprocess: undefined\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "e5dcc730cae6e03f2afe75474c877a2025f4565fe9def5fb8568cedc9935c0aa",
+    "result_sha256": "010e91949552438e2ce4fb596f1f2520c2a4be72a3d773c46494af4798054065",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643181,
+    "ended_unix_ms": 1793945643191,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "e2c35d0320900a33756848f34f9ccb03cdf6217e92366f8784db5a62e87ce218"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiJlMmMzNWQwMzIwOTAwYTMzNzU2ODQ4ZjM0ZjljY2IwM2NkZjYyMTdlOTIzNjZmODc4NGRiNWE2MmU4N2NlMjE4In19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiZTVkY2M3MzBjYWU2ZTAzZjJhZmU3NTQ3NGM4NzdhMjAyNWY0NTY1ZmU5ZGVmNWZiODU2OGNlZGM5OTM1YzBhYSIsInJlc3VsdF9zaGEyNTYiOiIwMTBlOTE5NDk1NTI0MzhlMmNlNGZiNTk2ZjFmMjUyMGMyYTRiZTcyYTNkNzczYzQ2NDk0YWY0Nzk4MDU0MDY1IiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTgxLCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMTkxLCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiJlMmMzNWQwMzIwOTAwYTMzNzU2ODQ4ZjM0ZjljY2IwM2NkZjYyMTdlOTIzNjZmODc4NGRiNWE2MmU4N2NlMjE4In19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "Ch+tzkyFqbcK3Ch16m82LVpe4WJhPa4RLXHoh7GPWNwdr1o9bKzJxkkd6VR1EOzl/fzewln3BIkn1SXyqdP5CA=="
+   }
+  },
+  {
+   "name": "files",
+   "line": 5,
+   "duration_ms": 10,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "import(\"qjs:std\").then(function (std) {\n  console.log(\"open /etc/passwd: \" + std.open(\"/etc/passwd\", \"r\"));\n  return import(\"qjs:os\");\n}).then(function (os) {\n  console.log(\"list /: \" + JSON.stringify(os.readdir(\"/\")));\n});\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "open /etc/passwd: null\nlist /: [[],44]\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "adfd9ea06434fba4438cee60370c9d9b0e35bb65a74a7065616abf101a40961b",
+    "result_sha256": "b03a54b03ee3fbba04927244c4543fb3f7dd21c76c6a166cee06d095fb539a8f",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643203,
+    "ended_unix_ms": 1793945643214,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "9ef5f788a04a600cac33ad7798706ebd40d11401827fd4f61b572fc1329ea678"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI5ZWY1Zjc4OGEwNGE2MDBjYWMzM2FkNzc5ODcwNmViZDQwZDExNDAxODI3ZmQ0ZjYxYjU3MmZjMTMyOWVhNjc4In19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiYWRmZDllYTA2NDM0ZmJhNDQzOGNlZTYwMzcwYzlkOWIwZTM1YmI2NWE3NGE3MDY1NjE2YWJmMTAxYTQwOTYxYiIsInJlc3VsdF9zaGEyNTYiOiJiMDNhNTRiMDNlZTNmYmJhMDQ5MjcyNDRjNDU0M2ZiM2Y3ZGQyMWM3NmM2YTE2NmNlZTA2ZDA5NWZiNTM5YThmIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjAzLCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjE0LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI5ZWY1Zjc4OGEwNGE2MDBjYWMzM2FkNzc5ODcwNmViZDQwZDExNDAxODI3ZmQ0ZjYxYjU3MmZjMTMyOWVhNjc4In19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "JlJBISpvneJ3LPJUyJo7vc/tXcnTxrIo0HkXDuagLT1tjBaeJPJFztKZPvpc7TcQYAofxOfhpi10gGYh7Li0DA=="
+   }
+  },
+  {
+   "name": "memory",
+   "line": 7,
+   "duration_ms": 3195,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 0,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "var piles = [];\ntry {\n  for (;;) piles.push(new Array(1e6).fill(7));\n} catch (e) {\n  console.log(\"kept \" + piles.length + \" piles of a million numbers, then: \" + e);\n}\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout": "kept 31 piles of a million numbers, then: InternalError: out of memory\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "9b793a5a50a1423c7bb021945c2e7f1ae975f1f37c076c06a31c9d4a34405423",
+    "result_sha256": "09235dcadd4744c77544e5a40273ab6d551523d89ea6a7147275004093300ecc",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945643227,
+    "ended_unix_ms": 1793945646423,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "99fe39ca21d8bc7c2d44a726cd2cf0c40275d0d3be8e83214ab508377bcb03cc"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI5OWZlMzljYTIxZDhiYzdjMmQ0NGE3MjZjZDJjZjBjNDAyNzVkMGQzYmU4ZTgzMjE0YWI1MDgzNzdiY2IwM2NjIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiOWI3OTNhNWE1MGExNDIzYzdiYjAyMTk0NWMyZTdmMWFlOTc1ZjFmMzdjMDc2YzA2YTMxYzlkNGEzNDQwNTQyMyIsInJlc3VsdF9zaGEyNTYiOiIwOTIzNWRjYWRkNDc0NGM3NzU0NGU1YTQwMjczYWI2ZDU1MTUyM2Q4OWVhNmE3MTQ3Mjc1MDA0MDkzMzAwZWNjIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQzMjI3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQ2NDIzLCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI5OWZlMzljYTIxZDhiYzdjMmQ0NGE3MjZjZDJjZjBjNDAyNzVkMGQzYmU4ZTgzMjE0YWI1MDgzNzdiY2IwM2NjIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "D/Dub2Qw1ukmzUb091tpHg5fhVaWO4P+1hkABxmR77/je+GbAZVNo1lINUYwMdSz+HGpsKhiQ6CPdk1sE0tpCw=="
+   }
+  },
+  {
+   "name": "forever",
+   "line": 9,
+   "duration_ms": 2021,
+   "request": {
+    "protocol": 5,
+    "minimum_isolation": "",
+    "timeout_ms": 2000,
+    "software_mode": "",
+    "software_identities": [],
+    "kind": "javascript",
+    "code": "console.log(\"starting a loop that never ends\");\nfor (;;) {}\n",
+    "grant_profile": ""
+   },
+   "result": {
+    "kind": "javascript",
+    "exit_code": 124,
+    "timed_out": true,
+    "stdout": "starting a loop that never ends\n",
+    "stderr": "",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+   },
+   "record": {
+    "version": 4,
+    "request_sha256": "e6d3942c2b5b344f85bd23f8a558abdad8afbc4f78a0f3d436d97884bd24d6d7",
+    "result_sha256": "4687e6f2f3cf04e24b12b9c99797d830c42b0320b08c84ecd9e2658dcf4a8bae",
+    "unanswered": "",
+    "provider": "wasm",
+    "isolation": "process",
+    "environment": "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "policy": "",
+    "software_identity": "",
+    "software_rule_id": "",
+    "instance": "",
+    "started_unix_ms": 1793945646447,
+    "ended_unix_ms": 1793945648468,
+    "session": "",
+    "sequence": 0,
+    "previous_sha256": "",
+    "record_sha256": "49ed23950b770c74d9fa3e3f046e8ff90449e49de1705bd2eb29d3814613c3fa"
+   },
+   "envelope": {
+    "payload_type": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicnVuLXJlY29yZCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI0OWVkMjM5NTBiNzcwYzc0ZDlmYTNlM2YwNDZlOGZmOTA0NDllNDlkZTE3MDViZDJlYjI5ZDM4MTQ2MTNjM2ZhIn19XSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vcGxpbXNvbGxtYXJrLmdpdGh1Yi5pby9wbGltc29sbC9ydW4tcmVjb3JkL3YxIiwicHJlZGljYXRlIjp7InZlcnNpb24iOjQsInJlcXVlc3Rfc2hhMjU2IjoiZTZkMzk0MmMyYjViMzQ0Zjg1YmQyM2Y4YTU1OGFiZGFkOGFmYmM0Zjc4YTBmM2Q0MzZkOTc4ODRiZDI0ZDZkNyIsInJlc3VsdF9zaGEyNTYiOiI0Njg3ZTZmMmYzY2YwNGUyNGIxMmI5Yzk5Nzk3ZDgzMGM0MmIwMzIwYjA4Yzg0ZWNkOWUyNjU4ZGNmNGE4YmFlIiwicHJvdmlkZXIiOiJ3YXNtIiwiaXNvbGF0aW9uIjoicHJvY2VzcyIsImVudmlyb25tZW50IjoicXVpY2tqcy13YXNtOnNoYTI1NjpmOTI1OGQzMThiMDU0MDRkNDlmNjM1MTkxZDIwNTZjMzBkMjRhZDc1ZjJjYjdmMTE5MGZkYjk4YTc2Y2Q2NzllIiwicG9saWN5IjoiIiwic3RhcnRlZF91bml4X21zIjoxNzkzOTQ1NjQ2NDQ3LCJlbmRlZF91bml4X21zIjoxNzkzOTQ1NjQ4NDY4LCJzZXNzaW9uIjoiIiwic2VxdWVuY2UiOjAsInByZXZpb3VzX3NoYTI1NiI6IiIsInJlY29yZF9zaGEyNTYiOiI0OWVkMjM5NTBiNzcwYzc0ZDlmYTNlM2YwNDZlOGZmOTA0NDllNDlkZTE3MDViZDJlYjI5ZDM4MTQ2MTNjM2ZhIn19",
+    "keyid": "352859fe4899c645de1aac6dd1e201cc5d7dea1c12b43eb19e1a722d5eafed78",
+    "sig": "GT+rAnYE4uZJDmxTe4KuvGXWWmC+Sn79PTNfL+VJNXY0f/SsIzNYbSRbgrcHTDr7uyxVZXBhA8KIcqni0TAfDQ=="
+   }
+  }
+ ]
+}
+</script>
+<script>
+(function () {
+  'use strict';
+  var ev = JSON.parse(document.getElementById('evidence').textContent);
+  function el(id) { return document.getElementById(id); }
+  function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function when(ms) { return new Date(ms).toISOString().replace('T', ' ').replace('Z', ' UTC'); }
+
+  // SHA-256 (FIPS 180-4) in plain JavaScript, so the digests work wherever the page opens,
+  // file:// included; the browser's own Web Crypto is used only for the signature.
+  var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+  function sha256(bytes) {
+    var n = bytes.length, padded = ((n + 9 + 63) >> 6) << 6;
+    var m = new Uint8Array(padded);
+    m.set(bytes);
+    m[n] = 0x80;
+    var dv = new DataView(m.buffer);
+    dv.setUint32(padded - 8, Math.floor(n / 0x20000000));
+    dv.setUint32(padded - 4, (n << 3) >>> 0);
+    var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var w = new Array(64);
+    for (var off = 0; off < padded; off += 64) {
+      for (var t = 0; t < 16; t++) w[t] = dv.getUint32(off + 4 * t);
+      for (t = 16; t < 64; t++) {
+        var s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+        var s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+        w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for (t = 0; t < 64; t++) {
+        var t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[t] + w[t]) | 0;
+        var t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H = [(H[0] + a) | 0, (H[1] + b) | 0, (H[2] + c) | 0, (H[3] + d) | 0, (H[4] + e) | 0, (H[5] + f) | 0, (H[6] + g) | 0, (H[7] + h) | 0];
+    }
+    return H.map(function (x) { return ('0000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
+  }
+
+  // The digest recipe of docs/run-records.md, "The encoding": every value is its length as
+  // an 8-byte big-endian number and then its bytes; a digest is SHA-256 over the domain
+  // string and then each field's name and content, in the order the specification lists.
+  function utf8(s) { return new TextEncoder().encode(s); }
+  function recipe(domain, fields) {
+    var parts = [], total = 0;
+    function value(b) {
+      var len = new Uint8Array(8), dv = new DataView(len.buffer);
+      dv.setUint32(0, Math.floor(b.length / 0x100000000));
+      dv.setUint32(4, b.length >>> 0);
+      parts.push(len, b);
+      total += 8 + b.length;
+    }
+    value(utf8(domain));
+    fields.forEach(function (f) { value(utf8(f[0])); value(utf8(String(f[1]))); });
+    var all = new Uint8Array(total), o = 0;
+    parts.forEach(function (p) { all.set(p, o); o += p.length; });
+    return { bytes: all, sha256: sha256(all) };
+  }
+  function requestFields(r) {
+    var f = [['protocol', r.protocol], ['minimum_isolation', r.minimum_isolation], ['timeout_ms', r.timeout_ms],
+      ['software_mode', r.software_mode], ['software_identities', r.software_identities.length]];
+    r.software_identities.forEach(function (id) { f.push(['software_identity', id]); });
+    return f.concat([['kind', r.kind], ['code', r.code], ['grant_profile', r.grant_profile]]);
+  }
+  function resultFields(o) {
+    return [['kind', o.kind], ['exit_code', o.exit_code], ['timed_out', o.timed_out], ['stdout', o.stdout],
+      ['stderr', o.stderr], ['stdout_truncated', o.stdout_truncated], ['stderr_truncated', o.stderr_truncated]];
+  }
+  var RECORD_V4 = ['request_sha256', 'result_sha256', 'unanswered', 'provider', 'isolation', 'environment', 'policy',
+    'software_identity', 'software_rule_id', 'instance', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence',
+    'previous_sha256'];
+  function recordFields(rec) { return RECORD_V4.map(function (k) { return [k, rec[k]]; }); }
+  function requestDigest(r) { return recipe('plimsoll.run-request.v2', requestFields(r)); }
+  function resultDigest(o) { return recipe('plimsoll.run-result.v1', resultFields(o)); }
+  function recordDigest(rec) { return recipe('plimsoll.run-record.v' + rec.version, recordFields(rec)); }
+
+  // The slip: the first run's record.
+  (function () {
+    var r = ev.runs[0], rec = r.record, slip = el('slip');
+    slip.appendChild(mk('div', 'head', 'PLIMSOLL · RUN RECORD'));
+    slip.appendChild(mk('div', 'sub', 'version ' + rec.version + ' · a single run'));
+    slip.appendChild(mk('hr'));
+    [['request_sha256 · what you sent', rec.request_sha256], ['result_sha256 · what came back', rec.result_sha256],
+      ['provider', rec.provider], ['isolation', rec.isolation], ['environment', rec.environment],
+      ['started', when(rec.started_unix_ms)], ['ended', when(rec.ended_unix_ms)]].forEach(function (kv) {
+      slip.appendChild(mk('div', 'k', kv[0]));
+      slip.appendChild(mk('div', 'v', kv[1]));
+    });
+    slip.appendChild(mk('hr'));
+    slip.appendChild(mk('div', 'k', 'record_sha256 · this slip'));
+    slip.appendChild(mk('div', 'v', rec.record_sha256));
+    slip.appendChild(mk('div', 'k', 'signed by key'));
+    slip.appendChild(mk('div', 'v', ev.key_id));
+    slip.appendChild(mk('div', 'foot', 'no code and no output on this slip'));
+  })();
+
+  // The instrument.
+  var LABELS = { polite: '1 · polite', network: '2 · internet', files: '3 · files', memory: '4 · memory', forever: '5 · forever' };
+  var current = 0;
+  var picker = el('picker'), box = el('stdout');
+  ev.runs.forEach(function (r, i) {
+    var b = mk('button', null, LABELS[r.name] || r.name);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+    b.addEventListener('click', function () { select(i); });
+    picker.appendChild(b);
+  });
+  function row(list, state, text, digests) {
+    var li = mk('li', state);
+    li.appendChild(mk('span', 'mark', state === 'pass' ? '✓' : state === 'fail' ? '✗' : '·'));
+    li.appendChild(mk('span', null, text));
+    if (digests) {
+      var d = mk('div', 'digests');
+      digests.forEach(function (pair, j) {
+        if (j) d.appendChild(document.createElement('br'));
+        d.appendChild(mk('b', null, pair[0] + ' '));
+        d.appendChild(document.createTextNode(pair[1]));
+      });
+      li.appendChild(d);
+    }
+    list.appendChild(li);
+  }
+  function recheck() {
+    var r = ev.runs[current], rec = r.record, list = el('checks');
+    list.textContent = '';
+    el('sigChecks').textContent = '';
+    el('verdict').textContent = '';
+    var result = Object.assign({}, r.result, { stdout: box.value });
+    var rq = requestDigest(r.request).sha256, rs = resultDigest(result).sha256, rc = recordDigest(rec).sha256;
+    row(list, rq === rec.request_sha256 ? 'pass' : 'fail', rq === rec.request_sha256 ? 'What was sent has the digest the record names.' : 'What was sent does not have the digest the record names.',
+      [['computed', rq], ['record ', rec.request_sha256]]);
+    var edited = box.value !== r.result.stdout;
+    row(list, rs === rec.result_sha256 ? 'pass' : 'fail', rs === rec.result_sha256 ? 'What came back has the digest the record names.' :
+      'What came back no longer has the digest the record names' + (edited ? ': you changed it, and an official client would return this answer with a DataLoss error.' : '.'),
+      [['computed', rs], ['record ', rec.result_sha256]]);
+    row(list, rc === rec.record_sha256 ? 'pass' : 'fail', rc === rec.record_sha256 ? 'The record\'s own lines have the digest it names for itself.' : 'The record\'s lines do not have the digest it names.',
+      [['computed', rc], ['record ', rec.record_sha256]]);
+  }
+  function select(i) {
+    current = i;
+    picker.querySelectorAll('button').forEach(function (b, j) { b.setAttribute('aria-pressed', j === i ? 'true' : 'false'); });
+    var r = ev.runs[i], q = r.request, o = r.result;
+    el('sent').textContent = q.code + '\n// protocol ' + q.protocol + ' · time limit ' + (q.timeout_ms ? q.timeout_ms + ' ms' : 'the server\'s default') +
+      ' · weakest room accepted: ' + (q.minimum_isolation || 'any');
+    box.value = o.stdout;
+    el('resultMeta').textContent = 'exit code ' + o.exit_code + (o.timed_out ? ', timed out' : '') + (o.stderr ? ', something on stderr' : ', nothing on stderr') +
+      (o.stdout_truncated || o.stderr_truncated ? ', output cut short' : ', nothing cut short') + '. The exit code and these flags are part of the digest too.';
+    recheck();
+  }
+  box.addEventListener('input', recheck);
+  el('restore').addEventListener('click', function () { box.value = ev.runs[current].result.stdout; recheck(); });
+  el('tamper').addEventListener('click', function () {
+    var s = ev.runs[current].result.stdout;
+    var at = -1;
+    for (var i = s.length - 1; i >= 0 && at < 0; i--) if (/[0-9]/.test(s.charAt(i))) at = i;
+    if (at < 0) at = 0;
+    var ch = s.charAt(at), next = /[0-9]/.test(ch) ? String((Number(ch) + 1) % 10) : (ch === 'a' ? 'b' : 'a');
+    box.value = s.slice(0, at) + next + s.slice(at + 1);
+    recheck();
+  });
+
+  // The signature: Ed25519 over the DSSE pre-authentication encoding, by the browser's Web Crypto.
+  function b64(s) { var bin = atob(s), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+  function cat(parts) { var n = 0; parts.forEach(function (p) { n += p.length; }); var out = new Uint8Array(n), o = 0; parts.forEach(function (p) { out.set(p, o); o += p.length; }); return out; }
+  function pae(type, payload) { return cat([utf8('DSSEv1 ' + type.length + ' '), type, utf8(' ' + payload.length + ' '), payload]); }
+  async function checkSignature() {
+    var r = ev.runs[current], rec = r.record, env = r.envelope, list = el('sigChecks'), verdict = el('verdict');
+    list.textContent = ''; verdict.textContent = '';
+    var payload = b64(env.payload), statement = JSON.parse(new TextDecoder().decode(payload));
+    var subject = statement.subject[0].digest.sha256, pred = statement.predicate;
+    row(list, subject === rec.record_sha256 ? 'pass' : 'fail', 'The signed statement is about this record: its subject is the record\'s digest.', [['subject', subject]]);
+    var differs = Object.keys(pred).filter(function (k) { return k in rec && String(pred[k]) !== String(rec[k]); });
+    row(list, differs.length ? 'fail' : 'pass', differs.length ? 'The signed fields differ from the record: ' + differs.join(', ') : 'Every field the statement signs equals the record\'s.');
+    var der = b64(ev.public_key_pem.replace(/-----[A-Z ]+-----/g, '').replace(/\s+/g, ''));
+    var kid = sha256(der);
+    row(list, kid === ev.key_id && env.keyid === ev.key_id ? 'pass' : 'fail', 'The signature names harness.pub\'s key: the SHA-256 of the public key is its key ID.', [['key ID', kid]]);
+    if (!window.crypto || !crypto.subtle) {
+      row(list, 'wait', 'This browser hides Web Crypto here (it does outside a secure context, such as a page opened from a plain http address that is not this computer), so the Ed25519 signature itself is not checked. The recorded plimsoll-attest check above stands.');
+      return;
+    }
+    var key;
+    try {
+      key = await crypto.subtle.importKey('spki', der, { name: 'Ed25519' }, false, ['verify']);
+    } catch (e) {
+      row(list, 'wait', 'This browser\'s Web Crypto does not offer Ed25519, so the signature itself is not checked here. The recorded plimsoll-attest check above stands.');
+      return;
+    }
+    var ok = await crypto.subtle.verify({ name: 'Ed25519' }, key, b64(env.sig), pae(utf8(env.payload_type), payload));
+    row(list, ok ? 'pass' : 'fail', ok ? 'The Ed25519 signature verifies with harness.pub, checked by this browser\'s own Web Crypto.' : 'The signature does not verify.');
+    var digestsOk = !el('checks').querySelector('.fail');
+    var allOk = ok && !list.querySelector('.fail') && digestsOk;
+    verdict.className = 'verdict ' + (allOk ? 'ok' : 'bad');
+    verdict.textContent = allOk ? 'This run checks out: signed, and its answer matches.' :
+      (ok && !digestsOk ? 'The signature is good, and the answer above does not match it.' : 'This run does not check out.');
+  }
+  el('verifySig').addEventListener('click', function () {
+    var b = el('verifySig');
+    b.disabled = true;
+    checkSignature().catch(function (e) { row(el('sigChecks'), 'fail', 'The check could not run: ' + e.message); }).finally(function () { b.disabled = false; });
+  });
+  select(0);
+})();
+</script>
+</body>
+</html>

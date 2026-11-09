@@ -9,7 +9,7 @@
 // reads its pod back (the runtime class, and that class's handler: runsc and any handler
 // the operator declares as gVisor are the kernel tier, runc the container tier, the tested
 // Kata handlers the VM tier, anything else refused; the image by digest; no API token
-// in the pod, no host namespaces, fixed DNS, emptyDir volumes only; sandboxd started with
+// in the pod, no host namespaces, fixed DNS, emptyDir volumes and the one TLS Secret only; sandboxd started with
 // plimsoll's token digest; capabilities limited to the two the uid drop needs) and every
 // network policy in the namespace that selects the pod (egress denied by one and allowed
 // by none; ingress only to sandboxd's port). Unknown pod/container fields and exec handlers
@@ -26,6 +26,12 @@
 // each pod gets plimsoll's commands alone (the tier check, then the run's), and every request carrying the token is sent before guest
 // code starts (the runner and node - both read their input to its end first): a guest
 // that killed or outlived sandboxd and listened on its port would otherwise be handed it.
+//
+// sandboxd serves no TLS, so the image runs it on loopback behind plimsoll's TLS
+// terminator, the container's command, and plimsolld reaches every pod over TLS 1.3
+// alone, trusting only the deployment's CA and the configured name (channel.go): the
+// token, the code, each run's report key and every result are never in the clear on the
+// pod network, and a pod that cannot prove itself gets nothing, marked not dispatched.
 //
 // This is its own package, as openshell is, so only a program that imports it links the
 // generated process.v1 protobuf names, which agent-sandbox's own Go SDK registers too.
@@ -50,7 +56,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
@@ -82,7 +87,6 @@ const (
 
 	defaultMemoryMB = 256
 	defaultCPUs     = 1.0
-	defaultPort     = 9090
 )
 
 // In the pod: the guest's uid (the docker provider's default, a uid no account uses), the
@@ -134,8 +138,12 @@ type Config struct {
 	// SandboxdToken is the bearer token sandboxd checks. The template must start
 	// sandboxd with --auth-token-sha256 set to its SHA-256 in hex.
 	SandboxdToken string
-	// SandboxdPort is sandboxd's gRPC port; 0 is 9090, sandboxd's default.
-	SandboxdPort int
+	// SandboxdCAFile is the PEM certificate authority sandboxd's TLS certificate must
+	// chain to (the deployment's own; the system roots are never used), read by New.
+	// SandboxdServerName is the DNS name that certificate must carry; empty is
+	// DefaultServerName. The pod's terminator serves the certificate (channel.go).
+	SandboxdCAFile     string
+	SandboxdServerName string
 	// MemoryMB and CPUs are the limits the template's container must set: 0 is 256 MiB
 	// and 1 CPU.
 	MemoryMB int
@@ -160,11 +168,11 @@ func (c Config) cpus() float64 {
 	return defaultCPUs
 }
 
-func (c Config) sandboxdPort() int {
-	if c.SandboxdPort > 0 {
-		return c.SandboxdPort
+func (c Config) serverName() string {
+	if c.SandboxdServerName != "" {
+		return c.SandboxdServerName
 	}
-	return defaultPort
+	return DefaultServerName
 }
 
 var (
@@ -197,8 +205,10 @@ func (c Config) validate() error {
 	switch {
 	case !tokenRE.MatchString(c.SandboxdToken):
 		return errors.New("agentsandbox: the sandboxd token must be 32 to 512 token characters")
-	case c.SandboxdPort < 0 || c.SandboxdPort > 65535:
-		return fmt.Errorf("agentsandbox: sandboxd port %d", c.SandboxdPort)
+	case c.SandboxdCAFile == "":
+		return errors.New("agentsandbox: sandboxd's CA file is required: the certificate authority its TLS certificate must chain to")
+	case !validServerName(c.serverName()):
+		return fmt.Errorf("agentsandbox: sandboxd's server name %q is not a DNS name", truncate(c.serverName(), 80))
 	case c.MemoryMB < 0 || c.CPUs < 0 || c.DiskMB < 0:
 		return errors.New("agentsandbox: negative limits")
 	}
@@ -246,14 +256,16 @@ type Provider struct {
 	// handlers is the tier each runtime class handler claims: handlerTiers, plus each of
 	// cfg.RunscHandlers at the kernel tier. New builds it; nothing writes it after, so it
 	// is read without the lock, and no provider's declarations reach another's.
-	handlers    map[string]sandbox.IsolationClass
-	kube        *kube
-	h2c         *http.Client
+	handlers map[string]sandbox.IsolationClass
+	kube     *kube
+	// sandboxd is the pinned TLS client for every pod's terminator (channel.go).
+	sandboxd    *http.Client
 	tokenDigest string
 	// instance labels every claim this provider makes, so ReconcileOrphans finds its own.
 	instance string
-	// dialProcess, when set, replaces the sandboxd client (tests).
-	dialProcess func(ip string) processv1connect.ProcessServiceClient
+	// dialAddr, when set, is the address dialed for a pod's IP (tests: a local server
+	// stands in for the pod); the channel is the same pinned TLS client either way.
+	dialAddr func(ip string) string
 
 	// pf caches Preflight for preflightTTL (a field so tests can turn it off).
 	pf providerkit.Check
@@ -300,6 +312,10 @@ func New(cfg Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	pool, err := readCAPool(cfg.SandboxdCAFile)
+	if err != nil {
+		return nil, err
+	}
 	sum := sha256.Sum256([]byte(cfg.SandboxdToken))
 	// The caller's slice is not kept: Preflight validates cfg again, and an edit to it
 	// after New must change neither that nor the table.
@@ -309,7 +325,7 @@ func New(cfg Config) (*Provider, error) {
 		handlers[name] = sandbox.IsolationKernel
 	}
 	return &Provider{
-		cfg: cfg, handlers: handlers, kube: k, h2c: h2cClient(), tokenDigest: hex.EncodeToString(sum[:]),
+		cfg: cfg, handlers: handlers, kube: k, sandboxd: channelClient(pool, cfg.serverName()), tokenDigest: hex.EncodeToString(sum[:]),
 		instance: randHex(8), pf: providerkit.Check{TTL: preflightTTL, Err: errors.New("agentsandbox: no check has completed yet")},
 		deleteTimeout: deleteBudget,
 	}, nil

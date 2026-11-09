@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -32,8 +33,27 @@ import (
 var qjsWasm []byte
 
 // compilationCache lets every per-call runtime reuse the compiled QuickJS module,
-// so compilation happens once per process instead of once per run.
+// so compilation happens once per process instead of once per run (qjsCompiled).
 var compilationCache = wazero.NewCompilationCache()
+
+// qjsCompiled compiles QuickJS once per process, into a runtime that is never closed.
+// The cache keeps a compiled module only while some runtime holds it: a run's runtime
+// compiles the module implicitly (InstantiateWithConfig) and gives it up when it
+// closes, so with nothing else holding it every run compiled QuickJS again, about
+// 300 ms a run and 2.8 s under the race detector (measured 2026-10-29), against 10 ms
+// and 66 ms once it is held. Holding it is this runtime's only use. wazero keys
+// compiled code by the module's bytes and the deadline flag (WithCloseOnContextDone),
+// not the memory limit, so every run's runtime finds it whatever its MemoryPages. It
+// compiles outside any run's deadline, so a short deadline or a caller's cancel is
+// never spent on it.
+var qjsCompiled = sync.OnceValue(func() error {
+	ctx := context.Background()
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithCloseOnContextDone(true).
+		WithCompilationCache(compilationCache))
+	_, err := rt.CompileModule(ctx, qjsWasm)
+	return err
+})
 
 // WasmSandbox runs a JavaScript snippet inside QuickJS compiled to WASM, executed
 // by wazero IN-PROCESS: no container, no network, no syscalls beyond what WASI
@@ -167,6 +187,9 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 	if m := w.maxTimeout(); timeout > m {
 		timeout = m
 	}
+	// A module that does not compile here does not compile in the run either, which
+	// reports it as it always has; this only keeps the compiled module held.
+	_ = qjsCompiled()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	broker, err := brokerSessionForGrant(runCtx, req.Grant, timeout, nil)

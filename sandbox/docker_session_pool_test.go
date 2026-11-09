@@ -12,21 +12,23 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox/sessiontest"
 )
 
-// sessionContainers names the session containers on the docker host now.
-func sessionContainers(t *testing.T) []string {
+// sessionContainers names d's session containers on the docker host now: d's own, by its
+// instance label, so another run's sessions on the same host are not counted as d's.
+func sessionContainers(t *testing.T, d *sandbox.DockerSandbox) []string {
 	t.Helper()
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "label=io.plimsoll.session", "--format", "{{.Names}}").Output()
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "label=io.plimsoll.session",
+		"--filter", "label=io.plimsoll.instance="+sandbox.DockerInstance(d), "--format", "{{.Names}}").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return strings.Fields(string(out))
 }
 
-// newContainers is the session containers present now that were not in before.
-func newContainers(t *testing.T, before []string) []string {
+// newContainers is d's session containers present now that were not in before.
+func newContainers(t *testing.T, d *sandbox.DockerSandbox, before []string) []string {
 	t.Helper()
 	var added []string
-	for _, name := range sessionContainers(t) {
+	for _, name := range sessionContainers(t, d) {
 		if !slices.Contains(before, name) {
 			added = append(added, name)
 		}
@@ -72,9 +74,9 @@ func startPool(t *testing.T, d *sandbox.DockerSandbox, size int) {
 // replacement and the session's container.
 func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
 	d := pythonSessionDocker(t)
-	before := sessionContainers(t)
+	before := sessionContainers(t, d)
 	startPool(t, d, 1)
-	members := newContainers(t, before)
+	members := newContainers(t, d, before)
 	if len(members) != 1 {
 		t.Fatalf("the pool made %v; want one member", members)
 	}
@@ -107,7 +109,7 @@ func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
 
 	var replacement string
 	for deadline := time.Now().Add(2 * time.Minute); replacement == "" && time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-		for _, name := range newContainers(t, before) {
+		for _, name := range newContainers(t, d, before) {
 			if name != member {
 				replacement = name
 			}
@@ -121,7 +123,7 @@ func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
 	if err := d.Drain(dctx); err != nil {
 		t.Fatal(err)
 	}
-	if left := newContainers(t, before); len(left) != 0 {
+	if left := newContainers(t, d, before); len(left) != 0 {
 		t.Fatalf("after Drain: %v remain", left)
 	}
 }
@@ -130,9 +132,9 @@ func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
 // container of its own that works, and the dead member is removed.
 func TestDockerSessionPoolPassesOverADeadMember(t *testing.T) {
 	d := sessionDocker(t)
-	before := sessionContainers(t)
+	before := sessionContainers(t, d)
 	startPool(t, d, 1)
-	members := newContainers(t, before)
+	members := newContainers(t, d, before)
 	if len(members) != 1 {
 		t.Fatalf("the pool made %v; want one member", members)
 	}
@@ -140,8 +142,11 @@ func TestDockerSessionPoolPassesOverADeadMember(t *testing.T) {
 		t.Fatalf("docker kill: %v: %s", err, out)
 	}
 	// The member's relays are docker exec streams, which end within milliseconds of
-	// the container; two seconds is ample for the pool to see it.
-	time.Sleep(2 * time.Second)
+	// the container; two seconds is ample for the pool to see it, and the wait ends
+	// sooner once the pool no longer offers the member.
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && slices.Contains(sandbox.DockerPoolReady(d), members[0]); {
+		time.Sleep(50 * time.Millisecond)
+	}
 	s := openDockerSession(t, d)
 	res, err := sessionJS(t, s, `console.log("alive")`)
 	if err != nil || strings.TrimSpace(res.Stdout) != "alive" {
@@ -151,7 +156,7 @@ func TestDockerSessionPoolPassesOverADeadMember(t *testing.T) {
 		t.Fatal("the session was given the dead member")
 	}
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(250 * time.Millisecond) {
-		if !slices.Contains(sessionContainers(t), members[0]) {
+		if !slices.Contains(sessionContainers(t, d), members[0]) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -168,7 +173,10 @@ func TestDockerSessionPoolConformance(t *testing.T) {
 	d := pythonSessionDocker(t)
 	startPool(t, d, 2)
 	langs := d.SessionEnvironments().Project.Languages
-	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget})
+	// One case at a time (no Parallel): side by side, the cases would empty the pool of
+	// two faster than it refills, and fresh sessions would stand in for pooled ones. The
+	// lifetime case waits 8 s, not 20: a pooled session opens at once.
+	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 8 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget})
 }
 
 // Sessions that hint Python move the pool: after five of them, one of its two members
@@ -177,7 +185,7 @@ func TestDockerSessionPoolConformance(t *testing.T) {
 // JavaScript cell in it still runs: a hint changes latency, never behavior.
 func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 	d := pythonSessionDocker(t)
-	before := sessionContainers(t)
+	before := sessionContainers(t, d)
 	// 5 is the smallest pool that divides its members across language sets.
 	startPool(t, d, 5)
 	python := []sandbox.Language{sandbox.LanguagePython}
@@ -206,7 +214,7 @@ func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 	// that, on two polls in a row.
 	var member, seen string
 	for deadline := time.Now().Add(3 * time.Minute); member == "" && time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
-		names := newContainers(t, before)
+		names := newContainers(t, d, before)
 		if len(names) != 5 {
 			seen = ""
 			continue
@@ -234,7 +242,7 @@ func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 		}
 	}
 	if member == "" {
-		t.Fatalf("after five Python-hinted sessions the pool is not one member warming Python alone and four warming both: %v", newContainers(t, before))
+		t.Fatalf("after five Python-hinted sessions the pool is not one member warming Python alone and four warming both: %v", newContainers(t, d, before))
 	}
 	s := open()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

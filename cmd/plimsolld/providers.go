@@ -172,6 +172,16 @@ func helpText() string {
 	for _, name := range daemonProviderNames() {
 		b.WriteString(providers[name].usage)
 	}
+	b.WriteString(`  PLIMSOLL_WITHHELD_KNOWN_FILE
+                             JSON lists of unreadable image files, keyed by verified
+                             content ID, path, reason and whole size. Create/update:
+                             plimsoll-withheld known-unreadable -set SET -known FILE IMAGE
+                             With a withheld set and docker, any unlisted unreadable
+                             file refuses startup, including with audit-only sets.
+                             Unset means none are known; malformed or missing FILE
+                             refuses startup. Rebuilt images need new lists. Listing
+                             unread bytes acknowledges a gap, not that they are clean.
+`)
 	b.WriteString(usageLimits)
 	return b.String()
 }

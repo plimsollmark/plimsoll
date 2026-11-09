@@ -285,6 +285,24 @@ func TestDoneWaitsForTeardown(t *testing.T) {
 	}
 }
 
+// Timer expiry must not depend on a payload reaching its first instruction.
+func TestLifetimeTimerExpiresAndTearsDown(t *testing.T) {
+	f := &fakeSandbox{}
+	l := NewLife("timer", f.hooks())
+	defer l.Close()
+	if !l.Activate(&Registry{}, time.Now().Add(time.Millisecond), 0) {
+		t.Fatal("Activate refused")
+	}
+	select {
+	case <-l.Done():
+		if SessionEnd(l.Err()) != Expired {
+			t.Fatalf("timer ended the session as %v", l.Err())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lifetime timer did not expire and tear down the session")
+	}
+}
+
 func TestControlArgv(t *testing.T) {
 	argv, err := ControlArgv(map[string]string{"PLIMSOLL_WORK": "/work"}, "node", "-")
 	if err != nil || !slices.Equal(argv, []string{"/usr/bin/env", "-i", "PATH=" + ControlPath, "PLIMSOLL_WORK=/work", "node", "-"}) {

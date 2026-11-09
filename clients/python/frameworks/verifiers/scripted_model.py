@@ -55,10 +55,14 @@ def _tokens(value: Any) -> int:
 class ScriptedModel:
     """The server; a context manager that starts it on 127.0.0.1 and stops it."""
 
-    def __init__(self, policy: Policy, model: str = "scripted") -> None:
+    def __init__(self, policy: Policy, model: str = "scripted", require_key: Optional[str] = None, reasoning: Optional[str] = None, cached_share: float = 0.0) -> None:
         self.policy = policy
         self.model = model
+        self.require_key = require_key  # a request without this bearer key gets a 401
+        self.reasoning = reasoning  # sent first in a stream, as a reasoning model's delta
+        self.cached_share = cached_share  # the share of each prompt reported as served from cache, as a caching API does
         self.requests: List[Dict[str, Any]] = []
+        self.request_headers: List[Dict[str, str]] = []
         self._lock = threading.Lock()
         self._calls = 0
         self._server: Optional[ThreadingHTTPServer] = None
@@ -95,6 +99,10 @@ class ScriptedModel:
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")
+                scripted.request_headers.append(dict(self.headers.items()))
+                if scripted.require_key is not None and self.headers.get("Authorization") != f"Bearer {scripted.require_key}":
+                    self._json(401, {"error": {"message": "wrong key", "type": "invalid_request_error"}})
+                    return
                 if not self.path.rstrip("/").endswith("/chat/completions"):
                     self._json(404, {"error": {"message": f"no route {self.path}"}})
                     return
@@ -124,6 +132,8 @@ class ScriptedModel:
                     self.wfile.write(b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n")
 
                 event({"role": "assistant", "content": ""})
+                if scripted.reasoning:
+                    event({"reasoning_content": scripted.reasoning})
                 if message.get("content"):
                     event({"content": message["content"]})
                 for i, call in enumerate(message.get("tool_calls") or []):
@@ -162,11 +172,14 @@ class ScriptedModel:
         if calls:
             message["tool_calls"] = calls
         prompt, completion = _tokens(messages), _tokens(message)
+        usage: Dict[str, Any] = {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
+        if self.cached_share:
+            usage["prompt_tokens_details"] = {"cached_tokens": int(prompt * self.cached_share)}
         return {
             "id": f"chatcmpl-scripted-{n}",
             "object": "chat.completion",
             "created": int(time.time()),
             "model": body.get("model") or self.model,
             "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if calls else "stop"}],
-            "usage": {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion},
+            "usage": usage,
         }

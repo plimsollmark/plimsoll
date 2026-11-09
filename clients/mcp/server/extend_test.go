@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net"
 	"strings"
 	"testing"
 
@@ -151,6 +152,57 @@ func TestAKitIsWrittenBeforeTheCallsFiles(t *testing.T) {
 	}
 }
 
+// SetCallFiles: the embedder's files go first into every call, fresh or in a sandbox, as they are at that call; a call
+// file at one of their paths is refused, and so is a call they leave no room for.
+func TestCallFilesGoIntoEveryCall(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 2})
+	s, err := server.New(local(d.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	server.SetCallFiles(s, func() []sandbox.File {
+		n++
+		if n == 1 {
+			return nil
+		}
+		return []sandbox.File{{Path: "rec/a.csv", Content: fmt.Sprintf("call %d", n)}}
+	})
+	c := connectServer(t, s)
+	if out := c.ok("run_code", map[string]any{"code": "1"}); out["stderr"] != "" {
+		t.Errorf("no call files yet, but the call wrote %q", out["stderr"])
+	}
+	out := c.ok("run_code", map[string]any{"code": "1", "files": []any{map[string]any{"path": "mine.txt", "content": "m"}}})
+	if out["stderr"] != "rec/a.csv\nmine.txt\n" {
+		t.Errorf("a fresh call wrote %q", out["stderr"])
+	}
+	if f := c.fail("run_code", map[string]any{"code": "1", "files": []any{map[string]any{"path": "rec/a.csv", "content": "mine"}}}); f.Ran != "no" || !strings.Contains(f.Summary, "writes into every call") {
+		t.Errorf("a call file at a call-files path: %+v", f)
+	}
+	h := c.ok("open_sandbox", map[string]any{})["sandbox"]
+	if out := c.ok("run_code", map[string]any{"code": "1", "sandbox": h}); out["stderr"] != "rec/a.csv\n" {
+		t.Errorf("a call in a sandbox wrote %q", out["stderr"])
+	}
+}
+
+func TestCallFilesThatLeaveNoRoomAreRefused(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{})
+	s, err := server.New(local(d.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetCallFiles(s, func() []sandbox.File {
+		return []sandbox.File{{Path: "big.csv", Content: strings.Repeat("x", sandbox.MaxProjectBytes)}}
+	})
+	c := connectServer(t, s)
+	if f := c.fail("run_code", map[string]any{"code": "1"}); f.Ran != "no" || !strings.Contains(f.Summary, "a call takes at most") {
+		t.Errorf("call files over the limit: %+v", f)
+	}
+	if n := d.Calls("Run"); n != 0 {
+		t.Errorf("%d runs reached the daemon", n)
+	}
+}
+
 func TestAKitGoesAgainIntoAReplacedSandbox(t *testing.T) {
 	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 2})
 	cfg := local(d.URL)
@@ -252,6 +304,10 @@ func TestExtendRegistersAToolLikeTheServers(t *testing.T) {
 			return echoOut{}, nil, sandbox.NotDispatched(sandbox.RefusalRequest, errors.New("no"))
 		case "lost":
 			return echoOut{}, nil, errors.New("the answer was lost")
+		case "noted":
+			return echoOut{}, nil, server.WithNote(&net.OpError{Op: "dial", Err: errors.New("refused")}, "It was not counted.")
+		case "noted-refusal":
+			return echoOut{}, nil, server.WithNote(sandbox.NotDispatched(sandbox.RefusalRequest, errors.New("no")), "It was not counted.")
 		}
 		return echoOut{Summary: in.Say}, []server.Picture{{PNG: img, Title: "p"}}, nil
 	})
@@ -264,6 +320,15 @@ func TestExtendRegistersAToolLikeTheServers(t *testing.T) {
 	}
 	if f := c.fail("echo", map[string]any{"say": "lost"}); f.Ran != "maybe" {
 		t.Errorf("an unmarked error: %+v", f)
+	}
+	// A note ends the answer, whatever the answer makes of the error under it (a dial error is
+	// shown in words of the server's own), and a marked refusal under a note is still a refusal.
+	if f := c.fail("echo", map[string]any{"say": "noted"}); f.Ran != "maybe" || !strings.HasSuffix(f.Summary, " It was not counted.") ||
+		!strings.Contains(f.Summary, "the daemon could not be reached") {
+		t.Errorf("a noted error: %+v", f)
+	}
+	if f := c.fail("echo", map[string]any{"say": "noted-refusal"}); f.Ran != "no" || f.Refusal != "request" || !strings.HasSuffix(f.Summary, " It was not counted.") {
+		t.Errorf("a noted refusal: %+v", f)
 	}
 	info := c.ok("server_info", nil)
 	if !strings.Contains(fmt.Sprint(info["tools"]), "echo") {

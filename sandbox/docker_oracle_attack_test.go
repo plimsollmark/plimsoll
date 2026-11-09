@@ -44,12 +44,18 @@ const (
 // returned trajectory.bin ("" if none).
 func judgeAttack(t *testing.T, d *DockerSandbox, controller string, extra ...File) (ProjectResult, string) {
 	t.Helper()
+	return judgeAttackWithin(t, d, 20*time.Second, controller, extra...)
+}
+
+// judgeAttackWithin is judgeAttack with the run's budget given.
+func judgeAttackWithin(t *testing.T, d *DockerSandbox, timeout time.Duration, controller string, extra ...File) (ProjectResult, string) {
+	t.Helper()
 	files := append([]File{{Path: "controller.js", Content: controller}}, extra...)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:     files,
 		Steps:     []string{"node --no-warnings /oracle/run.mjs controller.js"},
 		Artifacts: []string{"trajectory.bin"},
-		Timeout:   20 * time.Second,
+		Timeout:   timeout,
 	})
 	if err != nil {
 		// A typed pre-dispatch refusal is a fine outcome for an attack: nothing
@@ -202,7 +208,9 @@ func TestOracleAttackTimeoutHang(t *testing.T) {
 		"const rl = createInterface({ input: process.stdin });\n" +
 		"let n = 0;\n" +
 		"rl.on('line', () => { if (n++ < 10) process.stdout.write('0\\n'); });\n"
-	res, sum := judgeAttack(t, d, controller)
+	// 8 s, not the attacks' 20: the stall is endless, so any budget ends it, and the
+	// honest controller's whole judged run takes about 2 s under gVisor (2026-10-29).
+	res, sum := judgeAttackWithin(t, d, 8*time.Second, controller)
 	assertNotAccepted(t, res, sum, "timeout hang")
 	assertTimedOut(t, res, "hung controller")
 	if v, ok := verdictOf(res); ok && v.FellAt == nil && v.FinalTheta < 1e-3 && v.FinalTheta > -1e-3 {

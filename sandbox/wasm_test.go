@@ -9,13 +9,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tetratelabs/wazero"
 )
 
 // testWasm is DefaultWasm with a timeout sized for a test machine instead of for a
 // caller. DefaultWasm's 5s DefaultTimeout is a deliberate product default; it is not
 // a budget for `go test -race` on two shared vCPUs, where the race detector
 // instruments wazero's compilation of the embedded QuickJS build and a `console.log`
-// can exceed five seconds before running a single line of guest code.
+// could exceed five seconds before running a single line of guest code. (Every run
+// compiled QuickJS then; since 2026-10-29 qjsCompiled compiles it once per process,
+// outside any run's deadline.)
 //
 // Leaving the tests on the product default made every functional WASM test fail with
 // exit 124 on the first CI run of .github/workflows/audit.yml (2026-09-10): twelve
@@ -28,7 +32,45 @@ func testWasm() *WasmSandbox {
 	return w
 }
 
+// QuickJS is compiled once per process, not once per run (qjsCompiled), so a run costs
+// a small part of a compile. Before, the compilation cache let go of the compiled
+// module whenever a run's runtime closed, and every run compiled QuickJS again: about
+// 300 ms a run, against 10 ms once the module is held (2.8 s and 66 ms under the race
+// detector; 2026-10-29). The margin, a third of a compile, is ten times looser than
+// what was measured, so a loaded machine does not fail it.
+func TestWasmCompilesQuickJSOncePerProcess(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	w := testWasm()
+	run := func() time.Duration {
+		t.Helper()
+		start := time.Now()
+		if res, err := w.RunJavaScript(ctx, Request{Code: `console.log("ran")`}); err != nil || strings.TrimSpace(res.Stdout) != "ran" {
+			t.Fatalf("run: %+v, %v", res, err)
+		}
+		return time.Since(start)
+	}
+	run() // the process's first run may be the one that compiles
+	best := run()
+	for range 2 {
+		best = min(best, run())
+	}
+	// The same module compiled into a runtime of its own, which shares no cache.
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
+	defer rt.Close(ctx)
+	start := time.Now()
+	if _, err := rt.CompileModule(ctx, qjsWasm); err != nil {
+		t.Fatal(err)
+	}
+	compile := time.Since(start)
+	t.Logf("fastest of three runs %v; a compile %v", best, compile)
+	if best > compile/3 {
+		t.Fatalf("a run took %v against a compile's %v: each run compiles QuickJS again", best, compile)
+	}
+}
+
 func TestWasmRunJavaScript(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `console.log("wasm", 6 * 7)`})
 	if err != nil {
@@ -46,6 +88,7 @@ func TestWasmRunJavaScript(t *testing.T) {
 }
 
 func TestWasmEnforcesMinimumIsolationBeforeExecution(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{
 		Code:             `console.log("must not run")`,
@@ -71,6 +114,7 @@ func TestWasmEnforcesMinimumIsolationBeforeExecution(t *testing.T) {
 }
 
 func TestWasmNonZeroExitIsResult(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `throw new Error("boom")`})
 	if err != nil {
@@ -82,6 +126,7 @@ func TestWasmNonZeroExitIsResult(t *testing.T) {
 }
 
 func TestWasmHasNoNetworkOrFS(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	// No host import is provided for fetch; it should be undefined in QuickJS.
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `console.log("hasFetch=" + (typeof fetch))`})
@@ -94,6 +139,7 @@ func TestWasmHasNoNetworkOrFS(t *testing.T) {
 }
 
 func TestWasmTimeout(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	w.DefaultTimeout = 1 * time.Second
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `while (true) {}`})
@@ -109,6 +155,7 @@ func TestWasmTimeout(t *testing.T) {
 // never a normal result: wazero reports the cancel as exit 0xffffffff, which read as a
 // result with exit 4294967295 (review, 2026-10-26).
 func TestWasmCanceledRunIsAnError(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	w.DefaultTimeout = 10 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,6 +174,7 @@ func TestWasmCanceledRunIsAnError(t *testing.T) {
 // treated as "no cap" (which let a caller pin an in-process slot indefinitely) and
 // not produce a zero (already-expired) default deadline.
 func TestWasmZeroValueTimeoutFallbacks(t *testing.T) {
+	t.Parallel()
 	var w WasmSandbox // zero value
 	if got := w.maxTimeout(); got != wasmMaxTimeout {
 		t.Errorf("zero-value maxTimeout() = %v, want fallback %v (must not mean 'no cap')", got, wasmMaxTimeout)
@@ -145,6 +193,7 @@ func TestWasmZeroValueTimeoutFallbacks(t *testing.T) {
 }
 
 func TestWasmMemoryPagesClamped(t *testing.T) {
+	t.Parallel()
 	// An oversized resource envelope (8 GiB → 131072 pages) exceeds wazero's 4 GiB
 	// ceiling; it must be pinned to the max, not panic the runtime on first run.
 	w := testWasm()
@@ -158,6 +207,7 @@ func TestWasmMemoryPagesClamped(t *testing.T) {
 }
 
 func TestWasmRejectsUnsupportedResourceDimensions(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	Resources{CPUs: 1}.applyWasm(w)
 	if err := w.Preflight(context.Background()); err == nil {
@@ -175,6 +225,7 @@ func TestWasmRejectsUnsupportedResourceDimensions(t *testing.T) {
 // wazero's ~4 GiB default), the small-cap run would succeed and this test fails. wasm
 // runs IN-PROCESS, so an unenforced cap is a direct host-OOM vector.
 func TestWasmMemoryLimitEnforced(t *testing.T) {
+	t.Parallel()
 	// Allocate ~128 MiB of live Uint8Arrays: trivial under the 256 MiB default cap,
 	// impossible under a 32 MiB one.
 	const code = `
@@ -215,6 +266,7 @@ func TestWasmMemoryLimitEnforced(t *testing.T) {
 // error). If wazero changes the prefix, the trap would instead be returned as an
 // infra error and this test fails — exactly the regression to catch.
 func TestWasmTrapClassifierPinsWazeroPrefix(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{
 		Code: `function f(n){return n<=0?0:1+f(n-1)} f(200000)`,
@@ -231,6 +283,7 @@ func TestWasmTrapClassifierPinsWazeroPrefix(t *testing.T) {
 }
 
 func TestWasmProjectUnsupported(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	// The wasm provider cannot run projects; it signals this with ErrUnsupported (a
 	// returned error mapped to Unimplemented by the RPC layer), not a
@@ -242,6 +295,7 @@ func TestWasmProjectUnsupported(t *testing.T) {
 }
 
 func TestWasmConsoleErrorDoesNotCrash(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	// qjs only defines console.log; the shim must make error/warn/info/debug
 	// callable so this whole script runs instead of aborting on console.error.
@@ -260,6 +314,7 @@ func TestWasmConsoleErrorDoesNotCrash(t *testing.T) {
 }
 
 func TestWasmNumberFormatting(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	// qjs lacks Intl and groups nothing; the polyfill must make currency/number
 	// formatting produce Node-like output instead of the bare number.
@@ -286,6 +341,7 @@ func TestWasmNumberFormatting(t *testing.T) {
 // a swapped or tampered artifact must fail the build's tests, not ship.
 // When updating the asset, update the README table and this constant together.
 func TestEmbeddedQuickJSProvenance(t *testing.T) {
+	t.Parallel()
 	const pinned = "f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e" // quickjs-ng v0.15.1 + plimsoll host-call shim
 	sum := sha256.Sum256(qjsWasm)
 	if got := hex.EncodeToString(sum[:]); got != pinned {
@@ -303,6 +359,7 @@ func TestEmbeddedQuickJSProvenance(t *testing.T) {
 // The comparison against the archive's own LICENSE lives in wasm/build.sh, which
 // runs at the one moment the upstream copy exists locally.
 func TestQuickJSLicenseNoticeProvenance(t *testing.T) {
+	t.Parallel()
 	const pinned = "bfa580b50618373ca3debde48ea146aa2733e0fe99fd4d05b00d12cb98f9f822"
 	license, err := os.ReadFile("wasm/LICENSE.quickjs-ng")
 	if err != nil {
@@ -315,6 +372,7 @@ func TestQuickJSLicenseNoticeProvenance(t *testing.T) {
 }
 
 func TestWasmStackOverflowIsResultNotError(t *testing.T) {
+	t.Parallel()
 	w := testWasm()
 	// Deep JS recursion overflows the stack; in this wasm build that traps as an
 	// out-of-bounds access (qjs#47). It must be reported as a failed run (non-zero

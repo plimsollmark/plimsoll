@@ -15,6 +15,7 @@ var pageTemplate string
 
 type pageData struct {
 	Ev                              *evidence
+	Live                            *liveResults // nil until a real -live run sits beside the page
 	OpenAI, Anthropic, Plain        *runView
 	Chat, OStream, Upload           *callView
 	Refused, Messages, AStream      *callView
@@ -53,8 +54,8 @@ func profileJSON(p profileView) string {
 	return string(b)
 }
 
-func newPageData(ev *evidence) pageData {
-	d := pageData{Ev: ev, AllPass: true}
+func newPageData(ev *evidence, live *liveResults) pageData {
+	d := pageData{Ev: ev, Live: live, AllPass: true}
 	for i := range ev.Runs {
 		r := &ev.Runs[i]
 		switch r.Name {
@@ -232,17 +233,37 @@ var funcs = template.FuncMap{
 		}
 		return "refused: " + s
 	},
-	"join":   strings.Join,
+	"join": strings.Join,
+	"usd": func(v float64) string {
+		return "$" + strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.6f", v), "0"), ".")
+	},
+	"windows": func(lr *liveResults) int {
+		n := 0
+		for _, a := range lr.APIs {
+			n += a.OutputScan.Windows + a.Scan.Windows
+		}
+		return n
+	},
+	"livePassed": func(lr *liveResults) int {
+		n := 0
+		for _, c := range lr.Checks {
+			if c.Pass {
+				n++
+			}
+		}
+		return n
+	},
 	"slice2": func(a, b *callView) []*callView { return []*callView{a, b} },
 }
 
-func render(ev *evidence) ([]byte, error) {
+// render is the page; live is a real run's results, nil for none.
+func render(ev *evidence, live *liveResults) ([]byte, error) {
 	tmpl, err := template.New("page").Funcs(funcs).Parse(pageTemplate)
 	if err != nil {
 		return nil, err
 	}
 	var b bytes.Buffer
-	if err := tmpl.Execute(&b, newPageData(ev)); err != nil {
+	if err := tmpl.Execute(&b, newPageData(ev, live)); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil

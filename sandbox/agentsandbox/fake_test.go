@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -84,19 +85,20 @@ func goodSpec(digest string) podSpec {
 		DNSConfig: &dnsConfig{Nameservers: []string{fixedNameserver}},
 		Containers: []container{{
 			Name: "sandboxd", Image: fakeImage,
-			Command: []string{"/usr/local/bin/sandboxd", "--root-dir=/work", "--grpc-port=9090", "--auth-token-sha256=" + digest},
+			Command: []string{frontPath, "--root-dir=/work", "--listen-host=127.0.0.1", "--grpc-port=9091", "--auth-token-sha256=" + digest},
 			SecurityContext: &securityContext{AllowPrivilegeEscalation: &f, ReadOnlyRootFilesystem: &tr, Capabilities: &struct {
 				Add  []string `json:"add,omitempty"`
 				Drop []string `json:"drop,omitempty"`
 			}{Add: []string{"SETUID", "SETGID"}, Drop: []string{"ALL"}}},
-			VolumeMounts:           []volumeMount{{Name: "work", MountPath: "/work"}},
+			VolumeMounts:           []volumeMount{{Name: "work", MountPath: "/work"}, {Name: "sandboxd-tls", MountPath: tlsMountPath, ReadOnly: true}},
 			TerminationMessagePath: "/root/termination-log",
 			Resources: struct {
 				Limits   map[string]string `json:"limits,omitempty"`
 				Requests map[string]string `json:"requests,omitempty"`
 			}{Limits: map[string]string{"memory": "256Mi", "cpu": "1"}},
 		}},
-		Volumes: []volume{{"name": json.RawMessage(`"work"`), "emptyDir": json.RawMessage(`{"medium":"Memory","sizeLimit":"128Mi"}`)}},
+		Volumes: []volume{{"name": json.RawMessage(`"work"`), "emptyDir": json.RawMessage(`{"medium":"Memory","sizeLimit":"128Mi"}`)},
+			{"name": json.RawMessage(`"sandboxd-tls"`), "secret": json.RawMessage(`{"secretName":"plimsoll-sandboxd-tls","defaultMode":256}`)}},
 	}
 }
 
@@ -329,27 +331,35 @@ type fakeSandboxd struct {
 	tierChecks  int
 	// cancelled is closed when a hanging Start sees its stream end.
 	cancelled chan struct{}
+	// reached counts requests that completed the TLS handshake and reached the handler.
+	reached atomic.Int64
 }
 
-func newFakeSandboxd(t *testing.T) *fakeSandboxd {
+// newFakeSandboxdWith serves the fake over TLS with cert, as a pod's terminator serves
+// sandboxd: HTTP/2 unless protos names other ALPN protocols. reached counts every request
+// that got past the handshake.
+func newFakeSandboxdWith(t *testing.T, cert tls.Certificate, protos ...string) *fakeSandboxd {
 	f := &fakeSandboxd{t: t, stdin: map[int32]chan []byte{}, bufs: map[int32][]byte{}, cancelled: make(chan struct{}),
 		mountAnswer: strings.Join(kataMounts, "\n") + "\n",
 		tierAnswer:  "kernel [   0.000000] Starting gVisor...\nboot " + fakeBoot + "\nSeccomp:\t2\n"}
 	mux := http.NewServeMux()
 	mux.Handle(processv1connect.NewProcessServiceHandler(f))
-	f.srv = httptest.NewUnstartedServer(mux)
-	protocols := new(http.Protocols)
-	protocols.SetUnencryptedHTTP2(true)
-	f.srv.Config.Protocols = protocols
-	f.srv.Start()
+	f.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.reached.Add(1)
+		mux.ServeHTTP(w, r)
+	}))
+	if len(protos) == 0 {
+		protos = []string{"h2"}
+	}
+	f.srv.EnableHTTP2 = protos[0] == "h2"
+	f.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: protos, MinVersion: tls.VersionTLS13}
+	f.srv.StartTLS()
 	t.Cleanup(f.srv.Close)
 	return f
 }
 
-func (f *fakeSandboxd) client(string) processv1connect.ProcessServiceClient {
-	return processv1connect.NewProcessServiceClient(h2cClient(), f.srv.URL, connect.WithGRPC(),
-		connect.WithInterceptors(bearer(fakeToken)))
-}
+// addr is where a pod's terminator would be: every pod IP dials it.
+func (f *fakeSandboxd) addr(string) string { return f.srv.Listener.Addr().String() }
 
 func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1.StartRequest], stream *connect.ServerStream[processv1.StartResponse]) error {
 	f.mu.Lock()
@@ -447,7 +457,11 @@ func runnerReport(t *testing.T, stdin []byte) string {
 	}
 	var steps []step
 	for _, s := range plan.Steps {
-		steps = append(steps, step{Command: s, Stdout: []byte("ran " + s)})
+		st := step{Command: s, Stdout: []byte("ran " + s)}
+		if s == "node runner-probe.js" { // the smoke test's probe names the sandboxd it found below pid 1
+			st.Stderr = []byte("sandboxd 7\n")
+		}
+		steps = append(steps, st)
 	}
 	body, _ := json.Marshal(map[string]any{"steps": steps, "artifacts": []any{}})
 	h := hmac.New(sha256.New, key)
@@ -464,7 +478,10 @@ func testProvider(t *testing.T) (*Provider, *fakeAPI, *fakeSandboxd) {
 // testProviderWith is testProvider with edit applied to the configuration before New.
 func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *fakeSandboxd) {
 	t.Helper()
-	api, sd := newFakeAPI(t), newFakeSandboxd(t)
+	// Every fake pod's sandboxd is served over TLS with a certificate from a CA made for
+	// this test, and the provider reaches it through its real pinned channel.
+	pki := newTestPKI(t)
+	api, sd := newFakeAPI(t), newFakeSandboxdWith(t, pki.serverCert(t, DefaultServerName))
 	dir := t.TempDir()
 	ca := filepath.Join(dir, "ca.crt")
 	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.srv.Certificate().Raw}), 0o600); err != nil {
@@ -475,7 +492,7 @@ func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *f
 		t.Fatal(err)
 	}
 	cfg := Config{APIServer: api.srv.URL, CAFile: ca, TokenFile: tok, Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken}
+		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: pki.caFile(t)}
 	if edit != nil {
 		edit(&cfg)
 	}
@@ -483,7 +500,7 @@ func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *f
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.dialProcess = sd.client
+	p.dialAddr = sd.addr
 	p.pf.TTL = 0
 	sd.run = func(argv []string, stdin []byte) (string, string, int32) {
 		if strings.Contains(strings.Join(argv, " "), runnerPath) {
@@ -649,8 +666,8 @@ func fakeSmoke(t *testing.T, p *Provider, sd *fakeSandboxd, edit func(*boundaryR
 		}
 		ids := strings.Repeat("61000\t", 3) + "61000"
 		r := boundaryReport{Node: "v22.0.0", UID: ids, GID: ids, CapEff: "0000000000000000", CapPrm: "0000000000000000", NoNewPrivs: "1", Seccomp: "2",
-			Sandboxd: map[string]string{"none": "16", "wrong": "16"},
-			Env:      []string{"HOME", "PATH"}, Resolv: "nameserver 127.0.0.1\n", Swept: 1000, Gateway: "10.0.0.1", Egress: map[string]string{"tcp 10.0.0.1:10250": "timeout"},
+			Sandboxd: map[string]string{"none": "16", "wrong": "16", "front": "ERR_HTTP2_SESSION_ERROR"}, TLSKey: "EACCES",
+			Env: []string{"HOME", "PATH"}, Resolv: "nameserver 127.0.0.1\n", Swept: 1000, Gateway: "10.0.0.1", Egress: map[string]string{"tcp 10.0.0.1:10250": "timeout"},
 			Dmesg: "[   0.000000] Starting gVisor...", Mounts: []string{"none / overlay ro 0 0", "shm /dev/shm tmpfs rw 0 0"},
 		}
 		if p.IsolationClass() == sandbox.IsolationVM {

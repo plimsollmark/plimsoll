@@ -47,6 +47,7 @@ func wantTmpfs(t *testing.T, got *structpb.Struct, size int64) {
 }
 
 func TestDiskCapMountsASizedTmpForEachRun(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	withDiskCap(t, f, p, 64)
@@ -61,6 +62,7 @@ func TestDiskCapMountsASizedTmpForEachRun(t *testing.T) {
 }
 
 func TestNoDiskCapSendsNoDriverConfig(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	// A gateway may answer an absent driver config with an empty one: the same thing.
@@ -78,6 +80,7 @@ func TestNoDiskCapSendsNoDriverConfig(t *testing.T) {
 // A gateway without allow_driver_config refuses the create; the error names the
 // gateway setting and the plimsoll setting that asked for it, and startup fails.
 func TestDiskCapNeedsAllowDriverConfig(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	withDiskCap(t, f, p, 64)
@@ -97,6 +100,7 @@ func TestDiskCapNeedsAllowDriverConfig(t *testing.T) {
 }
 
 func TestDiskCapReadBackRefusesAnotherSize(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	f.run = echoScript
 	withDiskCap(t, f, p, 64)
@@ -117,6 +121,7 @@ func TestDiskCapReadBackRefusesAnotherSize(t *testing.T) {
 // v0.1.2: the file was gone after a suspend). Its read-back refuses a driver config
 // that appears later.
 func TestSessionGetsNoDiskCap(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	sc := &sessionScript{}
 	f.run = sc.run
@@ -141,6 +146,7 @@ func TestSessionGetsNoDiskCap(t *testing.T) {
 }
 
 func TestCheckTmpMount(t *testing.T) {
+	t.Parallel()
 	good := "tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,relatime,size=65536k 0 0" // measured on v0.1.2, 2026-09-29
 	if err := checkTmpMount(good, 64); err != nil {
 		t.Fatalf("measured mount refused: %v", err)
@@ -167,6 +173,7 @@ func TestCheckTmpMount(t *testing.T) {
 // the mount, or mounted it wrong. The read-back cannot see any of these; only the
 // probe's own reading of /proc/mounts can, so each must refuse startup.
 func TestSmokeTestChecksTheTmpMount(t *testing.T) {
+	t.Parallel()
 	const good = "tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,relatime,size=65536k 0 0" // measured on v0.1.2, 2026-09-29
 	for _, tc := range []struct {
 		name, mount, expect string

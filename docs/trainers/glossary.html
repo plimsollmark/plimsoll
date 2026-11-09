@@ -240,9 +240,17 @@
         <dt>admission</dt>
         <dd>The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing.</dd>
       </div>
+      <div class="entry" id="agent">
+        <dt>agent</dt>
+        <dd>An AI model left alone with a job and a terminal: it writes code, runs it, reads what happened and tries again, like a new hire on a first day with a laptop and no manager.</dd>
+      </div>
       <div class="entry" id="agent-sandbox">
         <dt>agent-sandbox</dt>
         <dd>A component of Kubernetes (a system for managing containers across machines) that lends a ready sandbox pod from a warm pool for one run; plimsoll checks the pod and its runtime before sending code, then deletes its claim.</dd>
+      </div>
+      <div class="entry" id="answer-key-tripwire">
+        <dt>answer-key tripwire</dt>
+        <dd>A check that reads every request a test harness sent to the model, exactly as sent, and looks for values the model must never see, such as the right answers; finding one means the exam leaked.</dd>
       </div>
       <div class="entry" id="attestation">
         <dt>attestation</dt>
@@ -252,6 +260,10 @@
         <dt>backpressure</dt>
         <dd>An overloaded service telling its callers to slow down, and the callers doing so.</dd>
       </div>
+      <div class="entry" id="baseline">
+        <dt>baseline</dt>
+        <dd>The starting point every group is compared against: here, the same plain program every agent began from, so any improvement is measured against it.</dd>
+      </div>
       <div class="entry" id="broker">
         <dt>broker</dt>
         <dd>The part of plimsoll that makes API calls for sandboxed code: it checks each call against the grant, attaches the credential itself, and counts the calls, so the code never sees the credential.</dd>
@@ -259,6 +271,18 @@
       <div class="entry" id="buck-converter">
         <dt>buck converter</dt>
         <dd>A power-supply circuit that turns a higher DC voltage into a lower one by switching it on and off many times a second.</dd>
+      </div>
+      <div class="entry" id="call">
+        <dt>call</dt>
+        <dd>One request to plimsoll to run some code, the way one phone call is one request to someone to do something.</dd>
+      </div>
+      <div class="entry" id="canary">
+        <dt>canary</dt>
+        <dd>A made-up marker value planted where a secret lives, so that spotting it anywhere else proves a leak; named after the canaries miners took underground as an early alarm.</dd>
+      </div>
+      <div class="entry" id="canary-run">
+        <dt>canary run</dt>
+        <dd>A test of the test harness itself: it plants a canary in every hiding place, runs the harness, and fails if any canary shows up where it should not.</dd>
       </div>
       <div class="entry" id="cart-pole">
         <dt>cart-pole</dt>
@@ -272,6 +296,10 @@
         <dt>cgroup</dt>
         <dd>The Linux kernel feature that caps and counts the memory, CPU time and number of processes a group of processes may use. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
       </div>
+      <div class="entry" id="checkpoint">
+        <dt>checkpoint</dt>
+        <dd>A saved snapshot of a model partway through training, like saving a game so you can compare how you played at different stages.</dd>
+      </div>
       <div class="entry" id="circuit-breaker">
         <dt>circuit breaker</dt>
         <dd>A switch in the broker that, after the API answers 429 (too many requests) or 503 (unavailable), stops forwarding calls for a cooldown so the API can recover.</dd>
@@ -279,6 +307,10 @@
       <div class="entry" id="code-mode">
         <dt>code mode</dt>
         <dd>Letting an AI agent write a short program that calls an API and run it in a sandbox, instead of calling one tool per step.</dd>
+      </div>
+      <div class="entry" id="compressor">
+        <dt>compressor</dt>
+        <dd>The model asked to read everything a loop produced and write a short note (the recipe) that captures what mattered, like a student boiling a textbook down to one cheat sheet.</dd>
       </div>
       <div class="entry" id="connect">
         <dt>Connect</dt>
@@ -292,6 +324,10 @@
         <dt>content-addressed</dt>
         <dd>Identified by a digest of its own content, so the identifier can never later point at different content.</dd>
       </div>
+      <div class="entry" id="control">
+        <dt>control</dt>
+        <dd>A group given everything except the thing being tested, so any difference between it and the tested group shows what that thing did, like two garden plots with the same seeds and water where only the fertilizer differs.</dd>
+      </div>
       <div class="entry" id="control-law">
         <dt>control law</dt>
         <dd>The formula a controller applies at each tick to turn its measurements into an action.</dd>
@@ -299,6 +335,10 @@
       <div class="entry" id="controller">
         <dt>controller</dt>
         <dd>A program that reads a system's state at every tick and decides how to push it, for example to keep a pole balanced on a cart.</dd>
+      </div>
+      <div class="entry" id="critic">
+        <dt>critic</dt>
+        <dd>Another model asked to score a piece of work out of 10, like a second teacher who reads an essay and marks it.</dd>
       </div>
       <div class="entry" id="deny-all">
         <dt>deny-all</dt>
@@ -388,6 +428,10 @@
         <dt>harness</dt>
         <dd>A program outside the daemon that drives runs and checks their results; plimsoll's attest harness signs run records and verifies them later.</dd>
       </div>
+      <div class="entry" id="held-out-flights">
+        <dt>held-out flights</dt>
+        <dd>Test flights no agent ever saw while it worked, made from a secret fixed before the runs began; the final exam, as opposed to the practice quizzes.</dd>
+      </div>
       <div class="entry" id="hypervisor">
         <dt>hypervisor</dt>
         <dd>The program that runs virtual machines and keeps them apart, so code that breaks out of a virtual machine still has to break the hypervisor. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
@@ -412,6 +456,10 @@
         <dt>load line</dt>
         <dd>The mark painted on a ship's hull showing how low it may safely sit in the water, where anyone can check it; plimsoll is named after it.</dd>
       </div>
+      <div class="entry" id="loop">
+        <dt>loop</dt>
+        <dd>An agent that improves its own work round after round: write, test, look at the result, change, repeat.</dd>
+      </div>
       <div class="entry" id="manifest">
         <dt>manifest</dt>
         <dd>A file that lists what something contains, such as the files in a release or the layers of a container image.</dd>
@@ -419,6 +467,10 @@
       <div class="entry" id="mcp">
         <dt>MCP</dt>
         <dd>Model Context Protocol: the open standard an AI application uses to offer tools, such as a run-code tool, to a language model.</dd>
+      </div>
+      <div class="entry" id="median">
+        <dt>median</dt>
+        <dd>The middle value when you line a set of numbers up in order, so half are below it and half above; one wild value cannot drag it far, unlike an average.</dd>
       </div>
       <div class="entry" id="microvm">
         <dt>microVM</dt>
@@ -456,6 +508,14 @@
         <dt>OpenShell</dt>
         <dd>NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run, or one per session.</dd>
       </div>
+      <div class="entry" id="overfitting">
+        <dt>overfitting</dt>
+        <dd>Scoring well on the practice set by memorizing it instead of getting better at the job, like a student who memorized last year's quiz and fails this year's.</dd>
+      </div>
+      <div class="entry" id="percentage-points">
+        <dt>percentage points</dt>
+        <dd>The plain difference between two percentages: going from 40% to 46% is 6 percentage points, not 6%.</dd>
+      </div>
       <div class="entry" id="physics-oracle">
         <dt>physics oracle</dt>
         <dd>The example that tests an agent-written controller by running it against a simulated cart-pole inside the sandbox and fingerprinting what happens.</dd>
@@ -463,6 +523,14 @@
       <div class="entry" id="pinned">
         <dt>pinned</dt>
         <dd>Fixed to one exact version, usually by digest, so it changes only when someone edits the pin.</dd>
+      </div>
+      <div class="entry" id="practice-flights">
+        <dt>practice flights</dt>
+        <dd>The flights a loop grades itself on every round: a rehearsal the agent can see, unlike the held-out flights it is finally judged on.</dd>
+      </div>
+      <div class="entry" id="practice-seeds">
+        <dt>practice seeds</dt>
+        <dd>The numbers behind the practice flights; each one decides one flight's payload, wind and gusts, so with the seed an agent could replay that flight exactly.</dd>
       </div>
       <div class="entry" id="preflight">
         <dt>preflight</dt>
@@ -475,6 +543,14 @@
       <div class="entry" id="process">
         <dt>process</dt>
         <dd>One running program, with its own memory and its own permissions.</dd>
+      </div>
+      <div class="entry" id="prompt">
+        <dt>prompt</dt>
+        <dd>The written text sent to a model telling it what to do, plus anything else it is shown with the request.</dd>
+      </div>
+      <div class="entry" id="prompt-cache">
+        <dt>prompt cache</dt>
+        <dd>A discount the model's provider gives when the start of a long conversation matches one it already read: it keeps that part and charges a fraction of the fresh price to read it again.</dd>
       </div>
       <div class="entry" id="prompt-injection">
         <dt>prompt injection</dt>
@@ -500,9 +576,21 @@
         <dt>QuickJS</dt>
         <dd>A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider.</dd>
       </div>
+      <div class="entry" id="rebuild">
+        <dt>rebuild</dt>
+        <dd>A fresh agent in a fresh sandbox, given only the task, a recipe and a few smoke flights, which builds its own controller from scratch to show whether the recipe carries enough to work from.</dd>
+      </div>
       <div class="entry" id="receipt">
         <dt>receipt</dt>
         <dd>A signed claim about an operation or file, whose signature and subject can be checked without independently repeating the work.</dd>
+      </div>
+      <div class="entry" id="recipe">
+        <dt>recipe</dt>
+        <dd>A short note, capped at a fixed number of tokens, written by a model that read a loop's whole record: the sticky note the last person on the job left for the next one.</dd>
+      </div>
+      <div class="entry" id="resampling">
+        <dt>resampling</dt>
+        <dd>Estimating how much a result could vary by redrawing the data again and again at random, like pulling names from a hat many times to see how different the draws can look.</dd>
       </div>
       <div class="entry" id="rpc">
         <dt>RPC</dt>
@@ -528,17 +616,33 @@
         <dt>sandbox</dt>
         <dd>A place where code runs with something stopping it from reaching the rest of the machine.</dd>
       </div>
+      <div class="entry" id="sealed-values">
+        <dt>sealed values</dt>
+        <dd>Anything the model being tested must never be sent, such as the right answers or the numbers behind the held-out flights.</dd>
+      </div>
       <div class="entry" id="seccomp">
         <dt>seccomp</dt>
         <dd>A Linux kernel feature that limits which system calls a process may make; plimsoll ships a profile listing the calls its containers may use.</dd>
+      </div>
+      <div class="entry" id="seed">
+        <dt>seed</dt>
+        <dd>One number that decides a random choice, so anyone can redo the exact same shuffle or flight, because the same seed always gives the same result.</dd>
       </div>
       <div class="entry" id="session">
         <dt>session</dt>
         <dd>One sandbox kept open for many calls: the files a call writes are there for the next, a cleanup between calls ends what a call left running, and an interpreter kept for cells can carry its state from one call to the next.</dd>
       </div>
+      <div class="entry" id="sha-256">
+        <dt>SHA-256</dt>
+        <dd>A way to turn any file into a 64-character fingerprint; change one byte of the file and the fingerprint changes completely, so publishing it first proves the file was not altered later.</dd>
+      </div>
       <div class="entry" id="shed">
         <dt>shed</dt>
         <dd>To refuse extra work at once, instead of queueing it, when a limit is reached.</dd>
+      </div>
+      <div class="entry" id="ship-scan">
+        <dt>ship scan</dt>
+        <dd>A check on every call on its way into the sandbox: anything matching the withheld set is refused before it ships, like airport security checking a bag against a list of banned items.</dd>
       </div>
       <div class="entry" id="side-channel">
         <dt>side channel</dt>
@@ -547,6 +651,14 @@
       <div class="entry" id="signing-key">
         <dt>signing key</dt>
         <dd>A private key that signs statements so that anyone holding the matching public key can check them; the MCP server signs each receipt with an Ed25519 key read from a file only its owner can read.</dd>
+      </div>
+      <div class="entry" id="smoke-flights">
+        <dt>smoke flights</dt>
+        <dd>A few throwaway flights, run only to check that code runs at all, named after plugging in new hardware to see whether smoke comes out.</dd>
+      </div>
+      <div class="entry" id="squeeze-gap">
+        <dt>squeeze gap</dt>
+        <dd>A loop's practice score minus the median practice score of the rebuilds made from its recipe: the part of the score the recipe could not carry, so a big gap means the score did not come from anything a short note can pass on.</dd>
       </div>
       <div class="entry" id="stdio">
         <dt>stdio</dt>
@@ -576,6 +688,10 @@
         <dt>tmpfs</dt>
         <dd>A filesystem held in memory, with a size limit set when it is mounted; its contents disappear when the container stops.</dd>
       </div>
+      <div class="entry" id="token">
+        <dt>token</dt>
+        <dd>The unit a language model reads and writes in: a short English word is usually one token, a long number several.</dd>
+      </div>
       <div class="entry" id="token-bucket">
         <dt>token bucket</dt>
         <dd>A rate limit that allows short bursts: each caller's allowance refills at a steady rate and each run spends one unit of it.</dd>
@@ -592,6 +708,14 @@
         <dt>Trigger.dev</dt>
         <dd>A hosted job runner for TypeScript whose durable chat agents can sleep between messages; the trigger-chat example gives one an executeCode tool backed by plimsoll.</dd>
       </div>
+      <div class="entry" id="truth-label">
+        <dt>truth label</dt>
+        <dd>The right answer for a test question; if it is pasted into the model's prompt, the exam leaked.</dd>
+      </div>
+      <div class="entry" id="validation-set">
+        <dt>validation set</dt>
+        <dd>The examples a learner checks itself against while it works, here the practice flights; kept apart from the final exam it is judged on.</dd>
+      </div>
       <div class="entry" id="virtual-machine">
         <dt>virtual machine</dt>
         <dd>A complete computer simulated in software, with its own kernel, kept apart from other virtual machines by the processor's virtualization features. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
@@ -603,6 +727,10 @@
       <div class="entry" id="webassembly">
         <dt>WebAssembly</dt>
         <dd>A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them.</dd>
+      </div>
+      <div class="entry" id="withheld-set">
+        <dt>withheld set</dt>
+        <dd>A list of fingerprints of things that must never go into the sandbox, written by whoever runs the plimsoll server; any file or line that matches is refused.</dd>
       </div>
     </dl>
     <!-- glossary:end -->

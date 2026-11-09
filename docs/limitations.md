@@ -30,16 +30,33 @@ Part of the [plimsoll README](../README.md).
   user. The VM is the boundary: root inside it reaches nothing outside, and the VM is
   deleted after the run. In a <dfn>*session*</dfn> (one sandbox kept for many calls),
   the code runs as a user that cannot become root ([sessions](sessions.md)).
+- **A hosted provider can read what it stores and runs.** Docker Cloud keeps an image in
+  its store and runs it on its machines; E2B its templates; an
+  [OpenShell (INTERNAL · glossary →)](trainers/glossary.html#openshell) gateway or a
+  Kubernetes cluster its pods. The provider can read the image and a running sandbox, and
+  plimsoll has no provider whose hardware hides a run from its host to change that. Keep
+  what must stay from the provider out of the image: `plimsoll-withheld scan-image` checks
+  an image against a withheld set before a push
+  ([INTERNAL · the ship scan →](ship-scan.md)).
 - **An upload has 30 seconds to arrive.** The daemon's read timeout covers the request
   body, up to its 8 MiB limit, so a client slower than about 280 KB/s on a full-size
   project is cut off (8 MiB in 30 seconds); a faster link or a smaller project is the
   remedy.
 - **The [agent-sandbox (INTERNAL · glossary →)](trainers/glossary.html#agent-sandbox)
-  provider's control channel is not encrypted.** plimsolld talks to each Kubernetes pod's
-  sandboxd over plain HTTP/2, so the token, the code, the report key and the output are as
-  private as the pod network is. Run it on an encrypted pod network;
-  [hardened mode (INTERNAL · glossary →)](trainers/glossary.html#hardened-mode) asks you to
-  say so ([agentsandbox.md](agentsandbox.md#the-control-channel-is-cleartext)).
+  provider's pods all share one TLS key.** plimsolld reaches each Kubernetes pod over TLS
+  that it checks against the deployment's own certificate authority, but every pod serves
+  the same certificate from one Secret, so code that broke out to root inside one pod could
+  read the key and, from a position on the pod network, pass for any pod until the Secret is
+  rotated. Code in the sandbox cannot read the key without such a break, which the startup smoke test
+  checks; rotate the Secret on a schedule. The same fact has a second consequence: the certificate
+  proves the peer is a plimsoll sandbox pod of the deployment, not the pod plimsolld dialed, so
+  an attacker who can rewrite traffic on the pod network can redirect one caller's connection
+  into another pod of the deployment (such as one their own run holds) and receive that run's
+  code, files and token. Until each pod has a key of its own, plimsolld started with `PLIMSOLL_HARDENED=1`
+  ([what that setting enforces](hardened-mode.md)) refuses to serve this provider unless `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1` states that an authenticated,
+  encrypted pod network or a service mesh with mutual TLS runs under it, since the daemon cannot
+  check that itself
+  ([agentsandbox.md](agentsandbox.md#the-control-channel-is-tls)).
 - **The E2B guard only works in the daemon process that started the run, so it cannot sit
   behind an ordinary load balancer.** A run's guard credential lives in the memory of the
   process that created the run, so a guard request sent to a second copy of the daemon is

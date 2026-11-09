@@ -108,6 +108,9 @@ type lab struct {
 	mu       sync.Mutex
 	projects []sandbox.ProjectRequest
 	flip     uint32 // a seed whose flights end the other way: a grader that is not deterministic
+	// slow, when set, says which grading runs outlast their time (by controller and cases file):
+	// such a run answers with a timed-out step that printed nothing, as the docker provider does.
+	slow func(controller, cases string) bool
 }
 
 func (l *lab) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
@@ -132,6 +135,11 @@ func (l *lab) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox
 		var cases struct{ Seeds []uint32 }
 		if len(f) < 4 || f[0] != "node" || f[1] != "fly.mjs" || json.Unmarshal([]byte(files[f[3]]), &cases) != nil {
 			return res, fmt.Errorf("lab: a step it cannot fly: %q", step)
+		}
+		if l.slow != nil && l.slow(files["controller.js"], files[f[3]]) {
+			res.Steps = append(res.Steps, sandbox.StepResult{Command: step, ExitCode: -1, TimedOut: true})
+			res.Outcome = sandbox.ProjectOutcomeTimedOut
+			return res, nil
 		}
 		out := fakeFlights(files["controller.js"], cases.Seeds)
 		for i, r := range out.Results {
@@ -196,6 +204,17 @@ func (s *labSession) RunCell(ctx context.Context, req sandbox.CellRequest) (sand
 	for _, f := range req.Files {
 		s.files[f.Path] = f.Content
 	}
+	// "//lab-fail": the sandbox fails the call with no answer, a harness fault.
+	if strings.HasPrefix(req.Code, "//lab-fail") {
+		s.mu.Unlock()
+		return sandbox.CellResult{}, errors.New("lab: the sandbox failed the call")
+	}
+	// "//lab-write PATH\nCONTENT": code that writes a file the way a model's own code would,
+	// not through write_file.
+	if rest, ok := strings.CutPrefix(req.Code, "//lab-write "); ok {
+		p, content, _ := strings.Cut(rest, "\n")
+		s.files[p] = content
+	}
 	s.mu.Unlock()
 	return s.Session.RunCell(ctx, req)
 }
@@ -238,7 +257,7 @@ func testJob(build int, imports map[string][]string) *Job {
 	for _, g := range []struct{ id, from string }{{"cheater", "cheater"}, {"honest", "honest"}, {"none", ""}} {
 		c.Groups = append(c.Groups, Group{ID: g.id, Label: g.id, From: g.from, Build: build, Import: imports[g.id]})
 	}
-	return &Job{Name: "test", Fresh: 16, Courses: []CourseJob{c}, Rebuild: Rebuild{Turns: 6, FlightsPerFly: 4}}
+	return &Job{Name: "test", Fresh: 16, Courses: []CourseJob{c}, Rebuild: Rebuild{Turns: 6, FlightsPerFly: 4, FlyCalls: 60, MaxTokens: 8192}}
 }
 
 func writeImports(t *testing.T, root string, files map[string]string) {
@@ -278,7 +297,7 @@ func TestRegradeIsSignedAndVerifies(t *testing.T) {
 	}
 	l := &lab{Sessions: &sandboxtest.Sessions{}}
 	out := filepath.Join(t.TempDir(), "page")
-	if err := runAndPublish(context.Background(), job, root, out, daemonFor(t, l), "", "", 3, "", "", "NO_KEY_SET", 0, givenFresh{}); err != nil {
+	if err := runAndPublish(context.Background(), job, root, out, daemonFor(t, l), "", "", 3, modelOpts{api: "chat", keyEnv: "NO_KEY_SET"}, givenFresh{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyPublished(out, job); err != nil {
@@ -304,7 +323,8 @@ func TestRegradeIsSignedAndVerifies(t *testing.T) {
 	if c.Groups[0].Missing != 1 || len(c.Groups[0].Rebuilds) != 6 {
 		t.Fatalf("the cheater's group: %+v", c.Groups[0])
 	}
-	if !ev.Scan.SetsHeld || ev.Scan.GradingRuns != 2*(2+20) || len(ev.Scan.Hits) != 0 {
+	// Each controller: the 8 practice flights in one run, the 16 fresh in two of gradeChunk.
+	if !ev.Scan.SetsHeld || ev.Scan.GradingRuns != 3*(2+20) || len(ev.Scan.Hits) != 0 {
 		t.Fatalf("scan %+v", ev.Scan)
 	}
 	if len(c.Tracks) != 2*2+3 {
@@ -347,7 +367,7 @@ func TestBuiltRebuildsAreScanned(t *testing.T) {
 		t.Run(fmt.Sprintf("leak=%v", leak), func(t *testing.T) {
 			var mu sync.Mutex
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var req struct{ Messages []message }
+				var req struct{ Messages []chatMessage }
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					http.Error(w, "bad", 400)
 					return
@@ -393,7 +413,7 @@ func TestBuiltRebuildsAreScanned(t *testing.T) {
 			job := testJob(1, nil)
 			l := &lab{Sessions: &sandboxtest.Sessions{}}
 			out := filepath.Join(t.TempDir(), "page")
-			err := runAndPublish(context.Background(), job, root, out, daemonFor(t, l), "", "", 2, "fake", fake.URL, "FAKE_MODEL_KEY", 100000, givenFresh{})
+			err := runAndPublish(context.Background(), job, root, out, daemonFor(t, l), "", "", 2, modelOpts{api: "chat", model: "fake", base: fake.URL, keyEnv: "FAKE_MODEL_KEY", maxTokens: 100000}, givenFresh{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -460,11 +480,11 @@ func TestBuiltRebuildsAreScanned(t *testing.T) {
 // token budget: no spend by accident.
 func TestBuildingNeedsAKeyAndABudget(t *testing.T) {
 	job := testJob(1, nil)
-	if err := runAndPublish(context.Background(), job, "", t.TempDir(), "http://127.0.0.1:1", "", "", 1, "m", "http://127.0.0.1:1", "SQUEEZE_TEST_UNSET_KEY", 1000, givenFresh{}); err != errNoModel {
+	if err := runAndPublish(context.Background(), job, "", t.TempDir(), "http://127.0.0.1:1", "", "", 1, modelOpts{api: "chat", model: "m", base: "http://127.0.0.1:1", keyEnv: "SQUEEZE_TEST_UNSET_KEY", maxTokens: 1000}, givenFresh{}); err != errNoModel {
 		t.Fatalf("no key: %v", err)
 	}
 	t.Setenv("SQUEEZE_TEST_KEY", "k")
-	if err := runAndPublish(context.Background(), job, "", t.TempDir(), "http://127.0.0.1:1", "", "", 1, "m", "http://127.0.0.1:1", "SQUEEZE_TEST_KEY", 0, givenFresh{}); err == nil || !strings.Contains(err.Error(), "-max-tokens") {
+	if err := runAndPublish(context.Background(), job, "", t.TempDir(), "http://127.0.0.1:1", "", "", 1, modelOpts{api: "chat", model: "m", base: "http://127.0.0.1:1", keyEnv: "SQUEEZE_TEST_KEY"}, givenFresh{}); err == nil || !strings.Contains(err.Error(), "-max-tokens") {
 		t.Fatalf("no budget: %v", err)
 	}
 }
@@ -511,7 +531,9 @@ func TestCourseFliesTheBaseline(t *testing.T) {
 		t.Fatalf("the baseline: %+v", fs)
 	}
 	for _, r := range fs.Results {
-		if r.SimulatedSeconds <= 0 || r.CPUSeconds <= 0 || r.CPUSeconds > 1 {
+		// /proc reports CPU time in 10 ms ticks. A short flight may use less
+		// than one tick and legitimately report zero, while simulated time advances.
+		if r.SimulatedSeconds <= 0 || r.CPUSeconds < 0 || r.CPUSeconds > 1 || r.StartCPUSeconds < 0 {
 			t.Fatalf("flight %+v", r)
 		}
 	}
@@ -551,7 +573,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 		"repro/none/r0.js": "// ALL rebuild\n"})
 	job := testJob(0, map[string][]string{"cheater": {"repro/none/r0.js"}, "honest": {"repro/none/r0.js"}, "none": {"repro/none/r0.js"}})
 	first := filepath.Join(t.TempDir(), "first")
-	if err := runAndPublish(context.Background(), job, root, first, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, "", "", "NO_KEY_SET", 0, givenFresh{}); err != nil {
+	if err := runAndPublish(context.Background(), job, root, first, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, modelOpts{api: "chat", keyEnv: "NO_KEY_SET"}, givenFresh{}); err != nil {
 		t.Fatal(err)
 	}
 	var rf1 RunFile
@@ -561,7 +583,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 	set := filepath.Join(first, "fresh.json")
 	loops := job.loopsOnly()
 	again := filepath.Join(t.TempDir(), "again")
-	if err := runAndPublish(context.Background(), loops, root, again, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, "", "", "NO_KEY_SET", 0, givenFresh{path: set, sha256: rf1.FreshSHA256}); err != nil {
+	if err := runAndPublish(context.Background(), loops, root, again, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, modelOpts{api: "chat", keyEnv: "NO_KEY_SET"}, givenFresh{path: set, sha256: rf1.FreshSHA256}); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyPublished(again, loops); err != nil {
@@ -593,7 +615,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev2.Scan.GradingRuns != 2*2 || len(ev2.Courses[0].Groups) != 0 {
+	if ev2.Scan.GradingRuns != 2*3 || len(ev2.Courses[0].Groups) != 0 {
 		t.Fatalf("a loops-only run graded %d runs and has groups %+v", ev2.Scan.GradingRuns, ev2.Courses[0].Groups)
 	}
 	for i, l := range ev1.Courses[0].Loops {
@@ -605,7 +627,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 	// The loops flown again, published beside the first run's page in sets/: on its own set, and
 	// on a set drawn for another run. The page states each loop on both, and verifies.
 	other := filepath.Join(t.TempDir(), "other")
-	if err := runAndPublish(context.Background(), loops, root, other, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, "", "", "NO_KEY_SET", 0, givenFresh{}); err != nil {
+	if err := runAndPublish(context.Background(), loops, root, other, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}}), "", "", 2, modelOpts{api: "chat", keyEnv: "NO_KEY_SET"}, givenFresh{}); err != nil {
 		t.Fatal(err)
 	}
 	copyRun := func(from, name string) string {
@@ -613,7 +635,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 		if err := os.MkdirAll(to, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		for _, n := range runFiles {
+		for _, n := range runFilesOf(loops) {
 			b, err := os.ReadFile(filepath.Join(from, n))
 			if err != nil {
 				t.Fatal(err)
@@ -666,7 +688,7 @@ func TestFlyAgainOnAGivenSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	flipped := filepath.Join(t.TempDir(), "flipped")
-	if err := runAndPublish(context.Background(), loops, root, flipped, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}, flip: fs.Seeds[3]}), "", "", 2, "", "", "NO_KEY_SET", 0, givenFresh{path: set, sha256: rf1.FreshSHA256}); err != nil {
+	if err := runAndPublish(context.Background(), loops, root, flipped, daemonFor(t, &lab{Sessions: &sandboxtest.Sessions{}, flip: fs.Seeds[3]}), "", "", 2, modelOpts{api: "chat", keyEnv: "NO_KEY_SET"}, givenFresh{path: set, sha256: rf1.FreshSHA256}); err != nil {
 		t.Fatal(err)
 	}
 	copyRun(flipped, "flipped")

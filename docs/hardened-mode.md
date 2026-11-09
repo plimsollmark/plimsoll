@@ -28,10 +28,16 @@ unless all of the following are verifiably in force:
   offers no such pinning, so there it means an explicit `E2B_TEMPLATE` rather than the
   implicit default: a named template, not a fixed version;
 - for the backend that runs each sandbox in a Kubernetes pod (`SANDBOX_PROVIDER=agentsandbox`),
-  `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`,
-  the operator's statement that the pod network between plimsolld and the sandbox pods is
-  encrypted. The daemon talks to each pod's sandboxd over cleartext HTTP/2, and it cannot
-  see whether the network beneath encrypts that path ([agentsandbox.md](agentsandbox.md#the-control-channel-is-cleartext));
+  `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`, the operator's statement that the pod
+  network between plimsolld and the sandbox pods is authenticated and encrypted (a network
+  plugin with WireGuard or IPsec, or a service mesh with mutual TLS). The daemon's own
+  connection to each pod is TLS checked against the deployment's certificate authority, but
+  every pod's TLS terminator serves the same certificate, so that check proves the peer is a
+  plimsoll sandbox pod, not which one. Someone who can rewrite traffic on the pod network
+  could send one caller's run into another caller's pod, and the daemon cannot see whether
+  the network beneath stops that, so it asks the operator to say so
+  ([agentsandbox.md](agentsandbox.md#hardened-mode-and-the-pod-network)). The requirement
+  goes when each pod has a key of its own;
 - an explicit per-run resource envelope (the memory, CPU and other limits each run
   gets), and for docker, whose runs share the daemon's machine, an aggregate memory
   budget, the total memory all runs at once may use;

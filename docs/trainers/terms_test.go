@@ -47,7 +47,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 var update = flag.Bool("update", false, "rewrite the page blocks generated from terms.json")
@@ -144,9 +146,71 @@ func (rt registeredTerm) alternation() string {
 
 // pattern finds the term anywhere in prose; whole matches only a complete string, which
 // is how a <dfn> is tied to the term it defines.
-func (rt registeredTerm) pattern() *regexp.Regexp { return regexp.MustCompile(rt.alternation()) }
+func (rt registeredTerm) pattern() *regexp.Regexp { return compiledTerm(rt.alternation()) }
 func (rt registeredTerm) whole() *regexp.Regexp {
-	return regexp.MustCompile(`^` + rt.alternation() + `$`)
+	return compiledTerm(`^` + rt.alternation() + `$`)
+}
+
+// termPatterns holds each pattern compiled once: the checks below ask for one per term,
+// page and definition, which was 3,956 compiles for the first-use rule alone (92 terms
+// on 43 pages, 2026-10-29).
+var termPatterns sync.Map
+
+func compiledTerm(src string) *regexp.Regexp {
+	if re, ok := termPatterns.Load(src); ok {
+		return re.(*regexp.Regexp)
+	}
+	re, _ := termPatterns.LoadOrStore(src, regexp.MustCompile(src))
+	return re.(*regexp.Regexp)
+}
+
+// mayOccur reports whether rt's pattern can match text, whose foldASCII is folded:
+// false only when no form of the term has all its words in the text, which every
+// match needs. It spares the regular expression a whole-page search for a term the page
+// never names, most of the 3,956 pairs, and the searches that find nothing are the
+// ones that read a page to its end (18 s of the race pass, 2026-10-29). A form with a
+// word outside ASCII is always searched.
+func (rt registeredTerm) mayOccur(text, folded string) bool {
+	for _, f := range rt.forms() {
+		all := true
+		for _, w := range strings.Fields(f) {
+			for i := 0; i < len(w); i++ {
+				if w[i] >= utf8.RuneSelf {
+					return true
+				}
+			}
+			in := strings.Contains(folded, foldASCII(w))
+			if rt.CaseSensitive {
+				in = strings.Contains(text, w)
+			}
+			if !in {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+// foldASCII maps every rune a case-insensitive regular expression matches to an ASCII
+// letter onto that letter in lower case: A to Z, and the two runes outside ASCII whose
+// case folding reaches one (U+212A KELVIN SIGN to k, U+017F LATIN SMALL LETTER LONG S to
+// s). So an ASCII word appears in foldASCII(text) wherever (?i) could match it in text.
+func foldASCII(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		case r == '\u212a':
+			return 'k'
+		case r == '\u017f':
+			return 's'
+		}
+		return r
+	}, s)
 }
 
 func isWordByte(b byte) bool {
@@ -651,8 +715,9 @@ func TestRegisteredTermsAreDefinedAtFirstUse(t *testing.T) {
 	for _, page := range reg.EnforcedPages {
 		p := pageProse(t, page)
 		text := p.text.String()
+		folded := foldASCII(text)
 		for _, rt := range reg.Terms {
-			if rt.Assumed {
+			if rt.Assumed || !rt.mayOccur(text, folded) {
 				continue
 			}
 			loc := rt.pattern().FindStringIndex(text)
@@ -668,6 +733,29 @@ func TestRegisteredTermsAreDefinedAtFirstUse(t *testing.T) {
 				"(<dfn>%s</dfn> in HTML, <dfn>*%s*</dfn> in markdown, then a plain clause), "+
 				"link it to glossary.html#%s, or use plain words instead",
 				page, text[loc[0]:loc[1]], context, rt.Term, rt.Term, rt.Anchor)
+		}
+	}
+}
+
+// mayOccur only skips the search where the pattern cannot match: for every registered
+// form, written as the pattern still matches it (another case, words split by a
+// newline, the runes outside ASCII that fold to k and s), inside other text, it says
+// the term may occur.
+func TestMayOccurNeverSkipsAMatch(t *testing.T) {
+	reg := loadRegistry(t)
+	// The runes outside ASCII that (?i) matches to k and s.
+	folds := strings.NewReplacer("k", "\u212a", "K", "\u212a", "s", "\u017f")
+	for _, rt := range reg.Terms {
+		for _, f := range rt.forms() {
+			for _, written := range []string{f, strings.ToUpper(f), strings.ToLower(f), strings.Join(strings.Fields(f), "\n  "), folds.Replace(f)} {
+				text := "Before it, " + written + " and after."
+				if rt.pattern().MatchString(text) && !rt.mayOccur(text, foldASCII(text)) {
+					t.Errorf("%q: the pattern matches %q, which mayOccur skips", rt.Term, text)
+				}
+			}
+		}
+		if text := "a page that names nothing registered"; rt.mayOccur(text, foldASCII(text)) && !rt.pattern().MatchString(text) {
+			t.Logf("%q: mayOccur searches a page it could have skipped (only slower)", rt.Term)
 		}
 	}
 }

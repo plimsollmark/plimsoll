@@ -199,17 +199,22 @@ sh wrapper.sh 5 11 yes >o2 2>e2; r=$?; t=$(tail -n1 e2); echo "case2 rc=$r outle
 sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; r=$?; t=$(tail -n1 e3); echo "case3 rc=$r errlen=$(( $(wc -c <e3) - ${#t} - 2 ))"
 sh wrapper.sh 1 11 sleep 30 >o4 2>e4; r=$?; set -- $(tail -n1 e4); echo "case4 rc=$r $1 cs=$2 fl=$3"
 sh wrapper.sh 5 11 sh -c 'yes x | head -c 2097152; echo done >&2; exit 7' >o5 2>e5; r=$?; t=$(tail -n1 e5); echo "case5 rc=$r outlen=$(wc -c <o5 | tr -d ' ') err=$(head -n1 e5) fl=${t##* }"
-b=$(date +%s); sh wrapper.sh 1 11 sh -c 'echo two; sleep 8' >o6 2>e6; r=$?; echo "case6 rc=$r out=$(cat o6) secs=$(( $(date +%s) - b ))"
+`
+	// Case 6 is a step of its own, timed by the step's duration (the runner's monotonic
+	// clock): it was timed inside the sandbox with date +%s, a wall-clock difference that a
+	// host clock stepped back during it (as a WSL2 host's was, 1.6 s every 32 s) made 0 or
+	// negative; under gVisor even /proc/uptime follows the wall clock.
+	const case6 = `sh wrapper.sh 1 11 sh -c 'echo two; sleep 8' >o6 2>e6; r=$?; echo "case6 rc=$r out=$(cat o6)"
 `
 	res, err := d.RunProject(context.Background(), ProjectRequest{
-		Files:   []File{{Path: "wrapper.sh", Content: wrapper}, {Path: "cases.sh", Content: script}},
-		Steps:   []string{"sh cases.sh"},
+		Files:   []File{{Path: "wrapper.sh", Content: wrapper}, {Path: "cases.sh", Content: script}, {Path: "case6.sh", Content: case6}},
+		Steps:   []string{"sh cases.sh", "sh case6.sh"},
 		Timeout: 60 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("RunProject: %v", err)
 	}
-	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 2 || res.Steps[0].ExitCode != 0 || res.Steps[1].ExitCode != 0 {
 		t.Fatalf("result = %+v", res)
 	}
 	out := res.Steps[0].Stdout
@@ -219,13 +224,18 @@ b=$(date +%s); sh wrapper.sh 1 11 sh -c 'echo two; sleep 8' >o6 2>e6; r=$?; echo
 		regexp.MustCompile(`(?m)^case3 rc=[1-9][0-9]* errlen=11$`),
 		regexp.MustCompile(`(?m)^case4 rc=137 ` + dcTrailer + ` cs=(1[0-9][0-9]|[2-9][0-9][0-9]) fl=0$`),
 		regexp.MustCompile(`(?m)^case5 rc=7 outlen=11 err=done fl=0$`),
-		// busybox timeout kills the sh it started, not its sleep, which holds both streams
-		// for 8 s: the answer comes about a second after the 1 s limit, with the output.
-		regexp.MustCompile(`(?m)^case6 rc=137 out=two secs=[1-4]$`),
 	} {
 		if !want.MatchString(out) {
 			t.Errorf("busybox wrapper output does not match %s:\n%s\nstderr: %s", want, out, res.Steps[0].Stderr)
 		}
+	}
+	// busybox timeout kills the sh it started, not its sleep, which holds both streams for
+	// 8 s: the answer comes about a second after the 1 s limit, with the output.
+	if got := res.Steps[1].Stdout; !regexp.MustCompile(`(?m)^case6 rc=137 out=two$`).MatchString(got) {
+		t.Errorf("case 6: %q, want rc=137 with the output", got)
+	}
+	if d := res.Steps[1].Duration; d < time.Second || d >= 5*time.Second {
+		t.Errorf("case 6 took %v, want about a second past the 1 s limit, well before the 8 s sleep", d)
 	}
 	// The wrapper's limit is 1 s. Bound the whole step with Go's monotonic
 	// duration, since busybox date +%s rounds to whole seconds and can report

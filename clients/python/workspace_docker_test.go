@@ -31,6 +31,7 @@ func fakeSessionsURL(t *testing.T) string {
 // docker or its images; fails instead under SANDBOX_TEST_REQUIRE_DOCKER=1, which
 // `make docker-suite` sets.
 func TestPythonWorkspaceDocker(t *testing.T) {
+	t.Parallel()
 	skip := func(format string, args ...any) {
 		t.Helper()
 		if os.Getenv("SANDBOX_TEST_REQUIRE_DOCKER") == "1" {

@@ -52,7 +52,9 @@
     "docs/efficiency-advisor.md",
     "docs/capability-grants.md",
     "docs/architecture/credential-minting.md",
-    "docs/trainers/mcp.html"
+    "docs/trainers/mcp.html",
+    "docs/examples/what-a-sandbox-is/index.html",
+    "docs/examples/proof-of-what-ran/index.html"
   ],
   "chapters": [
     {"anchor": "what-runs-your-container", "title": "What actually runs your container"}
@@ -65,10 +67,24 @@
       "definition": "The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing."
     },
     {
+      "term": "agent",
+      "anchor": "agent",
+      "variants": ["agents"],
+      "assumed": true,
+      "definition": "An AI model left alone with a job and a terminal: it writes code, runs it, reads what happened and tries again, like a new hire on a first day with a laptop and no manager."
+    },
+    {
       "term": "agent-sandbox",
       "anchor": "agent-sandbox",
       "variants": [],
       "definition": "A component of Kubernetes (a system for managing containers across machines) that lends a ready sandbox pod from a warm pool for one run; plimsoll checks the pod and its runtime before sending code, then deletes its claim."
+    },
+    {
+      "term": "answer-key tripwire",
+      "anchor": "answer-key-tripwire",
+      "variants": [],
+      "assumed": true,
+      "definition": "A check that reads every request a test harness sent to the model, exactly as sent, and looks for values the model must never see, such as the right answers; finding one means the exam leaked."
     },
     {
       "term": "attestation",
@@ -83,6 +99,13 @@
       "definition": "An overloaded service telling its callers to slow down, and the callers doing so."
     },
     {
+      "term": "baseline",
+      "anchor": "baseline",
+      "variants": [],
+      "assumed": true,
+      "definition": "The starting point every group is compared against: here, the same plain program every agent began from, so any improvement is measured against it."
+    },
+    {
       "term": "broker",
       "anchor": "broker",
       "variants": ["brokers", "brokered", "brokering"],
@@ -93,6 +116,27 @@
       "anchor": "buck-converter",
       "variants": ["buck converters"],
       "definition": "A power-supply circuit that turns a higher DC voltage into a lower one by switching it on and off many times a second."
+    },
+    {
+      "term": "call",
+      "anchor": "call",
+      "variants": ["calls"],
+      "assumed": true,
+      "definition": "One request to plimsoll to run some code, the way one phone call is one request to someone to do something."
+    },
+    {
+      "term": "canary",
+      "anchor": "canary",
+      "variants": ["canaries"],
+      "assumed": true,
+      "definition": "A made-up marker value planted where a secret lives, so that spotting it anywhere else proves a leak; named after the canaries miners took underground as an early alarm."
+    },
+    {
+      "term": "canary run",
+      "anchor": "canary-run",
+      "variants": ["canary runs"],
+      "assumed": true,
+      "definition": "A test of the test harness itself: it plants a canary in every hiding place, runs the harness, and fails if any canary shows up where it should not."
     },
     {
       "term": "cart-pole",
@@ -114,6 +158,13 @@
       "definition": "The Linux kernel feature that caps and counts the memory, CPU time and number of processes a group of processes may use."
     },
     {
+      "term": "checkpoint",
+      "anchor": "checkpoint",
+      "variants": ["checkpoints"],
+      "assumed": true,
+      "definition": "A saved snapshot of a model partway through training, like saving a game so you can compare how you played at different stages."
+    },
+    {
       "term": "circuit breaker",
       "anchor": "circuit-breaker",
       "variants": ["circuit breakers"],
@@ -124,6 +175,13 @@
       "anchor": "code-mode",
       "variants": [],
       "definition": "Letting an AI agent write a short program that calls an API and run it in a sandbox, instead of calling one tool per step."
+    },
+    {
+      "term": "compressor",
+      "anchor": "compressor",
+      "variants": ["compressors"],
+      "assumed": true,
+      "definition": "The model asked to read everything a loop produced and write a short note (the recipe) that captures what mattered, like a student boiling a textbook down to one cheat sheet."
     },
     {
       "term": "Connect",
@@ -146,6 +204,13 @@
       "definition": "Identified by a digest of its own content, so the identifier can never later point at different content."
     },
     {
+      "term": "control",
+      "anchor": "control",
+      "variants": [],
+      "assumed": true,
+      "definition": "A group given everything except the thing being tested, so any difference between it and the tested group shows what that thing did, like two garden plots with the same seeds and water where only the fertilizer differs."
+    },
+    {
       "term": "control law",
       "anchor": "control-law",
       "variants": ["control laws"],
@@ -156,6 +221,13 @@
       "anchor": "controller",
       "variants": ["controllers"],
       "definition": "A program that reads a system's state at every tick and decides how to push it, for example to keep a pole balanced on a cart."
+    },
+    {
+      "term": "critic",
+      "anchor": "critic",
+      "variants": ["critics"],
+      "assumed": true,
+      "definition": "Another model asked to score a piece of work out of 10, like a second teacher who reads an essay and marks it."
     },
     {
       "term": "deny-all",
@@ -291,6 +363,13 @@
       "definition": "A program outside the daemon that drives runs and checks their results; plimsoll's attest harness signs run records and verifies them later."
     },
     {
+      "term": "held-out flights",
+      "anchor": "held-out-flights",
+      "variants": ["held-out flight"],
+      "assumed": true,
+      "definition": "Test flights no agent ever saw while it worked, made from a secret fixed before the runs began; the final exam, as opposed to the practice quizzes."
+    },
+    {
       "term": "hypervisor",
       "anchor": "hypervisor",
       "variants": ["hypervisors"],
@@ -332,6 +411,13 @@
       "definition": "The mark painted on a ship's hull showing how low it may safely sit in the water, where anyone can check it; plimsoll is named after it."
     },
     {
+      "term": "loop",
+      "anchor": "loop",
+      "variants": ["loops"],
+      "assumed": true,
+      "definition": "An agent that improves its own work round after round: write, test, look at the result, change, repeat."
+    },
+    {
       "term": "manifest",
       "anchor": "manifest",
       "variants": ["manifests"],
@@ -342,6 +428,13 @@
       "anchor": "mcp",
       "variants": ["Model Context Protocol"],
       "definition": "Model Context Protocol: the open standard an AI application uses to offer tools, such as a run-code tool, to a language model."
+    },
+    {
+      "term": "median",
+      "anchor": "median",
+      "variants": [],
+      "assumed": true,
+      "definition": "The middle value when you line a set of numbers up in order, so half are below it and half above; one wild value cannot drag it far, unlike an average."
     },
     {
       "term": "microVM",
@@ -400,6 +493,20 @@
       "definition": "NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run, or one per session."
     },
     {
+      "term": "overfitting",
+      "anchor": "overfitting",
+      "variants": ["overfit"],
+      "assumed": true,
+      "definition": "Scoring well on the practice set by memorizing it instead of getting better at the job, like a student who memorized last year's quiz and fails this year's."
+    },
+    {
+      "term": "percentage points",
+      "anchor": "percentage-points",
+      "variants": ["percentage point", "points"],
+      "assumed": true,
+      "definition": "The plain difference between two percentages: going from 40% to 46% is 6 percentage points, not 6%."
+    },
+    {
       "term": "physics oracle",
       "anchor": "physics-oracle",
       "variants": ["oracle", "oracles"],
@@ -410,6 +517,20 @@
       "anchor": "pinned",
       "variants": ["pinning", "pin", "pins"],
       "definition": "Fixed to one exact version, usually by digest, so it changes only when someone edits the pin."
+    },
+    {
+      "term": "practice flights",
+      "anchor": "practice-flights",
+      "variants": ["practice flight"],
+      "assumed": true,
+      "definition": "The flights a loop grades itself on every round: a rehearsal the agent can see, unlike the held-out flights it is finally judged on."
+    },
+    {
+      "term": "practice seeds",
+      "anchor": "practice-seeds",
+      "variants": ["practice seed"],
+      "assumed": true,
+      "definition": "The numbers behind the practice flights; each one decides one flight's payload, wind and gusts, so with the seed an agent could replay that flight exactly."
     },
     {
       "term": "preflight",
@@ -429,6 +550,20 @@
       "variants": ["processes"],
       "assumed": true,
       "definition": "One running program, with its own memory and its own permissions."
+    },
+    {
+      "term": "prompt",
+      "anchor": "prompt",
+      "variants": ["prompts"],
+      "assumed": true,
+      "definition": "The written text sent to a model telling it what to do, plus anything else it is shown with the request."
+    },
+    {
+      "term": "prompt cache",
+      "anchor": "prompt-cache",
+      "variants": [],
+      "assumed": true,
+      "definition": "A discount the model's provider gives when the start of a long conversation matches one it already read: it keeps that part and charges a fraction of the fresh price to read it again."
     },
     {
       "term": "prompt injection",
@@ -467,10 +602,31 @@
       "definition": "A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider."
     },
     {
+      "term": "rebuild",
+      "anchor": "rebuild",
+      "variants": ["rebuilds"],
+      "assumed": true,
+      "definition": "A fresh agent in a fresh sandbox, given only the task, a recipe and a few smoke flights, which builds its own controller from scratch to show whether the recipe carries enough to work from."
+    },
+    {
       "term": "receipt",
       "anchor": "receipt",
       "variants": ["receipts"],
       "definition": "A signed claim about an operation or file, whose signature and subject can be checked without independently repeating the work."
+    },
+    {
+      "term": "recipe",
+      "anchor": "recipe",
+      "variants": ["recipes"],
+      "assumed": true,
+      "definition": "A short note, capped at a fixed number of tokens, written by a model that read a loop's whole record: the sticky note the last person on the job left for the next one."
+    },
+    {
+      "term": "resampling",
+      "anchor": "resampling",
+      "variants": ["resample", "resampled"],
+      "assumed": true,
+      "definition": "Estimating how much a result could vary by redrawing the data again and again at random, like pulling names from a hat many times to see how different the draws can look."
     },
     {
       "term": "RPC",
@@ -513,10 +669,24 @@
       "definition": "A place where code runs with something stopping it from reaching the rest of the machine."
     },
     {
+      "term": "sealed values",
+      "anchor": "sealed-values",
+      "variants": ["sealed value"],
+      "assumed": true,
+      "definition": "Anything the model being tested must never be sent, such as the right answers or the numbers behind the held-out flights."
+    },
+    {
       "term": "seccomp",
       "anchor": "seccomp",
       "variants": [],
       "definition": "A Linux kernel feature that limits which system calls a process may make; plimsoll ships a profile listing the calls its containers may use."
+    },
+    {
+      "term": "seed",
+      "anchor": "seed",
+      "variants": ["seeds"],
+      "assumed": true,
+      "definition": "One number that decides a random choice, so anyone can redo the exact same shuffle or flight, because the same seed always gives the same result."
     },
     {
       "term": "session",
@@ -525,10 +695,24 @@
       "definition": "One sandbox kept open for many calls: the files a call writes are there for the next, a cleanup between calls ends what a call left running, and an interpreter kept for cells can carry its state from one call to the next."
     },
     {
+      "term": "SHA-256",
+      "anchor": "sha-256",
+      "variants": [],
+      "assumed": true,
+      "definition": "A way to turn any file into a 64-character fingerprint; change one byte of the file and the fingerprint changes completely, so publishing it first proves the file was not altered later."
+    },
+    {
       "term": "shed",
       "anchor": "shed",
       "variants": ["sheds", "shedding"],
       "definition": "To refuse extra work at once, instead of queueing it, when a limit is reached."
+    },
+    {
+      "term": "ship scan",
+      "anchor": "ship-scan",
+      "variants": [],
+      "assumed": true,
+      "definition": "A check on every call on its way into the sandbox: anything matching the withheld set is refused before it ships, like airport security checking a bag against a list of banned items."
     },
     {
       "term": "side channel",
@@ -541,6 +725,20 @@
       "anchor": "signing-key",
       "variants": ["signing keys"],
       "definition": "A private key that signs statements so that anyone holding the matching public key can check them; the MCP server signs each receipt with an Ed25519 key read from a file only its owner can read."
+    },
+    {
+      "term": "smoke flights",
+      "anchor": "smoke-flights",
+      "variants": ["smoke flight"],
+      "assumed": true,
+      "definition": "A few throwaway flights, run only to check that code runs at all, named after plugging in new hardware to see whether smoke comes out."
+    },
+    {
+      "term": "squeeze gap",
+      "anchor": "squeeze-gap",
+      "variants": [],
+      "assumed": true,
+      "definition": "A loop's practice score minus the median practice score of the rebuilds made from its recipe: the part of the score the recipe could not carry, so a big gap means the score did not come from anything a short note can pass on."
     },
     {
       "term": "stdio",
@@ -585,6 +783,13 @@
       "definition": "A filesystem held in memory, with a size limit set when it is mounted; its contents disappear when the container stops."
     },
     {
+      "term": "token",
+      "anchor": "token",
+      "variants": ["tokens"],
+      "assumed": true,
+      "definition": "The unit a language model reads and writes in: a short English word is usually one token, a long number several."
+    },
+    {
       "term": "token bucket",
       "anchor": "token-bucket",
       "variants": ["token-bucket"],
@@ -609,6 +814,20 @@
       "definition": "A hosted job runner for TypeScript whose durable chat agents can sleep between messages; the trigger-chat example gives one an executeCode tool backed by plimsoll."
     },
     {
+      "term": "truth label",
+      "anchor": "truth-label",
+      "variants": ["truth labels"],
+      "assumed": true,
+      "definition": "The right answer for a test question; if it is pasted into the model's prompt, the exam leaked."
+    },
+    {
+      "term": "validation set",
+      "anchor": "validation-set",
+      "variants": [],
+      "assumed": true,
+      "definition": "The examples a learner checks itself against while it works, here the practice flights; kept apart from the final exam it is judged on."
+    },
+    {
       "term": "virtual machine",
       "anchor": "virtual-machine",
       "variants": ["virtual machines", "VM", "VMs"],
@@ -627,6 +846,13 @@
       "anchor": "webassembly",
       "variants": ["WASM"],
       "definition": "A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them."
+    },
+    {
+      "term": "withheld set",
+      "anchor": "withheld-set",
+      "variants": [],
+      "assumed": true,
+      "definition": "A list of fingerprints of things that must never go into the sandbox, written by whoever runs the plimsoll server; any file or line that matches is refused."
     }
   ]
 }

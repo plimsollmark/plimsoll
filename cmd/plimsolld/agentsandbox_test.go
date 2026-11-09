@@ -22,7 +22,7 @@ func TestAgentSandboxRegistered(t *testing.T) {
 // contacts nothing until Preflight; a process limit, a missing variable, an unreadable
 // token file or a malformed value is refused at construction.
 func TestBuildAgentSandboxFromEnv(t *testing.T) {
-	cert, _ := writeSelfSignedPair(t)
+	cert, key := writeSelfSignedPair(t)
 	dir := t.TempDir()
 	tokenFile := filepath.Join(dir, "sandboxd.token")
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("t", 40)+"\n"), 0o600); err != nil {
@@ -42,6 +42,7 @@ func TestBuildAgentSandboxFromEnv(t *testing.T) {
 		"SANDBOX_AGENTSANDBOX_RUNTIME_CLASS":       "gvisor",
 		"SANDBOX_AGENTSANDBOX_IMAGE":               "plimsoll/sandbox-agentsandbox:dev",
 		"SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE": tokenFile,
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE":    cert,
 		"SANDBOX_MEMORY_MB":                        "512",
 		"SANDBOX_CPUS":                             "2",
 		"SANDBOX_DISK_MB":                          "160",
@@ -77,6 +78,9 @@ func TestBuildAgentSandboxFromEnv(t *testing.T) {
 		{"no token file", with("SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", ""), "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE"},
 		{"an unreadable token file", with("SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", filepath.Join(dir, "absent")), "sandboxd token"},
 		{"a short token", with("SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", apiToken), "32 to 512"},
+		{"no sandboxd CA", with("SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE", ""), "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE"},
+		{"a key as sandboxd's CA", with("SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE", key), "not only certificates"},
+		{"an address as sandboxd's name", with("SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME", "10.0.0.1"), "not a DNS name"},
 		{"a cleartext API server", with("SANDBOX_AGENTSANDBOX_API_SERVER", "http://127.0.0.1:6443"), "https URL"},
 		{"an unpinned image when pinning is required", with("SANDBOX_REQUIRE_PINNED_IMAGES", "1"), "not pinned"},
 		{"a declared gVisor handler the built-in table maps", with("SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS", "runsc-receipt,runc"), "SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"},

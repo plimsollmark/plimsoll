@@ -1,0 +1,6 @@
+{
+  "protocol": 5,
+  "javascript": {
+    "code": "[\"fetch\", \"XMLHttpRequest\", \"WebSocket\", \"require\", \"process\"].forEach(function (name) {\n  console.log(name + \": \" + typeof globalThis[name]);\n});\n"
+  }
+}

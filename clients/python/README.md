@@ -454,7 +454,8 @@ Tested in `frameworks/verifiers/` through verifiers' own config loading, provisi
 network rules against an in-memory session, and on docker by `TestVerifiersRuntimeDocker`
 in `make docker-suite`: a small environment with isolated grading validates through
 `vf-validate`, and its record log checks. `frameworks/verifiers/attempt/` runs a complete
-attempt through `vf-eval` with a scripted model (no model is called) and measures it.
+attempt through `vf-eval` with a scripted model (no model is called) and measures it; with
+`--model` it runs a real one, which spends (its limits are in `examples/verifiers/README.md`).
 
 ## What the client checks
 
