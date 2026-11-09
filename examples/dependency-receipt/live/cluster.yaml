@@ -1,8 +1,8 @@
 # The agent-sandbox objects the live run makes on the kind cluster, in a namespace of its own,
 # and deletes when it ends: plimsolld's service account with only the access the provider
-# uses (docs/agentsandbox.md), a gVisor template under the runtime class whose runsc logs every
-# call the receipt reads, and a warm pool of two. The program fills in the fields in braces
-# (Go's text/template).
+# uses (docs/agentsandbox.md), the TLS Secret sandboxd's terminator serves, a gVisor template
+# under the runtime class whose runsc logs every call the receipt reads, and a warm pool of
+# two. The program fills in the fields in braces (Go's text/template).
 apiVersion: v1
 kind: Namespace
 metadata: {name: {{.Namespace}}}
@@ -51,6 +51,16 @@ metadata: {name: {{.Namespace}}-runtimeclasses}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{.Namespace}}-runtimeclasses}
 subjects: [{kind: ServiceAccount, name: plimsoll, namespace: {{.Namespace}}}]
 ---
+# The TLS key pair sandboxd's terminator serves, signed by a CA the program makes for this
+# run alone; plimsolld pins that CA (docs/agentsandbox.md, "The control channel is TLS").
+apiVersion: v1
+kind: Secret
+metadata: {name: plimsoll-sandboxd-tls, namespace: {{.Namespace}}}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{.TLSCert}}
+  tls.key: {{.TLSKey}}
+---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata: {name: {{.Pool}}, namespace: {{.Namespace}}}
@@ -72,7 +82,7 @@ spec:
       - name: sandboxd
         image: {{.Image}}
         imagePullPolicy: Never
-        command: ["/usr/local/bin/sandboxd", "--root-dir=/work", "--rest-port=8080", "--grpc-port=9090", "--auth-token-sha256={{.TokenSHA256}}"]
+        command: ["/usr/local/bin/plimsoll-sandboxd-tls", "--root-dir=/work", "--listen-host=127.0.0.1", "--rest-port=8080", "--grpc-port=9091", "--auth-token-sha256={{.TokenSHA256}}"]
         securityContext:
           runAsUser: 0
           runAsGroup: 0
@@ -89,9 +99,11 @@ spec:
         volumeMounts:
         - {name: work, mountPath: /work}
         - {name: tmp, mountPath: /tmp}
+        - {name: sandboxd-tls, mountPath: /etc/plimsoll/sandboxd-tls, readOnly: true}
       volumes:
       - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
       - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
+      - {name: sandboxd-tls, secret: {secretName: plimsoll-sandboxd-tls, defaultMode: 0400}}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool

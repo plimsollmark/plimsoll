@@ -1,0 +1,7 @@
+{
+  "protocol": 5,
+  "minimumIsolation": "kernel",
+  "javascript": {
+    "code": "console.log(\"hello\");\n"
+  }
+}

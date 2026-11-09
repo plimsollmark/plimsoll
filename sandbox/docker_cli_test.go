@@ -473,6 +473,7 @@ func TestDockerHostSettingsNeverReachGuestCode(t *testing.T) {
 // the guest's own result. Before, Preflight refused such an image: a denylist of
 // variables was all that stood between the hook and plimsoll's own programs.
 func TestDockerImageEnvReachesOnlyGuestProcesses(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	const img = "crsbx-test-env-hook-image:local"
 	// Every node started with the image's environment logs its argv, then loads
@@ -550,6 +551,7 @@ console.log(JSON.stringify([process.env.PLIMSOLL_TEST_CANARY, process.env.HOME, 
 // start marker, so a guest's exit read as docker's
 // failure; LD_DEBUG does the same under musl and glibc.
 func TestDockerPreflightRefusesLoaderEnv(t *testing.T) {
+	t.Parallel()
 	// Preflight also inspects the snippet image, so without the configured images the
 	// refusal under test is never reached (a hosted runner has docker and no images).
 	requireSnippetImage(t, testDocker())
@@ -576,6 +578,7 @@ func TestDockerPreflightRefusesLoaderEnv(t *testing.T) {
 // image's command in the container on an interval (it did, every second, before
 // --no-healthcheck).
 func TestDockerImageHealthcheckNeverRuns(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	const img = "crsbx-test-healthcheck-image:local"
 	build := exec.Command("docker", "build", "-q", "-t", img, "-")

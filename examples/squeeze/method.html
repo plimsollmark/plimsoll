@@ -1,0 +1,184 @@
+<!doctype html>
+{{- $r := .Group "recipe"}}{{$s := .Group "scrambled"}}{{$n := .Group "none"}}
+{{- $rs := .Pair "recipe minus scrambled"}}{{$rn := .Pair "recipe minus none"}}{{$sn := .Pair "scrambled minus none"}}
+{{- $loop := index .Course.Loops 0}}{{$t := .Totals}}
+{{- $st1 := index .Ev.Stages 0}}{{$st2 := index .Ev.Stages 1}}
+{{- $prs := .Permutation "recipe minus scrambled"}}{{$prn := .Permutation "recipe minus none"}}{{$psn := .Permutation "scrambled minus none"}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The scrambled-recipe test: method, statistics and related work</title>
+<meta name="description" content="For readers who know AI: how the scrambled-recipe experiment was designed and preregistered, what its bootstrap intervals can and cannot say at 16, 16 and 8 agents, the threats to validity, and the published work on whether language models follow the plans, hints and word orders they are given.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="The scrambled-recipe test: method, statistics and related work">
+<meta property="og:description" content="For readers who know AI: how the scrambled-recipe experiment was designed and preregistered, what its bootstrap intervals can and cannot say at 16, 16 and 8 agents, the threats to validity, and the published work on whether language models follow the plans, hints and word orders they are given.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/squeeze-recipe/method.html">
+<meta name="twitter:card" content="summary">
+<style>
+{{.CSS}}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="index.html">The result, for every reader (INTERNAL · results page →)</a><a href="../squeeze/index.html">The squeeze test (INTERNAL · example →)</a><a href="../../trainers/glossary.html">Glossary (INTERNAL · glossary →)</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<div class="prose">
+<div class="kicker">A plimsoll example · the scrambled-recipe test · for readers who know AI</div>
+<h1>Method, statistics and related work</h1>
+<p class="lede">The results page (<a href="index.html">INTERNAL · results page →</a>) is written for a reader who knows no AI. This page is for one who does: the design as preregistered, the statistics and their limits at these group sizes, the threats to validity, and where the question sits in the published literature. Every number here is computed from the same files as the results page by the same program, and <code>-verify</code> refuses either page if a number drifts.</p>
+{{- assert (and (eq .Ev.Outcome "ORDER SHOWED") .Ev.LandedRead) "the registered outcome is ORDER SHOWED on landings"}}
+
+<ol class="toc">
+<li><a href="#design">The design</a></li>
+<li><a href="#statistics">The statistics, and their limits</a></li>
+<li><a href="#exploratory">An exploratory check: exact permutation tests</a></li>
+<li><a href="#threats">Threats to validity</a></li>
+<li><a href="#related">Related work</a></li>
+<li><a href="#practice">Small preregistered experiments: what the literature asks for</a></li>
+<li><a href="#agents">Every agent, in numbers</a></li>
+<li><a href="#files">Files and verification</a></li>
+</ol>
+
+<h2 id="design"><span class="num">1</span>The design</h2>
+<p><b>Question.</b> Does a fresh coding agent use the plan it is handed? The treatment is a {{$loop.RecipeTokens}}-token recipe distilled by a model from an earlier agent's full record of learning this course (the squeeze test's "honest" recipe). The primary control is the same recipe with its words shuffled: lexical content held fixed, structure removed. A second control is no recipe. The job file (<code>examples/squeeze/jobs/recipe-scramble-easy.json</code>) states it this way:</p>
+<p class="quote">{{.Job.About}}</p>
+
+<h3>Arms and sizes</h3>
+<div class="scroll"><table>
+<thead><tr><th>Arm</th><th>What the agent read after the course description</th><th class="n">Agents</th><th>Stage</th></tr></thead>
+<tbody>
+{{- range .Ev.Groups}}
+<tr><td><span class="swatch" style="background:var(--{{.ID}})"></span>{{$.Name .ID}} (<code>{{.ID}}</code>)</td><td>{{if .Recipe}}<code>{{.Recipe}}</code>{{else}}No recipe: the course, the baseline controller and the tools.{{end}}</td><td class="n">{{.Agents}}</td><td>{{.Stage}}</td></tr>
+{{- end}}
+</tbody></table></div>
+<p>The no-recipe arm ran first ({{$n.Agents}} agents, {{clock $st1.Started}} to {{clock $st1.Ended}} UTC on {{day $st1.Started}}) as a ceiling check: had its mean landings reached {{pct0 .Exp.Rule.Ceiling}} of the fresh set, the rule would not have read landings, since a course that easy leaves no headroom for a plan to show. It landed {{pct $n.Landed}}, so the two recipe arms ran ({{$r.Agents}} and {{$s.Agents}} agents, {{clock $st2.Started}} to {{clock $st2.Ended}} UTC, {{minutes $st1.Ended $st2.Started}} minutes after the first stage ended), interleaved: rebuilds were started in turn across the two groups, so neither group ran wholly before the other. The recipe arms' size was fixed by the first stage's measured cost alone (the job's <code>-build</code>), never by its score; the job lists {{(index .Course.Groups 0).Build}} as the most each may have, and both reached it.</p>
+{{- assert (and (eq $r.Agents (index .Course.Groups 0).Build) (eq $s.Agents (index .Course.Groups 1).Build) (eq $n.Agents (index .Course.Groups 2).Build)) "every arm reached the size the job lists"}}
+
+<h3>What was fixed before the first agent ran</h3>
+<ul>
+<li><b>The sealed set.</b> {{.Ev.FreshCount}} flights drawn at random (<code>fresh.json</code>, a nonce and {{.Ev.FreshCount}} 32-bit seeds), committed to by SHA-256 <code>{{.Ev.FreshSHA256}}</code>. Both stages flew exactly this set; <code>-verify</code> recomputes each grading run's part of it from the set and refuses a run holding anything else.</li>
+<li><b>The design document</b>, SHA-256 <code>{{.Ev.Design}}</code>: the job, the system prompt, each arm's brief and after-session question, the tool definitions, the budgets, the request settings, the scrambled recipe and the code checks. Each stage's <code>run.json</code> records this digest; the program recomputes it from the public job file.</li>
+<li><b>The registered rule</b> (<code>experiment.json</code>): two measures per agent, three pairwise differences of means with 95% and 90% percentile bootstrap intervals from resampling agents within arm ({{comma .Exp.Rule.Resample.N}} draws, seed {{.Exp.Rule.Resample.Seed}}, CPython's <code>random.Random</code>, reproduced in Go), a ceiling rule on the untreated arm ({{pct0 .Exp.Rule.Ceiling}}), equivalence margins ({{pct0 .Exp.Rule.Margins.Landed}} of the fresh set on landings, {{printf "%g" .Exp.Rule.Margins.Words}} item on words), and four outcomes tried in order. The date the rule was written is recorded privately, not on these pages; a reader can check the rule's words and its application, not its timestamp.</li>
+<li><b>The scramble.</b> The honest recipe's whitespace-separated words, punctuation attached, Fisher-Yates shuffled by a splitmix64 generator from seed {{.ScrambleSeed}}, written out in <code>job.go</code> so no library's generator is involved. One shuffle, the same for every scrambled agent.</li>
+</ul>
+
+<h3>The two measures, and the one thing asked</h3>
+<ul>
+{{- range .Exp.Rule.Measures}}
+<li><b>{{.Name}}</b>: {{.Means}}.</li>
+{{- end}}
+<li><b>Asked, not measured.</b> After the last turn, with no tool available, each agent was asked whether and how it followed its recipe (no-recipe agents: what approach it took and why). The answer is recorded and quoted; it enters no score. Separating the agent's account from the measured behavior was a reader's suggestion and is the point of the comparison in the results page's verdict "What the agents say they used, their code does not name".</li>
+</ul>
+
+<h3>The four outcomes, in the order the rule tries them</h3>
+<ul class="outcomes">
+{{- range .Exp.Rule.Outcomes}}
+<li{{if eq .Name $.Ev.Outcome}} class="fired"{{end}}><span class="name">{{.Name}}</span>{{if eq .Name $.Ev.Outcome}}<span class="pill">this run</span>{{end}}<br>{{.Means}}.</li>
+{{- end}}
+</ul>
+
+<h3>Equal affordances</h3>
+<p>Every arm had the same model (<code>{{.Ev.Model}}</code>, Messages API, effort <code>{{.Job.Rebuild.Effort}}</code>, at most {{comma .Job.Rebuild.MaxTokens}} output tokens a turn, a {{comma .Job.Rebuild.PromptCap}}-token prompt cap), the same system prompt, the same baseline controller, the same three tools, and the same budget: {{.Job.Rebuild.Turns}} turns and {{.Job.Rebuild.FlyCalls}} <code>fly</code> calls of up to {{.Job.Rebuild.FlightsPerFly}} new random flights, plus the course's 4 smoke flights. The simulator was never in an agent's sandbox: <code>fly</code> ran the agent's <code>controller.js</code> in a separate sandbox and returned per-flight results only, so an agent could practice but not read the generator or the sealed seeds. The brief's tail for each arm:</p>
+<pre>{{.BriefTail "recipe"}}</pre>
+<pre>{{.BriefTail "none"}}</pre>
+<p>The system prompt, the same for every agent:</p>
+<pre>{{.System}}</pre>
+
+<h2 id="statistics"><span class="num">2</span>The statistics, and their limits</h2>
+<p><b>Unit of analysis.</b> The agent. Each agent's score is the fraction of the {{.Ev.FreshCount}} sealed flights its final controller landed; the 64 flights of one controller are not independent trials (they share the controller), so the rule resamples agents, not flights. With {{$r.Agents}}, {{$s.Agents}} and {{$n.Agents}} agents the effective sample is small, and everything below follows from that.</p>
+<p><b>The intervals.</b> Percentile bootstrap: for a pair, draw each arm's agents with replacement ({{comma .Exp.Rule.Resample.N}} times), recompute the difference of means, and take the 2.5th and 97.5th percentiles (95%) or the 5th and 95th (90%). Known limits at these sizes: the percentile interval tends to be too narrow in small samples, so its nominal 95% is optimistic (Hesterberg, below); the bootstrap distribution of a mean of {{$n.Agents}} values has few distinct resamples; and landings are bounded above (several agents sit at {{$r.High}} of {{.Ev.FreshCount}}), so the arm distributions are skewed toward the ceiling. The result page's reading "wholly above zero" is therefore a little less than a 95% claim, and the registered rule was written knowing a run this small could only show a large effect.</p>
+<p><b>What the primary pair shows.</b> Recipe minus scrambled on landings: {{pts $rs.Landed.Difference}} points, 95% interval {{pts (index $rs.Landed.Interval95 0)}} to {{pts (index $rs.Landed.Interval95 1)}}, 90% interval {{pts (index $rs.Landed.Interval90 0)}} to {{pts (index $rs.Landed.Interval90 1)}}. The interval's width, about {{printf "%.0f" (mulf (subf (index $rs.Landed.Interval95 1) (index $rs.Landed.Interval95 0)) 100.0)}} points, is the run's resolution: a true effect of a few points could not have shown. On recipe words named in code the pair's difference is {{wdiff $rs.Words.Difference}} with interval {{wdiff (index $rs.Words.Interval95 0)}} to {{wdiff (index $rs.Words.Interval95 1)}}: every agent in both arms scored 0, so the bootstrap has nothing to resample and the interval is degenerate, which is the "too little variety" failure of the bootstrap, not evidence of a tight estimate.</p>
+<p><b>The secondary pairs.</b> Recipe minus none {{pts $rn.Landed.Difference}} points (95% {{pts (index $rn.Landed.Interval95 0)}} to {{pts (index $rn.Landed.Interval95 1)}}); scrambled minus none {{pts $sn.Landed.Difference}} points (95% {{pts (index $sn.Landed.Interval95 0)}} to {{pts (index $sn.Landed.Interval95 1)}}; 90% {{pts (index $sn.Landed.Interval90 0)}} to {{pts (index $sn.Landed.Interval90 1)}}). Both hold zero at 95%. The rule names them "others": they are read, not decided on, and the results page labels the reading that the scrambled words hurt more than the recipe helped as the author's, not the rule's.</p>
+<p><b>Equivalence and the 90% interval.</b> The outcome NO RECIPE EFFECT SEEN is a two one-sided tests reading: a difference whose 90% interval lies inside the margin ({{pct0 .Exp.Rule.Margins.Landed}} on landings, {{printf "%g" .Exp.Rule.Margins.Words}} item on words) is declared too small to matter. The 90% interval is the standard choice for a 5% equivalence test. It did not fire here.</p>
+<p><b>Multiplicity.</b> Three pairs and two measures give six intervals, but the rule orders its outcomes so that one comparison decides ORDER SHOWED (the primary pair, on words, or on landings when read), and the ceiling rule chose the measure before any interval was computed. No correction is applied to the secondary pairs, and none is claimed; they are descriptive.</p>
+<p><b>Why the per-arm means carry no interval.</b> An earlier draft showed each arm's mean with its own bootstrap interval. They were removed: the rule puts its intervals on differences, a lone arm's interval invites the reader to compare intervals by eye (which is not a test of the difference), and with {{$n.Agents}} agents such an interval is especially unreliable.</p>
+
+<h2 id="exploratory"><span class="num">3</span>An exploratory check: exact permutation tests</h2>
+<p><span class="mark explore">EXPLORATORY</span> The registered rule used bootstrap intervals and nothing else. The tests below were not registered and decide nothing; they are here because a reader who knows the percentile bootstrap's small-sample habits will ask what a method with no resampling assumption says about the same data. They are reported in full so that they can be read as a check on the registered reading, not as a second result.</p>
+<p>For each pair, the exact permutation (shuffle) test of the difference in mean fresh flights landed: of every way to deal the pooled agents of the two arms into two groups of the observed sizes, the share whose difference of means is at least as far from zero as the observed one (two-sided). Scores are whole flights of the same total, so the count is exact, by a dynamic program over subset size and summed landings; nothing is sampled. The null hypothesis is exchangeability: that the arm labels carry no information.</p>
+<div class="scroll"><table id="perm-table">
+<thead><tr><th>Pair</th><th class="n">Sizes</th><th class="n">Observed difference</th><th class="n">Deals at least as extreme</th><th class="n">Of all deals</th><th class="n">Two-sided p</th></tr></thead>
+<tbody>
+{{- range $p := list $prs $prn $psn}}
+<tr><td>{{$p.Pair}}</td><td class="n">{{$p.M}} vs {{$p.N}}</td><td class="n">{{flights $p.Observed}} flights of {{$.Ev.FreshCount}}</td><td class="n">{{comma $p.Extreme}}</td><td class="n">{{comma $p.Total}}</td><td class="n">{{f3 $p.P}}</td></tr>
+{{- end}}
+</tbody></table></div>
+{{- assert (lt $prs.P 0.05) "the exploratory permutation test on the primary pair agrees with the registered reading"}}
+<p>Read beside the registered result: the primary pair's permutation p of {{f3 $prs.P}} is on the same side of the conventional line as the bootstrap interval that excludes zero, so the registered reading does not rest on the bootstrap's small-sample optimism alone. The two secondary pairs' values ({{f3 $prn.P}} and {{f3 $psn.P}}) sit where their bootstrap intervals, which hold zero, put them. These numbers were computed after the result was known, from the published scores, and should be weighed as such.</p>
+
+<h2 id="threats"><span class="num">4</span>Threats to validity</h2>
+<ul>
+<li><b>The control cannot separate "followed the plan's content" from "garbled text cost something".</b> The scrambled recipe is nonsense an agent must still read and decide about. The honest order's win is consistent with agents using the plan, and equally with a coherent note costing nothing while an incoherent one costs time or seeds a worse first idea. The natural follow-up is a coherent but wrong control: the harder course's recipe, the same seven items kept whole and reordered, or a plausible recipe for a different task. If the honest recipe still wins, the content mattered. That is a proposal, not something done here.</li>
+<li><b>Ceiling.</b> The untreated arm landed {{pct $n.Landed}}, under the {{pct0 .Exp.Rule.Ceiling}} rule but close to it. Headroom for a plan to help was about {{printf "%.0f" (mulf (subf 1.0 $n.Landed) 100.0)}} points; the test is more sensitive to a plan that hurts than to one that helps.</li>
+<li><b>The words measure is a lexical proxy.</b> "Recipe words named in code" counts identifier patterns, comments removed, baseline identifiers excluded. It has false negatives (a filter named <code>fv</code> is a filter) and the registered outcomes say so. A measure of what the code does (unit tests on the controller's behavior, or an instrumented simulator) was not available; its absence is why the words measure decided nothing here and why the rule reads landings first when it may.</li>
+<li><b>Two stages, {{minutes $st1.Ended $st2.Started}} minutes apart.</b> The untreated arm ran before the two treated arms, with the same model id and sealed set. A hosted model can change between calls; host load differed; the grading's median wall time was {{$st1.GradeMedianSeconds}} s in stage 1 and {{$st2.GradeMedianSeconds}} s in stage 2. The primary pair ran within one stage, interleaved, and is not exposed to this; the secondary pairs are.</li>
+<li><b>The baseline does most of the work.</b> Every agent started from a working controller. The agents' own accounts say they patched it and stopped when the smoke flights passed; a recipe competes with "the baseline already flies" for the agent's attention. A weaker baseline or a harder course would raise the value of a plan, at the cost of comparability with the squeeze test.</li>
+<li><b>Self-report is unsigned and post hoc.</b> The after-session answers are the model's text, recorded by the harness outside plimsoll. They are tied to the graded controller by its SHA-256 but are not evidence of what the code does, and the literature below gives reasons to expect them to be unfaithful.</li>
+<li><b>One model, one course, one recipe, one shuffle.</b> A single fixed shuffle means the scrambled arm's result is a property of that permutation, not of shuffling in general; a word order that happened to read almost sensibly, or one that put a misleading phrase first, would move the result. Nothing here generalizes to another model or a harder course.</li>
+<li><b>Practice budget.</b>{{$capped := .FlyCapped}} {{.Job.Rebuild.FlyCalls}} fly calls of {{.Job.Rebuild.FlightsPerFly}} flights is a cost-driven limit. {{upper (numword (len $capped))}} of the {{len .Ev.Agents}} agents ({{range $i, $a := $capped}}{{if $i}}, {{end}}<code>{{$a.ID}}</code>, {{lower ($.Name $a.Group)}}{{end}}) used every call; the other {{sub (len .Ev.Agents) (len $capped)}} used fewer. An agent that would have followed the plan given more iterations is indistinguishable here from one that would not.</li>
+<li><b>Sizes were set by cost.</b> The treated arms' size came from stage 1's spend, not from a power analysis; the intervals above are the honest statement of what the run could resolve.</li>
+</ul>
+
+<h2 id="related"><span class="num">5</span>Related work</h2>
+<p>Each source below was opened and its abstract read before it was cited; the one-line summaries are of the abstracts, and a reader should go to the paper for the detail. The question this experiment asks sits at the meeting of four literatures.</p>
+
+<h3>Do agents execute the plans they declare or are given?</h3>
+<ul class="ref">
+<li><span class="t">Oota, Herrera, Cabot Sagrera, López de Prado and Khan (2026), "Do LLM Agents Execute the Plans They Declare? From Planning-Mode Declaration to Pattern-Specific Execution"</span> (<a href="https://arxiv.org/abs/2609.38108">EXTERNAL · paper ↗</a>). The abstract reports that under a generic plan-then-act executor only 22% to 45% of trajectories across three benchmarks preserved the planning structure the model had declared, and that executors built to enforce a pattern do enforce it ("pattern-specific executors enforce the intended structure"). The closest published cousin of this experiment's question: here the plan was handed to the agent rather than declared by it, and the agents' accounts of partial use are the same gap between stated and executed plan.</li>
+<li><span class="t">Valmeekam, Marquez, Olmo, Sreedharan and Kambhampati (2022, revised 2023), "PlanBench: An Extensible Benchmark for Evaluating Large Language Models on Planning and Reasoning about Change"</span> (<a href="https://arxiv.org/abs/2206.10498">EXTERNAL · paper ↗</a>). A benchmark drawn from automated-planning domains on which, per its abstract, "LLM performance falls quite short" at plan generation. Relevant as the other side of the coin: this experiment did not ask the agents to plan, it handed them one, and asked whether it was used.</li>
+<li><span class="t">Zhou, Lu, Mishra, Brahma, Basu, Luan, Zhou and Hou (2023), "Instruction-Following Evaluation for Large Language Models"</span> (<a href="https://arxiv.org/abs/2311.07911">EXTERNAL · paper ↗</a>). IFEval scores instruction following with "verifiable instructions", checked by code rather than by a judge. The principle this experiment borrows: whether a plan was followed is read from the artifact by code, never from the model's own account.</li>
+</ul>
+
+<h3>Is the model's account of what it used faithful?</h3>
+<ul class="ref">
+<li><span class="t">Turpin, Michael, Perez and Bowman (2023), "Language Models Don't Always Say What They Think: Unfaithful Explanations in Chain-of-Thought Prompting"</span> (<a href="https://arxiv.org/abs/2305.04388">EXTERNAL · paper ↗</a>). Biasing features in a prompt (such as the order of answer options) shift a model's answers while its step-by-step explanation never mentions them; explanations can "systematically misrepresent the true reason for a model's prediction". The direct reason this page treats the agents' after-session answers as text to be quoted, not as evidence.</li>
+<li><span class="t">Lanham and others (2023), "Measuring Faithfulness in Chain-of-Thought Reasoning"</span> (<a href="https://arxiv.org/abs/2307.13702">EXTERNAL · paper ↗</a>). Perturbs a model's stated reasoning and measures whether its answer moves; finds reliance on stated reasoning varies widely by task and that larger models tend to produce less faithful reasoning on most tasks.</li>
+<li><span class="t">Chen and others (2025), "Reasoning Models Don't Always Say What They Think"</span> (<a href="https://arxiv.org/abs/2505.05410">EXTERNAL · paper ↗</a>). Inserts hints into prompts and checks whether the model's reasoning acknowledges using a hint it used; the abstract reports reveal rates "often below 20%". The nearest published analogue to "did the agent say it used the recipe": here every honest-recipe agent volunteered partial use, which is the opposite failure and still not a measurement.</li>
+</ul>
+
+<h3>How much does word order matter to a language model?</h3>
+<ul class="ref">
+<li><span class="t">Sinha, Jia, Hupkes, Pineau, Williams and Kiela (2021), "Masked Language Modeling and the Distributional Hypothesis: Order Word Matters Pre-training for Little"</span> (<a href="https://arxiv.org/abs/2104.06644">EXTERNAL · paper ↗</a>). Models pretrained on word-shuffled text still do well on many downstream tasks, which the authors attribute to "higher-order word co-occurrence statistics". A reason to have expected the scrambled recipe to carry much of the honest one's value: the words alone carry a lot.</li>
+<li><span class="t">Pham, Bui, Mai and Nguyen (2020, revised 2021), "Out of Order: How Important Is The Sequential Order of Words in a Sentence in Natural Language Understanding Tasks?"</span> (<a href="https://arxiv.org/abs/2012.15180">EXTERNAL · paper ↗</a>). Shuffling input words often leaves a classifier's predictions unchanged on GLUE tasks; the models lean on "superficial cues". Same expectation, from the input side. Against both, the agents here did worse with the shuffled recipe, which is why the garbled-text explanation above has to be taken seriously: an agent is not a classifier, and it must act on what it reads.</li>
+<li><span class="t">Lu, Bartolo, Moore, Riedel and Stenetorp (2021; ACL 2022), "Fantastically Ordered Prompts and Where to Find Them: Overcoming Few-Shot Prompt Order Sensitivity"</span> (<a href="https://arxiv.org/abs/2104.08786">EXTERNAL · paper ↗</a>). The order of a prompt's examples can swing a model between near state-of-the-art and near chance. Order sensitivity at the prompt level, with the same content, is established; this experiment is a small instance of it inside an agent loop.</li>
+<li><span class="t">Sclar, Choi, Tsvetkov and Suhr (2023; ICLR 2024), "Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design"</span> (<a href="https://arxiv.org/abs/2310.11324">EXTERNAL · paper ↗</a>). Models are "extremely sensitive to subtle changes in prompt formatting"; the authors argue for reporting a range over plausible formats rather than one number. A single fixed shuffle, as here, is one point of such a range.</li>
+</ul>
+
+<h3>Where the design's choices came from</h3>
+<p>Three suggestions from a reader who builds AI red-team agents shaped the design: score by what changed in the sandbox, never by what the agent says it did (so landings come from signed grading runs, the words measure from the code, and the agents' accounts are kept apart); scramble the plan and see whether the agent's actions change (the primary comparison); and ask whether hiding the simulator would send agents hunting for another shortcut (the simulator never entered an agent's sandbox, and each controller was checked for a random number generator and for the simulator's own generator constant: {{$r.RNG}}, {{$s.RNG}} and {{$n.RNG}} controllers carried a generator and {{$r.Generator}}, {{$s.Generator}} and {{$n.Generator}} the constant, by arm).</p>
+{{- assert (and (eq $r.RNG 0) (eq $s.RNG 0) (eq $n.RNG 0) (eq $r.Generator 0) (eq $s.Generator 0) (eq $n.Generator 0)) "no controller carried a random number generator or the simulator's constant"}}
+
+<h2 id="practice"><span class="num">6</span>Small preregistered experiments: what the literature asks for</h2>
+<ul class="ref">
+<li><span class="t">Nosek, Ebersole, DeHaven and Mellor (2018), "The preregistration revolution", PNAS</span> (<a href="https://www.pnas.org/doi/10.1073/pnas.1708274114">EXTERNAL · paper ↗</a>). Preregistration separates generating a hypothesis from testing it, against "hindsight bias" and the temptation to read a result in whatever way fits. This experiment's rule, measures, pairs, resampling and margins were fixed in <code>experiment.json</code> before the first agent ran; its exploratory section is labeled as such; what it could not do, prove its own timestamp to a reader, is stated.</li>
+<li><span class="t">Miller (2024), "Adding Error Bars to Evals: A Statistical Approach to Language Model Evaluations"</span> (<a href="https://arxiv.org/abs/2411.00640">EXTERNAL · paper ↗</a>). Treats a model evaluation as an experiment: report intervals, choose the unit of analysis, compare models with paired designs where possible, and plan the run to reduce noise. Here the unit is the agent and the comparisons are unpaired across arms, which is the main source of width in the intervals.</li>
+<li><span class="t">Agarwal, Schwarzer, Castro, Courville and Bellemare (2021), "Deep Reinforcement Learning at the Edge of the Statistical Precipice"</span> (<a href="https://arxiv.org/abs/2108.13264">EXTERNAL · paper ↗</a>). With few runs, point estimates can mislead and "reliable evaluation in the few run deep RL regime cannot ignore the uncertainty in results"; the authors recommend interval estimates and robust aggregates. The few-run regime is exactly where {{$r.Agents}}, {{$s.Agents}} and {{$n.Agents}} agents sit.</li>
+<li><span class="t">Hesterberg (2014), "What Teachers Should Know about the Bootstrap: Resampling in the Undergraduate Statistics Curriculum"</span> (<a href="https://arxiv.org/abs/1411.5279">EXTERNAL · paper ↗</a>). The percentile bootstrap interval "badly under-covers in small samples"; better intervals exist. The reason this page states the intervals' optimism and adds the exploratory permutation check rather than leaning on the percentile interval alone. A next run would do well to register a bootstrap-t or BCa interval, or an exact test, in the rule itself.</li>
+</ul>
+
+<h2 id="agents"><span class="num">7</span>Every agent, in numbers</h2>
+<p>From <code>evidence.json</code>: each agent's fresh and practice landings from its signed grading runs, and its session's turns and <code>fly</code> calls from the harness's record. Sorted as built.</p>
+<div class="scroll"><table id="agents-table">
+<thead><tr><th>Agent</th><th>Arm</th><th class="n">Fresh landed, of {{.Ev.FreshCount}}</th><th class="n">Practice, of {{.Ev.PracticeCount}}</th><th class="n">Turns</th><th class="n">fly calls</th><th class="n">Practice flights flown</th><th>Quoted its recipe</th><th>Recipe words named in code</th><th>Said "only partly"</th></tr></thead>
+<tbody>
+{{- range .Ev.Agents}}
+<tr><td><code>{{.ID}}</code></td><td><span class="swatch" style="background:var(--{{.Group}})"></span>{{$.Name .Group}}</td><td class="n">{{.Fresh}}</td><td class="n">{{.Practice}}</td><td class="n">{{.Turns}}</td><td class="n">{{.FlyCalls}}</td><td class="n">{{.Flights}}</td><td>{{if .QuotedRecipe}}yes{{else}}no{{end}}</td><td>{{len .ItemsNamed}}</td><td>{{if .SaidPartly}}yes{{else}}{{if eq .Group "none"}}n/a{{else}}no{{end}}{{end}}</td></tr>
+{{- end}}
+</tbody></table></div>
+
+<h2 id="files"><span class="num">8</span>Files and verification</h2>
+<p>Beside this page: <code>experiment.json</code> (stages in order, the registered rule, list prices), <code>evidence.json</code> (every number both pages state, including each agent's per-flight bits), and under <code>stages/baseline/</code> and <code>stages/recipe/</code> each stage's <code>bundle.jsonl.gz</code>, <code>harness.pub</code>, <code>fresh.json</code>, <code>run.json</code>, <code>transcripts.jsonl.gz</code>, <code>evidence.json</code> and <code>agents.json</code>. <code>run.json</code>'s <code>model_base</code> ({{range $i, $b := .ModelBases}}{{if $i}} and {{end}}<code>{{$b}}</code>{{end}}, one a stage) is a local relay on the experimenter's machine that enforced the spending cap and forwarded each call to the model's provider; the model itself ran on its maker's servers. From a clone of the repository:</p>
+<pre>go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -staged -verify -out docs/examples/squeeze-recipe</pre>
+<p>That checks every signature in both bundles, every record against its stored request and answer, the leak scans, that every grading run held the sealed set the run committed to, that both stages were made under the design the program writes, that each agent's record follows from its transcript and signed grading runs (the transcript's controller text must hash to the graded controller; its system and user prompts must be the design's for its arm), and that <code>evidence.json</code>, the results page and this page are byte for byte what those files render. The bootstrap intervals, the rule's outcome and the permutation counts are computed again, not read. It starts no sandbox and calls no model.</p>
+<p>The cost of the run, {{usd .Ev.Cost.TotalUSD}} over {{comma .Ev.Cost.Calls}} model calls at list prices, is stated on the results page with its breakdown.</p>
+
+<div class="foot">
+<p>Sources are linked where cited. The results page for every reader: <a href="index.html">INTERNAL · results page →</a>. The harness, <code>examples/squeeze</code> (<a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">EXTERNAL · source repo ↗</a>).</p>
+<p>This page is written by <code>examples/squeeze -staged</code> from the files beside it; <code>-verify</code> checks that it still is.</p>
+</div>
+</div>
+</main>
+</body>
+</html>

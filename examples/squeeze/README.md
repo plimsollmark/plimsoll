@@ -105,6 +105,13 @@ with a mechanism:
   states the most any graded controller used on one flight, which is what the number is set against.
 - **Signed scores.** Each grading run's record, the controller and both sets in it, is signed into
   the bundle, so anyone can recheck every score.
+- **Grading in parts.** A set of more than 8 flights is graded in runs of at most 8 (the fresh 64
+  in 8 runs), each holding exactly its part, which `-verify` recomputes from the set. 8 flights at
+  the 5-second CPU allowance are 40 seconds, a third of a run's 120-second ceiling, so a slow but
+  legal controller cannot run out of time and lose every fresh flight at once. A grading run that
+  still fails is a failure of the grading, not of the controller: `agents.json` says why
+  (`grade_problem`), apart from a controller the course refused (`invalid`, 0 landed by rule).
+  Runs made before this graded each set in one run, and still verify.
 
 What stays outside: the model that writes each rebuild. The program signs what reaches the sandbox;
 it cannot see inside the model.
@@ -190,10 +197,80 @@ Each rebuild is a fresh session with three tools, `write_file`, `run_code` and `
 hackathon's reproducer prompt as its brief. The recipe is not made here: plimsoll never calls a
 model on its own, so writing the recipe is the caller's step.
 
+`-api messages` talks to Anthropic's Messages API instead (raw HTTP, no new dependency): every
+request asks for the model's reasoning summary (adaptive thinking, `display: "summarized"`) and
+turns on prompt caching, each prompt is counted first (the count endpoint is free), and a call that
+could take the run past `-max-tokens` is not sent. A model off this machine needs `-paid` as well
+as its key; a local relay (one that holds the key and keeps its own spend ledger) does not.
+
+### Does an agent follow the plan it is handed?
+
+`jobs/recipe-scramble-easy.json` asks it on the easy course with three groups of fresh agents:
+the honest recipe, the same recipe with its words shuffled (the same words, no plan), and no
+recipe. It runs in two stages under one design: the eight no-recipe agents first (`-groups none`),
+then the two recipe groups, equal in size and at most the job's 16 each, at a size chosen from the
+first stage's cost (`-groups recipe,scrambled -build N`). A group with `"scramble": true` gets its loop's recipe shuffled by the fixed seed in
+`job.go`, so the scrambled recipe is the same on every run. Every group has the same budgets
+(`turns`, `fly_calls`, `flights_per_fly`, `prompt_cap`, `max_tokens`); rebuilds start in turn
+across the groups, so a run cut short is cut short for every group alike; `fly` flies
+`controller.js` only as the agent's last `write_file` of it left it, so the graded controller is
+text the model wrote. With `"ask_after": true` each agent is asked, once its controller has been
+read and with no tool run, why it did or did not follow its recipe.
+
+A building run writes `transcripts.jsonl.gz` (every turn: text, reasoning summary, tool calls and
+their results, and the answer to the question asked after) and `agents.json`, one record per
+agent: the longest run of its recipe's words it quoted, which of the recipe's items its
+controller's identifiers name (`items_named`: an item counts when one of the job's `items`
+patterns, case ignored, matches an identifier of the code, comments removed, that the baseline
+every sandbox starts with does not hold; `items_named_raw` keeps the baseline's identifiers, by
+which the baseline itself names one item), whether that code carries a random number generator,
+its calls, and its scores, read from the signed grading runs through `evidence.json`. The items
+count words taken up, not what the code does: code can name an item it does not implement, or
+implement one under other names. `-design FILE` writes the design document (the job, prompts, tools,
+budgets, request settings, the code checks and every course file's SHA-256) and starts nothing;
+`-design-sha256` refuses a run whose design is not that one, so a run is tied to the design fixed
+before it. `"no_page": true` writes the evidence without the hackathon's page.
+
+```sh
+go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -api messages \
+  -model claude-sonnet-5-5 -design design.json         # what the run will hold the same; spends nothing
+```
+
+The run of this job, 40 Claude Sonnet 5.5 agents in two stages on one sealed set, is published
+with its results page: [the recipe experiment](https://plimsollmark.github.io/plimsoll/examples/squeeze-recipe/index.html)
+(source: `docs/examples/squeeze-recipe/`). Each stage's files sit under `stages/<name>/` as the
+run wrote them, and `experiment.json` holds the stages in order, the registered rule (its pairs,
+its resampling, its margins and the words of its outcomes) and the model's list prices.
+`-staged`, with `-render` or `-verify`, reads them all: each stage is checked as `-verify` checks
+a run, every stage must have been made under the design this program writes for the job, on the
+same sealed set, and the intervals and the rule's outcome are computed again from the agents'
+signed scores. The resampling draws exactly as CPython's `random.Random(seed)` draws, so the
+intervals are the ones the rule's own script printed. The page's prose is held to the evidence:
+a sentence that states a conclusion carries a check, and a render whose numbers do not bear it
+fails.
+
+```sh
+go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -staged -verify \
+  -out docs/examples/squeeze-recipe                     # starts no sandbox, calls no model
+```
+
 Flags: `-job`, `-import` (where imported controllers are), `-out`, `-daemon` (a running plimsolld,
-its token in `PLIMSOLL_TOKEN`), `-runtime` (`runsc` or `runc`), `-image`, `-parallel`, `-model`,
-`-base`, `-key-env`, `-max-tokens`, `-fresh` and `-fresh-sha256` (fly an earlier run's fresh
-set), `-loops-only`, `-verify`, `-render`.
+its token in `PLIMSOLL_TOKEN`), `-runtime` (`runsc` or `runc`), `-image`, `-parallel`, `-api`
+(`chat` or `messages`), `-model`, `-base`, `-key-env`, `-max-tokens`, `-paid`, `-design` and
+`-design-sha256`, `-groups` (build only these groups, for an experiment run in stages under one
+design), `-build` (how many of each of those groups, at most the job's), `-seal` (draw a fresh set before the run, for `-fresh`), `-fresh` and `-fresh-sha256` (fly an earlier run's fresh set), `-loops-only`,
+`-verify`, `-render`, `-staged` (with `-verify` or `-render`: `-out` is a staged experiment's page),
+`-regrade DIR` (grade again, with no model call, the controllers of a
+building run's agents whose grading failed, on its own sealed sets, signed into
+`DIR/regrades/<time>/`; `agents.json` then takes their scores from there and names the regrade,
+and `-verify` checks it).
+
+What a run keeps when it does not finish: `run.json` names the harness's commit and whether its
+code was the commit's (`harness`; `-paid` refuses code that is not); each agent's transcript is
+saved as its session ends (`transcripts.partial.jsonl`); a run that fails or is interrupted keeps
+its staging directory, the signed bundle in it, as `<out>.failed-<time>` beside `-out`; and a run
+that lost a call or a session publishes its files and exits non-zero, naming each, so nothing reads
+it as a whole run.
 
 The page's section on the hackathon's leaked practice seed quotes `argon-scan.txt`, which
 `argon-scan.sh` prints: it rebuilds, from the public did-it-learn repository, the 13 files the
@@ -215,7 +292,9 @@ fail. The markers are random and the check never prints one. `go test -run TestC
 
 ## Tests
 
-`go test ./examples/squeeze` spends nothing and needs no docker. It checks that the verdict rules
+`go test ./examples/squeeze` spends nothing and needs no docker (the Messages API tests run against
+a stand-in server that answers like an agent, and check that a run with no key, no budget, no
+`-paid` or another design refuses before sending anything). It checks that the verdict rules
 ported from the hackathon's judge give the hackathon's own verdicts from its own numbers on all four
 loops; runs the regrade path and the rebuild path against an in-memory daemon and a scripted model
 (a rebuild writes a controller, flies, flies a seed again, is refused a seed it was never given);

@@ -719,3 +719,105 @@ func TestSummaryStaysOneLine(t *testing.T) {
 		t.Fatalf("summary %q; description:\n%s", res.Operations[0].Summary, res.Description)
 	}
 }
+
+// OpenAPI appends every path to the server URL, and a grant's base_url is an origin
+// only, so the server's path starts every route, every preamble call and the probe.
+// Before this, a document served under https://api.cloudflare.com/client/v4 gave routes
+// without /client/v4, and every call of a grant built from it missed the API.
+func TestServerBasePathStartsEveryRoute(t *testing.T) {
+	spec := `{"openapi":"3.0.3","info":{"title":"T","version":"1"},
+	  "servers":[{"url":"https://api.example.com/client/v4/"},{"url":"https://eu.api.example.com/client/v4"}],
+	  "paths":{
+	    "/accounts/{id}/items":{"post":{"operationId":"addItem","requestBody":{"content":{}}}},
+	    "/status":{"get":{"operationId":"status","x-plimsoll-health-check":true}}
+	  }}`
+	res, err := Generate([]byte(spec), Options{Global: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BasePath != "/client/v4" {
+		t.Errorf("BasePath = %q, want /client/v4", res.BasePath)
+	}
+	want := []string{"POST /client/v4/accounts/*/items", "GET /client/v4/status"}
+	if got := res.AllowStrings(); !reflect.DeepEqual(got, want) {
+		t.Errorf("allow = %v, want %v", got, want)
+	}
+	if res.HealthCheck != "GET /client/v4/status" {
+		t.Errorf("health check = %q", res.HealthCheck)
+	}
+	if !strings.Contains(res.Preamble, `"/client/v4/accounts/"`) || !strings.Contains(res.Description, "POST /client/v4/accounts/{id}/items") {
+		t.Errorf("the preamble or description lacks the base path:\n%s\n%s", res.Preamble, res.Description)
+	}
+
+	// A path-only server and a server with no path behave as written.
+	for url, wantRoute := range map[string]string{"/api": "GET /api/x", "https://api.example.com": "GET /x", "https://api.example.com/": "GET /x", "": "GET /x"} {
+		res, err := Generate([]byte(`{"openapi":"3.1.0","servers":[{"url":"`+url+`"}],"paths":{"/x":{"get":{"operationId":"g"}}}}`), Options{})
+		if err != nil {
+			t.Fatalf("server %q: %v", url, err)
+		}
+		if got := res.AllowStrings(); len(got) != 1 || got[0] != wantRoute {
+			t.Errorf("server %q: allow = %v, want %s", url, got, wantRoute)
+		}
+	}
+}
+
+// Where the base path is not knowable, generation fails rather than guessing one.
+func TestServerBasePathErrors(t *testing.T) {
+	for name, tc := range map[string]struct{ servers, want string }{
+		"servers disagree":       {`[{"url":"https://a.example.com/v1"},{"url":"https://b.example.com/v2"}]`, "disagree"},
+		"a variable in the path": {`[{"url":"https://api.example.com/{basePath}","variables":{"basePath":{"default":"v1"}}}]`, "variable"},
+		"relative to the doc":    {`[{"url":"v1"}]`, "relative"},
+		"a query":                {`[{"url":"https://api.example.com/v1?x=1"}]`, "query"},
+		"traversal in the path":  {`[{"url":"https://api.example.com/v1/.."}]`, "/v1/../x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Generate([]byte(`{"openapi":"3.1.0","servers":`+tc.servers+`,"paths":{"/x":{"get":{"operationId":"g"}}}}`), Options{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+	// A variable in the host is the operator's to choose in base_url; only the path matters.
+	res, err := Generate([]byte(`{"openapi":"3.1.0","servers":[{"url":"https://{region}.example.com/v1"}],"paths":{"/x":{"get":{"operationId":"g"}}}}`), Options{})
+	if err != nil || res.AllowStrings()[0] != "GET /v1/x" {
+		t.Fatalf("host variable: %v, %v", res, err)
+	}
+}
+
+// An operation served from servers of its own is reported, not emitted under the
+// document's base path, where it does not exist; one whose servers are the document's
+// is emitted as usual.
+func TestOperationServersOfItsOwnAreSkipped(t *testing.T) {
+	spec := `{"openapi":"3.0.3","servers":[{"url":"https://api.example.com/client/v4"}],"paths":{
+	  "/accounts/{id}/memories":{"get":{"operationId":"list"}},
+	  "/produce":{"servers":[{"url":"https://{stream}.streams.example.com"}],"post":{"operationId":"produce"}},
+	  "/consume":{"get":{"operationId":"consume","servers":[{"url":"https://other.example.com/client/v4"}]}},
+	  "/same":{"servers":[{"url":"https://api.example.com/client/v4/"}],"get":{"operationId":"same"}}
+	}}`
+	res, err := Generate([]byte(spec), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /client/v4/accounts/*/memories", "GET /client/v4/same"}
+	if got := res.AllowStrings(); !reflect.DeepEqual(got, want) {
+		t.Errorf("allow = %v, want %v", got, want)
+	}
+	if len(res.Skipped) != 2 {
+		t.Fatalf("skipped = %+v, want /produce and /consume", res.Skipped)
+	}
+	for _, s := range res.Skipped {
+		if (s.Path != "/produce" && s.Path != "/consume") || !strings.Contains(s.Reason, "servers of its own") {
+			t.Errorf("skip %+v", s)
+		}
+	}
+	// An explicit "/" is OpenAPI's default server, the one a document without servers has.
+	res, err = Generate([]byte(`{"openapi":"3.1.0","paths":{"/x":{"servers":[{"url":"/"}],"get":{"operationId":"g"}}}}`), Options{})
+	if err != nil || len(res.Skipped) != 0 || res.AllowStrings()[0] != "GET /x" {
+		t.Fatalf("an explicit default server: %+v, %v", res, err)
+	}
+	// A probe that would not be sent where it is served is operator error.
+	marked := `{"openapi":"3.1.0","servers":[{"url":"https://api.example.com"}],"paths":{"/status":{"get":{"operationId":"s","x-plimsoll-health-check":true,"servers":[{"url":"https://status.example.com"}]}}}}`
+	if _, err := Generate([]byte(marked), Options{}); err == nil || !strings.Contains(err.Error(), "servers of its own") {
+		t.Fatalf("a health probe on another server: err = %v", err)
+	}
+}

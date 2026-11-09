@@ -116,6 +116,7 @@ func openFake(t *testing.T, opts sandbox.SessionOptions) (*fakeGateway, *Provide
 }
 
 func TestOpenSessionCreatesAVerifiedSleepingSandbox(t *testing.T) {
+	t.Parallel()
 	f, p, s, sc := openFake(t, sandbox.SessionOptions{Lifetime: 90 * time.Second})
 	names := f.live()
 	if len(names) != 1 || names[0] != s.b.name {
@@ -144,6 +145,7 @@ func TestOpenSessionCreatesAVerifiedSleepingSandbox(t *testing.T) {
 }
 
 func TestOpenSessionRefusesAnUnprovableHost(t *testing.T) {
+	t.Parallel()
 	for name, listing := range map[string]string{
 		"ptrace scope 0":        strings.Replace(freshListing, `"ptrace":"1"`, `"ptrace":"0"`, 1),
 		"no Yama":               strings.Replace(freshListing, `"ptrace":"1"`, `"ptrace":""`, 1),
@@ -177,6 +179,7 @@ func waitGone(t *testing.T, f *fakeGateway) {
 }
 
 func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{DiskBytes: 5 << 20})
 	before := f.called("GetSandboxConfig")
 	res, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "console.log('ok')"})
@@ -211,6 +214,7 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 }
 
 func TestSessionSweepFailureRestartsTheSandbox(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	codes := []int32{1, sessionkit.SweepClean}
 	sc.sweep = func() int32 { c := codes[0]; codes = codes[1:]; return c }
@@ -235,6 +239,7 @@ func TestSessionSweepFailureRestartsTheSandbox(t *testing.T) {
 }
 
 func TestSessionEndsWhenTheRestartFails(t *testing.T) {
+	t.Parallel()
 	f, p, s, sc := openFake(t, sandbox.SessionOptions{})
 	sc.sweep = func() int32 { return 1 }
 	// After the stop, the fresh listing shows a process the sandbox should not have.
@@ -263,6 +268,7 @@ func TestSessionEndsWhenTheRestartFails(t *testing.T) {
 }
 
 func TestSessionEndsOverItsDiskBudget(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{DiskBytes: 1 << 20})
 	sc.sweep = func() int32 { return sessionkit.SweepOverBudget }
 	res, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
@@ -277,6 +283,7 @@ func TestSessionEndsOverItsDiskBudget(t *testing.T) {
 }
 
 func TestSessionEndsWhenTheMainProcessDies(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	sc.payload = func(e *fakeExec) error {
 		f.setPhase(s.b.name, openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR)
@@ -298,6 +305,7 @@ func TestSessionEndsWhenTheMainProcessDies(t *testing.T) {
 // (seen live twice); the next call's read-back then ends the session and refuses the
 // call before its payload runs.
 func TestSessionNoticesALateMainProcessEndAtTheNextCall(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "kill the main process"}); err != nil {
 		t.Fatal(err)
@@ -322,6 +330,7 @@ func TestSessionNoticesALateMainProcessEndAtTheNextCall(t *testing.T) {
 }
 
 func TestSessionRefusesACallAfterAnOutOfBandChange(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
 		c.Settings[agentProposalsSetting] = &sandboxv1.EffectiveSetting{Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: true}}}
@@ -336,6 +345,7 @@ func TestSessionRefusesACallAfterAnOutOfBandChange(t *testing.T) {
 }
 
 func TestSessionSuspendStopsAndTheNextCallStarts(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	if _, err := s.Suspend(context.Background()); err != nil {
 		t.Fatal(err)
@@ -358,16 +368,28 @@ func TestSessionSuspendStopsAndTheNextCallStarts(t *testing.T) {
 	}
 }
 
-func TestSessionLifetimeDeletesTheSandbox(t *testing.T) {
-	f, _, s, sc := openFake(t, sandbox.SessionOptions{Lifetime: 300 * time.Millisecond})
+func TestSessionExpiryStopsTheRunningCallAndDeletesTheSandbox(t *testing.T) {
+	t.Parallel()
+	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	hung := make(chan struct{})
 	sc.payload = func(e *fakeExec) error { close(hung); return e.hang() }
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "for(;;){}", Timeout: 20 * time.Second})
+		_, err := s.RunJavaScript(ctx, sandbox.Request{Code: "for(;;){}", Timeout: 20 * time.Second})
 		done <- err
 	}()
-	<-hung
+	select {
+	case <-hung:
+	case err := <-done:
+		t.Fatalf("the call ended before the payload started: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the payload did not start")
+	}
+	// Exercise expiry only after dispatch. The shared lifecycle's timer is tested
+	// separately, without making startup race a 300 ms session lifetime.
+	s.life.Finish(sessionkit.Expired, "")
 	select {
 	case err := <-done:
 		if sandbox.SessionEndReason(err) != sandbox.SessionExpired {
@@ -383,6 +405,7 @@ func TestSessionLifetimeDeletesTheSandbox(t *testing.T) {
 }
 
 func TestSessionFloorAndInvalidGrantAreRefusedBeforeTheTurn(t *testing.T) {
+	t.Parallel()
 	_, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
 	if !errors.Is(err, sandbox.ErrInsufficientIsolation) {
@@ -403,6 +426,7 @@ func TestSessionFloorAndInvalidGrantAreRefusedBeforeTheTurn(t *testing.T) {
 }
 
 func TestDrainEndsOpenSessions(t *testing.T) {
+	t.Parallel()
 	f, p, s, _ := openFake(t, sandbox.SessionOptions{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -418,6 +442,7 @@ func TestDrainEndsOpenSessions(t *testing.T) {
 }
 
 func TestCallsInOneSessionAreSerialized(t *testing.T) {
+	t.Parallel()
 	_, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	var mu sync.Mutex
 	running, most := 0, 0
@@ -458,6 +483,7 @@ func TestCallsInOneSessionAreSerialized(t *testing.T) {
 // A call that gives up waiting for the turn, held here as the previous call's sweep
 // holds it, ran nothing: it is marked so, as the daemon's own busy refusal is.
 func TestSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
+	t.Parallel()
 	_, _, s, _ := openFake(t, sandbox.SessionOptions{})
 	release, err := s.life.Hold(context.Background())
 	if err != nil {
@@ -476,6 +502,7 @@ func TestSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
 // layer gives back the session's capacity on Done, and the sandbox holds its memory
 // until the delete is through. Err says the session ended at once.
 func TestSessionDoneWaitsForTheSandboxDelete(t *testing.T) {
+	t.Parallel()
 	f, _, s, _ := openFake(t, sandbox.SessionOptions{})
 	f.mu.Lock()
 	f.deletePolls = 3 // the gateway accepts the delete and still has the record for three reads
@@ -513,6 +540,7 @@ func (unansweredGet) GetSandbox(context.Context, *connect.Request[openshellv1.Ge
 // dispatched, reason environment, and the session stays open (review F4): the call's
 // code never ran, as on docker, which marks the same failure the same way.
 func TestReadBackFailureBeforeACallIsNotDispatched(t *testing.T) {
+	t.Parallel()
 	f, p, s, _ := openFake(t, sandbox.SessionOptions{})
 	f.mu.Lock()
 	execs := len(f.execs)
@@ -540,6 +568,7 @@ func TestReadBackFailureBeforeACallIsNotDispatched(t *testing.T) {
 // session core, OpenShell registered it anyway: the session stayed open, and Drain
 // waited out its whole context for a sandbox nothing would delete.
 func TestSessionOpenRacingDrainIsRefused(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	sc := &sessionScript{}
 	listing, release := make(chan struct{}), make(chan struct{})
@@ -588,6 +617,7 @@ func TestSessionOpenRacingDrainIsRefused(t *testing.T) {
 // docker already kept). Before the shared session core it ended the session as
 // changed.
 func TestSessionKeepsGoingWhenItsConfigurationCannotBeRead(t *testing.T) {
+	t.Parallel()
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	f.mu.Lock()
 	f.configErr = connect.NewError(connect.CodeUnavailable, errors.New("the gateway is restarting"))
@@ -613,20 +643,23 @@ func TestSessionKeepsGoingWhenItsConfigurationCannotBeRead(t *testing.T) {
 // A session's lifetime runs from the open's start, as on docker and as the sandbox
 // declares it, not from the end of a slow create.
 func TestSessionLifetimeRunsFromTheOpen(t *testing.T) {
+	t.Parallel()
 	f, p := newFake(t)
 	sc := &sessionScript{}
 	f.run = sc.run
 	f.createDelay = 300 * time.Millisecond
-	before := time.Now()
 	s, err := p.OpenSession(context.Background(), sandbox.SessionOptions{Lifetime: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	returned := time.Now()
 	defer s.Close(context.Background())
-	// What the open does before the create (the driver check) may count; the create
-	// may not.
-	if over := s.ExpiresAt().Sub(before.Add(time.Minute)); over >= f.createDelay/2 {
-		t.Fatalf("the session expires %v after its lifetime from the open; its lifetime runs from after the create", over)
+	// The create sits inside the open, so a lifetime counted from the open's start ends at
+	// least the create's delay before one counted from here. Measured this way a busy host
+	// widens the margin and cannot fail a correct open: bounding the time since the open's
+	// start instead failed at 186 ms against 150 under a loaded race pass.
+	if early := returned.Add(time.Minute).Sub(s.ExpiresAt()); early < f.createDelay/2 {
+		t.Fatalf("the session expires only %v before a lifetime from the end of the open; its lifetime runs from after the create", early)
 	}
 }
 
@@ -635,6 +668,7 @@ func TestSessionLifetimeRunsFromTheOpen(t *testing.T) {
 // shared session core OpenShell passed it through the call-error path, which reported
 // the deadline unmarked, as if the call might have run.
 func TestSessionGrantRefusalStaysNotDispatched(t *testing.T) {
+	t.Parallel()
 	_, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	grant := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}},
 		Minter: slowMinter{}, AllowInSessions: true}
@@ -660,6 +694,7 @@ func (slowMinter) Mint(ctx context.Context, _ sandbox.MintScope) (sandbox.Minted
 // its create. Found by the R2 review; before the fix the session open, and a run,
 // created a sandbox after Drain had reported none left.
 func TestDrainLeavesNoSandboxToCome(t *testing.T) {
+	t.Parallel()
 	for _, op := range []string{"session", "run"} {
 		t.Run(op, func(t *testing.T) {
 			f, p := newFake(t)
@@ -708,6 +743,7 @@ func TestDrainLeavesNoSandboxToCome(t *testing.T) {
 // tracked: the wait for tracked names alone would miss a sandbox whose create has
 // begun and whose name is not tracked yet.
 func TestDrainWaitsForACreateInFlight(t *testing.T) {
+	t.Parallel()
 	_, p := newFake(t)
 	leave, ok := p.sessions.Enter() // a create between its check and tracking its name
 	if !ok {

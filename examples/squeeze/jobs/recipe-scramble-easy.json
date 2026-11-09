@@ -1,0 +1,129 @@
+{
+ "name": "recipe-scramble-easy",
+ "about": "Does a fresh agent follow the plan it is handed, or ignore it? Fresh agents on the easy course: from the hackathon's honest 32-token recipe, from the same recipe with its words shuffled by a fixed seed (the same words, no plan), and from no recipe. Run in two stages: the eight no-recipe agents first; then the recipe and scrambled groups, equal in size, up to the 16 each listed here, sized (-build) from the first stage's measured cost alone. Every agent has the same tools and the same practice budget (fly calls are limited, and the reason is cost); each controller is graded in sandboxes of its own on the loop's 16 practice flights and on 64 fresh flights, every run signed. Scores come from the signed grading runs only; agents.json reads each agent's recipe use, its controller's code and its answer to the question asked after.",
+ "fresh": 64,
+ "no_page": true,
+ "courses": [
+  {
+   "id": "easy",
+   "label": "the easy course",
+   "tag": "d1",
+   "practice": [
+    2711538435,
+    3107713414,
+    2893621486,
+    575937923,
+    3575332085,
+    1495601726,
+    324394184,
+    3874630936,
+    2252910516,
+    1001788019,
+    1574008760,
+    4220499815,
+    2368392552,
+    1627644072,
+    2910676638,
+    4100957300
+   ],
+   "loops": [
+    {
+     "id": "honest",
+     "label": "the honest loop",
+     "artifact": "",
+     "recipe": "Filter velocity; fast/slow accel disturbance observer; yaw + local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.",
+     "recipe_tokens": 32,
+     "tokenizer": "Gemini's tokenizer (count_tokens on gemini-4-argon), as the hackathon counted it",
+     "items": [
+      {
+       "item": "Filter velocity",
+       "any": [
+        "vel\\w*(filt|lpf|smooth|ema|alpha)",
+        "(filt|lpf|smooth|ema)\\w*vel"
+       ]
+      },
+      {
+       "item": "fast/slow accel disturbance observer",
+       "any": [
+        "disturb",
+        "observer",
+        "\\bdob\\b"
+       ]
+      },
+      {
+       "item": "yaw + local pos integrals",
+       "any": [
+        "integr",
+        "errsum|sumerr",
+        "\\bki\\b|\\bki_"
+       ]
+      },
+      {
+       "item": "smooth ref filter",
+       "any": [
+        "(ref|target|setpoint)\\w*(filt|smooth|lpf)",
+        "\\bsp_?(filt|smooth|lpf)",
+        "(filt|smooth|lpf)\\w*(ref|target|setpoint)"
+       ]
+      },
+      {
+       "item": "gate exit lock",
+       "any": [
+        "exit\\w*lock|lock\\w*exit",
+        "gate\\w*(lock|latch)|(lock|latch)\\w*gate",
+        "latch"
+       ]
+      },
+      {
+       "item": "predictive cross abort",
+       "any": [
+        "abort",
+        "predict\\w*cross|cross\\w*predict"
+       ]
+      },
+      {
+       "item": "ramp pad descent",
+       "any": [
+        "ramp",
+        "descen\\w*rate"
+       ]
+      }
+     ]
+    }
+   ],
+   "groups": [
+    {
+     "id": "recipe",
+     "label": "from the honest recipe",
+     "from": "honest",
+     "build": 16,
+     "import": []
+    },
+    {
+     "id": "scrambled",
+     "label": "from the honest recipe with its words shuffled",
+     "from": "honest",
+     "scramble": true,
+     "build": 16,
+     "import": []
+    },
+    {
+     "id": "none",
+     "label": "from no recipe",
+     "from": "",
+     "build": 8,
+     "import": []
+    }
+   ]
+  }
+ ],
+ "rebuild": {
+  "turns": 30,
+  "flights_per_fly": 8,
+  "fly_calls": 20,
+  "max_tokens": 16000,
+  "prompt_cap": 150000,
+  "effort": "medium",
+  "ask_after": true
+ }
+}

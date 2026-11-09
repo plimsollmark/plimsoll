@@ -13,7 +13,7 @@
     "@plimsollmark/client": "file:../../clients/typescript",
     "@trigger.dev/sdk": "^4.7.0",
     "ai": "^7.0.0",
-    "zod": "^4.0.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
@@ -22,6 +22,11 @@
   },
   "overrides": {
     "engine.io-client": "^6.6.7",
-    "giget": "^2.0.0"
+    "giget": "^2.0.0",
+    "trigger.dev": {
+      "esbuild": "0.25.12",
+      "zod": "^4.6.6",
+      "@prisma/config": "6.12.0"
+    }
   }
 }

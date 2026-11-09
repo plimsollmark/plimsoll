@@ -27,13 +27,17 @@ import { createInterface } from 'node:readline';
 const p = '/proc/' + process.ppid;
 const tryOpen = (f, m) => { try { closeSync(openSync(p + f, m)); return 'open'; } catch (e) { return e.code; } };
 const cmdlines = [];
-for (const pid of readdirSync('/proc')) {
+let procList = 'read';
+let pids = [];
+try { pids = readdirSync('/proc'); } catch (e) { procList = e.code; }
+for (const pid of pids) {
   if (!/^\d+$/.test(pid)) continue;
   try { cmdlines.push(readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0').join(' ')); } catch {}
 }
 const r = { cmdlines, fd0: tryOpen('/fd/0', constants.O_RDONLY), fd1: tryOpen('/fd/1', constants.O_WRONLY),
   mem: tryOpen('/mem', constants.O_RDONLY), maps: tryOpen('/maps', constants.O_RDONLY),
-  environ: tryOpen('/environ', constants.O_RDONLY), scenarioFile: existsSync('scenario.txt') };
+  environ: tryOpen('/environ', constants.O_RDONLY), scenarioFile: false, procList };
+try { r.scenarioFile = existsSync('scenario.txt'); } catch (e) { r.scenarioCheck = e.code; }   // the permission model throws
 process.stderr.write('PROBE ' + JSON.stringify(r) + '\n');
 createInterface({ input: process.stdin }).on('line', () => process.stdout.write('0 0\n'));
 `
@@ -74,6 +78,7 @@ func TestDockerJudgeKeepsScenarioFromController(t *testing.T) {
 		Cmdlines                     []string
 		Fd0, Fd1, Mem, Maps, Environ string
 		ScenarioFile                 bool
+		ProcList                     string
 	}
 	line := ""
 	for _, l := range strings.Split(res.Steps[0].Stderr, "\n") {
@@ -81,7 +86,9 @@ func TestDockerJudgeKeepsScenarioFromController(t *testing.T) {
 			line = strings.TrimPrefix(l, "PROBE ")
 		}
 	}
-	if err := json.Unmarshal([]byte(line), &probe); err != nil || len(probe.Cmdlines) == 0 {
+	// Under node's permission model (the runner starts every controller so) the controller cannot list /proc at all:
+	// then it reads no command line, and that refusal is the result; otherwise it must have read some.
+	if err := json.Unmarshal([]byte(line), &probe); err != nil || (len(probe.Cmdlines) == 0 && probe.ProcList != "ERR_ACCESS_DENIED") {
 		t.Fatalf("no probe report in stderr %q (%v)", res.Steps[0].Stderr, err)
 	}
 	for _, c := range probe.Cmdlines {
@@ -95,7 +102,7 @@ func TestDockerJudgeKeepsScenarioFromController(t *testing.T) {
 		t.Fatal("the scenario file still exists when the controller runs")
 	}
 	for name, got := range map[string]string{"fd/0": probe.Fd0, "fd/1": probe.Fd1, "mem": probe.Mem} {
-		if got != "EACCES" && got != "EPERM" {
+		if got != "EACCES" && got != "EPERM" && got != "ERR_ACCESS_DENIED" {
 			t.Fatalf("the controller opened its runner's %s (%s)", name, got)
 		}
 	}

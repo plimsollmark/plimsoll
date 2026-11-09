@@ -67,63 +67,68 @@ func build(t *testing.T, log []byte, rec *sandbox.RunRecord) (Predicate, []attes
 // Every fixture makes a receipt that checks against its own log and no other, names its
 // pod, and splits the calls into effected and attempted by their result.
 func TestFixtures(t *testing.T) {
+	t.Parallel()
 	signer, pub := newSigner(t)
 	logs := map[string][]byte{}
 	for name := range pods {
 		logs[name] = fixture(t, name)
 	}
 	for name, uid := range pods {
-		p, subs := build(t, logs[name], nil)
-		if p.Instance != "k8s-pod-uid:"+uid || p.Run != nil || len(subs) != 1 || subs[0].Name != LogSubject {
-			t.Errorf("%s: instance %q, run %+v, subjects %+v", name, p.Instance, p.Run, subs)
-		}
-		if p.Observer.Runsc != "release-20260907.0" || p.Observer.StraceLogSize != 16 || p.Observer.Network != "sandbox" ||
-			len(p.Observer.ConfigurationSHA256) != 64 || p.Log.Bytes != int64(len(logs[name])) || len(p.NotObserved) == 0 {
-			t.Errorf("%s: observer %+v, log %+v", name, p.Observer, p.Log)
-		}
-		// Each call sits on the side its result names, and every call is on one side.
-		sides := map[int]Calls{effected: {Opened: p.Effected.Opened, Changes: p.Effected.Changes, Network: p.Effected.Network},
-			attempted: p.Attempted, undetermined: p.Undetermined}
-		calls := 0
-		for side, c := range sides {
-			for _, o := range c.Opened {
-				if outcome(o.Result) != side {
-					t.Errorf("%s: open %+v on side %d", name, o, side)
-				}
+		t.Run(name, func(t *testing.T) {
+			// Side by side: each fixture's log is read four times, about 2.5 s under -race.
+			t.Parallel()
+			p, subs := build(t, logs[name], nil)
+			if p.Instance != "k8s-pod-uid:"+uid || p.Run != nil || len(subs) != 1 || subs[0].Name != LogSubject {
+				t.Errorf("%s: instance %q, run %+v, subjects %+v", name, p.Instance, p.Run, subs)
 			}
-			for _, x := range c.Changes {
-				if outcome(x.Result) != side {
-					t.Errorf("%s: change %+v on side %d", name, x, side)
-				}
+			if p.Observer.Runsc != "release-20260907.0" || p.Observer.StraceLogSize != 16 || p.Observer.Network != "sandbox" ||
+				len(p.Observer.ConfigurationSHA256) != 64 || p.Log.Bytes != int64(len(logs[name])) || len(p.NotObserved) == 0 {
+				t.Errorf("%s: observer %+v, log %+v", name, p.Observer, p.Log)
 			}
-			for _, x := range c.Network {
-				if outcome(x.Result) != side {
-					t.Errorf("%s: network call %+v on side %d", name, x, side)
+			// Each call sits on the side its result names, and every call is on one side.
+			sides := map[int]Calls{effected: {Opened: p.Effected.Opened, Changes: p.Effected.Changes, Network: p.Effected.Network},
+				attempted: p.Attempted, undetermined: p.Undetermined}
+			calls := 0
+			for side, c := range sides {
+				for _, o := range c.Opened {
+					if outcome(o.Result) != side {
+						t.Errorf("%s: open %+v on side %d", name, o, side)
+					}
 				}
+				for _, x := range c.Changes {
+					if outcome(x.Result) != side {
+						t.Errorf("%s: change %+v on side %d", name, x, side)
+					}
+				}
+				for _, x := range c.Network {
+					if outcome(x.Result) != side {
+						t.Errorf("%s: network call %+v on side %d", name, x, side)
+					}
+				}
+				calls += len(c.Opened) + len(c.Changes) + len(c.Network)
 			}
-			calls += len(c.Opened) + len(c.Changes) + len(c.Network)
-		}
-		tr, err := runsclog.Read(bytes.NewReader(logs[name]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if calls != len(tr.Opened)+len(tr.Changes)+len(tr.Network) || len(p.Effected.Written) != len(tr.Written) {
-			t.Errorf("%s: %d calls on the three sides, the log has %d", name, calls, len(tr.Opened)+len(tr.Changes)+len(tr.Network))
-		}
-		env, err := Sign(signer, p, subs)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Check(env, pub, bytes.NewReader(logs[name]), nil); err != nil {
-			t.Errorf("%s: %v", name, err)
-		}
-		other := "quiet"
-		if name == "quiet" {
-			other = "child"
-		}
-		if _, err := Check(env, pub, bytes.NewReader(logs[other]), nil); !errors.Is(err, ErrMismatch) {
-			t.Errorf("%s checked against %s's log: %v", name, other, err)
-		}
+			tr, err := runsclog.Read(bytes.NewReader(logs[name]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls != len(tr.Opened)+len(tr.Changes)+len(tr.Network) || len(p.Effected.Written) != len(tr.Written) {
+				t.Errorf("%s: %d calls on the three sides, the log has %d", name, calls, len(tr.Opened)+len(tr.Changes)+len(tr.Network))
+			}
+			env, err := Sign(signer, p, subs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Check(env, pub, bytes.NewReader(logs[name]), nil); err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+			other := "quiet"
+			if name == "quiet" {
+				other = "child"
+			}
+			if _, err := Check(env, pub, bytes.NewReader(logs[other]), nil); !errors.Is(err, ErrMismatch) {
+				t.Errorf("%s checked against %s's log: %v", name, other, err)
+			}
+		})
 	}
 	// All five ran under one runtime handler, so they share the configuration digest.
 	a, _ := build(t, logs["quiet"], nil)
@@ -135,6 +140,7 @@ func TestFixtures(t *testing.T) {
 
 // What the fixture packages did shows on the side it belongs to.
 func TestFixtureFacts(t *testing.T) {
+	t.Parallel()
 	canary, _ := build(t, fixture(t, "canary"), nil)
 	var written []string
 	for _, w := range canary.Effected.Written {
@@ -181,6 +187,7 @@ func TestFixtureFacts(t *testing.T) {
 // A receipt that lists less than the log shows fails the check, though its signature is
 // good; so does a log changed after signing, even where the change alters no event.
 func TestCheckRebuilds(t *testing.T) {
+	t.Parallel()
 	signer, pub := newSigner(t)
 	log := fixture(t, "network")
 	p, subs := build(t, log, nil)
@@ -233,6 +240,7 @@ func replaceNth(t *testing.T, b []byte, old, new string, n int) []byte {
 
 // A log that cannot support a receipt's claim makes none.
 func TestRefusals(t *testing.T) {
+	t.Parallel()
 	log := fixture(t, "quiet")
 	uid := pods["quiet"]
 	traced := "(--strace-syscalls): " + strings.Join(runsclog.Syscalls(), ",")
@@ -298,6 +306,7 @@ func signedRecord(t *testing.T, signer *attest.Signer, pub ed25519.PublicKey, in
 // A receipt joined to a run names its record, checks only with that record, and is refused
 // for a record of another sandbox.
 func TestRecordJoin(t *testing.T) {
+	t.Parallel()
 	signer, pub := newSigner(t)
 	log := fixture(t, "canary")
 	rec := signedRecord(t, signer, pub, sandbox.PodInstance(pods["canary"]))

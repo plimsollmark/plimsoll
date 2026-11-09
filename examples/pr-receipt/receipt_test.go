@@ -490,6 +490,11 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 // name prefix of the private directory os.MkdirTemp makes for it there and the socket's
 // file name. It is read from the sources, so a new socket fails the test below until it is
 // counted here and in receipt.sh's socket_room.
+// withheldListeners holds the Unix listeners of programs withheld from the public export that
+// never run in plimsolld (an agent inside a VM of its own). A withheld test file of this package
+// adds them where they exist, so the count below holds in both trees.
+var withheldListeners = map[string]int{}
+
 func receiptDaemonSockets(t *testing.T) [][2]string {
 	t.Helper()
 	sockets := [][2]string{
@@ -549,6 +554,9 @@ func receiptDaemonSockets(t *testing.T) [][2]string {
 	// run found the public tree failing here, 2026-10-29).
 	if _, err := os.Stat("../../sandbox/internal/dcfake/agent/main.go"); err == nil {
 		want["sandbox/internal/dcfake/agent/main.go"] = 1
+	}
+	for file, n := range withheldListeners {
+		want[file] = n
 	}
 	if fmt.Sprint(found) != fmt.Sprint(want) {
 		t.Errorf("Unix listeners %v; this test counts %v", found, want)

@@ -10,6 +10,7 @@ package grants
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -352,6 +353,15 @@ type tokenConfig struct {
 
 	Env string `json:"env"` // static: env var holding the bearer token
 
+	// Place says where the credential goes on the API's request: "bearer" (default,
+	// Authorization: Bearer), "header" (the bare token as the value of Header, e.g.
+	// x-goog-api-key or api-key) or "basic" (HTTP basic authentication with Username
+	// and the token as the password). The value is always the minter's, never a field
+	// of this file.
+	Place    string `json:"place"`
+	Header   string `json:"header"`   // place "header": the field name
+	Username string `json:"username"` // place "basic": the user name (may be empty)
+
 	SecretEnv string `json:"secret_env"` // jwt: env var holding the HS256 signing secret
 	TTLSec    int    `json:"ttl_sec"`    // jwt: token lifetime in seconds (default 60)
 	Issuer    string `json:"issuer"`     // jwt: iss claim (optional)
@@ -397,6 +407,37 @@ func buildMinter(profile string, tc *tokenConfig) (sandbox.TokenMinter, error) {
 		return newJWTMinter([]byte(secret), time.Duration(tc.TTLSec)*time.Second, tc.Issuer, tc.Audience, tc.KeyID), nil
 	default:
 		return nil, fmt.Errorf("grants: profile %q: unknown token.type %q (want static|jwt)", profile, tc.Type)
+	}
+}
+
+// parsePlacement reads where the credential goes from a token config. A key that does
+// not belong to the chosen place is an error, so a typo cannot leave a credential in the
+// default header while the operator believes it is elsewhere.
+func parsePlacement(tc *tokenConfig) (sandbox.CredentialPlacement, error) {
+	if tc == nil {
+		return sandbox.CredentialPlacement{}, nil
+	}
+	switch tc.Place {
+	case "", sandbox.CredentialBearer:
+		if tc.Header != "" || tc.Username != "" {
+			return sandbox.CredentialPlacement{}, errors.New("token.header and token.username need token.place \"header\" or \"basic\"")
+		}
+		return sandbox.CredentialPlacement{}, nil
+	case sandbox.CredentialHeader:
+		if tc.Header == "" {
+			return sandbox.CredentialPlacement{}, errors.New("token.header is required for token.place \"header\"")
+		}
+		if tc.Username != "" {
+			return sandbox.CredentialPlacement{}, errors.New("token.username belongs to token.place \"basic\"")
+		}
+		return sandbox.CredentialPlacement{Kind: sandbox.CredentialHeader, Header: tc.Header}, nil
+	case sandbox.CredentialBasic:
+		if tc.Header != "" {
+			return sandbox.CredentialPlacement{}, errors.New("token.header belongs to token.place \"header\"")
+		}
+		return sandbox.CredentialPlacement{Kind: sandbox.CredentialBasic, Username: tc.Username}, nil
+	default:
+		return sandbox.CredentialPlacement{}, fmt.Errorf("unknown token.place %q (want bearer|header|basic)", tc.Place)
 	}
 }
 
@@ -498,6 +539,10 @@ func Load(path string) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
+		placement, err := parsePlacement(pc.Token)
+		if err != nil {
+			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
+		}
 		health, err := parseHealthCheck(pc.HealthCheck)
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
@@ -521,6 +566,7 @@ func Load(path string) (*Registry, error) {
 			Global:               pc.Global,
 			Preamble:             preamble,
 			Minter:               minter,
+			CredentialPlacement:  placement,
 			HealthCheck:          health,
 			MaxCalls:             pc.MaxCalls,
 			RouteMaxCalls:        routeMax,

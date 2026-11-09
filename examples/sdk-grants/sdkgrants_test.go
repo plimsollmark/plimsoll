@@ -38,7 +38,7 @@ func TestPublishedFilesVerify(t *testing.T) {
 	if ev.Stub.Requests != 5 || ev.Stub.DummyKeyHits != 0 || ev.Stub.BrokerKeyOK != 5 {
 		t.Errorf("stub summary %+v", ev.Stub)
 	}
-	d := newPageData(ev)
+	d := newPageData(ev, nil)
 	if d.Upload.Upload == nil || d.Upload.Upload.Bytes != 8<<20 || d.Upload.Upload.RouteLimit != 16<<20 {
 		t.Errorf("upload %+v: the page says 8 MiB on a route raised to 16 MiB", d.Upload.Upload)
 	}

@@ -27,6 +27,7 @@ import (
 // instance is killed once it is more than e2bReapMargin past the expiry it declares,
 // and spared before that, without a declaration, or while this instance tracks it.
 func TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var deleted []string
 	past := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
@@ -98,6 +99,7 @@ func TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes(t *testing.T) {
 // control plane to filter by this instance's stamp (and, for sessions, by session=1),
 // for running and paused sandboxes, and follows every page.
 func TestE2BReconcileListsBothStatesByMetadataAcrossPages(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var filters []string
 	var deleted []string
@@ -140,6 +142,7 @@ func TestE2BReconcileListsBothStatesByMetadataAcrossPages(t *testing.T) {
 // request is sent until kill() has run, and that a create returning no sandbox
 // untracks its key: the lifecycle the reconciler's kill decision depends on.
 func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
+	t.Parallel()
 	var createBody []byte
 	var stampedMD map[string]string
 	var e *E2B
@@ -208,6 +211,7 @@ func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 // stream transfer budget is classified as a FAILED USER RUN (non-zero exit,
 // truncated output, no returned error) rather than generic infrastructure.
 func TestE2BFloodIsUserRunFailure(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/connect+json")
 		f, _ := w.(http.Flusher)
@@ -243,6 +247,7 @@ func TestE2BFloodIsUserRunFailure(t *testing.T) {
 // (TeardownGaveUp), so a caller that meters runs charges the run's whole reservation:
 // the microVM bills until its create timeout. A delete that succeeds says nothing.
 func TestE2BReportsAKillThatGaveUp(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusOK, http.StatusInternalServerError} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(status)
@@ -262,6 +267,7 @@ func TestE2BReportsAKillThatGaveUp(t *testing.T) {
 // run's context, as a kill that gave up does, so a caller that meters runs charges the
 // run's whole reservation.
 func TestE2BReportsACreateWithNoUsableID(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"no sandbox ID":      `{"envdAccessToken":"a","trafficAccessToken":"t"}`,
 		"an ID it won't use": `{"sandboxID":"sb/../x","envdAccessToken":"a","trafficAccessToken":"t"}`,
@@ -293,6 +299,7 @@ func TestE2BReportsACreateWithNoUsableID(t *testing.T) {
 // and reconciles at once. A create that never reached the control plane reports
 // nothing: no microVM can exist.
 func TestE2BReportsACreateWhoseAnswerWasLost(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	listed := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +384,7 @@ func (l *lostAnswerTransport) RoundTrip(r *http.Request) (*http.Response, error)
 // A create sent through a transport that never reports the request written, and lost
 // there, may still have made a microVM: the error, not the hook, decides.
 func TestE2BReportsALostCreateWithoutTraceHooks(t *testing.T) {
+	t.Parallel()
 	tr := &lostAnswerTransport{}
 	e := &E2B{APIKey: "k", APIBase: "https://api.example.invalid", HTTP: &http.Client{Transport: tr}}
 	ctx, gaveUp := WatchTeardown(context.Background())
@@ -398,6 +406,7 @@ func TestE2BReportsALostCreateWithoutTraceHooks(t *testing.T) {
 // A 5xx (a proxy timing out after the control plane started a VM) or a 2xx other than
 // 200 and 201 proves nothing about creation, so the run is charged as a lost create.
 func TestE2BCreateAnswerDecidesOnlyWhenARefusal(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status int
 		lost   bool

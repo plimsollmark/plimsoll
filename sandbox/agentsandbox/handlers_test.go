@@ -56,7 +56,7 @@ func TestDeclaredHandlersAreCheckedBeforeAnyAPICall(t *testing.T) {
 	}
 	for _, c := range cases {
 		cfg := Config{APIServer: srv.URL, CAFile: ca, TokenFile: "token", Namespace: "default", WarmPool: "pool",
-			RuntimeClass: "gvisor", Image: fakeImage, SandboxdToken: fakeToken, RunscHandlers: c.names}
+			RuntimeClass: "gvisor", Image: fakeImage, SandboxdToken: fakeToken, SandboxdCAFile: ca, RunscHandlers: c.names}
 		if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("RunscHandlers %q: %v; want %q", c.names, err, c.want)
 		}
@@ -65,7 +65,7 @@ func TestDeclaredHandlersAreCheckedBeforeAnyAPICall(t *testing.T) {
 		t.Fatalf("%d API calls while refusing declarations", n)
 	}
 	if _, err := New(Config{APIServer: srv.URL, CAFile: ca, TokenFile: "token", Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, SandboxdToken: fakeToken, RunscHandlers: []string{declaredHandler, strings.Repeat("a", 63)}}); err != nil {
+		RuntimeClass: "gvisor", Image: fakeImage, SandboxdToken: fakeToken, SandboxdCAFile: ca, RunscHandlers: []string{declaredHandler, strings.Repeat("a", 63)}}); err != nil {
 		t.Fatalf("a valid declaration: %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestDeclaredHandlersFromEnv(t *testing.T) {
 			"SANDBOX_AGENTSANDBOX_API_SERVER": "https://127.0.0.1:6443", "SANDBOX_AGENTSANDBOX_CA_FILE": ca, "SANDBOX_AGENTSANDBOX_TOKEN_FILE": "token",
 			"SANDBOX_AGENTSANDBOX_NAMESPACE": "default", "SANDBOX_AGENTSANDBOX_WARM_POOL": "pool", "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS": "gvisor",
 			"SANDBOX_AGENTSANDBOX_IMAGE": fakeImage, "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE": tokenFile,
-			"SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS": list,
+			"SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS": list, "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE": ca,
 		}
 		return func(k string) string { return m[k] }
 	}

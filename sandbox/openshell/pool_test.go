@@ -64,6 +64,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // lifetime a session may be given, which bounds how long a crashed daemon's member
 // lives on. Nothing else ran in it.
 func TestPoolMemberIsASessionSandboxDeclaringItsIdleBound(t *testing.T) {
+	t.Parallel()
 	f, p, sc := bareProvider(t)
 	pool := startBarePool(t, p, 1)
 	names := pool.Members()
@@ -94,6 +95,7 @@ func TestPoolMemberIsASessionSandboxDeclaringItsIdleBound(t *testing.T) {
 // read back before its first call like any session, and closing the session deletes
 // it. It never comes back: the next open gets the refill.
 func TestOpenSessionClaimsAWaitingMemberOnce(t *testing.T) {
+	t.Parallel()
 	f, p, _ := bareProvider(t)
 	pool := startBarePool(t, p, 1)
 	member := pool.Members()[0]
@@ -136,6 +138,7 @@ func TestOpenSessionClaimsAWaitingMemberOnce(t *testing.T) {
 // An open refused before its claim (a floor the provider cannot meet) leaves the
 // pool's demand as it was, and takes no member.
 func TestRefusedOpenLeavesTheOpenShellPoolAlone(t *testing.T) {
+	t.Parallel()
 	_, p, _ := bareProvider(t)
 	pool := startBarePool(t, p, 1)
 	member := pool.Members()[0]
@@ -160,6 +163,7 @@ func TestRefusedOpenLeavesTheOpenShellPoolAlone(t *testing.T) {
 // steer every member to the languages it names (found in review, 2026-10-28; it was
 // counted before the claim until then).
 func TestWarmOnlyOpenCountsTowardDemandOnlyWithAMember(t *testing.T) {
+	t.Parallel()
 	_, p, _ := bareProvider(t)
 	p.mu.Lock()
 	p.smoke = &smokeEvidence{Languages: []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}}
@@ -193,6 +197,7 @@ func TestWarmOnlyOpenCountsTowardDemandOnlyWithAMember(t *testing.T) {
 // A member made under another gateway version is not handed over: it is deleted, and
 // the open creates its sandbox as it would without a pool.
 func TestPoolMemberOfAnotherGatewayVersionIsNotHandedOver(t *testing.T) {
+	t.Parallel()
 	f, p, _ := bareProvider(t)
 	pool := startBarePool(t, p, 1)
 	member := pool.Members()[0]
@@ -217,6 +222,7 @@ func TestPoolMemberOfAnotherGatewayVersionIsNotHandedOver(t *testing.T) {
 // A member that may not outlive what its sandbox declares is not handed to a session
 // asking for a longer lifetime than the pool was started for.
 func TestPoolMemberIsNotHandedToALongerLifetime(t *testing.T) {
+	t.Parallel()
 	_, p, _ := bareProvider(t)
 	pool := startBarePool(t, p, 1)
 	member := pool.Members()[0]
@@ -232,6 +238,7 @@ func TestPoolMemberIsNotHandedToALongerLifetime(t *testing.T) {
 
 // Drain stops the pool and deletes its waiting members before it returns.
 func TestDrainDeletesWaitingMembers(t *testing.T) {
+	t.Parallel()
 	f, p, _ := bareProvider(t)
 	pool := startBarePool(t, p, 2)
 	waitFor(t, "two members", func() bool { return len(pool.Members()) == 2 })
@@ -252,6 +259,7 @@ func TestDrainDeletesWaitingMembers(t *testing.T) {
 // fails does not start: the fake answers the launcher with a payload's "ok", which is
 // no launch report.
 func TestPoolWhoseMemberCannotWarmDoesNotStart(t *testing.T) {
+	t.Parallel()
 	f, p, _ := bareProvider(t)
 	err := p.StartSessionPool(context.Background(), 1, testPoolLifetime)
 	if err == nil || !strings.Contains(err.Error(), "starting the javascript interpreter") {
@@ -266,6 +274,7 @@ func TestPoolWhoseMemberCannotWarmDoesNotStart(t *testing.T) {
 // A warm-only open takes a waiting member, and with none to hand over (no pool, or a
 // pool with none waiting) is refused and creates nothing.
 func TestWarmOnlyOpenOnOpenShellCreatesNothing(t *testing.T) {
+	t.Parallel()
 	f, p, _ := bareProvider(t)
 	warmOnly := sandbox.SessionOptions{Lifetime: time.Minute, WarmOnly: true}
 	_, err := p.OpenSession(context.Background(), warmOnly)

@@ -28,6 +28,10 @@
 //	go run ./examples/verifiers -verify    # recheck the published files; starts nothing
 //	go run ./examples/verifiers -render    # rewrite the page from evidence.json
 //	go run ./examples/verifiers -assemble  # rebuild the evidence from the last run's raw output
+//	go run ./examples/verifiers -real-model DIR # gather a real-model run beside the page and rewrite it
+//
+// -real-model takes the output directory of attempt/run_attempt.py --model, which is run by hand
+// because it spends money; this program never calls a model. A dry run is refused.
 package main
 
 import (
@@ -50,6 +54,7 @@ func main() {
 	verify := flag.Bool("verify", false, "recheck the published files and write nothing")
 	render := flag.Bool("render", false, "rewrite index.html from the published evidence.json; start nothing")
 	assembleOnly := flag.Bool("assemble", false, "rebuild evidence.json, the record logs and the page from the last run's raw output in -work; start nothing")
+	realRun := flag.String("real-model", "", "a real-model run's output directory (attempt/run_attempt.py --model): gather it beside the page and rewrite the page; start nothing")
 	flag.Parse()
 
 	var err error
@@ -61,6 +66,13 @@ func main() {
 		}
 	case *render:
 		err = renderPublished(*out)
+	case *realRun != "":
+		var repo string
+		if repo, err = os.Getwd(); err == nil {
+			if err = gatherReal(*realRun, *out, repo); err == nil {
+				err = renderPublished(*out)
+			}
+		}
 	case *assembleOnly:
 		var c config
 		if c, err = newConfig(*out, *python, *prime, *bench, *work, *runsc); err == nil {

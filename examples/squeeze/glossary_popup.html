@@ -1,0 +1,58 @@
+<style>
+dfn[data-def]{cursor:help}
+dfn[data-def]:focus-visible{outline:2px solid #11233a;outline-offset:2px;border-radius:3px}
+.gloss-pop{position:absolute;left:0;top:0;z-index:20;background:#11233a;color:#fff;font-size:13px;line-height:1.4;padding:8px 10px;border-radius:8px;max-width:min(300px,calc(100vw - 24px));box-shadow:0 4px 14px rgba(17,35,58,.25)}
+.gloss-pop[hidden]{display:none}
+.gloss-pop a{display:block;margin-top:6px;color:#cfe3ff;text-decoration:underline}
+</style>
+<div class="gloss-pop" id="gloss-pop" role="tooltip" hidden></div>
+<script>
+(function () {
+  var pop = document.getElementById("gloss-pop");
+  var cur = null, timer = 0;
+  function hide() {
+    clearTimeout(timer);
+    pop.hidden = true;
+    if (cur) cur.removeAttribute("aria-describedby");
+    cur = null;
+  }
+  function later() { clearTimeout(timer); timer = setTimeout(hide, 180); }
+  function show(el) {
+    clearTimeout(timer);
+    if (cur === el && !pop.hidden) return;
+    hide();
+    cur = el;
+    pop.textContent = el.getAttribute("data-def") + " ";
+    var a = document.createElement("a");
+    a.href = el.getAttribute("data-href");
+    a.textContent = "(INTERNAL · glossary →)";
+    pop.appendChild(a);
+    el.setAttribute("aria-describedby", "gloss-pop");
+    pop.hidden = false;
+    var r = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    var sx = window.pageXOffset, sy = window.pageYOffset, vw = document.documentElement.clientWidth;
+    var left = Math.max(12, Math.min(r.left, vw - w - 12));
+    var top = r.bottom + 6;
+    if (r.bottom + 6 + h > window.innerHeight && r.top - 6 - h > 0) top = r.top - 6 - h;
+    pop.style.left = (left + sx) + "px";
+    pop.style.top = (top + sy) + "px";
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("dfn[data-def]"), function (el) {
+    el.addEventListener("mouseenter", function () { show(el); });
+    el.addEventListener("mouseleave", later);
+    el.addEventListener("focus", function () { show(el); });
+    el.addEventListener("click", function () { show(el); });
+  });
+  pop.addEventListener("mouseenter", function () { clearTimeout(timer); });
+  pop.addEventListener("mouseleave", later);
+  document.addEventListener("pointerdown", function (e) {
+    if (pop.hidden || pop.contains(e.target)) return;
+    if (e.target.closest && e.target.closest("dfn[data-def]")) return;
+    hide();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); });
+  document.addEventListener("focusin", function (e) {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== cur) hide();
+  });
+})();
+</script>

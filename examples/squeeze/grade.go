@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,9 +34,46 @@ type FlightSet struct {
 }
 
 // gradeTimeout is a grading run's whole budget: the docker provider's ceiling. Each set is graded
-// in a run of its own because 80 flights in one run outlasted it under gVisor on a loaded machine
+// in runs of its own because 80 flights in one run outlasted it under gVisor on a loaded machine
 // (2026-10-27: a median of 114 s, 3 of 31 runs cut off); the page states the times measured.
 const gradeTimeout = 120 * time.Second
+
+// gradeChunk is the most flights one grading run flies. The course allows a controller 5 s of
+// CPU a flight (cpuBudgetSeconds), so 8 flights at that allowance are 40 s, a third of
+// gradeTimeout: a legal controller finishes its run even on a host loaded to a third of its
+// speed. Before this, the 64 fresh flights went in one run (64 x 5 s is 320 s), and one slow run
+// lost every fresh flight of a controller that broke no rule.
+const gradeChunk = 8
+
+// setPart is one grading run's share of a sealed set: its trace purpose and the file it holds.
+type setPart struct {
+	purpose string // "practice" or "fresh" for a set graded whole, else "fresh-3of8"
+	file    []byte
+}
+
+// setParts splits a sealed set into the grading runs that fly it: the whole set, its own file, when
+// it fits one run; else n = ceil(len/gradeChunk) parts (partOf), each named in its trace.
+func setParts(set string, s SealedSet, whole []byte) []setPart {
+	n := (len(s.Seeds) + gradeChunk - 1) / gradeChunk
+	if n <= 1 {
+		return []setPart{{purpose: set, file: whole}}
+	}
+	parts := make([]setPart, n)
+	for k := 1; k <= n; k++ {
+		parts[k-1] = setPart{purpose: fmt.Sprintf("%s-%dof%d", set, k, n), file: partOf(s, k, n).encode()}
+	}
+	return parts
+}
+
+// partOf is part k (from 1) of n of a set: flights (k-1)*len/n to k*len/n, a balanced split in
+// which no part is empty while n is at most the set's size. -verify computes it again from the
+// set and the run's trace, so a grading run is checked to hold exactly its part.
+func partOf(s SealedSet, k, n int) SealedSet {
+	lo, hi := (k-1)*len(s.Seeds)/n, k*len(s.Seeds)/n
+	return SealedSet{Name: fmt.Sprintf("%s %d of %d", s.Name, k, n),
+		About: fmt.Sprintf("Flights %d to %d of the %s set, graded in a run of their own.", lo+1, hi, s.Name),
+		Seeds: slices.Clone(s.Seeds[lo:hi])}
+}
 
 // gradeRequest is one controller's grading run on one sealed set: a fresh sandbox holding the
 // course, the controller and that set's file, named set+".json". The controller runs in a child

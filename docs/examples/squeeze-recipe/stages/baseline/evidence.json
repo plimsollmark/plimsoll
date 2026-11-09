@@ -1,0 +1,1290 @@
+{
+ "job": "recipe-scramble-easy",
+ "harness": "e3a616d81578a635c8bd5396a7cbb8a47d6341119ba3726e248546e3df65df32",
+ "lines": 327,
+ "runs": 142,
+ "sessions": 8,
+ "session_calls": 176,
+ "started": "2026-11-07T12:31:35Z",
+ "sealed": "2026-11-07T12:31:35Z",
+ "ended": "2026-11-07T12:42:42Z",
+ "fresh_sha256": "d81c7b18c6cf2ade2d4cbab4178a4957b2a0fc78a23ee59db7c16ce5d230819b",
+ "fresh_count": 64,
+ "fresh_given": true,
+ "cpu_budget_seconds": 5,
+ "provider": "docker",
+ "tier": "kernel",
+ "environment": "docker-image:sha256:2377ae0164d7c4741c8825183a9a846d4012dc9f8ac9a564cd91a646cc835a03",
+ "max_flight_cpu": 0.54,
+ "max_cpu_who": "easy none r3",
+ "cpu_ended_flights": 0,
+ "cpu_ended_by": [],
+ "max_start_cpu": 0.2,
+ "flights": 640,
+ "grade_median_seconds": 8.6,
+ "grade_max_seconds": 10.4,
+ "fresh_median_seconds": 70.7,
+ "courses": [
+  {
+   "id": "easy",
+   "label": "the easy course",
+   "tag": "d1",
+   "practice_count": 16,
+   "practice_sha256": "4243ea8a41363126666130d6155455e120ace1c514ce40050abd8d64bdfc4345",
+   "loops": [
+    {
+     "id": "honest",
+     "label": "the honest loop",
+     "recipe": "Filter velocity; fast/slow accel disturbance observer; yaw + local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.",
+     "recipe_tokens": 32,
+     "tokenizer": "Gemini's tokenizer (count_tokens on gemini-4-argon), as the hackathon counted it"
+    }
+   ],
+   "groups": [
+    {
+     "id": "recipe",
+     "label": "from the honest recipe",
+     "from": "honest",
+     "built": 16,
+     "imported": 0,
+     "missing": 0,
+     "rebuilds": null,
+     "practice_median": 0,
+     "fresh_median": 0,
+     "seed_hunters": 0
+    },
+    {
+     "id": "scrambled",
+     "label": "from the honest recipe with its words shuffled",
+     "from": "honest",
+     "built": 16,
+     "imported": 0,
+     "missing": 0,
+     "rebuilds": null,
+     "practice_median": 0,
+     "fresh_median": 0,
+     "seed_hunters": 0
+    },
+    {
+     "id": "none",
+     "label": "from no recipe",
+     "from": "",
+     "built": 8,
+     "imported": 0,
+     "missing": 0,
+     "rebuilds": [
+      {
+       "name": "r0",
+       "sha256": "281063a2d8dd03db9cb8f5e6ce491a051a27512b696d86c6890ec5599def697d",
+       "bytes": 2248,
+       "valid": true,
+       "practice": 13,
+       "practice_total": 16,
+       "fresh": 52,
+       "fresh_total": 64,
+       "practice_bits": "1001111110111111",
+       "fresh_bits": "1111111101011111111111101101111011101010111111111111111111100001",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 9
+        },
+        {
+         "end": "ran out of time",
+         "n": 3
+        }
+       ],
+       "max_cpu": 0.43,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "4b4f2cb6c0903e953be7cf32fb414062302c9a1456364b593f46a6391d911672",
+        "2244c460499bd43e4b940791715ee097ebfb5f9e743f13e16d04eacbe867de11",
+        "91e09da70768264a518d9de6fbcc4ad85bf2bfea317ed337c2b736958c7af8a8",
+        "e5ef7ea03bc904d5f0117c4856ae66431e620d3aba681daca48255d49fff59b9",
+        "99646cd652fcfd8476a68583754e09b20255f776bd9b936ddc1c74ea6b92e539",
+        "b8cdc7624bc96e7bd06f45b42fe0ba4ff4d8dc5a5ba1e66331def196a693331d",
+        "b9e878cc6da5e6f1298d7e1c957fca11a09a5bcacbc1675764aaf55661fe2800",
+        "caf7a381c3c09c32efe987cfd4fb024103c625d707d0271b0149d640818622ec",
+        "12595357ad89fea7a87f76ac55943913dd5a878183b4a10341c6ee9393f8b89a",
+        "4830d0eab63986eca21f0419c1b21af9b16848916f664d76b79f16ae4aa5e956"
+       ],
+       "seconds": 84.60000000000001
+      },
+      {
+       "name": "r1",
+       "sha256": "e0af14e95898d8d0da33ffa0d18ed99fb457e90f3de4d5ebec7e8ddf65d8aee1",
+       "bytes": 1824,
+       "valid": true,
+       "practice": 15,
+       "practice_total": 16,
+       "fresh": 58,
+       "fresh_total": 64,
+       "practice_bits": "1101111111111111",
+       "fresh_bits": "1111111011111111111100111111111111111011111111111110111111111101",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 6
+        }
+       ],
+       "max_cpu": 0.38,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "f9812c7eb2db6da63080a0e9b6214198b3915fde3f3e62f89f1bc6b6e70b4136",
+        "391612706774c87a309f4cc2c30ed91552da090ec0806f87e5c5680e3a2bdf5c",
+        "0aac9a94f09791491f506eaf8ec612d62b34285e0d6bb6336a420abd0b74ed2f",
+        "66853fca544b54191db8f426c6084a0643cd270b39f97a77dd43bb62ebae5a4c",
+        "d80586f9493c27ade175940b08982840c48add3056206b5f4356a02fa3766bcb",
+        "69cf710cddb727623183c7ebf1e4917d6773b463ac8f7788c82c5bd1fd500733",
+        "395a6e25754f57151c10bec1c98e26e508affe5d81665920f0d35b470f3db405",
+        "6135ac011bdb1e65ccfc5ce965f25f5ed6c8c1f1ca0cae93294f5a98bc13a648",
+        "d23a6d68520445a60315f5c24fd3f947fa1aed1130b22e51180b4cdf47796aa5",
+        "b35e9f433e171fd11978ff9b66934ca23545328687d5d0714cfd5a44f8c2f4a7"
+       ],
+       "seconds": 66.10000000000001
+      },
+      {
+       "name": "r2",
+       "sha256": "a86f4d9cc3f64082609550154532ebc9c4a6ebb4afaad598369b976ddb95b8e9",
+       "bytes": 2580,
+       "valid": true,
+       "practice": 16,
+       "practice_total": 16,
+       "fresh": 58,
+       "fresh_total": 64,
+       "practice_bits": "1111111111111111",
+       "fresh_bits": "1111011111111111111101111111110110111011111111111111111011111111",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 6
+        }
+       ],
+       "max_cpu": 0.35,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "b88a8233880ea31c4fd99e68401cdf02207eba7460eff327543d7fdee298fab0",
+        "3fed78a4fb6d505f5c0b83ecb00c2c33311207c143422e189e82c053b67e1a7c",
+        "036a47ef8ab9734c5a4698c22d93f41cc3420d5f6994fdbebc750293ef29fc54",
+        "b06fc5d5d96055be31a43816a8ac6c1977e74fdd55ccf606f05f5b4b7eedb011",
+        "191aacb16368eb464c8446849e55b6c06a24b9f673b4562c87cf75d9d3e1b72e",
+        "c6f7d1eb2d5412cdba5a64604901d37d251e62a0c99d0b5d8c8b72c2d93f3957",
+        "45ed45cf9d8f7f687cf67d516f2f2d3a858d01619dcf105b7f62995a70c16b7e",
+        "c38ecff8ea99f58af02ec52b585ca2d7d296253b0da5522c18800e6a509471b2",
+        "6bcedb24365c678580d7a3fde9fa26ca584882b97dd637e5c0956adf4258ea0a",
+        "e644c1bf31f31f79d1f17a3e339653ac582b251b1e2a06bfc4d6aadfdfbd4809"
+       ],
+       "seconds": 79.6
+      },
+      {
+       "name": "r3",
+       "sha256": "7b5b35fdeded9465f57ee6c1872296deb7c861a902dc5756dd955e70c128fa0a",
+       "bytes": 2481,
+       "valid": true,
+       "practice": 11,
+       "practice_total": 16,
+       "fresh": 51,
+       "fresh_total": 64,
+       "practice_bits": "1100111011101101",
+       "fresh_bits": "1111111011110111011101111111111011110000111111111011110111110101",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 11
+        },
+        {
+         "end": "ran out of time",
+         "n": 2
+        }
+       ],
+       "max_cpu": 0.54,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "0f53f8878df5cff40c6cd44ae0b69340780734d18f0fc85cbb1890446e2bdf02",
+        "bfa301f07922bc375605de596a1f1a0383957ffcfcc1db9265e5e1cf076390f2",
+        "4938515506ed133f8b2681c95ed892280c8166535f8046f35549f66a9ad1879b",
+        "0bae3de49eb4b879e2169fe0505da38abb311d743833af5ee40beb8957c72b45",
+        "264465449af53f66f9639e9f51133f337433ec37df00f2328f8e29072376064a",
+        "f436c7d95aaf76c6f471cf4efcfb181a4d14a954f36f434668fccc0bdbedfe1e",
+        "609892e5996a1bc754da8cc8ca1b0c9bd1508a746f60efe12d694debdb632e6e",
+        "605a4bc9b7cd16b88704409e177ff045213f418952cda2563277659c0611287a",
+        "0febe07360f16136e9db18806e5ec191ed97b9ca3b8784b8b75026c88c329f72",
+        "1612c40648663e68082e07992c696c73faf8e388b27a2c56df36c5cc5cf03dbc"
+       ],
+       "seconds": 91.9
+      },
+      {
+       "name": "r4",
+       "sha256": "1e9179e1445532a46cf8656a248b4d1a067ccce38bbad731f7ff0ccdde25b1f1",
+       "bytes": 2124,
+       "valid": true,
+       "practice": 13,
+       "practice_total": 16,
+       "fresh": 54,
+       "fresh_total": 64,
+       "practice_bits": "0111111011111011",
+       "fresh_bits": "1111111011101101011111111111110011111011111111111111110010111111",
+       "fresh_ends": [
+        {
+         "end": "ran out of time",
+         "n": 7
+        },
+        {
+         "end": "gate frame collision",
+         "n": 3
+        }
+       ],
+       "max_cpu": 0.46,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "f65d983524472b5cfee092ecba1cf7467547122a3cefcd86d5d48c6b7da7e580",
+        "e809bb28507ce5331cab5785f4d96d78c4dc717064401b83b425e35989b3aeb2",
+        "1155e9ddd6a7d9adb071ed0282adef94f0dacc014c20b2502bd74ae481501c0e",
+        "d99f7938ab29f4e860f0ee4daf4a4b40091451b74d8ddafb591a25e0c1d24b68",
+        "f35eefffb1fdf8cadfed29c4ea810c6618478942653025e1395d39ff8556b96d",
+        "c5b069529fed6c25ac959707342053cb9447be0e966252e2ed98cc90ecbbb540",
+        "e84d8943148235aa5f0a5c54eacdc20c297fa040eecf4d8080cf997ddc20a354",
+        "e1922e0b982d15adbedda92f4b7415e0d54825f02525805b5f67cf7dd9a9a42a",
+        "f8330cbd5b7abe30aa1dcc831e860edcfe6d5f50b87dbd1dc21724845457216d",
+        "6027f1342b988c28130234ff4b6017797deb7c872aa2d67500feb0291f0fc282"
+       ],
+       "seconds": 94.8
+      },
+      {
+       "name": "r5",
+       "sha256": "136ea942fba9118c6b701168c09bbd0fa965af5125d77ac9886e5dc5af11aa87",
+       "bytes": 2527,
+       "valid": true,
+       "practice": 14,
+       "practice_total": 16,
+       "fresh": 59,
+       "fresh_total": 64,
+       "practice_bits": "1101011111111111",
+       "fresh_bits": "1111111011111111111110111111111111111011111110111110111111111111",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 4
+        },
+        {
+         "end": "ran out of time",
+         "n": 1
+        }
+       ],
+       "max_cpu": 0.43,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "67fb42264375f78140a90a994dc0f6d3564a94f04a50339cfab429ffbb7a0a2f",
+        "04b1dc498b5f45be134f2ba2f74bfd555e533fc7ef7ab8f050c19ac8cd550d57",
+        "197426f08b3dab0ac322e7ea36df4892cd345ea83493a2c9db66e3a824cdc82b",
+        "865b5e4c12f2373f72275dd0d73ac5ccfbd6b35cd3e59eb5843e17c39c26472c",
+        "42704f4a65cebdd9ce9b13419326e78ad7d9508a24e0b31010df847b9079a698",
+        "b0eccc81e169faba24e979f8ad359f95b13aaf33c242191e75edc616b3d30cda",
+        "08eecfa4791fb872204148dfdd7bee8f50aad92aef269b735fa3d0ca8ea907f9",
+        "5cd0171744298803f5ee7323cdc2fb1d994794955d67e5bda9bb12bfaedeb310",
+        "114890db4e77de013bf170be911b74a0cd851d705e4e90e0a0ec3f64cb1f6ab8",
+        "af9f3245f81163f8f30ffa99d9395ff8e20aba9fce463539b6279ad5466957d9"
+       ],
+       "seconds": 83.2
+      },
+      {
+       "name": "r6",
+       "sha256": "8ae1cc83bd375c306a02557b418846fb4bfd0e6167716b9358bc75394cb19b14",
+       "bytes": 2440,
+       "valid": true,
+       "practice": 14,
+       "practice_total": 16,
+       "fresh": 50,
+       "fresh_total": 64,
+       "practice_bits": "1111111011111011",
+       "fresh_bits": "0111111011101100111111101111100011111011111111111101110010111111",
+       "fresh_ends": [
+        {
+         "end": "ran out of time",
+         "n": 10
+        },
+        {
+         "end": "gate frame collision",
+         "n": 4
+        }
+       ],
+       "max_cpu": 0.46,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "483e0aa24b3b1659ddf482052d0a76254ab066746ccb093565dde50632d30c45",
+        "af3524bb1a49dcb684d91146b2e388f026a25b32bd1bb3f2ef2ee628bc6b196a",
+        "53a03e686d4c67a2c2e42049bdf7c63298eb152cef687fb95e024ab2274cf51f",
+        "c08caf66df7c625188237f3eb06916868683e17fc694f6275a49997e0015deff",
+        "144c70adbb9f81a510fc33a47380505eb7164ae9106e2f35dc29212dc4383231",
+        "9661c86448be3aef12ddf91327def915ccd5e3b4dbdd79742985fc183a86a0aa",
+        "e085bd74f6928d70f1c5f474b4238895df42d0beaafd8fc4f8d7bd4fede75707",
+        "56e1a408910eaaa072eef4ddac50df221bce9a6d8ff7e2d9e440744cad4067ee",
+        "d6fff1fd07312be17167dab07b55e16101828ceafc66ff7c4c08d804d8e4efbd",
+        "2b5cc4d9082b9c997823d24be42e04963635dfcd8519f75f3a37576c1630d0ce"
+       ],
+       "seconds": 87.70000000000002
+      },
+      {
+       "name": "r7",
+       "sha256": "a904c756d828e0468ca22859a6d0de2da282a60ef8fc313401c71a9889e87b7b",
+       "bytes": 2603,
+       "valid": true,
+       "practice": 15,
+       "practice_total": 16,
+       "fresh": 56,
+       "fresh_total": 64,
+       "practice_bits": "1111111111111101",
+       "fresh_bits": "1111101111111111011111111011111111110011111111110110101111111111",
+       "fresh_ends": [
+        {
+         "end": "gate frame collision",
+         "n": 4
+        },
+        {
+         "end": "ran out of time",
+         "n": 4
+        }
+       ],
+       "max_cpu": 0.51,
+       "cpu_ended": 0,
+       "flown": 80,
+       "seed_hunt": false,
+       "records": [
+        "2231f6310ee1fecbf9202b3efdd715ee95a0a6392f363146e73349c4e37739db",
+        "0f2055b39221cfe45ad6df56fcde5bb9b8b47a6bd7cdb1ce51d917af4778f9ba",
+        "68916b0a315035b4b2a5d2f3d7cc389706906bf3e5db8c34e957805465125d6c",
+        "e279735f6485a717d960567fcc460b41a49f828289bd3a76c3eb1bbffbc23ac6",
+        "2e8d342d0ec402a5529e007aa9a90866c85d40c3dafca8d7fc2930f91ba841ad",
+        "f0dae8f87594bcf2557fba0dc312bc2591e35347d7681307bab5eb7e77459f4b",
+        "41eb3b00646501aa2b70574eb2d868dd51a23a99b03597d6e3b124c37f1d1641",
+        "935f375f8651d72505a76ae38df443ba0cf823298300aff85c5ad3915d547434",
+        "61c644415a32d0790f239b6a15a6228bbc6e3d2151a1dde5db6109df0028de87",
+        "a41fd0876758046a2892c4b0dea813d22a6f173ee163e88dae41a0172915e3a4"
+       ],
+       "seconds": 95.19999999999999
+      }
+     ],
+     "practice_median": 14,
+     "fresh_median": 55,
+     "seed_hunters": 0
+    }
+   ],
+   "tracks": [
+    {
+     "who": "none",
+     "n": "0",
+     "set": "fresh",
+     "seed": 2879061876,
+     "success": true,
+     "end": "landed",
+     "seconds": 15.18,
+     "xyz": [
+      [
+       -210,
+       7,
+       -163
+      ],
+      [
+       -210,
+       7,
+       -163
+      ],
+      [
+       -209,
+       10,
+       -163
+      ],
+      [
+       -207,
+       16,
+       -162
+      ],
+      [
+       -204,
+       23,
+       -159
+      ],
+      [
+       -200,
+       32,
+       -155
+      ],
+      [
+       -196,
+       41,
+       -150
+      ],
+      [
+       -193,
+       50,
+       -143
+      ],
+      [
+       -191,
+       60,
+       -134
+      ],
+      [
+       -191,
+       70,
+       -124
+      ],
+      [
+       -192,
+       80,
+       -113
+      ],
+      [
+       -194,
+       88,
+       -102
+      ],
+      [
+       -196,
+       94,
+       -92
+      ],
+      [
+       -197,
+       99,
+       -84
+      ],
+      [
+       -196,
+       101,
+       -79
+      ],
+      [
+       -193,
+       103,
+       -78
+      ],
+      [
+       -188,
+       103,
+       -80
+      ],
+      [
+       -180,
+       104,
+       -86
+      ],
+      [
+       -172,
+       103,
+       -92
+      ],
+      [
+       -164,
+       103,
+       -98
+      ],
+      [
+       -159,
+       103,
+       -103
+      ],
+      [
+       -156,
+       102,
+       -105
+      ],
+      [
+       -156,
+       102,
+       -105
+      ],
+      [
+       -160,
+       102,
+       -102
+      ],
+      [
+       -166,
+       102,
+       -97
+      ],
+      [
+       -171,
+       102,
+       -92
+      ],
+      [
+       -176,
+       102,
+       -87
+      ],
+      [
+       -178,
+       102,
+       -83
+      ],
+      [
+       -179,
+       102,
+       -82
+      ],
+      [
+       -178,
+       102,
+       -84
+      ],
+      [
+       -175,
+       103,
+       -88
+      ],
+      [
+       -169,
+       103,
+       -93
+      ],
+      [
+       -161,
+       103,
+       -97
+      ],
+      [
+       -150,
+       103,
+       -98
+      ],
+      [
+       -139,
+       103,
+       -98
+      ],
+      [
+       -128,
+       103,
+       -95
+      ],
+      [
+       -117,
+       104,
+       -91
+      ],
+      [
+       -108,
+       104,
+       -86
+      ],
+      [
+       -99,
+       108,
+       -82
+      ],
+      [
+       -90,
+       114,
+       -78
+      ],
+      [
+       -80,
+       121,
+       -72
+      ],
+      [
+       -70,
+       128,
+       -65
+      ],
+      [
+       -61,
+       133,
+       -56
+      ],
+      [
+       -54,
+       137,
+       -45
+      ],
+      [
+       -49,
+       139,
+       -32
+      ],
+      [
+       -47,
+       141,
+       -18
+      ],
+      [
+       -47,
+       141,
+       -3
+      ],
+      [
+       -51,
+       142,
+       11
+      ],
+      [
+       -55,
+       141,
+       23
+      ],
+      [
+       -59,
+       141,
+       32
+      ],
+      [
+       -61,
+       140,
+       37
+      ],
+      [
+       -60,
+       140,
+       38
+      ],
+      [
+       -56,
+       140,
+       35
+      ],
+      [
+       -49,
+       140,
+       29
+      ],
+      [
+       -41,
+       140,
+       22
+      ],
+      [
+       -32,
+       140,
+       15
+      ],
+      [
+       -26,
+       140,
+       10
+      ],
+      [
+       -22,
+       140,
+       8
+      ],
+      [
+       -21,
+       139,
+       8
+      ],
+      [
+       -23,
+       139,
+       12
+      ],
+      [
+       -28,
+       140,
+       17
+      ],
+      [
+       -34,
+       140,
+       22
+      ],
+      [
+       -39,
+       140,
+       27
+      ],
+      [
+       -43,
+       140,
+       30
+      ],
+      [
+       -45,
+       140,
+       31
+      ],
+      [
+       -43,
+       140,
+       29
+      ],
+      [
+       -38,
+       140,
+       25
+      ],
+      [
+       -31,
+       140,
+       20
+      ],
+      [
+       -21,
+       140,
+       16
+      ],
+      [
+       -10,
+       140,
+       14
+      ],
+      [
+       2,
+       140,
+       14
+      ],
+      [
+       13,
+       140,
+       16
+      ],
+      [
+       23,
+       139,
+       19
+      ],
+      [
+       33,
+       135,
+       21
+      ],
+      [
+       41,
+       129,
+       24
+      ],
+      [
+       50,
+       122,
+       27
+      ],
+      [
+       57,
+       116,
+       31
+      ],
+      [
+       62,
+       110,
+       37
+      ],
+      [
+       64,
+       106,
+       45
+      ],
+      [
+       63,
+       104,
+       54
+      ],
+      [
+       60,
+       103,
+       65
+      ],
+      [
+       56,
+       102,
+       78
+      ],
+      [
+       52,
+       102,
+       91
+      ],
+      [
+       51,
+       103,
+       103
+      ],
+      [
+       52,
+       103,
+       112
+      ],
+      [
+       56,
+       103,
+       118
+      ],
+      [
+       62,
+       104,
+       120
+      ],
+      [
+       72,
+       104,
+       118
+      ],
+      [
+       81,
+       104,
+       112
+      ],
+      [
+       90,
+       105,
+       105
+      ],
+      [
+       97,
+       105,
+       98
+      ],
+      [
+       101,
+       105,
+       92
+      ],
+      [
+       101,
+       105,
+       89
+      ],
+      [
+       99,
+       105,
+       88
+      ],
+      [
+       93,
+       105,
+       91
+      ],
+      [
+       87,
+       105,
+       95
+      ],
+      [
+       81,
+       105,
+       101
+      ],
+      [
+       76,
+       105,
+       106
+      ],
+      [
+       75,
+       105,
+       110
+      ],
+      [
+       76,
+       105,
+       111
+      ],
+      [
+       80,
+       105,
+       110
+      ],
+      [
+       87,
+       105,
+       106
+      ],
+      [
+       97,
+       105,
+       102
+      ],
+      [
+       107,
+       105,
+       97
+      ],
+      [
+       119,
+       105,
+       94
+      ],
+      [
+       130,
+       105,
+       93
+      ],
+      [
+       141,
+       105,
+       95
+      ],
+      [
+       151,
+       102,
+       98
+      ],
+      [
+       161,
+       95,
+       102
+      ],
+      [
+       173,
+       87,
+       108
+      ],
+      [
+       186,
+       78,
+       117
+      ],
+      [
+       199,
+       71,
+       128
+      ],
+      [
+       211,
+       65,
+       142
+      ],
+      [
+       220,
+       61,
+       156
+      ],
+      [
+       225,
+       58,
+       168
+      ],
+      [
+       226,
+       57,
+       176
+      ],
+      [
+       223,
+       56,
+       180
+      ],
+      [
+       217,
+       56,
+       179
+      ],
+      [
+       209,
+       56,
+       173
+      ],
+      [
+       201,
+       57,
+       166
+      ],
+      [
+       194,
+       58,
+       157
+      ],
+      [
+       190,
+       59,
+       150
+      ],
+      [
+       190,
+       59,
+       145
+      ],
+      [
+       192,
+       60,
+       143
+      ],
+      [
+       197,
+       60,
+       145
+      ],
+      [
+       203,
+       60,
+       148
+      ],
+      [
+       210,
+       60,
+       154
+      ],
+      [
+       215,
+       60,
+       161
+      ],
+      [
+       217,
+       60,
+       167
+      ],
+      [
+       216,
+       60,
+       171
+      ],
+      [
+       213,
+       60,
+       172
+      ],
+      [
+       208,
+       59,
+       170
+      ],
+      [
+       202,
+       59,
+       165
+      ],
+      [
+       197,
+       60,
+       159
+      ],
+      [
+       195,
+       60,
+       154
+      ],
+      [
+       195,
+       60,
+       151
+      ],
+      [
+       198,
+       60,
+       151
+      ],
+      [
+       203,
+       60,
+       153
+      ],
+      [
+       208,
+       60,
+       157
+      ],
+      [
+       213,
+       60,
+       163
+      ],
+      [
+       215,
+       60,
+       168
+      ],
+      [
+       215,
+       59,
+       171
+      ],
+      [
+       214,
+       56,
+       172
+      ],
+      [
+       211,
+       50,
+       172
+      ],
+      [
+       207,
+       43,
+       169
+      ],
+      [
+       204,
+       35,
+       166
+      ],
+      [
+       202,
+       27,
+       162
+      ],
+      [
+       201,
+       20,
+       159
+      ],
+      [
+       202,
+       14,
+       157
+      ],
+      [
+       204,
+       9,
+       157
+      ],
+      [
+       206,
+       7,
+       159
+      ],
+      [
+       207,
+       7,
+       159
+      ],
+      [
+       207,
+       7,
+       160
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "scan": {
+  "session_calls": 176,
+  "practice_runs": 61,
+  "grading_runs": 80,
+  "needles": 83,
+  "hits": [],
+  "sets_held": true
+ },
+ "model": "claude-sonnet-5-5",
+ "usage": {
+  "prompt": 1572559,
+  "completion": 98489,
+  "cache_read": 1421588,
+  "cache_write": 150713,
+  "calls": 113
+ },
+ "built": [
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 0,
+   "session": "216a01b71cdad39f95a96a9a92f9800001649cd9df2e5f1585868d8d05fdef6a",
+   "turns": 10,
+   "runs": 8,
+   "fly_calls": 6,
+   "flights": 26,
+   "final": "`controller.js` passes all four smoke flights, and it passed both seeds that had crashed earlier. It has not yet flown a fresh batch of random flights since the final change.\n\nOn an earlier version of the controller, 6 of 8 random flights passed. The two failures were gate-frame collisions at gate 0, one at about 1 s and one at about 4 s. I changed the approach to hold further back from the gate until the drone is lined up. After that change, both seeds passed, finishing in 16.3 s and 20.7 s.\n\nLanding times in the smoke flights ranged from 13.7 s to 20.4 s. Some earlier random flights ran as l…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 1,
+   "session": "92e2668b82798da5c700dc1a3202e6536ac6a193bad66af7f547943bf8d992bf",
+   "turns": 13,
+   "runs": 12,
+   "fly_calls": 8,
+   "flights": 30,
+   "final": "`controller.js` is finished. It passed all 4 smoke flights and 8 of 8 new random flights, and every run landed within 25 s (the slowest took about 14.4 s).\n\nIt is a waypoint follower with a velocity loop on each axis. It holds back until it is lined up with the next gate, then crosses. After the last gate it flies over the pad and descends slowly.\n\nThe earlier versions were less reliable. In the earlier 8-flight batch, 2 of 8 flights hit the time limit. One of those was stuck before the first gate, and I loosened the alignment test to fix it. The same seed then ran out of time once, still on t…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 2,
+   "session": "42535f99df9c00c0de86fff39d583199ad25bf210b2c674d05851ebe585bb324",
+   "turns": 13,
+   "runs": 11,
+   "fly_calls": 6,
+   "flights": 28,
+   "final": "`controller.js` passes all four smoke flights. It also passed 8 of 8 on new random flights. The flights I saw landed in about 14 to 17 seconds, against the 25-second limit. Landing errors were 0.05 m or less, inside the 0.15 m allowed.\n\nI started from the baseline stabilizer and changed five things:\n- **Climb and transit:** The drone starts near the pad, which is on the far side of all three gates. It now climbs to 2.1 m and flies back at that height to x = -1.85 before lining up with gate 0. The baseline tried to fly straight at gate 0 and hit the frame.\n- **Climb overshoot:** The climb used …",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 3,
+   "session": "f52bae8ddd87c4452d42a6035b252e08eec59df898a0b77bd101bd9013fc6e60",
+   "turns": 8,
+   "runs": 6,
+   "fly_calls": 4,
+   "flights": 20,
+   "final": "`controller.js` passes all four smoke flights. On 8 further random flights it passed 7.\n\n- **Timing:** Some landings finish close to the 25 s limit. One smoke flight landed at 24.5 s and one random flight at 24.0 s.\n- **Failure:** The one failed random flight (seed 3168081487) hit a gate frame at 0.89 s, before passing any gate. I didn't diagnose it. My guess is the drone drifted into the gate 0 frame during the initial climb.\n\nThe controller is the baseline waypoint follower reworked in three ways:\n- **Gate approach:** It lines up 0.55 m before each gate and crosses only when its y and z erro…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 4,
+   "session": "a3d136b81e9203802f9344277e7ded9a2a2cb4594452ccd4cb109e9317828dce",
+   "turns": 13,
+   "runs": 12,
+   "fly_calls": 9,
+   "flights": 48,
+   "final": "`controller.js` is the version that passed 3 of the 4 smoke flights. It also passed 8 of 8 on a separate set of random flights.\n\n- **Smoke failure:** seed 972765592 hit a gate frame at gate 0, after about 6.5 s. I never found the cause. A gust during the crossing is my guess, but I didn't confirm it.\n- **Margin on time:** one smoke flight (seed 3821313589) landed at 24.4 s, so time is tight against the 25 s deadline.\n- **Stricter gate alignment:** it fixed the collision. It made other flights run out of time, and in one random flight the drone never got through gate 0. That version passed 3 of…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 5,
+   "session": "2f531cbc7530f6718ed1acde0c92b529808de51cab0893a58a7abcb8ce87e8ec",
+   "turns": 22,
+   "runs": 19,
+   "fly_calls": 11,
+   "flights": 43,
+   "final": "`controller.js` is in its final form. It passed 3 of the 4 smoke flights and 8 of 8 on a fresh batch of random flights.\n\nThe one smoke failure (seed 249602000) is a gate-frame collision at 9.31 s, after one gate had been passed. I did not find the cause, and I made no change aimed at it.\n\nThe controller started from the baseline stabilizer, and these are the changes that made the difference:\n- **Landing bug:** the baseline's altitude integrator kept winding up during descent, so the drone climbed instead of landing. I froze the integrator once the landing phase starts.\n- **Gate crossing:** the…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 6,
+   "session": "c09207785d198b2f7495a2518455647787cb277c01770677323f7c0a72537efa",
+   "turns": 14,
+   "runs": 12,
+   "fly_calls": 7,
+   "flights": 32,
+   "final": "`controller.js` is in place. It passed 3 of the 4 smoke flights and 8 of 8 on a fresh random batch.\n\nThe failed smoke flight (seed 3821313589) hit the 25 s limit. All three gates were crossed, and the drone ended 0.085 m from the pad without finishing the landing. I couldn't see why from the results and didn't investigate further.\n\nTiming is tight on some flights. Two of the eight random flights landed at 24.2 s and 25.0 s (the second at 24.995 s), so wind that slows a flight a bit more could push it past the deadline. I stopped there rather than tuning speed further.\n\nIt started from the supp…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  },
+  {
+   "course": "easy",
+   "group": "none",
+   "n": 7,
+   "session": "17e5d1abcb00039fb3bbde28cd500261ffd5284fa97f113bf9dad3c026a2936f",
+   "turns": 12,
+   "runs": 11,
+   "fly_calls": 10,
+   "flights": 48,
+   "final": "`controller.js` passes all four smoke flights. I'd expect it to pass most graded flights but not all, because it still fails some seeds.\n\n- **Last version:** it passed 8 of 8 new random flights.\n- **Earlier version:** it had flown 8 random flights and passed 5. The three failures were gate-frame collisions at the first or second gate.\n- **Known weak seed:** seed 871229581 still hits the first gate frame at about 5.8 s. It failed with that earlier version and again with the final one.\n- **Time margin:** the slowest landings took about 21.6 s of the 25 s allowed, so a slow run could hit the dead…",
+   "ended": "answered",
+   "controller_from": "write_file"
+  }
+ ],
+ "missing": [],
+ "failures": []
+}

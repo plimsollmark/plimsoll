@@ -213,17 +213,21 @@ try {
   // a short grace), which killed this runner before it reported, and every earlier
   // step's output went with it. A step reached with nothing left still starts, with a
   // millisecond, and is reported timed out, so the run reads as timed out.
+  // Counted on the monotonic clock (performance.now), never the wall clock: a host whose
+  // time service steps the clock (a WSL2 guest is stepped back 1.6 s every 32 s) moves
+  // Date.now, so a step's budget came out longer after a backward step and shorter after a
+  // forward one, and its duration with them.
   const budgetMs = Number.isFinite(plan.budgetMs) && plan.budgetMs > 0 ? plan.budgetMs : 0;
-  const deadline = budgetMs > 0 ? Date.now() + budgetMs : Infinity;
+  const deadline = budgetMs > 0 ? performance.now() + budgetMs : Infinity;
   for (const command of plan.steps ?? []) {
     began = true;
-    const start = Date.now();
+    const start = performance.now();
     // No encoding: output is captured as raw bytes and reported as base64, so a step
     // that writes bytes that are not UTF-8 is reported with exactly those bytes.
     const r = spawnSync("sh", ["-c", command], {
       cwd: WORK,
       env: stepEnv,
-      timeout: deadline === Infinity ? undefined : Math.max(1, deadline - start),
+      timeout: deadline === Infinity ? undefined : Math.max(1, Math.ceil(deadline - start)),
       // SIGKILL, not Node's default SIGTERM: a step that ignores SIGTERM would run on
       // past its budget until the outer backstop killed the container and every
       // step's report with it.
@@ -251,7 +255,7 @@ try {
       // shell reports a child killed by one, and as the exec-based providers do.
       exitCode: timedOut ? 124 : overflowed ? EXIT_OUTPUT_FLOODED : (r.status ?? (r.signal ? 128 + (osConstants.signals[r.signal] ?? 0) : -1)),
       timedOut,
-      durationMs: Date.now() - start,
+      durationMs: Math.round(performance.now() - start),
     };
     steps.push(step);
     capEncodedSteps(steps, step, stdout, stderr);

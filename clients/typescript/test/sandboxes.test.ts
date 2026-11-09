@@ -108,8 +108,8 @@ async function pooledSeen(): Promise<{ warmOnly: number; fresh: number; ended: n
 }
 
 async function until(what: string, cond: () => boolean | Promise<boolean>): Promise<void> {
-  for (const deadline = Date.now() + 10_000; !(await cond()); await new Promise((r) => setTimeout(r, 10))) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+  for (const deadline = performance.now() + 10_000; !(await cond()); await new Promise((r) => setTimeout(r, 10))) {
+    if (performance.now() > deadline) throw new Error(`timed out waiting for ${what}`);
   }
 }
 
@@ -218,9 +218,9 @@ test("a warmed sandbox the daemon closed as unclaimed is replaced on the key's f
   });
   const s = new CodeSandboxes({ minimumIsolation: "container", client });
   s.warm("w");
-  const deadline = Date.now() + 3000;
+  const deadline = performance.now() + 3000;
   while (!answered.includes("OpenSession")) {
-    assert.ok(Date.now() < deadline, "the warm never opened a session");
+    assert.ok(performance.now() < deadline, "the warm never opened a session");
     await new Promise((r) => setTimeout(r, 10));
   }
   assert.equal((await fetch(`${quickIdleUrl}/test/wait-ended`, { method: "POST" })).status, 200);
@@ -834,12 +834,12 @@ test("a call aborted while the shared Describe is pending settles at once and le
   });
   const s = new CodeSandboxes({ minimumIsolation: "container", client: slowDescribe });
   const aborted = new AbortController();
-  const started = Date.now();
+  const started = performance.now();
   const first = s.run("k", { code: "1" }, aborted.signal);
   const second = s.run("k2", { code: "2" });
   setTimeout(() => aborted.abort(), 30);
   await assert.rejects(first, { code: "canceled", notDispatched: "request" });
-  assert.ok(Date.now() - started < 300, `settled after ${Date.now() - started} ms, not at the abort`);
+  assert.ok(performance.now() - started < 300, `settled after ${Math.round(performance.now() - started)} ms, not at the abort`);
   assert.equal((await second).stdout, "python 1: 2", "another call's wait for the same Describe goes on");
   assert.equal(describes, 1);
   await s.disposeAll();

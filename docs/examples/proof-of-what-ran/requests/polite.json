@@ -1,0 +1,6 @@
+{
+  "protocol": 5,
+  "javascript": {
+    "code": "console.log(\"Hello from a stranger. 2 + 2 = \" + (2 + 2));\n"
+  }
+}

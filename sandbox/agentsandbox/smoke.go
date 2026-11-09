@@ -49,15 +49,22 @@ type smokeEvidence struct {
 	// SandboxdAuth is what sandboxd answered the guest's token-less and wrong-token process
 	// starts on loopback: "16,16" when it refused both.
 	SandboxdAuth string
+	// FrontPlaintext is what the TLS terminator's port answered the same cleartext start
+	// (never a gRPC status); TLSKey is how the guest's open of the TLS key failed.
+	FrontPlaintext string
+	TLSKey         string
 }
 
 // boundaryScript runs as the guest with `node -`; the two %s are the JSON list of
 // host:port targets the provider adds (the API server's addresses) and the volumes to fill,
-// as [mount path, size limit in bytes] pairs. It reports who it runs as, its environment
-// and resolver, a write attempted at every path it can reach, how much each volume took
-// before it refused, each connection attempt's outcome, and what kernel answers it.
+// as [mount path, size limit in bytes] pairs, then sandboxd's loopback port, the TLS
+// terminator's port, the process start's path and the TLS key's path. It reports who it
+// runs as, its environment and resolver, a write attempted at every path it can reach, how
+// much each volume took before it refused, each connection attempt's outcome, what kernel
+// answers it, whether it can open the TLS key (never its content), and what sandboxd and
+// the terminator answer it on loopback.
 const boundaryScript = `const fs = require("fs"), net = require("net"), cp = require("child_process"), http2 = require("http2");
-const extra = %s, fills = %s, sandboxdPort = %d, startPath = %q;
+const extra = %s, fills = %s, sandboxdPort = %d, frontPort = %d, startPath = %q, tlsKey = %q;
 const read = f => { try { return fs.readFileSync(f, "utf8"); } catch (e) { return "unreadable: " + e.code; } };
 const status = read("/proc/self/status");
 const field = n => ((status.match(new RegExp("^" + n + ":[ \\t]*(.*)$", "m")) || [])[1] || "").trim();
@@ -97,6 +104,7 @@ while (queue.length && swept < 50000) {
   }
 }
 Object.assign(report, { swept, writable, files, created });
+try { fs.closeSync(fs.openSync(tlsKey, "r")); report.tlsKey = "open"; } catch (e) { report.tlsKey = e.code || String(e); }
 report.msgqueue = (read("/proc/self/limits").match(/^Max msgqueue size\s+(\S+)/m) || [])[1] || "";
 report.fill = {};
 for (const [dir, size] of fills) {
@@ -121,9 +129,11 @@ const targets = ["1.1.1.1:443", "8.8.8.8:53", "169.254.169.254:80", "[2606:4700:
 if (report.gateway) targets.push(report.gateway + ":` + kubeletPort + `");
 // sandboxd's own port answers on loopback inside the pod, and plimsoll's commands run as root
 // through it: a process start without the token, and one with a wrong token, must end with
-// gRPC status 16 (unauthenticated). A port that does not answer proves nothing.
-const grpcStatus = auth => new Promise(done => {
-  const c = http2.connect("http://127.0.0.1:" + sandboxdPort);
+// gRPC status 16 (unauthenticated). A port that does not answer proves nothing. The same
+// cleartext start sent to the TLS terminator's port must get no gRPC status at all: no
+// plaintext reaches sandboxd through it.
+const grpcStatus = (auth, port) => new Promise(done => {
+  const c = http2.connect("http://127.0.0.1:" + port);
   const t = setTimeout(() => { c.destroy(); done("timeout"); }, 2500);
   c.on("error", e => { clearTimeout(t); done(e.code || String(e)); });
   const h = { ":method": "POST", ":path": startPath, "content-type": "application/grpc", "te": "trailers" };
@@ -139,24 +149,32 @@ const grpcStatus = auth => new Promise(done => {
 (async () => {
   const outcomes = await Promise.all(targets.map(t => { const i = t.lastIndexOf(":"); return tcp(t.slice(0, i).replace(/^\[|\]$/g, ""), t.slice(i + 1)); }));
   report.egress = Object.fromEntries(targets.map((t, i) => ["tcp " + t, outcomes[i]]));
-  report.sandboxd = { none: await grpcStatus(""), wrong: await grpcStatus("Bearer plimsoll-boundary-probe") };
+  report.sandboxd = { none: await grpcStatus("", sandboxdPort), wrong: await grpcStatus("Bearer plimsoll-boundary-probe", sandboxdPort),
+    front: await grpcStatus("", frontPort) };
   process.stdout.write(JSON.stringify(report));
 })();
 `
 
-// runnerScript is a project step: it finds the runner that started it, then tries what
-// a step could take from it or from sandboxd (root, pid 1): the plan and report
-// descriptors and memory. Every open must be refused.
+// runnerScript is a project step: it finds the runner that started it and, in a pod,
+// sandboxd above it, then tries what a step could take from them or from pid 1 (in a pod
+// the TLS terminator, root, holding the TLS key in its memory): the plan and report
+// descriptors, memory and environment. Every open must be refused. It names the sandboxd
+// it found on stderr ("sandboxd PID"), which smokeRunner requires in a pod; under docker,
+// whose runner is pid 1, there is none.
 const runnerScript = `const fs = require("fs");
 const ppid = pid => { const s = fs.readFileSync("/proc/" + pid + "/stat", "utf8"); return +s.slice(s.lastIndexOf(")") + 2).split(" ")[1]; };
-let pid = process.ppid, runner = 0;
+const argv = pid => fs.readFileSync("/proc/" + pid + "/cmdline", "utf8").split("\0");
+let pid = process.ppid, runner = 0, sandboxd = 0;
 for (let i = 0; i < 8 && pid > 0; i++, pid = ppid(pid)) {
-  if (fs.readFileSync("/proc/" + pid + "/cmdline", "utf8").split("\0").includes("` + runnerPath + `")) { runner = pid; break; }
+  if (!runner && argv(pid).includes("` + runnerPath + `")) runner = pid;
+  else if (runner && argv(pid)[0] === "` + sandboxdPath + `") { sandboxd = pid; break; }
 }
 if (!runner) { console.log("no runner among this step's ancestors"); process.exit(9); }
-const r = "/proc/" + runner, o = fs.constants;
+console.error("sandboxd " + sandboxd);
+const r = "/proc/" + runner, s = "/proc/" + sandboxd, o = fs.constants;
 const checks = [[r + "/fd/0", o.O_RDONLY], [r + "/fd/1", o.O_RDONLY], [r + "/fd/1", o.O_WRONLY], [r + "/mem", o.O_RDONLY],
   ["/proc/1/mem", o.O_RDONLY], ["/proc/1/environ", o.O_RDONLY], ["/proc/1/fd/0", o.O_RDONLY]];
+if (sandboxd) checks.push([s + "/mem", o.O_RDONLY], [s + "/environ", o.O_RDONLY], [s + "/fd/0", o.O_RDONLY]);
 const out = {};
 for (const [p, flags] of checks) {
   try { fs.closeSync(fs.openSync(p, flags)); out[p + ":" + flags] = "open"; } catch (e) { out[p + ":" + flags] = e.code || String(e); }
@@ -240,7 +258,7 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	p.mu.Unlock()
 	slog.Info("agentsandbox smoke passed", "tier", tier.String(), "template", p.templateName(), "node", ev.Node,
 		"swept", ev.Swept, "writable", ev.Writable, "files", ev.Files, "egress", ev.Egress, "interfaces", ev.Interfaces,
-		"gateway", ev.Gateway, "kernel", ev.Kernel, "seccomp", ev.Seccomp, "queues", ev.Queues, "mounts", ev.Mounts, "filled", ev.Filled, "sandboxd_auth", ev.SandboxdAuth)
+		"gateway", ev.Gateway, "kernel", ev.Kernel, "seccomp", ev.Seccomp, "queues", ev.Queues, "mounts", ev.Mounts, "filled", ev.Filled, "sandboxd_auth", ev.SandboxdAuth, "front_plaintext", ev.FrontPlaintext, "tls_key", ev.TLSKey)
 	return nil
 }
 
@@ -270,7 +288,7 @@ func (p *Provider) apiTargets(ctx context.Context) []string {
 }
 
 type boundaryReport struct {
-	Sandboxd   map[string]string `json:"sandboxd"` // what sandboxd answered the guest's token-less ("none") and wrong-token ("wrong") process starts
+	Sandboxd   map[string]string `json:"sandboxd"` // what sandboxd answered the guest's token-less ("none") and wrong-token ("wrong") process starts on its loopback port, and what the TLS terminator answered a cleartext one ("front")
 	Node       string            `json:"node"`
 	UID        string            `json:"uid"`
 	GID        string            `json:"gid"`
@@ -292,6 +310,7 @@ type boundaryReport struct {
 	Interfaces []string          `json:"interfaces"`
 	Gateway    string            `json:"gateway"`
 	Egress     map[string]string `json:"egress"`
+	TLSKey     string            `json:"tlsKey"` // "open", or the error code the guest's open of the TLS key got
 	Fill       map[string]struct {
 		Wrote int64  `json:"wrote"`
 		Code  string `json:"code"`
@@ -315,7 +334,7 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 	if err != nil {
 		return smokeEvidence{}, err
 	}
-	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: fmt.Sprintf(boundaryScript, targets, fillJSON, p.cfg.sandboxdPort(), processv1connect.ProcessServiceStartProcedure), Timeout: 30 * time.Second})
+	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: fmt.Sprintf(boundaryScript, targets, fillJSON, sandboxdPort, frontPort, processv1connect.ProcessServiceStartProcedure, tlsKeyPath), Timeout: 30 * time.Second})
 	if err != nil {
 		return smokeEvidence{}, fmt.Errorf("boundary test: %w", err)
 	}
@@ -328,7 +347,7 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 	}
 	ev := smokeEvidence{Node: r.Node, Swept: r.Swept, Writable: r.Writable, Files: r.Files, Egress: r.Egress,
 		Interfaces: r.Interfaces, Gateway: r.Gateway, Kernel: r.Dmesg, Seccomp: r.Seccomp, Mounts: map[string]string{},
-		SandboxdAuth: r.Sandboxd["none"] + "," + r.Sandboxd["wrong"]}
+		SandboxdAuth: r.Sandboxd["none"] + "," + r.Sandboxd["wrong"], FrontPlaintext: r.Sandboxd["front"], TLSKey: r.TLSKey}
 	roots, err := p.writableRoots()
 	if err != nil {
 		return ev, err
@@ -351,7 +370,7 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 		fill = checkRootMountKinds(r.Mounts, roots, []string{"tmpfs"})
 	}
 	return ev, errors.Join(checkIdentity(r), qerr, checkWritable(r.Swept, slices.Concat(r.Writable, created), r.Files, roots), checkNestedMounts(r.Mounts, roots), fill,
-		checkEgress(r.Egress, r.Gateway), checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp), checkSandboxdAuth(r))
+		checkEgress(r.Egress, r.Gateway), checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp), checkSandboxdAuth(r), checkChannelFromInside(r))
 }
 
 // checkSandboxdAuth requires sandboxd to have refused the guest's token-less and wrong-token
@@ -366,6 +385,23 @@ func checkSandboxdAuth(r boundaryReport) error {
 		}
 	}
 	return nil
+}
+
+var grpcStatusRE = regexp.MustCompile(`^[0-9]+$`)
+
+// checkChannelFromInside holds the TLS channel to what the guest can do in its own pod:
+// its open of the TLS key must be refused for permission (a missing file would prove
+// nothing, so ENOENT fails too), and a cleartext process start sent to the terminator's
+// port must get no gRPC status, since any status means plaintext reached sandboxd there.
+func checkChannelFromInside(r boundaryReport) error {
+	var errs []error
+	if r.TLSKey != "EACCES" && r.TLSKey != "EPERM" {
+		errs = append(errs, fmt.Errorf("the guest's open of the TLS key %s answered %q; it must be refused for permission (EACCES or EPERM)", tlsKeyPath, r.TLSKey))
+	}
+	if got := r.Sandboxd["front"]; got == "" || grpcStatusRE.MatchString(got) {
+		errs = append(errs, fmt.Errorf("the TLS terminator's port %d answered a cleartext process start with %q; plaintext must reach nothing behind it", frontPort, got))
+	}
+	return errors.Join(errs...)
 }
 
 // checkNestedMounts refuses every mount strictly beneath a writable root, at every tier.
@@ -452,8 +488,17 @@ func (p *Provider) smokeRunner(ctx context.Context) error {
 		}
 		return fmt.Errorf("the step reached the runner or sandboxd: outcome %s (%s), %s", res.Outcome, res.Detail, detail)
 	}
+	// The step found sandboxd among its ancestors, below pid 1 (the TLS terminator), so
+	// sandboxd's own memory, environment and stdin were among the refused opens.
+	m := sandboxdAncestorRE.FindStringSubmatch(res.Steps[0].Stderr)
+	if m == nil || m[1] == "1" {
+		return fmt.Errorf("the step did not find sandboxd below pid 1 among its ancestors (it said %q), so the probe of sandboxd's memory did not run", truncate(res.Steps[0].Stderr, 120))
+	}
 	return nil
 }
+
+// sandboxdAncestorRE is the runner script's account of the sandboxd it found.
+var sandboxdAncestorRE = regexp.MustCompile(`(?m)^sandboxd ([1-9][0-9]*)$`)
 
 // writableRoots are the directories where the guest may write: the template container's
 // emptyDir mount paths (the read-back allows no other volume) and /dev/shm, the

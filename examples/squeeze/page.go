@@ -301,7 +301,7 @@ func renderPage(ev *Evidence) ([]byte, error) {
 	if err := tmpl.Execute(&buf, pageData{Ev: ev, HK: hk, Argon: argon, Canary: canary, Data: template.JS(data)}); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return applyGlossary(buf.Bytes())
 }
 
 // The template's lookups: a course's loop or group, in the hackathon's numbers or plimsoll's.

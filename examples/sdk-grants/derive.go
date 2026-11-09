@@ -512,6 +512,8 @@ func readProfiles(raw []byte) ([]profileView, error) {
 			RouteTypes  map[string][]string `json:"route_content_types"`
 			MaxRequest  int64               `json:"max_request_bytes"`
 			Callers     []string            `json:"allowed_callers"`
+			RouteCalls  map[string]int      `json:"route_max_calls"` // the live run's profiles
+			SetHeaders  map[string]string   `json:"set_headers"`     // the live run's profiles
 			Token       struct {
 				Type string `json:"type"`
 				Env  string `json:"env"`

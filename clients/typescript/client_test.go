@@ -4,6 +4,7 @@
 package typescript
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -263,7 +264,7 @@ func TestTypeScript(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s", out)
 			if err != nil {
-				t.Fatalf("node --test: %v", err)
+				t.Fatalf("node --test: %v%s", err, staleClientHint(s.dir, "."))
 			}
 		})
 	}
@@ -406,4 +407,109 @@ func (unansweredLiar) SessionRun(_ context.Context, req *connect.Request[plimsol
 
 func (unansweredLiar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
 	return connect.NewResponse(&plimsollv1.CloseSessionResponse{Session: record.SessionFingerprint(liarSessionID)}), nil
+}
+
+// staleClientHint says why a suite's failure may have nothing to do with the code under
+// test. The Trigger.dev example runs against the client copy npm put under its
+// node_modules (install-links), never clients/typescript itself, and a copy older than
+// the source fails with only the SDK's "An error occurred." It returns "" when dir holds
+// no copy, or the copy matches the client's build and no source is newer than that build.
+func staleClientHint(dir, client string) string {
+	installed := filepath.Join(dir, "node_modules", "@plimsollmark", "client", "dist")
+	if _, err := os.Stat(installed); err != nil {
+		return ""
+	}
+	sources, err := filepath.Glob(filepath.Join(client, "src", "*.ts"))
+	if err != nil {
+		return ""
+	}
+	hint := func(why string) string {
+		return fmt.Sprintf("\n%s: this suite ran on the client copy in %s, not the source; run make clients-suite", why, installed)
+	}
+	for _, source := range sources {
+		name := strings.TrimSuffix(filepath.Base(source), ".ts") + ".js"
+		copied, err := os.ReadFile(filepath.Join(installed, name))
+		if err != nil {
+			return hint(name + " is missing from the copy")
+		}
+		built, err := os.ReadFile(filepath.Join(client, "dist", name))
+		if err != nil || !bytes.Equal(built, copied) {
+			return hint(name + " differs from clients/typescript/dist")
+		}
+		sourceInfo, err := os.Stat(source)
+		if err != nil {
+			continue
+		}
+		if builtInfo, err := os.Stat(filepath.Join(client, "dist", name)); err == nil && sourceInfo.ModTime().After(builtInfo.ModTime()) {
+			// A timestamp only: a generator rewriting identical bytes trips this too, so
+			// it says may, and it is read only after a suite has failed.
+			return hint(filepath.Base(source) + " is newer than its build, so the build may be stale")
+		}
+	}
+	return ""
+}
+
+func TestStaleClientHint(t *testing.T) {
+	write := func(t *testing.T, path, text string, at time.Time) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-time.Hour)
+	setup := func(t *testing.T) (dir, client, copied string) {
+		t.Helper()
+		root := t.TempDir()
+		dir, client = filepath.Join(root, "example"), filepath.Join(root, "client")
+		copied = filepath.Join(dir, "node_modules", "@plimsollmark", "client", "dist", "client.js")
+		write(t, filepath.Join(client, "src", "client.ts"), "source", old)
+		write(t, filepath.Join(client, "dist", "client.js"), "built", time.Now())
+		write(t, copied, "built", time.Now())
+		return dir, client, copied
+	}
+
+	t.Run("current", func(t *testing.T) {
+		dir, client, _ := setup(t)
+		if got := staleClientHint(dir, client); got != "" {
+			t.Fatalf("a current copy got a hint: %s", got)
+		}
+	})
+	t.Run("no copy", func(t *testing.T) {
+		_, client, _ := setup(t)
+		if got := staleClientHint(t.TempDir(), client); got != "" {
+			t.Fatalf("a suite with no copy got a hint: %s", got)
+		}
+	})
+	t.Run("copy differs from the build", func(t *testing.T) {
+		dir, client, copied := setup(t)
+		write(t, copied, "older build", time.Now())
+		if got := staleClientHint(dir, client); !strings.Contains(got, "make clients-suite") || !strings.Contains(got, "client.js") {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("build older than its source", func(t *testing.T) {
+		dir, client, _ := setup(t)
+		write(t, filepath.Join(client, "src", "client.ts"), "edited", time.Now().Add(time.Hour))
+		if got := staleClientHint(dir, client); !strings.Contains(got, "make clients-suite") || !strings.Contains(got, "client.ts") {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("a source file never copied", func(t *testing.T) {
+		dir, client, copied := setup(t)
+		if err := os.Remove(copied); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(copied+".keep", nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := staleClientHint(dir, client); !strings.Contains(got, "missing") {
+			t.Fatalf("got %q", got)
+		}
+	})
 }

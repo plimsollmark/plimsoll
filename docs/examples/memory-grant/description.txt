@@ -1,0 +1,33 @@
+Cloudflare API (v4.0.0).
+Agent code reaches it through the brokered `memory.*` client; only the operations
+below are permitted. Every call is allow-listed and gets a per-run token injected
+host-side, so the code never handles a credential.
+
+  memory.agent_memory_namespace_list(account_id)  ->  GET /client/v4/accounts/{account_id}/agent-memory/namespaces
+      List namespaces
+  memory.agent_memory_namespace_create(account_id, body)  ->  POST /client/v4/accounts/{account_id}/agent-memory/namespaces
+      Create a namespace
+  memory.agent_memory_namespace_get(account_id, namespace_name)  ->  GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}
+      Get a namespace
+  memory.agent_memory_namespace_delete(account_id, namespace_name)  ->  DELETE /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}
+      Delete a namespace
+  memory.agent_memory_profile_list(account_id, namespace_name)  ->  GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles
+      List profiles
+  memory.agent_memory_profile_delete(account_id, namespace_name, profile_name)  ->  DELETE /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}
+      Delete a profile
+  memory.agent_memory_ingest(account_id, namespace_name, profile_name, body)  ->  POST /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/ingest
+      Ingest messages
+  memory.agent_memory_memory_list(account_id, namespace_name, profile_name)  ->  GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/memories
+      List memories
+  memory.agent_memory_memory_get(account_id, namespace_name, profile_name, memory_id)  ->  GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/memories/{memory_id}
+      Get a memory
+  memory.agent_memory_memory_delete(account_id, namespace_name, profile_name, memory_id)  ->  DELETE /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/memories/{memory_id}
+      Delete a memory
+  memory.agent_memory_recall(account_id, namespace_name, profile_name, body)  ->  POST /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/recall
+      Recall memories
+  memory.agent_memory_remember(account_id, namespace_name, profile_name, body)  ->  POST /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/remember
+      Remember a memory
+  memory.agent_memory_session_delete(account_id, namespace_name, profile_name, session_id)  ->  DELETE /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/sessions/{session_id}
+      Delete a session
+  memory.agent_memory_summary(account_id, namespace_name, profile_name, body)  ->  POST /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/summary
+      Get a profile summary

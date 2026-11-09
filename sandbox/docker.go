@@ -162,6 +162,10 @@ type DockerSandbox struct {
 	sessions sessionkit.Registry
 	// pool is the session pool, when StartSessionPool started one (docker_pool.go).
 	pool atomic.Pointer[dockerPool]
+	// instanceID names this value on every container it starts (dockerInstanceLabel),
+	// made on first use.
+	instanceOnce sync.Once
+	instanceID   string
 }
 
 const (
@@ -325,7 +329,7 @@ func (d *DockerSandbox) lockdownArgs(name string, expires time.Time, workTmpfs b
 	}
 	// The container's lifetime, so ReconcileOrphans reaps it if it outlives its CLI
 	// and every removal attempt (review F2).
-	args = append(args, expiresLabelArgs(expires)...)
+	args = append(args, d.labelArgs(expires)...)
 	return append(args, d.lockdownFlags(workTmpfs, runtime, seccomp)...)
 }
 

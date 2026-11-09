@@ -116,6 +116,7 @@ func checkGranted(t *testing.T, res sandbox.Result, status int) {
 // E2B_SESSION_GRANTS=session: the sandbox carries the guard's rule from its open, and
 // its one credential reaches a grant only while a granted call runs.
 func TestE2BSessionDockerGrantsSessionRule(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	e := f.provider()
 	e.GuardURL, e.SessionGrants = testGuardURL, sandbox.E2BSessionGrantsSession
@@ -150,6 +151,7 @@ func TestE2BSessionDockerGrantsSessionRule(t *testing.T) {
 // puts on a rule with a fresh credential and takes it off, and the next call's
 // read-back still matches the open.
 func TestE2BSessionDockerGrantsCallRule(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	e := f.provider()
 	e.GuardURL, e.SessionGrants = testGuardURL, sandbox.E2BSessionGrantsCall

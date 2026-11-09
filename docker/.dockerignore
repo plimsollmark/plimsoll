@@ -1,6 +1,8 @@
 # Files in docker/ that no image of `make docker-images` is built from: the gVisor installer
 # and its test, its pinned versions, the seccomp profile the host applies at run time, and the
-# agent-sandbox image's recipe (built on its own, from the project image). Keeping them
+# agent-sandbox image's recipe (built on its own, from the project image), with its TLS
+# terminator's source and its own ignore file, which admits that source to its build alone
+# (BuildKit reads agentsandbox.Dockerfile.dockerignore instead of this file). Keeping them
 # out of the build context also keeps them out of the hash `make docker-images` stamps
 # on each image, so editing one does not mark the images stale. One literal path per
 # line, no patterns: the Makefile's hash reads this file as a plain list.
@@ -9,3 +11,6 @@ install-gvisor.sh
 install_gvisor_test.go
 seccomp.json
 agentsandbox.Dockerfile
+sandboxdtls/main.go
+sandboxdtls/main_test.go
+agentsandbox.Dockerfile.dockerignore

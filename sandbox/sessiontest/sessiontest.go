@@ -39,6 +39,14 @@ type Config struct {
 	// retries included: Done closes once the sandbox is gone, so it can trail the end
 	// by this much.
 	Teardown time.Duration
+	// Parallel runs the cases side by side (as many at once as go test's -parallel
+	// allows), each still in a session of its own, under a subtest named "cases", so Run
+	// returns once every case has ended either way. For providers whose sessions are local
+	// and cost nothing by the second (docker and the stand-ins for E2B and Docker Cloud);
+	// a live suite leaves it off, so a paid run never holds more sandboxes at once than one
+	// case's. Leave it off too where a case must find the provider as the case before left
+	// it: a session pool hands each case a warm member only while cases come one at a time.
+	Parallel bool
 }
 
 // Run runs every case against p, each in its own session.
@@ -48,6 +56,24 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	}
 	if cfg.Teardown <= 0 {
 		t.Fatal("Config.Teardown is not set: Done waits for the sandbox's delete, so the suite needs its bound")
+	}
+	if !cfg.Parallel {
+		runCases(t, p, cfg)
+		return
+	}
+	t.Run("cases", func(t *testing.T) { runCases(t, p, cfg) })
+}
+
+// runCases starts every case as a subtest of t, each in a session of its own; with
+// cfg.Parallel each subtest runs beside the others, after t's function returns.
+func runCases(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	run := func(name string, f func(*testing.T)) {
+		t.Run(name, func(t *testing.T) {
+			if cfg.Parallel {
+				t.Parallel()
+			}
+			f(t)
+		})
 	}
 	for _, c := range []struct {
 		name string
@@ -72,7 +98,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"GrantedCallNeedsAGrantThatAllowsSessions", grantNeedsSessionOptIn},
 		{"ForgedRelayFramesNeitherMarkNorRepeatACell", forgedRelayFrames},
 	} {
-		t.Run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
+		run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
 	}
 	langs := cfg.Languages
 	if len(langs) == 0 {
@@ -87,14 +113,14 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 			{"CellErrorKeepsTheState", cellErrorKeepsState},
 			{"CellDeadlineEndsTheInterpreter", cellDeadline},
 		} {
-			t.Run(c.name+"/"+string(lang), func(t *testing.T) { c.run(t, p, cfg, lang) })
+			run(c.name+"/"+string(lang), func(t *testing.T) { c.run(t, p, cfg, lang) })
 		}
 	}
 	if slices.Contains(langs, sandbox.LanguagePython) {
-		t.Run("UnreapedChildOfAPythonCellLeavesTheSessionUsable", func(t *testing.T) { pythonChildUnreaped(t, p, cfg) })
-		t.Run("InterpreterIdentityCannotBeSubstituted", func(t *testing.T) { interpreterNotSubstituted(t, p, cfg) })
-		t.Run("ForgedRelayIdentityIsNotKept", func(t *testing.T) { forgedRelayIdentity(t, p, cfg) })
-		t.Run("WorkDirectoryModulesDoNotRunAtInterpreterStart", func(t *testing.T) { pythonShadowFiles(t, p, cfg) })
+		run("UnreapedChildOfAPythonCellLeavesTheSessionUsable", func(t *testing.T) { pythonChildUnreaped(t, p, cfg) })
+		run("InterpreterIdentityCannotBeSubstituted", func(t *testing.T) { interpreterNotSubstituted(t, p, cfg) })
+		run("ForgedRelayIdentityIsNotKept", func(t *testing.T) { forgedRelayIdentity(t, p, cfg) })
+		run("WorkDirectoryModulesDoNotRunAtInterpreterStart", func(t *testing.T) { pythonShadowFiles(t, p, cfg) })
 	}
 }
 

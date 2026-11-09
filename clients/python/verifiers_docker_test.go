@@ -22,6 +22,7 @@ import (
 // it. clients-suite excludes it, as it does TestPythonWorkspaceDocker: its CI job has no
 // images. The check is not a test_*.py, so the framework suite's discover run never sees it.
 func TestVerifiersRuntimeDocker(t *testing.T) {
+	t.Parallel()
 	skip := func(format string, args ...any) {
 		t.Helper()
 		if os.Getenv("SANDBOX_TEST_REQUIRE_DOCKER") == "1" {

@@ -87,7 +87,7 @@ the hashes before accepting an answer.
 |---|---|---|
 | Run code | JavaScript snippets, projects containing files and ordered build/test/run steps, and compiled simulation modules on Docker. | [INTERNAL · payloads and examples →](docs/example-programs.md) |
 | Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim, and a single call that asks for one (`prefer_warm`) runs in a waiting sandbox that is deleted after it. | [INTERNAL · sessions and pools →](docs/sessions.md), [INTERNAL · one call timed, warm and fresh →](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html) |
-| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. Standard client libraries, such as the OpenAI and Anthropic SDKs, reach a granted API at a local address inside the sandbox, with streamed answers and uploads of up to 512 MiB a route. A grant to a chat API also reaches whatever that API's own server-side tools fetch from the internet; the guide says how to turn them off. | [INTERNAL · capability grants →](docs/capability-grants.md), [INTERNAL · both SDKs under a grant →](https://plimsollmark.github.io/plimsoll/examples/sdk-grants/index.html) |
+| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. Standard client libraries, such as the OpenAI and Anthropic SDKs, reach a granted API at a local address inside the sandbox, with streamed answers and uploads of up to 512 MiB a route. A grant to a chat API also reaches whatever that API's own server-side tools fetch from the internet; the guide says how to turn them off. | [INTERNAL · capability grants →](docs/capability-grants.md), [INTERNAL · both SDKs under a grant →](https://plimsollmark.github.io/plimsoll/examples/sdk-grants/index.html), [INTERNAL · agent memory through a grant →](https://plimsollmark.github.io/plimsoll/examples/memory-grant/index.html) |
 | Keep answer keys out of a run | The ship scan checks every file a call carries, and the archives it can read inside them, against the files, source lines and values the operator withholds, such as an evaluation's answer keys and sealed tests. Each entry either refuses a match before any of the call's code runs or only logs it, as the operator sets it. The scan does not see files already in the image, what a grant fetches, or material hidden on purpose, such as an archive encoded twice; the guide lists its limits. | [INTERNAL · ship scan →](docs/ship-scan.md), [INTERNAL · five calls, refused and logged →](https://plimsollmark.github.io/plimsoll/examples/ship-scan/index.html) |
 | Choose where code runs | Require an isolation tier on each request. A placement library selects among servers and retries elsewhere only on a request-bound refusal that says execution was not <dfn>*dispatched*</dfn>, never handed to the provider to run. | [INTERNAL · placement and retries →](docs/placement.md) |
 | Check, sign and replay | Checked run records, linked session records, signed bundles and separately signed statements. The signing tool runs outside the server; the server holds no <dfn>*signing key*</dfn>, the private key that makes signatures. | [INTERNAL · records and signing →](docs/run-records.md) |
@@ -201,6 +201,11 @@ other checks for a score that looks too good, on one real hackathon entry: the s
 which is in this release, and the canary run, which is not part of the open-source release.
 [INTERNAL · three checks for an AI score that looks too good →](https://plimsollmark.github.io/plimsoll/examples/squeeze/index.html)
 
+A second squeeze page runs the recipe idea as an experiment: 40 fresh agents built a drone
+controller from the honest recipe, the same words shuffled, or nothing, and the recipe's order
+moved the landings. Every number comes from signed run records.
+[INTERNAL · does a fresh AI agent follow the plan it is handed? →](https://plimsollmark.github.io/plimsoll/examples/squeeze-recipe/index.html)
+
 Prime Intellect's verifiers library is a common format for reinforcement-learning
 environments, programs that set a model tasks and grade its answers. Its environments run with
 plimsoll as their sandbox: the page runs one on Docker's default runtime and under gVisor, and
@@ -272,6 +277,8 @@ Docker Cloud services. No independent third-party security audit is claimed.
 | What you want to do | Start here |
 |---|---|
 | Understand the idea before the API | [INTERNAL · plain-English browser lesson →](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html) |
+| See what a sandbox stops, with five real programs | [INTERNAL · what a sandbox is →](https://plimsollmark.github.io/plimsoll/examples/what-a-sandbox-is/index.html) |
+| See what a run's signed record proves, and check five in the browser | [INTERNAL · proof of what ran →](https://plimsollmark.github.io/plimsoll/examples/proof-of-what-ran/index.html) |
 | Run a server or embed the package | [INTERNAL · getting started →](docs/getting-started.md) |
 | Learn through working examples | [INTERNAL · example catalog →](docs/example-programs.md) |
 | Configure callers and credentials | [INTERNAL · caller administration →](docs/callers.md) |

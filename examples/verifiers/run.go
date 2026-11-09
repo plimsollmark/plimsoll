@@ -323,24 +323,46 @@ func fetchPinned(ctx context.Context, dir, repo, commit string) error {
 	return nil
 }
 
-// checkTaskFiles requires the task's package to be exactly primeFiles.
+// checkTaskFiles requires the task's package to be exactly primeFiles. Beyond each file's bytes
+// it refuses anything Python could import or load that a hash of the listed files misses: a
+// symbolic link to a file or a directory (a linked directory named json would shadow the
+// standard library), a __pycache__ directory or a .pyc or .pyo file (a hash-based .pyc runs in
+// place of the source it names), a file that is not a regular one (a FIFO would hang the read)
+// and a directory that cannot be read. The Python driver's check_task_files refuses the same.
 func checkTaskFiles(dir string) (map[string]string, error) {
 	got := map[string]string{}
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return err
+		}
+		if p == dir {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
+		name := d.Name()
+		if name == "__pycache__" || strings.HasSuffix(name, ".pyc") || strings.HasSuffix(name, ".pyo") {
+			return fmt.Errorf("%s is compiled bytecode or its cache", rel)
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symbolic link", rel)
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", rel)
 		}
 		raw, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(dir, p)
 		sum := sha256.Sum256(raw)
-		got[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
+		got[rel] = hex.EncodeToString(sum[:])
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("the task's package at %s is not the one pinned: %w", dir, err)
 	}
 	var bad []string
 	for name, want := range primeFiles {

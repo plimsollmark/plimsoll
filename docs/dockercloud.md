@@ -86,7 +86,13 @@ both. What was verified live on 2026-10-05, with the Connect API:
   image needs `SANDBOX_DOCKERCLOUD_API=connect`.
 
 Whoever holds the account's token can boot the image and read it, as with any image the
-account can boot.
+account can boot. So can Docker: the service stores the image and runs it on its own
+machines, where the provider can read the image and a running sandbox, and neither a
+private store nor encryption at rest changes that (Docker offered no confidential
+computing, where hardware hides a run from its host, as of 2026-11-05). Material that
+must stay from the provider must stay out of the image; `plimsoll-withheld scan-image`
+checks an image against a withheld set before it is pushed
+([INTERNAL · the ship scan →](ship-scan.md)).
 
 ## What each run does
 

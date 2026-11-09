@@ -108,3 +108,39 @@ func TestSmokeChecksRefuse(t *testing.T) {
 		}
 	}
 }
+
+// From inside the pod: the guest's open of the TLS key must fail for permission, and a
+// cleartext process start sent to the terminator must get no gRPC status.
+func TestSmokeHoldsTheChannelFromInside(t *testing.T) {
+	report := func(key, front string) boundaryReport {
+		return boundaryReport{TLSKey: key, Sandboxd: map[string]string{"none": "16", "wrong": "16", "front": front}}
+	}
+	for _, c := range []struct {
+		key, front, want string // want "" passes
+	}{
+		{"EACCES", "ERR_HTTP2_SESSION_ERROR", ""},
+		{"EPERM", "none", ""},
+		{"EACCES", "ECONNRESET", ""},
+		{"open", "none", "refused for permission"},
+		{"ENOENT", "none", "refused for permission"},
+		{"", "none", "refused for permission"},
+		{"EACCES", "16", "plaintext must reach nothing"},
+		{"EACCES", "0", "plaintext must reach nothing"},
+		{"EACCES", "", "plaintext must reach nothing"},
+	} {
+		err := checkChannelFromInside(report(c.key, c.front))
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("key %q, front %q: %v, want %q", c.key, c.front, err, c.want)
+		}
+	}
+}
+
+// The runner probe must name a sandboxd below pid 1, the terminator.
+func TestSmokeRunnerNamesSandboxdBelowPid1(t *testing.T) {
+	for stderr, ok := range map[string]bool{"sandboxd 7\n": true, "x\nsandboxd 12\n": true, "sandboxd 1\n": false, "sandboxd 0\n": false, "": false, "sandboxd 7 8\n": false} {
+		m := sandboxdAncestorRE.FindStringSubmatch(stderr)
+		if got := m != nil && m[1] != "1"; got != ok {
+			t.Errorf("%q: %t", stderr, got)
+		}
+	}
+}

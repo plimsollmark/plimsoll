@@ -1,0 +1,293 @@
+{
+  "upstream": "real",
+  "date": "2026-10-30",
+  "commit": "2049e8cb6ca0fa869d06875325cf81ef9f2ab16c",
+  "key_id": "de4f7b1fa3efa5e14c2200bd16e263c5a5f1ebbb1d5a86f3d97ecf9f066930e0",
+  "daemon": {
+    "provider": "docker",
+    "isolation": "container",
+    "policy": "seccomp:sha256:a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089 sdk_env:seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+    "protocol": 5
+  },
+  "image": {
+    "tag": "plimsoll-wip/sdk-grants:dev",
+    "id": "sha256:d9346194620cf59c36c8aeb5cfbe30e351d48657c1d5d3db14533867aab9208b",
+    "base": "plimsoll/sandbox-python:latest",
+    "base_id": "sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171"
+  },
+  "budget_usd": 0.25,
+  "worst_case_usd": 0.00012671999999999998,
+  "cost_usd": 0.00005,
+  "scan": {
+    "salt": "691be4f486eaaf19064b5f3f47a45fdd",
+    "keys": [
+      {
+        "name": "openai",
+        "length": 236,
+        "sha256": "e9ea322b505f41924643e5d5977dfb2f29fd7cb24d564e7a47f8cd48f7d3d484"
+      },
+      {
+        "name": "anthropic",
+        "length": 108,
+        "sha256": "8de95c682a0760c512b285736163fe45833b902bf5ec867cbd9e71267cd96de5"
+      }
+    ]
+  },
+  "apis": [
+    {
+      "profile": "openai",
+      "vendor": "Nebius Token Factory",
+      "base_url": "https://api.tokenfactory.nebius.com",
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "library": "openai 3.41.0",
+      "route": "POST /v1/chat/completions",
+      "token_env": "NEBIUS_API_KEY",
+      "price_in_per_million": 0.06,
+      "price_out_per_million": 0.24,
+      "record": {
+        "sha256": "f6791d63e90f67036ee51a088808896423e889971c34b3876c1bcda610c2822d",
+        "request_sha256": "8a33a14f750f525a9a4966fffdf740294d5f01158beec5c79a3da24bce4a1959",
+        "result_sha256": "d9362e3f5d0b56a284b2fd48b03fccb120eb3db566127224cfa01e7bc327d386",
+        "provider": "docker",
+        "isolation": "container",
+        "environment": "docker-image:sha256:d9346194620cf59c36c8aeb5cfbe30e351d48657c1d5d3db14533867aab9208b",
+        "policy": "seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+        "started_unix_ms": 1793383896019,
+        "ended_unix_ms": 1793383898595
+      },
+      "audit": {
+        "msg": "project run",
+        "grant_profile": "openai",
+        "sandbox": "docker",
+        "isolation": "container",
+        "outcome": "completed",
+        "host_calls": 2,
+        "host_calls_denied": 1
+      },
+      "metrics": [
+        {
+          "profile": "openai",
+          "method": "POST",
+          "route": "/v1/chat/completions",
+          "count": 2,
+          "sum_seconds": 1.3567367030000002
+        }
+      ],
+      "calls": [
+        {
+          "name": "plain",
+          "title": "A plain call",
+          "status": 200,
+          "model": "nvidia/Nemotron-3_5-Lightning",
+          "answer": "Here's a thinking process:\n\n1.  **Analyze User Request:** \n   - User says: \"Say hello in five words.\"\n   - I need to output a greeting that is exactly five words long.\n\n2.  **Identify Constraints:**\n   - Must be a \"hello\" (greet",
+          "finish": "length",
+          "input_tokens": 22,
+          "output_tokens": 64,
+          "usage_given": true
+        },
+        {
+          "name": "stream",
+          "title": "The same call, streamed",
+          "status": 200,
+          "answer": "Here's a thinking process:\n\n1.  **Analyze User Input:** User says \"Say hello in five words.\"\n2.  **Identify Core Request:** Greet (\"hello\") but constrained to exactly five words.\n3.  **Formulate Response:** Need to output a greeting that is exactly five words long",
+          "input_tokens": 22,
+          "output_tokens": 64,
+          "usage_given": true,
+          "pieces": 38,
+          "first_to_last_ms": 213.150634765625,
+          "largest_gap_ms": 66.145751953125,
+          "content_type": "text/event-stream; charset=utf-8"
+        },
+        {
+          "name": "refused",
+          "title": "A route the profile does not allow",
+          "status": 403,
+          "usage_given": false,
+          "error": "PermissionDeniedError",
+          "x_should_retry": "false",
+          "body": "forbidden by sandbox capability allowlist\n"
+        }
+      ],
+      "guest_scan": {
+        "bytes": 22504,
+        "windows": 42206,
+        "places": 10,
+        "hits": [],
+        "stopped_at_limit": false
+      },
+      "output_scan": {
+        "bytes": 18943,
+        "windows": 36860,
+        "hits": 0
+      },
+      "input_tokens": 44,
+      "output_tokens": 128,
+      "cost_usd": 0.000033
+    },
+    {
+      "profile": "anthropic",
+      "vendor": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "model": "claude-haiku-5-5",
+      "library": "anthropic 2.3.0",
+      "route": "POST /v1/messages",
+      "pass_headers": [
+        "anthropic-version"
+      ],
+      "token_env": "ANTHROPIC_API_KEY",
+      "price_in_per_million": 0.1,
+      "price_out_per_million": 0.5,
+      "record": {
+        "sha256": "2fbb9e2f95bf420abf6501ce2a22ebb6939250293fd026aca672ce8d96c5c708",
+        "request_sha256": "f62655b6150ae6ff6d19861188458bdb628c2b9e38ac5ae987afb8da8a04aa3e",
+        "result_sha256": "fe810f45ff2596f5b0e854015e07beeb0151c8ca2eb55bbc31aeff5041a3dee3",
+        "provider": "docker",
+        "isolation": "container",
+        "environment": "docker-image:sha256:d9346194620cf59c36c8aeb5cfbe30e351d48657c1d5d3db14533867aab9208b",
+        "policy": "seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+        "started_unix_ms": 1793383898597,
+        "ended_unix_ms": 1793383903515
+      },
+      "audit": {
+        "msg": "project run",
+        "grant_profile": "anthropic",
+        "sandbox": "docker",
+        "isolation": "container",
+        "outcome": "completed",
+        "host_calls": 2,
+        "host_calls_denied": 1
+      },
+      "metrics": [
+        {
+          "profile": "anthropic",
+          "method": "POST",
+          "route": "/v1/messages",
+          "count": 2,
+          "sum_seconds": 2.8373422379999997
+        }
+      ],
+      "calls": [
+        {
+          "name": "plain",
+          "title": "A plain call",
+          "status": 200,
+          "model": "claude-haiku-5-5",
+          "answer": "Hello there, friend! How are you?",
+          "finish": "end_turn",
+          "input_tokens": 16,
+          "output_tokens": 14,
+          "usage_given": true
+        },
+        {
+          "name": "stream",
+          "title": "The same call, streamed",
+          "status": 200,
+          "answer": "Hello there, friend. How are you?",
+          "input_tokens": 16,
+          "output_tokens": 14,
+          "usage_given": true,
+          "pieces": 9,
+          "first_to_last_ms": 258.013427734375,
+          "largest_gap_ms": 257.662353515625,
+          "content_type": "text/event-stream; charset=utf-8"
+        },
+        {
+          "name": "refused",
+          "title": "A route the profile does not allow",
+          "status": 403,
+          "usage_given": false,
+          "error": "PermissionDeniedError",
+          "x_should_retry": "false",
+          "body": "forbidden by sandbox capability allowlist\n"
+        }
+      ],
+      "guest_scan": {
+        "bytes": 22394,
+        "windows": 41986,
+        "places": 10,
+        "hits": [],
+        "stopped_at_limit": false
+      },
+      "output_scan": {
+        "bytes": 16175,
+        "windows": 31324,
+        "hits": 0
+      },
+      "input_tokens": 32,
+      "output_tokens": 28,
+      "cost_usd": 0.000017
+    }
+  ],
+  "checks": [
+    {
+      "id": "records",
+      "says": "Each run's record is signed by the harness and checks against the request and answer stored with it.",
+      "pass": true,
+      "detail": "2 runs verified"
+    },
+    {
+      "id": "key-not-in-output",
+      "says": "Neither key's bytes appear in what either run was sent or answered, its output included.",
+      "pass": true,
+      "detail": "0 matches in 68184 windows"
+    },
+    {
+      "id": "key-not-in-sandbox",
+      "says": "Neither key's bytes appear in any process environment or command line the guest could read, or in its files.",
+      "pass": true,
+      "detail": "0 matches in 84192 windows; stopped at its size limit: false"
+    },
+    {
+      "id": "api-answered",
+      "says": "Each API answered its plain call, and reported the tokens it used.",
+      "pass": true,
+      "detail": "Nebius Token Factory: status 200, 64 output tokens; Anthropic: status 200, 14 output tokens"
+    },
+    {
+      "id": "stream",
+      "says": "Each streamed answer reached the guest's library in pieces over at least 20 ms; one handed over in a single block takes about 3 ms.",
+      "pass": true,
+      "detail": "Nebius Token Factory: 38 pieces over 213 ms; Anthropic: 9 pieces over 258 ms"
+    },
+    {
+      "id": "refusal",
+      "says": "The call to a route the profile does not allow was refused by the broker and marked not to retry: the daemon's audit line counts two calls that went on and one it denied.",
+      "pass": true,
+      "detail": "Nebius Token Factory: status 403, 2 allowed and 1 denied on the audit line; Anthropic: status 403, 2 allowed and 1 denied on the audit line"
+    },
+    {
+      "id": "cost",
+      "says": "The tokens the APIs reported, at list price, came in under the budget.",
+      "pass": true,
+      "detail": "$0.000050 of $0.25; at most $0.000127 by arithmetic before the run"
+    },
+    {
+      "id": "versions",
+      "says": "The guest imported the pinned versions of both libraries.",
+      "pass": true,
+      "detail": "openai 3.41.0, anthropic 2.3.0"
+    }
+  ],
+  "files": [
+    {
+      "name": "bundle.jsonl",
+      "bytes": 40992,
+      "sha256": "b551ffd1b93ae719da5d152931ba0ec434ec068caf8e645757508b3baf58d79a"
+    },
+    {
+      "name": "harness.pub",
+      "bytes": 113,
+      "sha256": "d9a6afb205d1e6cabab4df37d3d6acebce8a3d2810edf211af3df23b2d0f49e5"
+    },
+    {
+      "name": "observations.dsse.json",
+      "bytes": 6439,
+      "sha256": "90d0342cb067f3d025737df99cf85fc322fe0cfa18bc382b7316bcf636cb79de"
+    },
+    {
+      "name": "grants.json",
+      "bytes": 1060,
+      "sha256": "c4674dd8de11eb38596d6956d4e95e48e0ec10b69f1e078176b490374f732877"
+    }
+  ]
+}

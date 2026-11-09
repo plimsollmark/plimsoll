@@ -106,7 +106,15 @@ type GroupEvidence struct {
 	SeedHunters    int       `json:"seed_hunters"`
 }
 
-// Graded1 is one controller's grading run.
+// The two problems agents.json tells apart from the rest: problemInvalid is the controller's own
+// failure (the course's validator refused its source, so it flew nothing and scores 0 by rule);
+// problemNoRecord, like a run whose time ran out, is the grading's, and gives no score at all.
+const (
+	problemInvalid  = "invalid controller: "
+	problemNoRecord = "a grading run came back without a record"
+)
+
+// Graded1 is one controller's grading runs.
 type Graded1 struct {
 	Name          string   `json:"name"` // "r3", or "loop"
 	SHA256        string   `json:"sha256"`
@@ -190,7 +198,11 @@ type Scan struct {
 // the seed hunt, where a controller recognizes a flight by regenerating it from its seed.
 var generatorConstant = regexp.MustCompile(`(?i)0x6d2b79f5|1831565813`)
 
-var tracePattern = regexp.MustCompile(`^sq\.([a-z][a-z0-9-]*)\.([a-z][a-z0-9-]*)\.(loop|[0-9]+)\.(build|fly|practice|fresh|tracks)$`)
+var tracePattern = regexp.MustCompile(`^sq\.([a-z][a-z0-9-]*)\.([a-z][a-z0-9-]*)\.(loop|[0-9]+)\.(build|fly|practice|fresh|tracks|(?:practice|fresh)-[1-9][0-9]*of[1-9][0-9]*)$`)
+
+// partPattern reads a grading run's purpose: its set, and which part of how many it flew ("fresh"
+// alone is the whole set in one run, as every run before gradeChunk graded it).
+var partPattern = regexp.MustCompile(`^(practice|fresh)(?:-([1-9][0-9]*)of([1-9][0-9]*))?$`)
 
 type call struct {
 	line    int
@@ -434,8 +446,8 @@ func deriveRun(dir string, job *Job) (*Evidence, error) {
 		practiceFiles[id] = practiceSet(*c).encode()
 	}
 
-	// Pass 1: the grading runs, one per controller and set, which also hold each loop's own
-	// controller for the scan.
+	// Pass 1: the grading runs, each controller on each set in one run or in parts (setParts),
+	// which also hold each loop's own controller for the scan.
 	type setRun struct {
 		fs      FlightSet
 		problem string
@@ -443,15 +455,26 @@ func deriveRun(dir string, job *Job) (*Evidence, error) {
 		src     []byte
 		line    int
 	}
-	runs := map[string]map[string]setRun{} // course/who/n -> set -> run
+	// setRuns are the runs that flew one controller on one set: n parts, by part number from 1.
+	type setRuns struct {
+		n     int
+		parts map[int]setRun
+	}
+	runs := map[string]map[string]*setRuns{} // course/who/n -> set -> its runs
 	var keys []string
 	loopSrc := map[string][]byte{}
 	ev.Scan.SetsHeld = true
-	var seconds, freshSeconds []float64
+	var seconds []float64
 	providers, tiers, envs := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, c := range calls {
-		if c.purpose != "practice" && c.purpose != "fresh" {
+		pm := partPattern.FindStringSubmatch(c.purpose)
+		if pm == nil {
 			continue
+		}
+		set, k, n := pm[1], 1, 1
+		if pm[2] != "" {
+			k, _ = strconv.Atoi(pm[2])
+			n, _ = strconv.Atoi(pm[3])
 		}
 		cj, ok := courses[c.course]
 		if !ok {
@@ -462,12 +485,19 @@ func deriveRun(dir string, job *Job) (*Evidence, error) {
 		if !ok {
 			return nil, fmt.Errorf("line %d: a grading run with no controller", c.line)
 		}
-		want := freshFile
-		if c.purpose == "practice" {
-			want = practiceFiles[c.course]
+		whole, wholeFile := fresh, freshFile
+		if set == "practice" {
+			whole, wholeFile = practiceSet(*cj), practiceFiles[c.course]
 		}
-		other := map[string]string{"practice": "fresh.json", "fresh": "practice.json"}[c.purpose]
-		if _, both := files[other]; both || !bytes.Equal(files[c.purpose+".json"], want) {
+		if k > n || n > len(whole.Seeds) {
+			return nil, fmt.Errorf("line %d: part %d of %d of a set of %d flights", c.line, k, n, len(whole.Seeds))
+		}
+		want := wholeFile
+		if pm[2] != "" {
+			want = partOf(whole, k, n).encode()
+		}
+		other := map[string]string{"practice": "fresh.json", "fresh": "practice.json"}[set]
+		if _, both := files[other]; both || !bytes.Equal(files[set+".json"], want) {
 			ev.Scan.SetsHeld = false
 		}
 		if c.n == "loop" {
@@ -478,40 +508,90 @@ func deriveRun(dir string, job *Job) (*Evidence, error) {
 		}
 		key := c.course + "/" + c.who + "/" + c.n
 		if runs[key] == nil {
-			runs[key] = map[string]setRun{}
+			runs[key] = map[string]*setRuns{}
 			keys = append(keys, key)
 		}
-		if _, dup := runs[key][c.purpose]; dup {
+		sr := runs[key][set]
+		if sr == nil {
+			sr = &setRuns{n: n, parts: map[int]setRun{}}
+			runs[key][set] = sr
+		}
+		if sr.n != n {
+			return nil, fmt.Errorf("line %d: %s's %s set graded in %d parts and in %d", c.line, key, set, sr.n, n)
+		}
+		if _, dup := sr.parts[k]; dup {
 			return nil, fmt.Errorf("line %d: %s graded twice on its %s set", c.line, key, c.purpose)
 		}
-		fs, problem := readSet(c.resp.GetProject())
-		runs[key][c.purpose] = setRun{fs: fs, problem: problem, rec: c.rec, src: src, line: c.line}
-		seconds = append(seconds, c.rec.Ended.Sub(c.rec.Started).Seconds())
-		if c.purpose == "fresh" {
-			freshSeconds = append(freshSeconds, c.rec.Ended.Sub(c.rec.Started).Seconds())
+		for _, r := range sr.parts {
+			if !bytes.Equal(r.src, src) {
+				return nil, fmt.Errorf("lines %d and %d: %s's grading runs hold different controllers", r.line, c.line, key)
+			}
 		}
+		fs, problem := readSet(c.resp.GetProject())
+		sr.parts[k] = setRun{fs: fs, problem: problem, rec: c.rec, src: src, line: c.line}
+		seconds = append(seconds, c.rec.Ended.Sub(c.rec.Started).Seconds())
 		providers[c.rec.Provider], tiers[sandbox.ParseIsolationClass(c.rec.Isolation).String()], envs[c.rec.Environment] = true, true, true
 		ev.Scan.GradingRuns++
 	}
+	// joined is one controller's runs on one set read as one: every part answered, their flights in
+	// order; or why not (a part with no record, the first part's problem).
+	type joined struct {
+		have    bool // every part came back with a record
+		fs      FlightSet
+		problem string
+		parts   []setRun
+	}
+	join := func(sr *setRuns) joined {
+		if sr == nil {
+			return joined{}
+		}
+		j := joined{have: len(sr.parts) == sr.n, fs: FlightSet{Valid: true}}
+		for k := 1; k <= sr.n; k++ {
+			r, ok := sr.parts[k]
+			if !ok {
+				continue
+			}
+			j.parts = append(j.parts, r)
+			where := ""
+			if sr.n > 1 {
+				where = fmt.Sprintf("run %d of %d: ", k, sr.n)
+			}
+			switch {
+			case r.problem != "":
+				if j.problem == "" {
+					j.problem = where + r.problem
+				}
+			case !r.fs.Valid:
+				if j.fs.Valid {
+					j.fs.Valid, j.fs.Error = false, r.fs.Error
+				}
+			default:
+				j.fs.Passed += r.fs.Passed
+				j.fs.Total += r.fs.Total
+				j.fs.Results = append(j.fs.Results, r.fs.Results...)
+			}
+		}
+		return j
+	}
 	graded := map[string]Graded1{} // course/who/n
+	var freshSeconds []float64
 	for _, key := range keys {
 		parts := strings.SplitN(key, "/", 3)
-		p, havePractice := runs[key]["practice"]
-		f, haveFresh := runs[key]["fresh"]
-		src := p.src
-		if !havePractice {
-			src = f.src
-		}
-		if havePractice && haveFresh && !bytes.Equal(p.src, f.src) {
-			return nil, fmt.Errorf("lines %d and %d: %s's two grading runs hold different controllers", p.line, f.line, key)
+		p, f := join(runs[key]["practice"]), join(runs[key]["fresh"])
+		var src []byte
+		for _, r := range append(slices.Clone(p.parts), f.parts...) {
+			if src != nil && !bytes.Equal(src, r.src) {
+				return nil, fmt.Errorf("line %d: %s's grading runs hold different controllers", r.line, key)
+			}
+			src = r.src
 		}
 		one := Graded1{Name: "loop", SHA256: digest(src), Bytes: len(src), SeedHunt: generatorConstant.Match(src)}
 		if parts[2] != "loop" {
 			one.Name = "r" + parts[2]
 		}
 		switch {
-		case !havePractice || !haveFresh:
-			one.Problem = "a grading run came back without a record"
+		case !p.have || !f.have:
+			one.Problem = problemNoRecord
 		case p.problem != "":
 			one.Problem = "practice: " + p.problem
 		case f.problem != "" && p.fs.Valid:
@@ -519,20 +599,29 @@ func deriveRun(dir string, job *Job) (*Evidence, error) {
 		case f.problem != "":
 			one.Problem = "fresh: " + f.problem
 		case !p.fs.Valid:
-			one.Problem = "invalid controller: " + clip(p.fs.Error, 120)
+			one.Problem = problemInvalid + clip(p.fs.Error, 120)
+		case !f.fs.Valid:
+			one.Problem = problemInvalid + clip(f.fs.Error, 120)
 		default:
 			one.Valid = true
 		}
-		for _, r := range []setRun{p, f} {
+		freshTime := 0.0
+		for i, r := range append(slices.Clone(p.parts), f.parts...) {
 			if r.rec.SHA256 != "" {
 				one.Records = append(one.Records, r.rec.SHA256)
 				one.Seconds += round1(r.rec.Ended.Sub(r.rec.Started).Seconds())
+				if i >= len(p.parts) {
+					freshTime += r.rec.Ended.Sub(r.rec.Started).Seconds()
+				}
 			}
 		}
-		// Every flight a set's run answered counts, whether or not the controller's other set was
+		if len(f.parts) > 0 {
+			freshSeconds = append(freshSeconds, freshTime)
+		}
+		// Every flight a run answered counts, whether or not the controller's other runs were
 		// graded: a flight the CPU budget ended is a fact about the controller either way.
 		within := 0.0
-		for _, r := range []setRun{p, f} {
+		for _, r := range append(slices.Clone(p.parts), f.parts...) {
 			if r.problem != "" || !r.fs.Valid {
 				continue
 			}

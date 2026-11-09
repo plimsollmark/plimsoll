@@ -34,9 +34,15 @@
 // that one request returns what those calls did, and the only basis on which an advisor
 // finding names a route to the caller; with no marker the emit is empty.
 //
+// Every route starts with the path part of the document's server URL (/client/v4 for
+// https://api.cloudflare.com/client/v4), since OpenAPI appends each path to it and a
+// profile's base_url is an origin only; servers that disagree on that path, or put a
+// variable in it, fail generation.
+//
 // Operations the grant model cannot express (an unenforceable verb, a required query or
-// header parameter) are reported on stderr as skips, and generated-but-narrowed ones as
-// warnings. Neither is fatal; both are printed before any artifact.
+// header parameter, servers of their own) are reported on stderr as skips, and
+// generated-but-narrowed ones as warnings. Neither is fatal; both are printed before any
+// artifact.
 package main
 
 import (
@@ -94,6 +100,10 @@ func run() error {
 	// Operations that WERE generated but whose emitted method is narrower than the spec.
 	for _, w := range res.Warnings {
 		fmt.Fprintf(os.Stderr, "plimsoll-specgen: warning: %s\n", w)
+	}
+	// The server URL's path is in every route, and a profile's base_url must not repeat it.
+	if res.BasePath != "" {
+		fmt.Fprintf(os.Stderr, "plimsoll-specgen: every route starts with the servers' base path %s; set the profile's base_url to the server's origin only\n", res.BasePath)
 	}
 	// Say why there is no health_check, rather than leaving a profile silently without a
 	// recovery probe.
@@ -168,6 +178,7 @@ type bundle struct {
 	Title       string              `json:"title"`
 	Version     string              `json:"version"`
 	Global      string              `json:"global"`
+	BasePath    string              `json:"base_path,omitempty"`
 	Allow       []string            `json:"allow"`
 	Preamble    string              `json:"preamble"`
 	Description string              `json:"description"`
@@ -197,6 +208,7 @@ func printBundleJSON(w io.Writer, res *specgen.Result) error {
 		Title:       res.Title,
 		Version:     res.Version,
 		Global:      res.Global,
+		BasePath:    res.BasePath,
 		Allow:       res.AllowStrings(),
 		Preamble:    res.Preamble,
 		Description: res.Description,

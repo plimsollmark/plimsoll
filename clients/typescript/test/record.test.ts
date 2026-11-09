@@ -162,9 +162,9 @@ test("a bytes field that is not base64 text is refused before anything is alloca
   for (const resp of answers) {
     resp.record = { version: 4, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
     const kind = resp.javascript ? "javascript" : resp.project ? "project" : "cell";
-    const t0 = Date.now();
+    const t0 = performance.now();
     const got = checkRecord("r", kind, undefined, resp);
     assert.ok("problem" in got && got.problem.includes("malformed"), JSON.stringify(got));
-    assert.ok(Date.now() - t0 < 1000, "the refusal must not decode the field");
+    assert.ok(performance.now() - t0 < 1000, "the refusal must not decode the field");
   }
 });

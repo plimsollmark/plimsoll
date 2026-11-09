@@ -49,6 +49,7 @@ func TestDockerTeardownHoldsCapacityUntilRemovalIsConfirmed(t *testing.T) {
 // share it, so a daemon that never answers holds removeContainer no longer than its
 // context. Before, each absence check had a budget of its own (review, 2026-10-23).
 func TestDockerRemovalKeepsToOneDeadline(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	start := time.Now()

@@ -395,25 +395,33 @@ func e2bSnippet(t *testing.T, s sandbox.Session, code string) sandbox.Result {
 // ExecsWalledOff: a relay is root's from its first instruction and drops to the guest
 // non-dumpable, so no cell can open its pipes even as it starts.
 func TestE2BSessionDockerConformance(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
+	// The fake's sessions are local containers that open in under a second, so the
+	// lifetime case waits 8 s, not 20, and the cases run side by side.
 	sessiontest.Run(t, f.provider(), sessiontest.Config{
-		Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second,
+		Lifetime: 5 * time.Minute, ShortLifetime: 8 * time.Second,
 		Languages:      []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython},
-		ExecsWalledOff: true, Teardown: sandbox.E2BTeardown,
+		ExecsWalledOff: true, Teardown: sandbox.E2BTeardown, Parallel: true,
 	})
 }
 
 // The one-shot project contract (projecttest) over the fake, in a run and in a
 // session's calls.
 func TestE2BDockerProjectConformance(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
-	t.Run("run", func(t *testing.T) { projecttest.Run(t, f.provider(), 15*time.Second) })
-	t.Run("session", func(t *testing.T) { projecttest.Run(t, openE2B(t, f.provider()), 15*time.Second) })
+	// The two run side by side, each with sandboxes of its own. A hung step's budget is
+	// docker's 8 s: the fake's sandbox is a local container, ready in about half a second
+	// (at 15 s each hang waited 7 s more for nothing, 2026-10-29).
+	t.Run("run", func(t *testing.T) { t.Parallel(); projecttest.Run(t, f.provider(), 8*time.Second) })
+	t.Run("session", func(t *testing.T) { t.Parallel(); projecttest.Run(t, openE2B(t, f.provider()), 8*time.Second) })
 }
 
 // The provider's startup smoke test (a run, its egress probe, the languages) and then
 // the session smoke test, as plimsolld runs them, over the fake.
 func TestE2BSessionDockerSmokeTest(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	e := f.provider()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -432,6 +440,7 @@ func TestE2BSessionDockerSmokeTest(t *testing.T) {
 // A session's code runs as the guest uid, with no-new-privs and no group, never as
 // root or the template's user; plimsoll's programs run as root.
 func TestE2BSessionDockerGuestIsUnprivileged(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	s := openE2B(t, f.provider())
 	res := e2bSnippet(t, s, `const st = require("fs").readFileSync("/proc/self/status", "latin1");
@@ -459,6 +468,7 @@ console.log(JSON.stringify({uid: f("Uid"), gid: f("Gid"), groups: f("Groups").tr
 // resumes the sandbox and sweeps them away, and the next cell says its interpreter is
 // new. The files stay.
 func TestE2BSessionDockerPauseAndResume(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	s := openE2B(t, f.provider())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -529,6 +539,7 @@ func e2bSandboxOf(t *testing.T, f *e2bFake) string {
 // session at the next call's read-back, before anything runs; so does a sandbox
 // deleted under the session.
 func TestE2BSessionDockerReadBackEndsAChangedSession(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	e := f.provider()
 	for _, c := range []struct {
@@ -565,6 +576,7 @@ func TestE2BSessionDockerReadBackEndsAChangedSession(t *testing.T) {
 // instance's reconciliation can delete a paused one a crashed daemon left; while the
 // session lives, its own instance never does.
 func TestE2BSessionDockerDeclaresItsExpiry(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	e := f.provider()
 	s := openE2B(t, e)
@@ -597,6 +609,7 @@ func TestE2BSessionDockerDeclaresItsExpiry(t *testing.T) {
 // A granted call is refused before dispatch, unsupported, on a provider with no way to
 // reach the guard (no E2B_GUARD_URL or no E2B_SESSION_GRANTS).
 func TestE2BSessionDockerRefusesGrants(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	s := openE2B(t, f.provider())
 	grant := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}},
@@ -610,6 +623,7 @@ func TestE2BSessionDockerRefusesGrants(t *testing.T) {
 // The stager clears the last call's directory under /tmp/.plimsoll-call; a link the
 // session's code put at that path is replaced, never followed into the work directory.
 func TestE2BSessionDockerStagerFollowsNoLinkAtItsDirectory(t *testing.T) {
+	t.Parallel()
 	f := newE2BFake(t)
 	s := openE2B(t, f.provider())
 	_ = e2bSnippet(t, s, `const fs = require("fs"); fs.writeFileSync("precious.txt", "keep");

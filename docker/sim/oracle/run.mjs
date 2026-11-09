@@ -16,7 +16,8 @@
 // OUT is little-endian float64: per tick x, v, theta, omega, then the force.
 // Stdout carries the SHA-256 of OUT (the fingerprint), the tick count, whether
 // and when the pole fell (|theta| > pi/2), and the final cart position.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, lstatSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
@@ -71,7 +72,15 @@ const state = () => new Float64Array(memory.buffer, ptr, width).slice();
 const rc = sim_init(theta0, 0.5, 1.0, h, tEnd);
 if (rc < 0) { console.error(`plant refused to initialise: ${rc}`); process.exit(1); }
 
-const child = spawn(process.execPath, ['--no-warnings', controller], { stdio: ['pipe', 'pipe', 'inherit'] });
+// The controller reads its own files and nothing else, under node's permission model: the regular files beside it
+// as they are now (never a link; the scenario file is already gone and OUT is written after it exits), which holds
+// its code and any module of its own such as a compiled controller.wasm; and no plant module, no runner, no WASI,
+// child process, worker, addon or file write. A plant module in its reach would be simulation nobody counts or
+// sees. The permission model is node's seatbelt, not a security boundary; the container is that.
+const ownDir = dirname(resolve(controller));
+const ownCode = readdirSync(ownDir).filter((f) => lstatSync(join(ownDir, f)).isFile())
+  .map((f) => `--allow-fs-read=${join(ownDir, f)}`);
+const child = spawn(process.execPath, ['--no-warnings', '--permission', ...ownCode, controller], { stdio: ['pipe', 'pipe', 'inherit'] });
 const closed = new Promise((resolve) => child.on('close', resolve));
 // A controller that exits while ticks remain can close its input before the judge
 // sees its output end; the write error is the controller's failure (exit 3).

@@ -24,12 +24,13 @@ import (
 var agentsandboxVars = []string{
 	"SANDBOX_AGENTSANDBOX_API_SERVER", "SANDBOX_AGENTSANDBOX_CA_FILE", "SANDBOX_AGENTSANDBOX_TOKEN_FILE",
 	"SANDBOX_AGENTSANDBOX_NAMESPACE", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS",
-	"SANDBOX_AGENTSANDBOX_IMAGE", "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE",
+	"SANDBOX_AGENTSANDBOX_IMAGE", "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE",
 }
 
-// envelopeVars are passed through when set, for a template whose limits are not the
-// defaults (the read-back requires them to be equal).
-var envelopeVars = []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"}
+// envelopeVars are passed through when set: the limits, for a template whose limits are
+// not the defaults (the read-back requires them to be equal), and the name sandboxd's
+// certificate carries, when it is not the default.
+var envelopeVars = []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME"}
 
 // TestAgentSandboxDaemonLive runs the real daemon against an agent-sandbox cluster:
 // startup (the read-back and the smoke test), Describe, a snippet under the tier's floor,
@@ -88,7 +89,7 @@ func TestAgentSandboxDaemonLive(t *testing.T) {
 
 	res, err := remote.RunJavaScript(ctx, sandbox.Request{Code: "console.log(6 * 7)", MinimumIsolation: tier})
 	if err != nil || res.ExitCode != 0 || res.Stdout != "42\n" || res.Isolation != tier {
-		t.Fatalf("snippet: %+v, %v", res, err)
+		t.Fatalf("snippet: %+v, %v\nthe daemon's log:\n%s", res, err, d.logText())
 	}
 	t.Logf("snippet over RPC: exit %d, stdout %q, %v", res.ExitCode, res.Stdout, res.Duration.Round(time.Millisecond))
 

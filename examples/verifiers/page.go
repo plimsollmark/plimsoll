@@ -15,7 +15,8 @@ var pageTemplate string
 // pageData is what the template reads: the evidence, and views of it the page draws.
 type pageData struct {
 	Ev       *evidence
-	Gold     *attempt // plimsoll-bash on plimsoll, runc, the solving policy
+	Real     *realView // the real model's section; nil until a results file exists
+	Gold     *attempt  // plimsoll-bash on plimsoll, runc, the solving policy
 	Wrong    *attempt
 	GVisor   *attempt
 	Shipped  *attempt // verifiers' shipped bash harness on plimsoll
@@ -83,8 +84,8 @@ func (d *pageData) find(name string) *attempt {
 	return nil
 }
 
-func newPageData(ev *evidence) pageData {
-	d := pageData{Ev: ev}
+func newPageData(ev *evidence, real *realResults) pageData {
+	d := pageData{Ev: ev, Real: newRealView(real)}
 	d.Gold, d.Wrong, d.GVisor = d.find("uuid-gold-runc"), d.find("uuid-wrong-runc"), d.find("uuid-gold-runsc")
 	d.Shipped, d.Docker = d.find("uuid-shipped-runc"), d.find("uuid-gold-docker")
 	for _, l := range ev.Logs {
@@ -248,8 +249,9 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// render is the page for ev, byte for byte the same for the same evidence.
-func render(ev *evidence) ([]byte, error) {
+// render is the page for ev, byte for byte the same for the same evidence. real is the real
+// model's results, nil for none.
+func render(ev *evidence, real *realResults) ([]byte, error) {
 	t, err := template.New("page").Funcs(template.FuncMap{
 		"reward": reward,
 		"ms":     func(f float64) string { return fmt.Sprintf("%.0f", f) },
@@ -260,8 +262,18 @@ func render(ev *evidence) ([]byte, error) {
 			}
 			return s
 		},
-		"plural":    plural,
-		"tiers":     tiers,
+		"plural": plural,
+		"tiers":  tiers,
+		"usd":    usd,
+		"ended":  endedWords,
+		"sources": func(f *float64) string {
+			if f == nil {
+				return "n/a"
+			}
+			return fmt.Sprintf("%.0f of 5", *f*5)
+		},
+		"thousands": thousands,
+		"budget":    budget,
 		"add":       func(a, b int) int { return a + b },
 		"phase":     func(a *attempt, p string) string { return fmt.Sprintf("%.2f", a.Seconds[p]) },
 		"runtime":   nameRuntime,
@@ -284,7 +296,7 @@ func render(ev *evidence) ([]byte, error) {
 		return nil, err
 	}
 	var b bytes.Buffer
-	if err := t.Execute(&b, newPageData(ev)); err != nil {
+	if err := t.Execute(&b, newPageData(ev, real)); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil

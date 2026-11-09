@@ -82,11 +82,11 @@ Read the document for the subsystem you touch, not all of them.
   the isolation floor, a session's chain, the request ID's echo.
 - [docker/](docker/): the image recipes (`Dockerfile`, `python.Dockerfile`, `sim.Dockerfile`,
   `wasm-cc.Dockerfile`, `agentsandbox.Dockerfile`), the in-sandbox project runner
-  [runner.mjs](docker/runner.mjs), the runner guard [guard/runner.c](docker/guard/runner.c),
+  [runner.mjs](docker/runner.mjs), the runner guard [guard/runner.c](docker/guard/runner.c), the agent-sandbox image's TLS terminator for sandboxd [sandboxdtls/](docker/sandboxdtls/main.go),
   the simulation worker [sim/](docker/sim/), the audited seccomp allowlist `seccomp.json`.
 - [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`, `fanout`, `fanout-cartpole`,
   `wasm-controller`, `wasm-buck`, `providers`, `sessions`, `capsule`, `sbom`, `agentsandbox`,
-  `adapter`, `trigger-chat`, `agent-session`, `squeeze`, `ship-scan`); their pages are under `docs/examples/`.
+  `adapter`, `trigger-chat`, `agent-session`, `squeeze`, `ship-scan`, `memory-grant`); their pages are under `docs/examples/`.
   [docs/example-programs.md](docs/example-programs.md) says what each proves.
 - [measurements/](measurements/): timing programs; the gate builds them and never runs them.
 - [proto/](proto/) and `gen/go`: the service definition and generated code (`make generate`,

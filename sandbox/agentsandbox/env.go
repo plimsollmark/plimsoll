@@ -48,7 +48,7 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: sandboxd token: %w", err)
 	}
 	var missing []string
-	for _, name := range []string{"SANDBOX_AGENTSANDBOX_NAMESPACE", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS", "SANDBOX_AGENTSANDBOX_IMAGE"} {
+	for _, name := range []string{"SANDBOX_AGENTSANDBOX_NAMESPACE", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS", "SANDBOX_AGENTSANDBOX_IMAGE", "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE"} {
 		if getenv(name) == "" {
 			missing = append(missing, name)
 		}
@@ -71,6 +71,8 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		Image:              getenv("SANDBOX_AGENTSANDBOX_IMAGE"),
 		RequirePinnedImage: pinned,
 		SandboxdToken:      strings.TrimSpace(string(token)),
+		SandboxdCAFile:     getenv("SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE"),
+		SandboxdServerName: getenv("SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME"),
 		MemoryMB:           res.MemoryMB,
 		CPUs:               res.CPUs,
 		DiskMB:             res.DiskMB,

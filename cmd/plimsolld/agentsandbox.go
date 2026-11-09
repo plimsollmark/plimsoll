@@ -25,17 +25,18 @@ func init() {
 			return []string{"SANDBOX_DISK_MB"}
 		},
 		pinnedImages: true,
-		// sandboxd serves no TLS, so its token, the code, each run's plan with its report
-		// key, and every result cross the pod network as cleartext HTTP/2. The network
-		// policy decides who may connect, not who may watch or rewrite the traffic. The
-		// daemon cannot see whether the CNI or a mesh encrypts that path, so hardened mode
-		// requires the operator to state it (Claude Security scan, 2026-10-27).
+		// The channel to sandboxd is TLS, but every pod's terminator serves the same
+		// certificate, so it proves the peer is a plimsoll sandbox pod, not the pod dialed
+		// (Claude Security scan, 2026-11-07, finding F1). Someone who can rewrite traffic
+		// on the pod network could send one caller's run into another caller's pod. The
+		// daemon cannot see whether the CNI or a mesh authenticates that path, so hardened
+		// mode requires the operator to state it, until each pod has a key of its own.
 		hardened: func(getenv func(string) string, fail func(string, ...any), bad func(error)) {
 			encrypted, err := sandbox.BoolFromEnv(getenv, "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK")
 			if err != nil {
 				bad(err)
 			} else if !encrypted {
-				fail("hardened mode requires SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1: sandboxd's channel is cleartext HTTP/2 carrying its token, the code, each run's report key and the results, so the pod network between plimsolld and the sandbox pods must be encrypted (a CNI with WireGuard or IPsec, or a service mesh with mutual TLS) before a result can be trusted against anyone on that path")
+				fail("hardened mode requires SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1: every sandbox pod's TLS certificate is the same, so the channel proves the peer is a plimsoll sandbox pod, not the pod this run was sent to; the pod network between plimsolld and the sandbox pods must be authenticated and encrypted (a CNI with WireGuard or IPsec, or a service mesh with mutual TLS) before a result can be trusted against anyone who can rewrite traffic on that path")
 			}
 		},
 	}
@@ -87,11 +88,23 @@ const agentsandboxUsage = `
                              SANDBOX_DISK_MB, when set, bounds the sum of its volumes'
                              size limits; SANDBOX_PIDS fails startup, because the
                              kubelet sets the process limit
+  SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE
+                             the PEM certificate authority sandboxd's TLS
+                             certificate must chain to, the deployment's own (the
+                             system roots are never used); required. Each pod's
+                             TLS terminator serves the certificate from the
+                             Secret mounted at /etc/plimsoll/sandboxd-tls (mode
+                             0400), in front of sandboxd on loopback, and nothing
+                             is sent to a pod that does not prove it
+  SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME
+                             the DNS name that certificate must carry (default
+                             sandboxd.plimsoll.invalid)
   SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK
                              =1 states that the pod network between plimsolld and
-                             the sandbox pods is encrypted (a CNI with WireGuard or
-                             IPsec, or a mesh with mutual TLS). sandboxd's channel
-                             is cleartext HTTP/2 carrying its token, the code, each
-                             run's report key and the results; hardened mode
-                             requires the statement
+                             the sandbox pods is authenticated and encrypted (a CNI
+                             with WireGuard or IPsec, or a mesh with mutual TLS).
+                             Every pod serves the same TLS certificate, so the
+                             channel proves the peer is a plimsoll sandbox pod, not
+                             which one; hardened mode requires the statement until
+                             each pod has a key of its own
 `

@@ -1,0 +1,248 @@
+{
+  "date": "2026-10-30",
+  "model": "nvidia/Nemotron-3_5-Lightning",
+  "upstream_host": "api.tokenfactory.nebius.com",
+  "preset": "easy",
+  "tasks": 10,
+  "concurrency": 2,
+  "max_total_tokens_per_attempt": 400000,
+  "attempt_token_budget": 2400000,
+  "run_token_budget": 32000001,
+  "max_call_output_tokens": 16384,
+  "cost_cap_usd": 0.96,
+  "price_in_per_million": 0.06,
+  "price_cached_per_million": 0.03,
+  "price_out_per_million": 0.24,
+  "attempts": [
+    {
+      "task": 0,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.6,
+      "stop": "agent_completed",
+      "input_tokens": 654544,
+      "cached_input_tokens": 498848,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 16226,
+      "total_tokens": 670770,
+      "cost_usd": 0.028201,
+      "model_turns": 43,
+      "tool_results": 42
+    },
+    {
+      "task": 1,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0,
+      "stop": "agent_completed",
+      "input_tokens": 440114,
+      "cached_input_tokens": 333264,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 16412,
+      "total_tokens": 456526,
+      "cost_usd": 0.020348,
+      "model_turns": 29,
+      "tool_results": 28
+    },
+    {
+      "task": 2,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0,
+      "stop": "agent_completed",
+      "input_tokens": 234357,
+      "cached_input_tokens": 150912,
+      "last_finish_reason": "length",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 19228,
+      "total_tokens": 253585,
+      "cost_usd": 0.014149,
+      "model_turns": 27,
+      "tool_results": 26
+    },
+    {
+      "task": 3,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.6,
+      "stop": "agent_completed",
+      "input_tokens": 1205130,
+      "cached_input_tokens": 1012368,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 32441,
+      "total_tokens": 1237571,
+      "cost_usd": 0.049723,
+      "model_turns": 49,
+      "tool_results": 48
+    },
+    {
+      "task": 4,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.8,
+      "stop": "agent_completed",
+      "input_tokens": 795753,
+      "cached_input_tokens": 635088,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 22211,
+      "total_tokens": 817964,
+      "cost_usd": 0.034023,
+      "model_turns": 47,
+      "tool_results": 46
+    },
+    {
+      "task": 5,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0,
+      "stop": "agent_completed",
+      "input_tokens": 2171292,
+      "cached_input_tokens": 1942992,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 56972,
+      "total_tokens": 2228264,
+      "cost_usd": 0.085661,
+      "model_turns": 64,
+      "tool_results": 63
+    },
+    {
+      "task": 6,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.8,
+      "stop": "agent_completed",
+      "input_tokens": 822068,
+      "cached_input_tokens": 672816,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 21902,
+      "total_tokens": 843970,
+      "cost_usd": 0.034396,
+      "model_turns": 42,
+      "tool_results": 41
+    },
+    {
+      "task": 7,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.4,
+      "stop": "agent_completed",
+      "input_tokens": 345457,
+      "cached_input_tokens": 253616,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 11943,
+      "total_tokens": 357400,
+      "cost_usd": 0.015985,
+      "model_turns": 25,
+      "tool_results": 24
+    },
+    {
+      "task": 8,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.6,
+      "stop": "agent_completed",
+      "input_tokens": 502525,
+      "cached_input_tokens": 396144,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 22857,
+      "total_tokens": 525382,
+      "cost_usd": 0.023753,
+      "model_turns": 29,
+      "tool_results": 28
+    },
+    {
+      "task": 9,
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "source_uuid_fraction": 0.6,
+      "stop": "agent_completed",
+      "input_tokens": 531083,
+      "cached_input_tokens": 389856,
+      "last_finish_reason": "stop",
+      "max_call_output_tokens": 16384,
+      "output_tokens": 15860,
+      "total_tokens": 546943,
+      "cost_usd": 0.023976,
+      "model_turns": 37,
+      "tool_results": 36
+    }
+  ],
+  "relay": {
+    "prompt_tokens": 7702323,
+    "cached_prompt_tokens": 6285904,
+    "completion_tokens": 236052,
+    "total_tokens": 7938375,
+    "charged_without_usage": 0,
+    "tokens_counted": 7938375,
+    "token_budget": 32000001,
+    "usd_spent": 0.33021474,
+    "usd_budget": 0.96,
+    "forwarded": 392,
+    "refused": 0,
+    "upstream_errors": 0,
+    "usage_missing": 0,
+    "budget_reached": false,
+    "answer_key_seen": false
+  },
+  "cost_usd": 0.330215,
+  "trace_total_tokens": 7938375,
+  "traces_match_relay": true,
+  "log": {
+    "file": "real-model/records.jsonl",
+    "floor": "kernel",
+    "python": {
+      "sessions": 10,
+      "records": 472,
+      "closed": 10,
+      "tiers": {
+        "kernel": 472
+      },
+      "incomplete": []
+    },
+    "go": {
+      "sessions": 10,
+      "records": 472,
+      "closed": 10,
+      "tiers": {
+        "kernel": 472
+      },
+      "incomplete": []
+    }
+  },
+  "key_absent_from_every_file": true,
+  "children_checked_for_the_key": 2,
+  "other_files_checked_for_the_key": 1,
+  "solvable": {
+    "solvable_from_corpus": 10,
+    "of": 10,
+    "checked_on": "2026-10-30"
+  }
+}

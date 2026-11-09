@@ -43,6 +43,9 @@ type Server struct {
 	// receipts, when configured, signs every checked exchange (nil otherwise).
 	receipts *Receipts
 
+	// callFiles, when set (SetCallFiles), gives files every run_code call writes first.
+	callFiles func() []sandbox.File
+
 	// stop cancels every tool call in progress; Shutdown calls it.
 	stopCtx context.Context
 	stop    context.CancelFunc
@@ -202,6 +205,27 @@ func shown(err error) string {
 	return err.Error()
 }
 
+// notedError is an error with a sentence its failed call's answer ends with (WithNote).
+type notedError struct {
+	err  error
+	note string
+}
+
+func (e *notedError) Error() string { return e.err.Error() }
+func (e *notedError) Unwrap() error { return e.err }
+
+// WithNote returns err with a sentence the answer of the failed call ends with, kept
+// whatever the answer makes of err itself: an embedder's tool saying what the failure
+// did not cost, for one (a lab that gives back a run it counts under a limit says so,
+// since a model told only that the code may have run cannot tell). errors.Is and
+// errors.As see through it; the outermost note is the one shown.
+func WithNote(err error, note string) error {
+	if err == nil || note == "" {
+		return err
+	}
+	return &notedError{err: err, note: note}
+}
+
 // failed describes err: nothing ran only when it carries the not-dispatched mark, or
 // failed in this server before any request carried code.
 func (s *Server) failed(ctx context.Context, err error) *failure {
@@ -217,6 +241,10 @@ func (s *Server) failed(ctx context.Context, err error) *failure {
 		f.Summary = fmt.Sprintf("The call reached this server's %s deadline; the code may have run, and there is no checked answer for it. It was not retried; running it again could repeat what it did.", s.cfg.CallTimeout)
 	default:
 		f.Summary = fmt.Sprintf("The code may have run, and there is no checked answer for it: %s. It was not retried; running it again could repeat what it did.", shown(err))
+	}
+	var noted *notedError
+	if errors.As(err, &noted) {
+		f.Summary += " " + noted.note
 	}
 	var ended *sandbox.SessionEndedError
 	if errors.As(err, &ended) {
@@ -513,6 +541,17 @@ func clipRunes(s string, n int) string {
 // panics.
 func Extend[In, Out any](s *Server, t *mcp.Tool, h func(context.Context, In) (Out, []Picture, error)) {
 	extend(s, t, false, h)
+}
+
+// SetCallFiles makes f's files part of every run_code call on s, fresh or in a sandbox,
+// written into the working directory before the call's own: data an embedder's other
+// tools make during a session (recordings, say) that code should read without the model
+// copying it into the call. A call file at one of their paths is refused. f is called once
+// per call and must return promptly; its files count against the call's limits, so an
+// embedder keeps them well inside the daemon's, and keeps their paths apart from its kits'.
+// Call it before serving.
+func SetCallFiles(s *Server, f func() []sandbox.File) {
+	s.callFiles = f
 }
 
 // ExtendRun registers an embedder's tool that runs code: Extend, plus run_code's

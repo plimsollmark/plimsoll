@@ -1,0 +1,6 @@
+# The agent-sandbox image's build context (docker/agentsandbox.Dockerfile). BuildKit reads
+# this file instead of docker/.dockerignore for that Dockerfile, so the terminator's source,
+# which .dockerignore keeps out of the other images' context and inputs hash, reaches this
+# build, and nothing else does.
+*
+!sandboxdtls/main.go

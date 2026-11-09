@@ -1,0 +1,7 @@
+{
+  "protocol": 5,
+  "timeoutMs": 2000,
+  "javascript": {
+    "code": "console.log(\"starting a loop that never ends\");\nfor (;;) {}\n"
+  }
+}

@@ -1,0 +1,16 @@
+[
+  "GET /client/v4/accounts/*/agent-memory/namespaces",
+  "POST /client/v4/accounts/*/agent-memory/namespaces",
+  "DELETE /client/v4/accounts/*/agent-memory/namespaces/*",
+  "GET /client/v4/accounts/*/agent-memory/namespaces/*",
+  "GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles",
+  "DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*",
+  "POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/ingest",
+  "GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories",
+  "DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*",
+  "GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*",
+  "POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/recall",
+  "POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/remember",
+  "DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/sessions/*",
+  "POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/summary"
+]

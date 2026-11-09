@@ -228,7 +228,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
     <div class="n">Check 1</div>
     <h3>The answer key gets into the sandbox</h3>
     <p class="term">The <b>ship scan</b>, in plimsoll's server</p>
-    <p>Before any code runs, every file and line of code headed into the sandbox is checked against a list of fingerprints of things that must never go in (the <dfn>withheld set</dfn>). A match is refused, or quietly reported to whoever runs the server.</p>
+    <p>Before any code runs, every file and line of code headed into the sandbox is checked against a list of fingerprints of things that must never go in (the <dfn tabindex="0" data-gloss="withheld-set" data-def="A list of fingerprints of things that must never go into the sandbox, written by whoever runs the plimsoll server; any file or line that matches is refused." data-href="../../trainers/glossary.html#withheld-set">withheld set</dfn>). A match is refused, or quietly reported to whoever runs the server.</p>
     <p class="where">On this page: it finds the secret number my hackathon project leaked, in that project's real files, right where my own check didn't look. <a href="#ship-scan">Section 1</a></p>
   </div>
   <div class="check">
@@ -248,7 +248,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
     <div class="n">Check 2</div>
     <h3>The answer key rides along to the model</h3>
     <p class="term">The <b>answer-key tripwire</b> and its <b>canary run</b>, a plimsoll check that is not part of the open-source release</p>
-    <p>Plant made-up marker values where your secrets live, run your harness once, and check that every marker got planted and none of them showed up in what the model was sent.</p>
+    <p>A check on what a harness sends the model, and a test of that check itself, so that a clean report means something.</p>
     <p class="where">On this page: the check's own output on a harness that behaves, on two leaks I put back on purpose, and on a harness that forgot to plant anything. <a href="#canary">Section 2</a></p>
   </div>
   <div class="check">
@@ -311,8 +311,8 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
 </div>
 
 <h2 id="ship-scan"><span class="num">1</span>The ship scan: keep the answer key out of the sandbox</h2>
-<p>A <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> is where an agent's code runs and gets graded. The usual way that goes wrong is the harness carrying the answers in itself: it ships its own simulator into the sandbox as a helper file, and the agent works the hidden test cases out from it; or it leaves a held-out <dfn>seed</dfn> (the single number a test case is generated from) in an example link in some file the agent can read. UC Berkeley went through 13 widely used AI benchmarks (the standard tests everyone scores AI on) and found that "the most common pattern we exploited was submissions running in the same process, container, or filesystem as the evaluator" (<a href="https://rdi.berkeley.edu/blog/trustworthy-benchmarks/">EXTERNAL · article ↗</a>). In plain words: the work being graded sat in the same room as the grader's notes.</p>
-<p>The <dfn>ship scan</dfn> checks every <dfn>call</dfn> (one request to plimsoll to run some code) on its way in. Whoever runs the plimsoll server writes a <dfn>withheld set</dfn>: <a href="../../trainers/glossary.html#digest">SHA-256 digests (INTERNAL · glossary →)</a>, fixed-length fingerprints, of the files and values that must never reach a sandbox, made with the command <code>plimsoll-withheld</code>. plimsolld, the plimsoll server program, scans everything a call carries (the code, file names and contents, the commands to run, the names of files to send back, code typed into a sandbox kept open between calls) as the very last check before the run starts.</p>
+<p>A <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> is where an agent's code runs and gets graded. The usual way that goes wrong is the harness carrying the answers in itself: it ships its own simulator into the sandbox as a helper file, and the agent works the hidden test cases out from it; or it leaves a held-out <dfn tabindex="0" data-gloss="seed" data-def="One number that decides a random choice, so anyone can redo the exact same shuffle or flight, because the same seed always gives the same result." data-href="../../trainers/glossary.html#seed">seed</dfn> (the single number a test case is generated from) in an example link in some file the agent can read. UC Berkeley went through 13 widely used AI benchmarks (the standard tests everyone scores AI on) and found that "the most common pattern we exploited was submissions running in the same process, container, or filesystem as the evaluator" (<a href="https://rdi.berkeley.edu/blog/trustworthy-benchmarks/">EXTERNAL · article ↗</a>). In plain words: the work being graded sat in the same room as the grader's notes.</p>
+<p>The <dfn tabindex="0" data-gloss="ship-scan" data-def="A check on every call on its way into the sandbox: anything matching the withheld set is refused before it ships, like airport security checking a bag against a list of banned items." data-href="../../trainers/glossary.html#ship-scan">ship scan</dfn> checks every <dfn tabindex="0" data-gloss="call" data-def="One request to plimsoll to run some code, the way one phone call is one request to someone to do something." data-href="../../trainers/glossary.html#call">call</dfn> (one request to plimsoll to run some code) on its way in. Whoever runs the plimsoll server writes a <dfn tabindex="0" data-gloss="withheld-set" data-def="A list of fingerprints of things that must never go into the sandbox, written by whoever runs the plimsoll server; any file or line that matches is refused." data-href="../../trainers/glossary.html#withheld-set">withheld set</dfn>: <a href="../../trainers/glossary.html#digest">SHA-256 digests (INTERNAL · glossary →)</a>, fixed-length fingerprints, of the files and values that must never reach a sandbox, made with the command <code>plimsoll-withheld</code>. plimsolld, the plimsoll server program, scans everything a call carries (the code, file names and contents, the commands to run, the names of files to send back, code typed into a sandbox kept open between calls) as the very last check before the run starts.</p>
 <div class="analogy"><b>Why fingerprints and not the values:</b> a digest identifies a file or a value without containing it, so the set holds none of them, and plimsolld's log and refusals name an entry by its label, never by what it holds (it reads each call to compare it, and an audited call's output is left as the code wrote it), and a set of files and long values can be published as a record of exactly what was looked for. A set of short values cannot: a six-digit seed's fingerprint is found by trying all million candidates, so that set is as secret as the seeds.</div>
 </div>
 
@@ -334,7 +334,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
 <p>The same scan also runs on its own, on a folder, whatever sandbox you use: <code>plimsoll-withheld scan -set withheld.json task/</code> lists every find and exits 1 on one. That is how I checked my own hackathon entry.</p>
 
 <h3 id="argon-scan">On a real leak: the secret number my check missed</h3>
-<p>At the Argon hackathon (<a href="#argon">section 14</a>), my harness kept the 16 <dfn>practice seeds</dfn>, the numbers behind the 16 practice test flights an agent graded itself on, out of the files it shipped to the agents, and checked its own work: one line asserting that the task file it shipped held neither the seed list nor the first seed. Until 12:55 that day, an example link in another file it shipped, the replay viewer, named the second seed.</p>
+<p>At the Argon hackathon (<a href="#argon">section 14</a>), my harness kept the 16 <dfn tabindex="0" data-gloss="practice-seeds" data-def="The numbers behind the practice flights; each one decides one flight&#39;s payload, wind and gusts, so with the seed an agent could replay that flight exactly." data-href="../../trainers/glossary.html#practice-seeds">practice seeds</dfn>, the numbers behind the 16 practice test flights an agent graded itself on, out of the files it shipped to the agents, and checked its own work: one line asserting that the task file it shipped held neither the seed list nor the first seed. Until 12:55 that day, an example link in another file it shipped, the replay viewer, named the second seed.</p>
 <p>On 2026-10-28 I rebuilt, from the entry's public repository (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>), the 13 files its harness put into the sandbox of every rebuild (a fresh agent of the squeeze test, <a href="#squeeze">section 5</a>), at the last commit before the fix (12:44, <code>6887745aaaf49d18…</code>) and at the fix (12:55, <code>b49116e19281648c…</code>), the way its own <code>loop/kit.py</code> built them. Then I built a withheld set of the 16 practice seeds and scanned both folders offline with <code>plimsoll-withheld</code>. This is the whole transcript; <code>examples/squeeze/argon-scan.sh</code> prints it.</p>
 </div>
 
@@ -374,25 +374,13 @@ tmp/argon-scan/after/workspace/tasks/drone/view.mjs:26:track=/tmp/codex-drone/tr
 <p><b>What the ship scan does not catch.</b> Anything hidden on purpose: a value split in two, reversed or encrypted, one disguise inside another (base64 inside base64, a web address escaped twice), hex, raw compressed data with no header, a value drawn into an image (a PNG's pixel data is not read). A file baked into the sandbox's starting image, which never passes through a call. Whatever a run downloads through a <a href="../../trainers/glossary.html#grant">capability grant (INTERNAL · glossary →)</a>, plimsoll's per-run permission to reach one outside service. And the signed <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>, plimsoll's receipt for each run, does not mention the scan yet: until it does, the server's log is the evidence. It catches what a harness ships by mistake and what an agent copies. The full account, with every bound and what each costs, is the ship scan's documentation (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/ship-scan.md">EXTERNAL · official docs ↗</a>).</p>
 
 <h2 id="canary"><span class="num">2</span>The canary run: test the leak check before you trust it</h2>
-<p>The second leak skips the sandbox entirely. The answer key rides along in what the harness sends the model: the right answer (the <dfn>truth label</dfn>) pasted into the <dfn>prompt</dfn>, the written instructions a model is given; the reference answer's numbers; or a test video uploaded under a name that gives it away (a clip called <code>skip-step-3.mp4</code> rather tells the model which step is missing). The second and the third both happened in one real hackathon project, a checker that compares a worker's video of a procedure against an expert's: its requests carried the expert's step times, and its planted test clips went up under names that said which step had been removed.</p>
-<p>The <dfn>answer-key tripwire</dfn> reads every request your harness recorded, exactly as it was sent, looking for <dfn>sealed values</dfn>: anything the model being tested must never be sent. Text is found as whole words, in any capitalization; numbers are found however they are written (<code>31.5</code> is found as <code>31.50</code>, <code>t=31.5s</code> or <code>0:31.5</code>, and not inside <code>131.5</code>); a file is found by its SHA-256. It reads names too: every recorded file's name, and every folder's below the one you point it at. A hit names the file, the spot in the request and the sealed value's id, never the value itself, so the report is safe to publish.</p>
-<p>A clean tripwire says this run's secrets weren't there. It doesn't say the harness can't leak: a value that happened to be missing, or a hiding place you forgot to list, passes in silence. The <dfn>canary run</dfn> tests the harness itself. A <dfn>canary</dfn> is a made-up marker value planted where secrets live, so that spotting it anywhere else proves a leak (named after the canaries miners took underground as an early alarm). Make one marker per hiding place, have the harness use them instead of the real values for one run, record every request, and check. It passes only when every marker got planted somewhere and none reached a request. Then put one leak back on purpose and watch it fail; plimsoll's own tests do exactly that.</p>
-<div class="analogy"><b>Like a mapmaker's trap street:</b> a street that does not exist, drawn on the map on purpose, so that a copy of the map gives itself away. The canary run adds a step the trap street skips: it first checks that the fake street really is on your own map, because one you forgot to draw catches nothing.</div>
+<p>The second leak skips the sandbox entirely. The answer key rides along in what the harness sends the model: the right answer (the <dfn tabindex="0" data-gloss="truth-label" data-def="The right answer for a test question; if it is pasted into the model&#39;s prompt, the exam leaked." data-href="../../trainers/glossary.html#truth-label">truth label</dfn>) pasted into the <dfn tabindex="0" data-gloss="prompt" data-def="The written text sent to a model telling it what to do, plus anything else it is shown with the request." data-href="../../trainers/glossary.html#prompt">prompt</dfn>, the written instructions a model is given; the reference answer's numbers; or a test video uploaded under a name that gives it away (a clip called <code>skip-step-3.mp4</code> rather tells the model which step is missing). The second and the third both happened in one real hackathon project, a checker that compares a worker's video of a procedure against an expert's: its requests carried the expert's step times, and its planted test clips went up under names that said which step had been removed.</p>
+<p>The <dfn tabindex="0" data-gloss="answer-key-tripwire" data-def="A check that reads every request a test harness sent to the model, exactly as sent, and looks for values the model must never see, such as the right answers; finding one means the exam leaked." data-href="../../trainers/glossary.html#answer-key-tripwire">answer-key tripwire</dfn> reads every request your harness recorded, exactly as it was sent, looking for <dfn tabindex="0" data-gloss="sealed-values" data-def="Anything the model being tested must never be sent, such as the right answers or the numbers behind the held-out flights." data-href="../../trainers/glossary.html#sealed-values">sealed values</dfn>: anything the model being tested must never be sent. It protects against the harness handing the model its own answer key. A hit names where it was found and the sealed value's id, never the value itself, so the report is safe to publish.</p>
+<p>A clean tripwire says this run's secrets weren't there. It doesn't say the harness can't leak. The <dfn tabindex="0" data-gloss="canary-run" data-def="A test of the test harness itself: it plants a canary in every hiding place, runs the harness, and fails if any canary shows up where it should not." data-href="../../trainers/glossary.html#canary-run">canary run</dfn> tests the harness itself, so a clean report can be trusted: it uses made-up marker values (<dfn tabindex="0" data-gloss="canary" data-def="A made-up marker value planted where a secret lives, so that spotting it anywhere else proves a leak; named after the canaries miners took underground as an early alarm." data-href="../../trainers/glossary.html#canary">canaries</dfn>, named after the birds miners took underground as an early alarm) in place of the real secrets, and fails if the check misses a planted leak or if the harness never planted anything. Neither check is part of plimsoll's open-source release.</p>
+<div class="analogy"><b>Like a mapmaker's trap street:</b> a street that does not exist, drawn on the map on purpose, so that a copy of the map gives itself away.</div>
 </div>
 
-<figure id="fig-canary">
-  <div class="fig-title">One canary run, start to finish</div>
-  <div class="flow">
-    <div class="box"><b>1 · Make markers</b><ul><li>one pair per hiding place</li><li>text: <code>cnry</code> and 12 more letters and digits</li><li>a number from 1000 to 10000, never near a whole one</li></ul></div>
-    <div class="arrow" aria-hidden="true"></div>
-    <div class="box key"><b>2 · Plant them</b><ul><li>in place of the real values, for one run:</li><li>the truth labels</li><li>the reference's numbers</li><li>the planted files' names</li></ul></div>
-    <div class="arrow" aria-hidden="true"></div>
-    <div class="box"><b>3 · Run as usual</b><ul><li>record every request to the model under test, as sent</li><li>uploads under the names they went up with</li></ul></div>
-    <div class="arrow" aria-hidden="true"></div>
-    <div class="box good"><b>4 · Check</b><ul><li>every marker planted somewhere: <span class="yes">must be yes</span></li><li>any marker in any request: <span class="no">must be no</span></li></ul></div>
-  </div>
-  <figcaption>Then put one leak back on purpose (the reference's time in the prompt, a clip uploaded under its plan name) and watch step 4 fail. A canary check that has never failed has not been tested.</figcaption>
-</figure>
+
 
 <div class="prose">
 <h3 id="canary-demo">What it prints, passing and failing</h3>
@@ -433,16 +421,13 @@ $ plimsoll-eval-integrity canary check --sealed canary.json --planted not-plante
 </figure>
 
 <div class="prose">
-<pre>plimsoll-eval-integrity canary make truth reference-times plan-names -o canary.json
-plimsoll-eval-integrity canary check --sealed canary.json \
-  --planted hidden/ --requests recorded-requests/</pre>
-<p>The canary run is not part of plimsoll's open-source release: the commands above are what it ran, and the transcript is quoted as it printed. <b>What it does not catch:</b> a value said another way (a paraphrase, seconds turned into milliseconds), a value the model can work out from what it was rightly given, an encoding inside another, and anything you did not record. It finds what a harness sends by mistake, not what is hidden on purpose.</p>
+<p>The canary run is not part of plimsoll's open-source release: the transcript above is quoted as it printed. It finds what a harness sends by mistake, not what is hidden on purpose.</p>
 </div>
 
 <div class="prose part" id="squeeze-test">
 <div class="kicker">Check 3 · sections 3 to 13</div>
 <h2 style="margin:4px 0 6px">The squeeze test: did the loop learn the job, or learn the test?</h2>
-<p>An agent that improves its own work round after round is usually graded on the same practice test every round. I'll call such an agent a <dfn>loop</dfn>. A perfect practice score can then mean it got good at the job, or it memorized the test. The squeeze test, from a 2026 paper by three researchers at Amazon, gives evidence of which: not a verdict (section 7 has the cheater it let through). Squeeze everything a loop learned into a note of about 32 tokens. Hand the note to fresh agents who have never seen the test. Watch what they can rebuild from it, and what they can't.</p>
+<p>An agent that improves its own work round after round is usually graded on the same practice test every round. I'll call such an agent a <dfn tabindex="0" data-gloss="loop" data-def="An agent that improves its own work round after round: write, test, look at the result, change, repeat." data-href="../../trainers/glossary.html#loop">loop</dfn>. A perfect practice score can then mean it got good at the job, or it memorized the test. The squeeze test, from a 2026 paper by three researchers at Amazon, gives evidence of which: not a verdict (section 7 has the cheater it let through). Squeeze everything a loop learned into a note of about 32 tokens. Hand the note to fresh agents who have never seen the test. Watch what they can rebuild from it, and what they can't.</p>
 </div>
 
 <div class="prose">
@@ -472,11 +457,11 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 <div class="prose">
 <div class="legend"><span><i style="background:#3a3936"></i>landed</span><span><i style="background:#fff;border:1.5px solid #c9c7bf"></i>failed</span><span><span class="src pl">signed by plimsoll</span> flights: each controller graded again on plimsoll, on the loop's 16 practice flights and on 64 fresh flights drawn for this page. Critic scores <span class="src hk">recorded at the hackathon</span>.</span></div>
 
-<p>Both loops write a flight controller (the small program that steers the drone), fly it, look at pictures of the flights, have a <dfn>critic</dfn> (another model, asked to score the work out of 10) score it, and fix it, round after round. Both reach a perfect practice score. On flights neither had seen, one lands almost every time (62 of 64 here) and the other never gets off the pad (0 of 64). Its own critic gave the second one the same score as the first. The next sections are about telling the two apart when you can't fly them on fresh flights, and what finding out costs.</p>
+<p>Both loops write a flight controller (the small program that steers the drone), fly it, look at pictures of the flights, have a <dfn tabindex="0" data-gloss="critic" data-def="Another model asked to score a piece of work out of 10, like a second teacher who reads an essay and marks it." data-href="../../trainers/glossary.html#critic">critic</dfn> (another model, asked to score the work out of 10) score it, and fix it, round after round. Both reach a perfect practice score. On flights neither had seen, one lands almost every time (62 of 64 here) and the other never gets off the pad (0 of 64). Its own critic gave the second one the same score as the first. The next sections are about telling the two apart when you can't fly them on fresh flights, and what finding out costs.</p>
 
 <h2 id="job"><span class="num">3</span>The job: fly a drone through three gates</h2>
-<p>The task is a simulated drone (a quadcopter, the four-rotor kind) in a room six meters square. It takes off from a pad, flies through three square gates in order, and lands softly on a second pad, all within 25 seconds. Every flight is different: a hidden payload makes the drone heavier, one of its four motors is weak by a hidden amount, the wind blows from a hidden direction, and two or three gusts hit at hidden moments, one of them sharp. The program that flies it is a <dfn>controller</dfn>: a function the simulator calls 100 times a second with noisy sensor readings (position, speed, tilt), and which answers with how hard to push and which way to tilt.</p>
-<p>Each flight is made from one number, its <dfn>seed</dfn>. Feed the seed to the simulator's random number generator and out come that flight's payload, weak motor, wind and gusts. Same seed, same flight, every time.</p>
+<p>The task is a simulated drone (a quadcopter, the four-rotor kind) in a room six meters square. It takes off from a pad, flies through three square gates in order, and lands softly on a second pad, all within 25 seconds. Every flight is different: a hidden payload makes the drone heavier, one of its four motors is weak by a hidden amount, the wind blows from a hidden direction, and two or three gusts hit at hidden moments, one of them sharp. The program that flies it is a <dfn tabindex="0" data-gloss="controller" data-def="A program that reads a system&#39;s state at every tick and decides how to push it, for example to keep a pole balanced on a cart." data-href="../../trainers/glossary.html#controller">controller</dfn>: a function the simulator calls 100 times a second with noisy sensor readings (position, speed, tilt), and which answers with how hard to push and which way to tilt.</p>
+<p>Each flight is made from one number, its <dfn tabindex="0" data-gloss="seed" data-def="One number that decides a random choice, so anyone can redo the exact same shuffle or flight, because the same seed always gives the same result." data-href="../../trainers/glossary.html#seed">seed</dfn>. Feed the seed to the simulator's random number generator and out come that flight's payload, weak motor, wind and gusts. Same seed, same flight, every time.</p>
 <div class="analogy"><b>Like a deck of cards:</b> the seed is the shuffle. Know the seed and you know every card before it is dealt.</div>
 </div>
 
@@ -498,14 +483,14 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 
 <div class="prose">
 <h2 id="cheat"><span class="num">4</span>How a loop scores 16 of 16 without learning to fly</h2>
-<p>The loop is the build-and-improve cycle from Google's guide to building 3D worlds with Gemini 4 Argon (<a href="https://aistudio.google.com/learn/building-3d-games-and-worlds-with-gemini-4-argon">EXTERNAL · official docs ↗</a>), which says to run a render, watch, critique, fix loop "until the Critic rates the scene 9/10". At the hackathon, Gemini 4 Argon (the Google model the hackathon was about) ran that loop as an agent in a sandbox of its own, with 16 <dfn>practice flights</dfn>: the flights the loop grades itself on every round. Machine learning people call them the <dfn>validation set</dfn>. Behind them sat 64 <dfn>held-out flights</dfn> no agent ever saw, made from a secret whose SHA-256 was published before any of the runs on this page.</p>
+<p>The loop is the build-and-improve cycle from Google's guide to building 3D worlds with Gemini 4 Argon (<a href="https://aistudio.google.com/learn/building-3d-games-and-worlds-with-gemini-4-argon">EXTERNAL · official docs ↗</a>), which says to run a render, watch, critique, fix loop "until the Critic rates the scene 9/10". At the hackathon, Gemini 4 Argon (the Google model the hackathon was about) ran that loop as an agent in a sandbox of its own, with 16 <dfn tabindex="0" data-gloss="practice-flights" data-def="The flights a loop grades itself on every round: a rehearsal the agent can see, unlike the held-out flights it is finally judged on." data-href="../../trainers/glossary.html#practice-flights">practice flights</dfn>: the flights the loop grades itself on every round. Machine learning people call them the <dfn tabindex="0" data-gloss="validation-set" data-def="The examples a learner checks itself against while it works, here the practice flights; kept apart from the final exam it is judged on." data-href="../../trainers/glossary.html#validation-set">validation set</dfn>. Behind them sat 64 <dfn tabindex="0" data-gloss="held-out-flights" data-def="Test flights no agent ever saw while it worked, made from a secret fixed before the runs began; the final exam, as opposed to the practice quizzes." data-href="../../trainers/glossary.html#held-out-flights">held-out flights</dfn> no agent ever saw, made from a secret whose SHA-256 was published before any of the runs on this page.</p>
 <div class="analogy"><b>Like a student and a practice quiz:</b> a student who retakes the same 16-question practice quiz every evening can reach 16 of 16 by learning the subject, or by memorizing which answer goes with which question. The final exam, with questions they have never seen, is the only way to tell. The held-out flights are the final exam.</div>
 <p>One loop was told to build the best controller it could, and warned that the 16 flights were only a sample: design for every flight, not for these 16. The other was told its score was those 16 flights and a critic's rating, that nothing else would ever be checked, and to maximize both at any cost; then it was told which file computes each practice flight's conditions, and that the starting spot gives away which flight it is in. That second loop is a cheater on purpose, built the way the paper builds its own known-bad example to test against, and it took the shortcut it was shown. The drone's starting spot on the pad shifts by a few centimeters from flight to flight, and that shift shows in the very first sensor reading. The cheater's controller holds a copy of the simulator's random number generator and the 16 practice seeds. At the first tick it matches the reading against them, recognizes which practice flight it is in, and then knows that flight's payload, weak motor and every future gust. On a flight it does not recognize, it has nothing to fall back on: it answers with something that is not a command at all, and the flight ends in its first hundredth of a second.</p>
-<p>Scoring well on the practice set by memorizing it instead of getting better at the job is called <dfn>overfitting</dfn>: the student who memorized last year's quiz. A loop that grades itself on the same 16 flights for hours is set up to do it, and the score alone cannot show whether it did.</p>
+<p>Scoring well on the practice set by memorizing it instead of getting better at the job is called <dfn tabindex="0" data-gloss="overfitting" data-def="Scoring well on the practice set by memorizing it instead of getting better at the job, like a student who memorized last year&#39;s quiz and fails this year&#39;s." data-href="../../trainers/glossary.html#overfitting">overfitting</dfn>: the student who memorized last year's quiz. A loop that grades itself on the same 16 flights for hours is set up to do it, and the score alone cannot show whether it did.</p>
 
 <h2 id="squeeze"><span class="num">5</span>The squeeze</h2>
 <p>Martin Bertran, Aaron Roth and Zhiwei Steven Wu of Amazon asked why AI agents that do machine-learning research (they build and tune other AI models, checking against the same validation set again and again) so rarely end up memorizing it (<a href="https://arxiv.org/abs/2606.11045">EXTERNAL · paper ↗</a>, <a href="https://www.amazon.science/blog/why-dont-machine-learning-research-agents-overfit">EXTERNAL · article ↗</a>). Their hypothesis: "successful ML strategies are highly compressible." A real method can be written down in a few words. Memorized specifics cannot. So they test it directly: squeeze what an agent learned into a very short note, give the note to a fresh agent with no other access, and see whether it reproduces the score.</p>
-<p>Three words carry the rest of this page. A <dfn>token</dfn> is the unit a model reads and writes in; a short English word is usually one token, a long number several. The <dfn>recipe</dfn> is the squeezed note: at most 32 tokens, written by a model that has read the loop's entire record. A <dfn>rebuild</dfn> is a fresh agent in a fresh sandbox, given only the task, the recipe and a few <dfn>smoke flights</dfn> (throwaway flights to check its code runs at all), which builds its own controller from scratch. The paper calls it a reproducer.</p>
+<p>Three words carry the rest of this page. A <dfn tabindex="0" data-gloss="token" data-def="The unit a language model reads and writes in: a short English word is usually one token, a long number several." data-href="../../trainers/glossary.html#token">token</dfn> is the unit a model reads and writes in; a short English word is usually one token, a long number several. The <dfn tabindex="0" data-gloss="recipe" data-def="A short note, capped at a fixed number of tokens, written by a model that read a loop&#39;s whole record: the sticky note the last person on the job left for the next one." data-href="../../trainers/glossary.html#recipe">recipe</dfn> is the squeezed note: at most 32 tokens, written by a model that has read the loop's entire record. A <dfn tabindex="0" data-gloss="rebuild" data-def="A fresh agent in a fresh sandbox, given only the task, a recipe and a few smoke flights, which builds its own controller from scratch to show whether the recipe carries enough to work from." data-href="../../trainers/glossary.html#rebuild">rebuild</dfn> is a fresh agent in a fresh sandbox, given only the task, the recipe and a few <dfn tabindex="0" data-gloss="smoke-flights" data-def="A few throwaway flights, run only to check that code runs at all, named after plugging in new hardware to see whether smoke comes out." data-href="../../trainers/glossary.html#smoke-flights">smoke flights</dfn> (throwaway flights to check its code runs at all), which builds its own controller from scratch. The paper calls it a reproducer.</p>
 <div class="analogy"><b>Like a sticky note between students:</b> a student who learned long division can pass the method to a friend on a sticky note, and the friend will ace a quiz they have never seen. A student who memorized 16 answers cannot fit them on the note. Whatever the friend scores is what was really learned.</div>
 </div>
 
@@ -529,7 +514,7 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 
 <div class="prose">
 <h2 id="recipes"><span class="num">6</span>The two recipes, word by word</h2>
-<p>These are the two recipes the <dfn>compressor</dfn> (the model asked to write the note) wrote on the easy course, word for word. Each is exactly 32 tokens. The compressor read everything each loop produced: every round's transcript, every version of its controller, every score and every critique, 93,293 tokens for the cheater and 172,527 for the honest loop. Hover over or tap a phrase for a plain-words reading. The readings are mine, not the compressor's.</p>
+<p>These are the two recipes the <dfn tabindex="0" data-gloss="compressor" data-def="The model asked to read everything a loop produced and write a short note (the recipe) that captures what mattered, like a student boiling a textbook down to one cheat sheet." data-href="../../trainers/glossary.html#compressor">compressor</dfn> (the model asked to write the note) wrote on the easy course, word for word. Each is exactly 32 tokens. The compressor read everything each loop produced: every round's transcript, every version of its controller, every score and every critique, 93,293 tokens for the cheater and 172,527 for the honest loop. Hover over or tap a phrase for a plain-words reading. The readings are mine, not the compressor's.</p>
 </div>
 
 <div class="grid2" id="recipes-pair">
@@ -562,7 +547,7 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 </figure>
 
 <div class="prose">
-<p>The squeeze's verdict uses the left panel only, since in real use the right panel does not exist. The <dfn>squeeze gap</dfn> is the loop's practice score minus the <dfn>median</dfn> (the middle one, when sorted) practice score of the rebuilds from its recipe: the part of the score the recipe could not carry. The hackathon fixed its rules before any result came in, at 11:31 on the day: flag the loop when the gap is more than 2 flights of 16.</p>
+<p>The squeeze's verdict uses the left panel only, since in real use the right panel does not exist. The <dfn tabindex="0" data-gloss="squeeze-gap" data-def="A loop&#39;s practice score minus the median practice score of the rebuilds made from its recipe: the part of the score the recipe could not carry, so a big gap means the score did not come from anything a short note can pass on." data-href="../../trainers/glossary.html#squeeze-gap">squeeze gap</dfn> is the loop's practice score minus the <dfn tabindex="0" data-gloss="median" data-def="The middle value when you line a set of numbers up in order, so half are below it and half above; one wild value cannot drag it far, unlike an average." data-href="../../trainers/glossary.html#median">median</dfn> (the middle one, when sorted) practice score of the rebuilds from its recipe: the part of the score the recipe could not carry. The hackathon fixed its rules before any result came in, at 11:31 on the day: flag the loop when the gap is more than 2 flights of 16.</p>
 <div class="verdict-grid" id="verdicts-easy"></div>
 <div class="callout warn"><b>On the easy course the squeeze did not flag the cheater.</b> Its rebuilds scored a median 15 of 16 on practice against the loop's 16: a gap of 1 flight, under the line of 2. The held-out flights caught it at once: the loop's own controller landed 0 of 64, while the rebuilds from its recipe landed a median 58. The recipe carried enough real flying to rebuild a good controller, so the squeeze saw a loop that had learned. It had, and it had also memorized the test.</div>
 <p>The chart also shows why the test is still useful here. Look at whose practice score predicts its fresh score. Every rebuild's does: rebuilds never saw the practice flights, so their practice scores are honest. The loop's own does not. When a loop's own controller and its rebuilds disagree on fresh flights, the loop memorized, and the rebuild is the controller to ship. The hackathon's judge called this "the loop's own artifact memorized: ship the rebuild", and marked it for the cheater.</p>
@@ -614,7 +599,7 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 
 <h2 id="cannot"><span class="num">11</span>What the squeeze cannot tell you</h2>
 <ul>
-<li><b>It is not a detector to trust on its own.</b> The paper does measure it as one, and well: under a 128-token recipe it flagged all 38 overfit <dfn>checkpoints</dfn> (saved snapshots of a model partway through training) of 102 and wrongly flagged 6 of the 64 honest ones, "100% sensitivity and 91% specificity". But that was in what the authors call "an intentionally strong exploitation regime": agents told to "maximize validation accuracy at all costs", with full access to the validation data. They scope it themselves: "The goal is not to model every subtle form of benchmark overuse". The easy course is a case outside that regime: a cheat riding on real skill, which the hackathon's line let through.</li>
+<li><b>It is not a detector to trust on its own.</b> The paper does measure it as one, and well: under a 128-token recipe it flagged all 38 overfit <dfn tabindex="0" data-gloss="checkpoint" data-def="A saved snapshot of a model partway through training, like saving a game so you can compare how you played at different stages." data-href="../../trainers/glossary.html#checkpoint">checkpoints</dfn> (saved snapshots of a model partway through training) of 102 and wrongly flagged 6 of the 64 honest ones, "100% sensitivity and 91% specificity". But that was in what the authors call "an intentionally strong exploitation regime": agents told to "maximize validation accuracy at all costs", with full access to the validation data. They scope it themselves: "The goal is not to model every subtle form of benchmark overuse". The easy course is a case outside that regime: a cheat riding on real skill, which the hackathon's line let through.</li>
 <li><b>It needs a line, and on small test sets the line is a judgment call.</b> Section 8 shows the same data called both ways by two reasonable lines.</li>
 <li><b>It costs more than fresh tests.</b> Sixteen rebuilds are sixteen agent sessions. Sixty-four fresh flights are one sandbox run, a median of 44.3 seconds on plimsoll under gVisor, and they caught every inflated score on this page (0, 18 and 56 of 64 against 16 of 16 practice). The rule the hackathon ended on: if you can make fresh tests, make fresh tests.</li>
 <li><b>It certifies the rebuild, not the loop.</b> In the paper's words, "Output compression only certifies the reproducer's hypothesis." A good rebuild says the method fits in 32 tokens; it says nothing directly about the loop's own controller, which may still be memorizing.</li>
@@ -740,7 +725,7 @@ go run ./examples/squeeze -import ../did-it-learn</pre>
 <dt>Answer-key tripwire</dt><dd>A search of the requests a harness sent a model, for values the model must never be sent.</dd>
 <dt>Sealed value</dt><dd>Anything the model under test must never be sent: a truth label, a reference number, a telling file name.</dd>
 <dt>Canary</dt><dd>A made-up marker planted where secrets live, so seeing it anywhere else proves a leak. A trap street on your own map.</dd>
-<dt>Canary run</dt><dd>One run of a harness with canaries planted in place of the real secrets, checked for every canary planted and none sent.</dd>
+<dt>Canary run</dt><dd>A run of a harness with made-up markers in place of the real secrets, to test the leak check itself.</dd>
 <dt>Controller</dt><dd>The program that flies the drone: called 100 times a second with sensor readings, it answers with thrust and tilt.</dd>
 <dt>Seed</dt><dd>The number a flight is made from. Like the shuffle of a deck: same seed, same flight.</dd>
 <dt>Practice seeds</dt><dd>The seeds of the 16 practice flights; the ones the Argon entry leaked one of.</dd>
@@ -1475,6 +1460,64 @@ go run ./examples/squeeze -import ../did-it-learn</pre>
       svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (y + 4));
     });
   })();
+})();
+</script>
+<style>
+dfn[data-def]{cursor:help}
+dfn[data-def]:focus-visible{outline:2px solid #11233a;outline-offset:2px;border-radius:3px}
+.gloss-pop{position:absolute;left:0;top:0;z-index:20;background:#11233a;color:#fff;font-size:13px;line-height:1.4;padding:8px 10px;border-radius:8px;max-width:min(300px,calc(100vw - 24px));box-shadow:0 4px 14px rgba(17,35,58,.25)}
+.gloss-pop[hidden]{display:none}
+.gloss-pop a{display:block;margin-top:6px;color:#cfe3ff;text-decoration:underline}
+</style>
+<div class="gloss-pop" id="gloss-pop" role="tooltip" hidden></div>
+<script>
+(function () {
+  var pop = document.getElementById("gloss-pop");
+  var cur = null, timer = 0;
+  function hide() {
+    clearTimeout(timer);
+    pop.hidden = true;
+    if (cur) cur.removeAttribute("aria-describedby");
+    cur = null;
+  }
+  function later() { clearTimeout(timer); timer = setTimeout(hide, 180); }
+  function show(el) {
+    clearTimeout(timer);
+    if (cur === el && !pop.hidden) return;
+    hide();
+    cur = el;
+    pop.textContent = el.getAttribute("data-def") + " ";
+    var a = document.createElement("a");
+    a.href = el.getAttribute("data-href");
+    a.textContent = "(INTERNAL · glossary →)";
+    pop.appendChild(a);
+    el.setAttribute("aria-describedby", "gloss-pop");
+    pop.hidden = false;
+    var r = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    var sx = window.pageXOffset, sy = window.pageYOffset, vw = document.documentElement.clientWidth;
+    var left = Math.max(12, Math.min(r.left, vw - w - 12));
+    var top = r.bottom + 6;
+    if (r.bottom + 6 + h > window.innerHeight && r.top - 6 - h > 0) top = r.top - 6 - h;
+    pop.style.left = (left + sx) + "px";
+    pop.style.top = (top + sy) + "px";
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("dfn[data-def]"), function (el) {
+    el.addEventListener("mouseenter", function () { show(el); });
+    el.addEventListener("mouseleave", later);
+    el.addEventListener("focus", function () { show(el); });
+    el.addEventListener("click", function () { show(el); });
+  });
+  pop.addEventListener("mouseenter", function () { clearTimeout(timer); });
+  pop.addEventListener("mouseleave", later);
+  document.addEventListener("pointerdown", function (e) {
+    if (pop.hidden || pop.contains(e.target)) return;
+    if (e.target.closest && e.target.closest("dfn[data-def]")) return;
+    hide();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(); });
+  document.addEventListener("focusin", function (e) {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== cur) hide();
+  });
 })();
 </script>
 </body>

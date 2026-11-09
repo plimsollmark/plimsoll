@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -169,6 +170,83 @@ func TestTaskFilesArePinned(t *testing.T) {
 	}
 }
 
+// A hash of the listed files is not the whole of what Python loads from the package's root:
+// a linked directory, planted bytecode, a FIFO and an unreadable directory are each refused,
+// the same cases the Python driver's check_task_files refuses.
+func TestTaskFilesRefuseWhatAHashMisses(t *testing.T) {
+	write := func(t *testing.T, path, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]func(t *testing.T, dir string){
+		"directory symlink": func(t *testing.T, dir string) {
+			outside := t.TempDir()
+			write(t, filepath.Join(outside, "__init__.py"), "payload")
+			if err := os.Symlink(outside, filepath.Join(dir, "json")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"file symlink": func(t *testing.T, dir string) {
+			if err := os.Remove(filepath.Join(dir, "uuid_ctf", "taskset.py")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../README.md", filepath.Join(dir, "uuid_ctf", "taskset.py")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"planted bytecode": func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "uuid_ctf", "__pycache__", "x.pyc"), "payload")
+		},
+		"empty __pycache__": func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "uuid_ctf", "__pycache__"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"fifo": func(t *testing.T, dir string) {
+			if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"unreadable directory": func(t *testing.T, dir string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads every directory")
+			}
+			locked := filepath.Join(dir, "uuid_ctf", "locked")
+			if err := os.MkdirAll(locked, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(locked, 0o755) })
+		},
+	}
+	for name, plant := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for file := range primeFiles {
+				write(t, filepath.Join(dir, file), "x")
+			}
+			plant(t, dir)
+			done := make(chan error, 1)
+			go func() { _, err := checkTaskFiles(dir); done <- err }()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("passed")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("hung")
+			}
+		})
+	}
+}
+
 // The published directory rechecks, and refuses a copy with one byte of one record changed.
 func TestPublishedFilesVerify(t *testing.T) {
 	if err := verifyPublished(published); err != nil {
@@ -184,7 +262,7 @@ func TestPublishedFilesVerify(t *testing.T) {
 	// The page's fixed sentences (the headline, "the grader can say no", the shipped
 	// harness stopping in setup) hold for these results; a rerun that changes one fails
 	// here, so the text is reread before it is published.
-	d := newPageData(ev)
+	d := newPageData(ev, nil)
 	for name, got := range map[string]string{
 		"uuid_ctf on plimsoll, runc":   reward(d.Gold.Reward),
 		"uuid_ctf on plimsoll, gVisor": reward(d.GVisor.Reward),

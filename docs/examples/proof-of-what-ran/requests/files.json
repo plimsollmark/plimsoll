@@ -1,0 +1,6 @@
+{
+  "protocol": 5,
+  "javascript": {
+    "code": "import(\"qjs:std\").then(function (std) {\n  console.log(\"open /etc/passwd: \" + std.open(\"/etc/passwd\", \"r\"));\n  return import(\"qjs:os\");\n}).then(function (os) {\n  console.log(\"list /: \" + JSON.stringify(os.readdir(\"/\")));\n});\n"
+  }
+}

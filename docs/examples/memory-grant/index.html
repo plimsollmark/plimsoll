@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plimsoll: agent memory through a grant, with the key left outside</title>
+<meta name="description" content="Agent-written code stores and recalls a memory in Cloudflare's Agent Memory API through a plimsoll grant built by plimsoll-specgen from Cloudflare's published OpenAPI document. The API key stays in the broker on the host, the run's trace names route templates only, and two calls outside the grant are refused before they reach the API. The API is a local fake: no account, no key, nothing spent.">
+<style>
+:root{color-scheme:light;--ink:#0b0b0b;--ink2:#3d3c39;--muted:#6b6a65;--line:#e4e3de;--paper:#fcfcfb;--soft:#f4f3ef;--teal:#0f766e;--bad:#b42318;--good:#106b54;--amber:#8a5a00}
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.6 Inter,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 22px 90px}
+a{color:var(--teal);overflow-wrap:anywhere}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#1f2328;text-decoration:none}
+h1{font-size:42px;line-height:1.1;margin:18px 0 10px;letter-spacing:-1px}
+h2{font-size:29px;line-height:1.15;margin:70px 0 10px;letter-spacing:-.4px}
+h3{font-size:19px;margin:26px 0 6px}
+p{margin:10px 0}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.kicker{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin:0}
+.lede{font-size:20px;color:var(--ink2);max-width:780px}
+.small{font-size:14px;color:var(--muted)}
+code,pre{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0}
+pre.out{background:#fff}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:26px 0 0}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.tile b{display:block;font-size:30px;line-height:1.1;letter-spacing:-.5px}
+.tile span{font-size:14px;color:var(--muted)}
+.tile .good{color:var(--good)}.tile .bad{color:var(--bad)}
+.aside{border-left:4px solid #e8a317;background:#fff8e6;padding:10px 14px;border-radius:0 10px 10px 0;max-width:820px;font-size:16px;margin:16px 0}
+figure{margin:26px 0 0}
+figure svg{width:100%;height:auto;display:block;max-width:900px}
+.caption{font-size:14px;color:var(--muted);margin-top:4px}
+.run{border:1px solid var(--line);border-radius:16px;padding:6px 18px 12px;background:var(--paper);margin:18px 0;min-width:0}
+.run.ok{border-left:6px solid var(--good)}
+.run.refused{border-left:6px solid var(--bad)}
+.run h3{margin-top:12px}
+.label{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 2px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+td code{font-size:13px}
+th{font-size:13px;color:var(--muted);font-weight:600}
+.yes{color:var(--bad);font-weight:600}.no{color:var(--good);font-weight:600}
+footer{margin-top:80px;border-top:1px solid var(--line);padding-top:16px;font-size:14px;color:var(--muted)}
+@media (max-width:760px){
+ h1{font-size:32px}h2{font-size:25px}
+ table{font-size:13px}th,td{padding:6px 4px}
+}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md">Capability grants (EXTERNAL · source repo ↗)</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/memory-grant">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<p class="kicker">A hosted memory API, through a grant</p>
+<h1>Agent memory, with the key left outside the sandbox</h1>
+<p class="lede">An <dfn>agent memory API</dfn> is a hosted service that keeps what an AI agent learns (a customer's language, a preference, a past decision) so that a later conversation can recall it. The agent's code needs an API key to call it, and a key handed to the sandbox can be printed, stored or sent anywhere. Here the code calls Cloudflare's Agent Memory through a plimsoll <a href="../../trainers/glossary.html#grant">grant (INTERNAL · glossary →)</a>, one run's permission to call listed routes of one API: the <a href="../../trainers/glossary.html#broker">broker (INTERNAL · glossary →)</a>, the part of plimsoll outside the sandbox that makes each call, holds the key, and the code reaches three routes of one customer's memory and nothing else.</p>
+<p class="aside"><b>The API on this page is a fake.</b> The routes and the client come from the OpenAPI document Cloudflare publishes; the server answering them is a small Go program on loopback (<a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/memory-grant/fake.go">fake.go (EXTERNAL · source repo ↗)</a>) that checks the key and keeps memories in memory. No Cloudflare account, key or network was used, and nothing was spent.</p>
+
+<div class="tiles">
+<div class="tile"><b>3 of 14</b><span>routes of Cloudflare's document the grant lists</span></div>
+<div class="tile"><b>5</b><span>runs, each in a fresh sandbox</span></div>
+<div class="tile"><b class="good">4 of 4</b><span>requests at the API carried the key, set by the broker</span></div>
+<div class="tile"><b class="good">2</b><span>calls outside the grant, refused by the broker; none reached the API</span></div>
+<div class="tile"><b class="good">0</b><span>places in the sandbox the key was found</span></div>
+</div>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="The agent's code in the sandbox calls the memory client, which sends method, path and body to the broker on the host. The broker checks the allow list, adds the key, and sends the request to the Agent Memory API. It writes a trace of route templates, statuses and sizes.">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b6a65"/></marker></defs>
+<g font-family="Inter,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#0b0b0b">
+<rect x="6" y="20" width="250" height="190" rx="14" fill="#fcfcfb" stroke="#c9c7bf" stroke-dasharray="6 4"/>
+<text x="131" y="44" text-anchor="middle" font-weight="700">The sandbox</text>
+<rect x="21" y="60" width="220" height="56" rx="10" fill="#fff" stroke="#c9c7bf"/>
+<text x="131" y="84" text-anchor="middle">the agent's code</text>
+<text x="131" y="102" text-anchor="middle" font-size="12" fill="#3d3c39">memory.agent_memory_recall(...)</text>
+<rect x="21" y="132" width="220" height="62" rx="10" fill="#fff" stroke="#c9c7bf"/>
+<text x="131" y="156" text-anchor="middle">the memory client</text>
+<text x="131" y="174" text-anchor="middle" font-size="12" fill="#3d3c39">generated by plimsoll-specgen;</text>
+<text x="131" y="188" text-anchor="middle" font-size="12" fill="#3d3c39">a copy of the allow list, no key</text>
+<line x1="131" y1="116" x2="131" y2="130" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<line x1="241" y1="163" x2="338" y2="163" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="296" y="140" text-anchor="middle" font-size="12" fill="#3d3c39">method,</text>
+<text x="296" y="155" text-anchor="middle" font-size="12" fill="#3d3c39">path, body</text>
+<rect x="340" y="60" width="240" height="110" rx="12" fill="#e6f3f1" stroke="#0f766e" stroke-width="2"/>
+<text x="460" y="86" text-anchor="middle" font-weight="700" fill="#0f766e">The broker, on the host</text>
+<text x="460" y="108" text-anchor="middle" font-size="12.5">1. the path is on the allow list?</text>
+<text x="460" y="126" text-anchor="middle" font-size="12.5">no: 403, nothing sent</text>
+<text x="460" y="144" text-anchor="middle" font-size="12.5">2. yes: add the key, send</text>
+<text x="460" y="162" text-anchor="middle" font-size="12" fill="#3d3c39">the key lives here, in Go</text>
+<line x1="580" y1="115" x2="666" y2="115" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="623" y="104" text-anchor="middle" font-size="12" fill="#3d3c39">+ the key</text>
+<rect x="670" y="60" width="222" height="110" rx="12" fill="#fcfcfb" stroke="#c9c7bf"/>
+<text x="781" y="88" text-anchor="middle" font-weight="700">Agent Memory API</text>
+<text x="781" y="110" text-anchor="middle" font-size="12.5">stores and recalls memories</text>
+<text x="781" y="130" text-anchor="middle" font-size="12" fill="#3d3c39">here: the fake on loopback,</text>
+<text x="781" y="146" text-anchor="middle" font-size="12" fill="#3d3c39">which refuses a request</text>
+<text x="781" y="162" text-anchor="middle" font-size="12" fill="#3d3c39">without the key</text>
+<line x1="460" y1="170" x2="460" y2="226" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="290" y="228" width="340" height="62" rx="10" fill="#fff" stroke="#c9c7bf"/>
+<text x="460" y="252" text-anchor="middle" font-weight="700">The call trace</text>
+<text x="460" y="272" text-anchor="middle" font-size="12" fill="#3d3c39">route template, status, sizes; no path, body or key</text>
+</g>
+</svg>
+<figcaption class="caption">Where the key is. The client in the sandbox has only a copy of the allow list; the broker holds the key and attaches it after deciding a call is allowed.</figcaption>
+</figure>
+
+<h2>Where the routes come from</h2>
+<p>Cloudflare publishes an <dfn>OpenAPI document</dfn> for its whole API: the standard machine-readable description of an HTTP API, listing every route, its parameters and its answers (<a href="https://spec.openapis.org/oas/v3.0.3.html">OpenAPI 3.0.3 (EXTERNAL · official docs ↗)</a>). It lives in <a href="https://github.com/cloudflare/api-schemas">cloudflare/api-schemas (EXTERNAL · source repo ↗)</a> under the BSD 3-Clause license, which allows copying with the copyright notice kept. The example keeps its Agent Memory part, 14 operations, unchanged in <a href="agent-memory.openapi.json">agent-memory.openapi.json</a>, with the license beside it in <a href="LICENSE.cloudflare-api-schemas">LICENSE.cloudflare-api-schemas</a>. It was cut from the file at commit <code>2d7642070d54</code> (SHA-256 <code>29f54710427f</code>), and <code>-extract</code> refuses to cut it from any other file. Cloudflare's own pages for the service: <a href="https://developers.cloudflare.com/agent-memory/api/http-api/">Agent Memory HTTP API (EXTERNAL · official docs ↗)</a>.</p>
+<p><code>plimsoll-specgen</code>, plimsoll's generator, reads the document and writes three files that would otherwise be written and kept in step by hand: the route list (<a href="allow.json">allow.json</a>), the typed client the code calls (<a href="preamble.js">preamble.js</a>), and the text a gateway (the service between the model and plimsoll) shows the model so it knows what exists (<a href="description.txt">description.txt</a>; a <a href="../../trainers/glossary.html#tool">tool (INTERNAL · glossary →)</a> description). A path parameter such as <code>{account_id}</code> becomes <code>*</code>, which matches one path segment. Every route the document has:</p>
+<pre>GET /client/v4/accounts/*/agent-memory/namespaces
+POST /client/v4/accounts/*/agent-memory/namespaces
+DELETE /client/v4/accounts/*/agent-memory/namespaces/*
+GET /client/v4/accounts/*/agent-memory/namespaces/*
+GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles
+DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*
+POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/ingest
+GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories
+DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*
+GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*
+POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/recall
+POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/remember
+DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/sessions/*
+POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/summary</pre>
+<p>Every route starts with <code>/client/v4</code>. The document's server address is <code>https://api.cloudflare.com/client/v4</code>, OpenAPI adds each path to it, and a grant's <code>base_url</code> is the scheme and host only. Before this example, specgen left the server's path out, so a grant built from this document would have sent every call to <code>/accounts/…</code> and missed the API. It now puts the server's path in every route, and refuses a document whose servers disagree about it.</p>
+<p>specgen also reported what it could not carry over: three list operations take optional query parameters, and the broker refuses any path with a query, so their generated functions always call the bare route.</p>
+<pre>GET /client/v4/accounts/{account_id}/agent-memory/namespaces: optional query &#34;per_page&#34;, query &#34;order&#34;, query &#34;direction&#34;, query &#34;cursor&#34; cannot be sent through the broker, so the generated method always calls the bare route
+GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles: optional query &#34;per_page&#34;, query &#34;cursor&#34; cannot be sent through the broker, so the generated method always calls the bare route
+GET /client/v4/accounts/{account_id}/agent-memory/namespaces/{namespace_name}/profiles/{profile_name}/memories: optional query &#34;per_page&#34;, query &#34;cursor&#34;, query &#34;session_id&#34;, query &#34;type&#34; cannot be sent through the broker, so the generated method always calls the bare route</pre>
+
+<h2>What the operator grants</h2>
+<p>A document lists what an API has, not what an agent should reach. The operator writes the <dfn>grant profile</dfn>, the grant stored under a name that a run selects, in <a href="grants.json">grants.json</a>:</p>
+<pre>{
+  &#34;profiles&#34;: {
+    &#34;agent-memory&#34;: {
+      &#34;base_url&#34;: &#34;https://api.cloudflare.com&#34;,
+      &#34;global&#34;: &#34;memory&#34;,
+      &#34;allowed_callers&#34;: [&#34;support-agent&#34;],
+      &#34;token&#34;: { &#34;type&#34;: &#34;static&#34;, &#34;env&#34;: &#34;CLOUDFLARE_API_TOKEN&#34; },
+
+      &#34;allow&#34;: [
+        &#34;POST /client/v4/accounts/00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/remember&#34;,
+        &#34;POST /client/v4/accounts/00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall&#34;,
+        &#34;GET /client/v4/accounts/00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/memories/*&#34;
+      ],
+      &#34;catalog&#34;: [
+        &#34;GET /client/v4/accounts/*/agent-memory/namespaces&#34;,
+        &#34;POST /client/v4/accounts/*/agent-memory/namespaces&#34;,
+        &#34;DELETE /client/v4/accounts/*/agent-memory/namespaces/*&#34;,
+        &#34;GET /client/v4/accounts/*/agent-memory/namespaces/*&#34;,
+        &#34;GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles&#34;,
+        &#34;DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*&#34;,
+        &#34;POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/ingest&#34;,
+        &#34;GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories&#34;,
+        &#34;DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*&#34;,
+        &#34;GET /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/memories/*&#34;,
+        &#34;POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/recall&#34;,
+        &#34;POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/remember&#34;,
+        &#34;DELETE /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/sessions/*&#34;,
+        &#34;POST /client/v4/accounts/*/agent-memory/namespaces/*/profiles/*/summary&#34;
+      ],
+      &#34;preamble_file&#34;: &#34;preamble.js&#34;
+    }
+  }
+}
+</pre>
+<p><code>catalog</code> is specgen's list, unchanged: the example fails if it drifts from the document. <code>allow</code> is three of those routes with the account, the namespace and the customer's profile written in, so this run's code can store and recall one customer's memories and read one back, and can do nothing else the key can. <code>memories/*</code> is the one wildcard left: any memory ID within that profile. The account ID is made up: 32 digits, which fits both the pattern the Agent Memory paths give it (digits only) and the one other parts of the document give account IDs (32 hexadecimal characters). The key comes from <code>CLOUDFLARE_API_TOKEN</code> on the host; the profile names the variable, never the value. A grant has no per-caller parameters, so serving many customers this way means one profile each, selected by name per run.</p>
+<p>The example loads this file exactly as the plimsoll daemon loads its grants file, and changes one thing for the run: <code>base_url</code> points at the fake.</p>
+
+<h2>Five runs</h2>
+<p>Each run is a fresh sandbox on the <a href="../../trainers/glossary.html#webassembly">WebAssembly (INTERNAL · glossary →)</a> provider: plimsoll's own process runs a <a href="../../trainers/glossary.html#quickjs">QuickJS (INTERNAL · glossary →)</a> JavaScript engine compiled to WebAssembly, chosen so the example runs anywhere. The <dfn>trace</dfn> is the broker's record of each call: the allow entry it matched, written as in the profile (the <dfn>route template</dfn>), the status and the byte counts. The latency it also records is left off this page, so the page is the same on every run.</p>
+
+<section class="run ok">
+<h3>1. Store a memory, recall it, read it back by its ID</h3>
+<p>One run stores a memory, asks the API to recall what it holds about the customer&#39;s language, and reads the memory back by the ID the recall returned. All three are routes the grant lists. The third shows what the trace does with a wildcard: the request named the memory&#39;s ID, and the trace keeps the allow entry, memories/*.</p>
+<p class="label">The code</p>
+<pre>var A = &#34;00000000000000000000000000000042&#34;, NS = &#34;support-agent&#34;, ME = &#34;customer-42&#34;;
+memory.agent_memory_remember(A, NS, ME, {content: &#34;The customer wants replies in Spanish.&#34;, sessionId: &#34;chat-7&#34;})
+  .then(function (r) {
+    console.log(&#34;stored &#34; &#43; r.result.id);
+    globalThis.lastStored = r.result.id;
+    return memory.agent_memory_recall(A, NS, ME, {query: &#34;Which language does the customer want?&#34;});
+  })
+  .then(function (r) {
+    console.log(&#34;recalled: &#34; &#43; r.result.answer);
+    return memory.agent_memory_memory_get(A, NS, ME, r.result.candidates[0].id);
+  })
+  .then(function (r) { console.log(&#34;read back by ID: &#34; &#43; r.result.content); },
+        function (e) { console.log(&#34;failed: &#34; &#43; e.message); });</pre>
+<p class="label">What it printed</p>
+<pre class="out">stored 01JFAKEMEM0000000000000001
+recalled: The customer wants replies in Spanish.
+read back by ID: The customer wants replies in Spanish.</pre>
+<p class="label">The broker's trace</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>method</th><th>route template (after <code>/client/v4/accounts/</code>)</th><th>status</th><th>bytes sent</th><th>bytes back</th></tr>
+<tr><td>1</td><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/remember</code></td><td>200</td><td>73</td><td>295</td></tr>
+<tr><td>2</td><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>200</td><td>50</td><td>249</td></tr>
+<tr><td>3</td><td>GET</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/memories/*</code></td><td>200</td><td>0</td><td>295</td></tr>
+</table></div>
+<p class="label">Requests that reached the API</p>
+<div class="scroll"><table>
+<tr><th>method</th><th>path the API received (after <code>/client/v4/accounts/</code>)</th><th>key</th><th>status</th></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/remember</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+<tr><td>GET</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/memories/01JFAKEMEM0000000000000001</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+</table></div>
+</section>
+
+<section class="run ok">
+<h3>2. A later run, in a fresh sandbox, recalls it</h3>
+<p>A new run starts a new JavaScript engine, so nothing the first run left in the sandbox is there. The memory is, because it was never in the sandbox: the API holds it, and this run recalls it.</p>
+<p class="label">The code</p>
+<pre>var A = &#34;00000000000000000000000000000042&#34;, NS = &#34;support-agent&#34;, ME = &#34;customer-42&#34;;
+memory.agent_memory_recall(A, NS, ME, {query: &#34;What language should replies use?&#34;}).then(
+  function (r) { console.log(r.result.count &#43; &#34; memory found: &#34; &#43; r.result.answer); },
+  function (e) { console.log(&#34;failed: &#34; &#43; e.message); });
+console.log(&#34;left over from the first run: &#34; &#43; (typeof globalThis.lastStored));</pre>
+<p class="label">What it printed</p>
+<pre class="out">left over from the first run: undefined
+1 memory found: The customer wants replies in Spanish.</pre>
+<p class="label">The broker's trace</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>method</th><th>route template (after <code>/client/v4/accounts/</code>)</th><th>status</th><th>bytes sent</th><th>bytes back</th></tr>
+<tr><td>1</td><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>200</td><td>45</td><td>250</td></tr>
+</table></div>
+<p class="label">Requests that reached the API</p>
+<div class="scroll"><table>
+<tr><th>method</th><th>path the API received (after <code>/client/v4/accounts/</code>)</th><th>key</th><th>status</th></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+</table></div>
+</section>
+
+<section class="run refused">
+<h3>3. Another customer&#39;s memory, through the client and around it</h3>
+<p>The same recall, for customer-43. The client plimsoll put in the sandbox refuses it before any request is made, since its copy of the allow list has no route for that profile. That check is the guest&#39;s own JavaScript, which hostile code can skip, so the code then calls the raw host function under the client. The broker, outside the sandbox, refuses that too and counts one denied call. No request reached the API.</p>
+<p class="label">The code</p>
+<pre>var A = &#34;00000000000000000000000000000042&#34;, NS = &#34;support-agent&#34;, ME = &#34;customer-42&#34;;
+var Q = {query: &#34;Which language does the customer want?&#34;};
+memory.agent_memory_recall(A, NS, &#34;customer-43&#34;, Q).then(
+  function (r) { console.log(&#34;client answered: &#34; &#43; JSON.stringify(r)); },
+  function (e) {
+    console.log(&#34;client refused: &#34; &#43; e.message);
+    var raw = __coderunner_host_call(JSON.stringify({method: &#34;POST&#34;,
+      path: &#34;/client/v4/accounts/&#34; &#43; A &#43; &#34;/agent-memory/namespaces/&#34; &#43; NS &#43; &#34;/profiles/customer-43/recall&#34;, body: Q}));
+    console.log(&#34;broker answered: &#34; &#43; raw.status &#43; &#34; &#34; &#43; raw.body);
+  });</pre>
+<p class="label">What it printed</p>
+<pre class="out">client refused: host api call not permitted by sandbox capability: POST /client/v4/accounts/00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-43/recall
+broker answered: 403 forbidden by sandbox capability allowlist</pre>
+<p class="label">The broker's trace</p>
+<p>No call recorded; 1 denied by the allow list, with no path kept, since a denied call matched no template.</p>
+<p class="label">Requests that reached the API</p>
+<p>None.</p>
+</section>
+
+<section class="run refused">
+<h3>4. A route the key could reach and the grant does not list</h3>
+<p>The generated client has a function for every operation in the document, deleting a namespace among them. Whether the key may delete one is up to its Cloudflare permissions, which plimsoll does not see; the grant does not list the route, so the client and the broker refuse it, as in the third run.</p>
+<p class="label">The code</p>
+<pre>var A = &#34;00000000000000000000000000000042&#34;, NS = &#34;support-agent&#34;, ME = &#34;customer-42&#34;;
+memory.agent_memory_namespace_delete(A, NS).then(
+  function (r) { console.log(&#34;client answered: &#34; &#43; JSON.stringify(r)); },
+  function (e) {
+    console.log(&#34;client refused: &#34; &#43; e.message);
+    var raw = __coderunner_host_call(JSON.stringify({method: &#34;DELETE&#34;,
+      path: &#34;/client/v4/accounts/&#34; &#43; A &#43; &#34;/agent-memory/namespaces/&#34; &#43; NS}));
+    console.log(&#34;broker answered: &#34; &#43; raw.status &#43; &#34; &#34; &#43; raw.body);
+  });</pre>
+<p class="label">What it printed</p>
+<pre class="out">client refused: host api call not permitted by sandbox capability: DELETE /client/v4/accounts/00000000000000000000000000000042/agent-memory/namespaces/support-agent
+broker answered: 403 forbidden by sandbox capability allowlist</pre>
+<p class="label">The broker's trace</p>
+<p>No call recorded; 1 denied by the allow list, with no path kept, since a denied call matched no template.</p>
+<p class="label">Requests that reached the API</p>
+<p>None.</p>
+</section>
+
+<section class="run ok">
+<h3>5. The guest looking for the key</h3>
+<p>The code searches every global of the engine and every function of the client for the key. One global, execArgv, holds all the source the engine was given, the injected client and the generated one included, so a key anywhere in that source would be named: the example&#39;s test plants one in a preamble and this same search names it. Here it finds nothing, because the key never leaves Go: the broker sets it on the request to the API after deciding the call is allowed.</p>
+<p class="label">The code</p>
+<pre>var needle = [&#34;fake&#34;, &#34;agent&#34;, &#34;memory&#34;, &#34;token&#34;, &#34;held&#34;, &#34;by&#34;, &#34;the&#34;, &#34;broker&#34;].join(&#34;-&#34;);
+function holds(v) { try { return String(v).indexOf(needle) &gt;= 0; } catch (e) { return false; } }
+var inGlobals = Object.getOwnPropertyNames(globalThis).filter(function (n) { return holds(globalThis[n]); });
+var inClient = Object.keys(memory).filter(function (k) { return holds(memory[k]); });
+console.log(&#34;functions on memory: &#34; &#43; Object.keys(memory).length);
+console.log(&#34;globals holding the key: &#34; &#43; (inGlobals.length ? inGlobals.join(&#34;,&#34;) : &#34;none&#34;));
+console.log(&#34;client functions holding the key: &#34; &#43; (inClient.length ? inClient.join(&#34;,&#34;) : &#34;none&#34;));</pre>
+<p class="label">What it printed</p>
+<pre class="out">functions on memory: 20
+globals holding the key: none
+client functions holding the key: none</pre>
+<p class="label">The broker's trace</p>
+<p>No call recorded.</p>
+<p class="label">Requests that reached the API</p>
+<p>None.</p>
+</section>
+
+
+<h2>What the trace keeps, and what it leaves out</h2>
+<p>The trace is what plimsoll's audit log, its metrics and its efficiency advisor (which suggests cheaper ways to make the same calls) are built from. By construction it has no field for a path, a body or a credential, so what it holds is the operator's own text, the allow entry, plus numbers. The API sees everything, as it must. Where each value of the first run went:</p>
+<div class="scroll"><table>
+<tr><th>value</th><th>in the guest's output</th><th>at the API</th><th>in the trace</th></tr>
+<tr><td>the key</td><td class="no">no</td><td>on every request</td><td class="no">no</td></tr>
+<tr><td>the memory's content, “The customer wants replies in Spanish.”</td><td>yes</td><td>stored</td><td class="no">no: 73 bytes sent</td></tr>
+<tr><td>the memory's ID</td><td>yes</td><td>in the path of the third request</td><td class="no">no: <code>memories/*</code></td></tr>
+<tr><td>the other customer, <code>customer-43</code></td><td>yes, in the refusal</td><td class="no">never reached it</td><td class="no">no: one denied call, counted</td></tr>
+</table></div>
+<p>When an operator needs to tie a run to the request that caused it, a run can carry a <code>trace_id</code> the caller already uses in its own log; plimsoll writes it on the run's audit line and keeps the content where it already is, one layer up.</p>
+
+<h2>What the API saw</h2>
+<p>Every request the fake received, in order. All of them came from the first two runs, and each carried the key the broker added; the code in the sandbox never had it.</p>
+<div class="scroll"><table>
+<tr><th>method</th><th>path (after <code>/client/v4/accounts/</code>)</th><th>key</th><th>status</th></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/remember</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+<tr><td>GET</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/memories/01JFAKEMEM0000000000000001</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+<tr><td>POST</td><td><code>00000000000000000000000000000042/agent-memory/namespaces/support-agent/profiles/customer-42/recall</code></td><td>the broker&#39;s token</td><td>200</td></tr>
+</table></div>
+
+<h2>What this does not show</h2>
+<p><b>The real service.</b> No request went to Cloudflare. The fake answers in the envelope the document gives (<code>success</code>, <code>errors</code>, <code>messages</code>, <code>result</code>), but its recall is a word match, while the document describes Cloudflare's answer as written by a language model, so real answers and their sizes will differ. When this was written, Cloudflare's documentation said Agent Memory is in private beta and listed no price (<a href="https://developers.cloudflare.com/agent-memory/">Agent Memory overview (EXTERNAL · official docs ↗)</a>).</p>
+<p><b>A strong wall.</b> These runs used the WebAssembly provider, whose <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a> is process: an escape from the JavaScript engine would land in plimsoll's own process, where the key is. For hostile code, run behind the docker provider under <a href="../../trainers/glossary.html#gvisor">gVisor (INTERNAL · glossary →)</a> or a virtual-machine provider; the grant and the broker are the same code there.</p>
+<p><b>What goes into memory.</b> The grant decides which routes the code may call; it does not read what the code stores. Code that can write a memory can write anything it has seen, and a later run, or another agent given the same profile, reads it back. Pinning the profile limits who reads it, not what is in it. And a recalled memory is text another run wrote: if a model reads it, it can carry instructions meant to steer the model (<a href="../../trainers/glossary.html#prompt-injection">prompt injection (INTERNAL · glossary →)</a>), which nothing here checks.</p>
+<p><b>A short-lived key.</b> The profile uses a <code>static</code> token, the same key on every run. Where an API can issue short-lived tokens, a profile can name a <a href="../../trainers/glossary.html#mint">minter (INTERNAL · glossary →)</a> that makes one per run, so a key that leaked expires soon after the run; this example does not do that.</p>
+
+<h2>Why Cloudflare's document</h2>
+<p>The example was meant to use whichever memory service publishes an OpenAPI document that may be copied into a public repository. Three were checked on 2026-11-05:</p>
+<div class="scroll"><table>
+<tr><th>service</th><th>document</th><th>through a grant</th></tr>
+<tr><td>Cloudflare Agent Memory</td><td>published in cloudflare/api-schemas, BSD 3-Clause</td><td>used here: a bearer key, and every path is one a grant can hold</td></tr>
+<tr><td>Mem0 Platform</td><td>published at <a href="https://docs.mem0.ai/openapi.json">docs.mem0.ai/openapi.json (EXTERNAL · official docs ↗)</a>, Apache 2.0; the service has a free plan</td><td>not today. Every path ends in <code>/</code> (<code>/v3/memories/add/</code>), which the broker refuses as not canonical, so specgen stops at the first one; and the key goes in <code>Authorization: Token &lt;key&gt;</code>, a form none of the grant's ways of placing a key writes</td></tr>
+<tr><td>Mem0's self-hosted server</td><td>none published: the running server generates its own</td><td>its <code>X-API-Key</code> header is one a grant can set, but there is no published document to generate from</td></tr>
+</table></div>
+
+<h2>Run it yourself</h2>
+<p>From the repository root, with Go installed; nothing here needs docker, an account or the network, except the download in the last command.</p>
+<pre>go run ./examples/memory-grant           # rewrite this page and the generated files beside it
+go run ./examples/memory-grant -check    # write nothing; fail unless they are current
+go test ./examples/memory-grant          # the same run, plus the checks failing when their claim is false
+
+# regenerate the three specgen files by hand, byte for byte the same
+go run ./cmd/plimsoll-specgen -global memory -outdir docs/examples/memory-grant \
+  docs/examples/memory-grant/agent-memory.openapi.json
+
+# cut the extract again from Cloudflare's whole document (about 27 MB)
+mkdir -p tmp && curl -sSLo tmp/cloudflare-openapi.json https://raw.githubusercontent.com/cloudflare/api-schemas/2d7642070d549e2e36be64d7ded20b4ac748f53a/openapi.json
+go run ./examples/memory-grant -extract tmp/cloudflare-openapi.json</pre>
+<p class="small">The full SHA-256 of the upstream file: <code>29f54710427f411f81c6738c735f3586580f089648f20ca05212d94f4f52bdf0</code>; the commit: <code>2d7642070d549e2e36be64d7ded20b4ac748f53a</code>.</p>
+
+<footer>plimsoll is open source under the Apache-2.0 license; the Agent Memory document beside this page is Cloudflare's, under the BSD 3-Clause license. <a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a> · <a href="https://plimsollmark.github.io/plimsoll/trainers/">lessons</a> · <a href="https://github.com/plimsollmark/plimsoll">source (EXTERNAL · source repo ↗)</a></footer>
+</main>
+</body>
+</html>

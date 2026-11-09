@@ -26,6 +26,9 @@ import (
 // providers run real Node (process/fetch/require defined, host FS/network
 // reachable) and rely on an OS/VM boundary (gVisor/microVM) plus a minimally
 // scoped token, NOT on JS-global removal.
+//
+// Not parallel: the secret must sit in this process's own environment, where a guest
+// getenv would read it, so the test sets it (t.Setenv) for its duration.
 func TestWasmDefaultCannotReachHostResources(t *testing.T) {
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret.txt")
@@ -83,6 +86,7 @@ func TestWasmDefaultCannotReachHostResources(t *testing.T) {
 // globals. This is NOT the isolation boundary (see the authoritative test above) —
 // it just confirms the no-grant path does not enable the libc globals.
 func TestWasmDefaultExposesNoStdGlobals(t *testing.T) {
+	t.Parallel()
 	ws := testWasm()
 	res, err := ws.RunJavaScript(context.Background(), Request{Code: `
 		const names = ["std","os","require","process","fetch","Deno","Bun"];

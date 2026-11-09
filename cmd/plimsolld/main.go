@@ -117,8 +117,11 @@ The daemon takes no arguments. Configuration is by environment variable:
                              call (not dispatched) or is named on the audit line
                              alone, by the entry's mode, and a set with a refuse
                              entry refuses a call whose archives pass the scan's
-                             bounds. A malformed set refuses to start. See
-                             docs/ship-scan.md
+                             bounds. With the docker provider, each image it runs
+                             is scanned for the set at startup too (about 12 s for
+                             a 1 GB image), and a refuse-mode entry found in one
+                             refuses to start. A malformed set refuses to start.
+                             See docs/ship-scan.md
 
 `
 
@@ -657,6 +660,17 @@ func main() {
 		svc.Withheld = set
 		slog.Info("withheld set loaded: every call's payload is scanned for it", "set", set.Digest(), "entries", set.Len(),
 			"exempt_callers", set.ExemptCount())
+		// The images too: what is baked into one reaches every sandbox without passing
+		// through a call (scanImages).
+		if d, ok := sb.(*sandbox.DockerSandbox); ok {
+			scanCtx, cancelScan := context.WithTimeout(context.Background(), 10*time.Minute)
+			err := scanImages(scanCtx, d, set)
+			cancelScan()
+			if err != nil {
+				slog.Error("the withheld image scan failed; refusing to serve", "error", err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	if hardened {

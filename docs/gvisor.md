@@ -154,6 +154,24 @@ SANDBOX_DOCKER_RUNTIME=runsc go test ./sandbox -run 'Docker|RunProject' -count=1
   one-file TypeScript project (compile with `tsc`, then run with `node`) took 4.1 s
   against 1.95 s (2.1 times as long). plimsoll's position is that the isolation is worth
   that cost for untrusted code.
+- **Inside the sandbox, process start times and the uptime follow the host's wall
+  clock.** gVisor computes a process's start time (field 22 of `/proc/PID/stat`) as the
+  moment the task started minus the moment the sandbox booted, both read from the
+  realtime clock (the wall clock, which a time service may set), and
+  `/proc/uptime` the same way; Linux counts both from boot on a clock nothing sets
+  (gVisor's `pkg/sentry/kernel/task_start.go` and `timekeeper.go`, Linux's
+  `fs/proc/array.c` and `fs/proc/uptime.c`, read 2026-11-05). So on a host whose clock is
+  stepped (set back or forward at once, as a time service does to a clock
+  it finds far off), a process started after a step reads as having started earlier
+  than it did, possibly before processes that started before it, and the uptime goes
+  back. Measured with release-20260907.0 on a WSL2 host stepped back 1.6 s every 32 s: a
+  process that slept 3 s read an uptime of 3.13 s, and about 1.5 s when a step landed
+  during its sleep. Code in a sandbox that orders processes by start time (a cleanup that
+  kills everything started after itself) can therefore pick the wrong ones. Compare a
+  start time only for equality: the same PID with the same start time is the same
+  process however the clock moved, which is how plimsoll's own cleanup tells its processes
+  apart in a sandbox kept open for many calls. On such a host wall-clock durations jump as well, so plimsoll's
+  runner times each step on the monotonic clock.
 - A successful bundle verification establishes that the files are the pinned release
   and that none is missing. The Docker tests after installation establish how the
   runtime behaves in the cases they exercise; neither check is a third-party security

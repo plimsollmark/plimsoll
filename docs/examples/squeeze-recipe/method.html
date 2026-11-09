@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The scrambled-recipe test: method, statistics and related work</title>
+<meta name="description" content="For readers who know AI: how the scrambled-recipe experiment was designed and preregistered, what its bootstrap intervals can and cannot say at 16, 16 and 8 agents, the threats to validity, and the published work on whether language models follow the plans, hints and word orders they are given.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="The scrambled-recipe test: method, statistics and related work">
+<meta property="og:description" content="For readers who know AI: how the scrambled-recipe experiment was designed and preregistered, what its bootstrap intervals can and cannot say at 16, 16 and 8 agents, the threats to validity, and the published work on whether language models follow the plans, hints and word orders they are given.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/squeeze-recipe/method.html">
+<meta name="twitter:card" content="summary">
+<style>
+:root{color-scheme:light;
+  --ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--line:#e1e0d9;--axis:#c3c2b7;--paper:#fcfcfb;
+  --recipe:#2a78d6;--scrambled:#eb6834;--none:#1baf7a;
+  --good:#0b6b0b;--bad:#a12a2a;--unclear:#7a5200;--link:#0f4a85;--note:#fff7d6;--note-edge:#e9d27a}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.62 system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+a{color:var(--link)}
+main{max-width:1040px;margin:0 auto;padding:22px 20px 90px}
+.prose{max-width:720px;margin-left:auto;margin-right:auto}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 26px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#0f4a85;text-decoration:none}
+h1{font-size:40px;line-height:1.12;letter-spacing:-.6px;margin:10px 0 14px}
+h2{font-size:26px;line-height:1.25;letter-spacing:-.2px;margin:64px 0 10px}
+h2 .num{color:var(--muted);font-weight:500;margin-right:8px}
+h3{font-size:19px;margin:30px 0 6px}
+p{margin:10px 0}
+.lede{font-size:20px;color:#2b2a28;line-height:1.55}
+.kicker{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.analogy{color:#3f3e3a;background:#f4f7fb;border-left:3px solid #9ec5f4;padding:8px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+.tag{display:inline-block;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#8a8a84;background:#f1f0ec;border-radius:4px;padding:0 5px;vertical-align:1px}
+code,.mono{font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:#f3f2ee;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:#f6f5f1;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+figure{margin:26px 0 30px;padding:18px 18px 14px;background:var(--paper);border:1px solid var(--line);border-radius:14px}
+figcaption{font-size:14.5px;color:var(--ink2);margin-top:10px;line-height:1.5}
+.fig-title{font-weight:650;font-size:16px;margin:0 0 4px}
+.fig-sub{font-size:14px;color:var(--ink2);margin:0 0 10px}
+svg{display:block;max-width:100%;height:auto}
+svg text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid #cfcdc4;border-radius:9px;overflow:hidden;background:#fff}
+.seg button{font:inherit;font-size:14px;border:0;background:none;padding:6px 12px;cursor:pointer;color:var(--ink2)}
+.seg button+button{border-left:1px solid #cfcdc4}
+.seg button[aria-pressed="true"]{background:#11233a;color:#fff}
+.btn{font:inherit;font-size:14px;border:1px solid #cfcdc4;background:#fff;border-radius:9px;padding:6px 12px;cursor:pointer}
+.btn:hover{background:#f3f2ee}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:0 0 12px;font-size:14px}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:26px 0}
+.card{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.card h3{margin:0 0 2px;font-size:17px}
+.card .who{font-size:13px;color:var(--muted);margin-bottom:8px}
+.card .big{font-size:32px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.1}
+.card .small{font-size:14px;color:var(--ink2)}
+.card.recipe{border-top:5px solid var(--recipe)}
+.card.scrambled{border-top:5px solid var(--scrambled)}
+.card.none{border-top:5px solid var(--none)}
+.sticky{position:relative;background:var(--note);border:1px solid var(--note-edge);border-radius:4px 4px 14px 4px;padding:14px 16px 10px;box-shadow:0 2px 0 #eadfae,0 10px 22px -16px rgba(80,60,0,.45);font:16px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:0 0 6px}
+.sticky .label{font:600 13px system-ui,-apple-system,"Segoe UI",sans-serif;color:#7a6512;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+.sticky.empty{color:#7a6512;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}
+.primer{border:1px solid #c9dcf2;background:#f4f7fb;border-radius:14px;padding:12px 18px 14px;margin:18px 0 6px}
+.primer dt{font-weight:650;margin-top:10px}
+.primer dd{margin:2px 0 0 0;font-size:15.5px;color:#2b2a28}
+.like{color:#1c5cab}
+.toc{columns:2;column-gap:26px;font-size:15px;margin:18px 0 0;padding-left:20px}
+.toc li{margin:2px 0}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{color:var(--ink2);font-weight:600;font-size:13.5px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.scroll table{min-width:540px}
+.swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:0}
+.strip-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:12px;align-items:center;border-top:1px solid var(--line);padding:6px 0}
+.strip-row:first-of-type{border-top:0}
+.strip-row .lab{font-size:14.5px;line-height:1.4}
+.strip-row .lab b{display:block;font-size:15.5px}
+.axis-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:12px}
+.axis-row .lab{font-size:13px;color:var(--ink2);align-self:start;padding-top:4px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:var(--ink2);margin:10px 0 0}
+.tip{position:absolute;pointer-events:none;background:#11233a;color:#fff;font-size:13px;line-height:1.4;padding:7px 9px;border-radius:8px;max-width:280px;opacity:0;transition:opacity .1s;z-index:5}
+.tipwrap{position:relative}
+.dot{cursor:pointer}
+.dot:focus{outline:none}
+.dot:focus,.dot.on{stroke:#11233a;stroke-width:3}
+.verdicts{display:grid;grid-template-columns:1fr;gap:14px;margin:18px 0}
+.verdict{border:1px solid var(--line);border-left:6px solid #11233a;border-radius:0 14px 14px 0;padding:12px 16px;background:#fff}
+.verdict.good{border-left-color:var(--good);background:#f5fbf5}
+.verdict.bad{border-left-color:var(--bad);background:#fff8f7}
+.verdict.unclear{border-left-color:#d79a00;background:#fffaf0}
+.verdict h3{margin:4px 0 4px;font-size:18px}
+.verdict p{margin:6px 0;font-size:16px}
+.mark{display:inline-block;border-radius:6px;font-size:12.5px;font-weight:700;letter-spacing:.05em;padding:2px 9px}
+.mark.good{background:#e1f2e1;color:var(--good)}
+.mark.bad{background:#fde8e6;color:var(--bad)}
+.mark.unclear{background:#fff1d6;color:var(--unclear)}
+.mark.explore{background:#ece9f7;color:#4a3a8a}
+.outcomes{list-style:none;padding:0;margin:14px 0}
+.outcomes li{border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:8px 0;background:#fff}
+.outcomes li.fired{border:2px solid #11233a;background:#f4f7fb}
+.outcomes .name{font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:15px}
+.pill{display:inline-block;border-radius:999px;font-size:12.5px;font-weight:650;padding:1px 9px;white-space:nowrap;background:#11233a;color:#fff;margin-left:8px;vertical-align:1px}
+.quote{font-size:16px;border-left:3px solid #d8d6ce;padding:2px 0 2px 14px;margin:14px 0;color:#2b2a28}
+.quote .by{display:block;font-size:13px;color:var(--muted);margin-top:4px}
+.quote.recipe{border-left-color:var(--recipe)}
+.quote.scrambled{border-left-color:var(--scrambled)}
+.quote.none{border-left-color:var(--none)}
+.agents{list-style:none;padding:0;margin:10px 0}
+.agents > li{border:1px solid var(--line);border-radius:10px;margin:6px 0;background:#fff}
+.agents > li[hidden]{display:none}
+.agents details summary{cursor:pointer;padding:8px 12px;font-size:14.5px;list-style-position:inside}
+.agents details summary .id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px;font-weight:650}
+.agents details .answer{padding:0 16px 10px;font-size:15px;color:#2b2a28;border-top:1px dashed var(--line)}
+.agents details .answer ul{padding-left:20px;margin:6px 0}
+.agents details .answer p{margin:8px 0}
+.agents .meta{font-size:13px;color:var(--ink2);padding:6px 16px 0}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.tile .who{font-size:13px;color:var(--muted)}
+.tile .big{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.tile .small{font-size:14px;color:var(--ink2)}
+.words dt{font-weight:650;margin-top:12px}
+.words dd{margin:2px 0 0 0;color:#2b2a28}
+.small{font-size:14px;color:var(--ink2)}
+.foot{margin-top:70px;padding-top:18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink2)}
+.callout{border:1px solid #e3d9b6;background:#fffbea;border-radius:14px;padding:12px 18px;margin:18px 0}
+.callout.plan{border-color:#cfd8e8;background:#f4f7fb}
+.callout .kicker{margin-bottom:4px}
+.scale{border:1px solid var(--line);border-radius:14px;padding:12px 18px;margin:18px 0;background:var(--paper)}
+.scale ul{margin:6px 0 0;padding-left:20px}
+.scale li{margin:4px 0}
+.handed{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:14px 0 6px;text-align:center}
+.handed .col{min-width:0}
+.handed .col h4{margin:8px 0 4px;font-size:16px}
+.handed .col .n{font-size:14px;color:var(--ink2)}
+.handed .mini{display:inline-block;width:100%;max-width:230px;text-align:left}
+.handed .mini.sticky{font-size:12.5px;line-height:1.45;padding:10px 12px 8px}
+.handed .mini.sticky .label{font-size:11px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.strips{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.strips .col h4{margin:0 0 8px;font-size:15.5px}
+.strip{display:flex;align-items:baseline;gap:8px;background:var(--note);border:1px solid var(--note-edge);border-radius:3px;padding:5px 10px;margin:5px 0;font:14.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 1px 0 #eadfae}
+.strip.cut{border-style:dashed}
+.badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#11233a;color:#fff;font:700 11.5px system-ui,-apple-system,"Segoe UI",sans-serif;flex:0 0 auto}
+.scrambled-words{background:var(--note);border:1px solid var(--note-edge);border-radius:3px;padding:10px 12px;font:14.5px/2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 1px 0 #eadfae}
+.scrambled-words .w{white-space:nowrap}
+.scrambled-words sup{font:700 10px system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff;background:#11233a;border-radius:50%;display:inline-block;width:15px;height:15px;line-height:15px;text-align:center;vertical-align:super;margin-left:1px}
+.readkey{font-size:13.5px;color:var(--ink2);margin:8px 0 0;padding-left:18px}
+.readkey li{margin:3px 0}
+.cite{font-size:15px;margin:8px 0}
+.cite .who{color:var(--ink2)}
+.ref{margin:12px 0;padding-left:0;list-style:none}
+.ref li{margin:10px 0;font-size:15.5px;line-height:1.55}
+.ref .t{font-weight:600}
+@media (max-width:760px){
+  body{font-size:16px}
+  main{padding:16px 14px 70px}
+  h1{font-size:30px}
+  h2{font-size:22px;margin-top:48px}
+  .lede{font-size:18px}
+  .cards,.notes,.tiles,.handed,.grid2,.strips{grid-template-columns:1fr}
+  .strip-row,.axis-row{grid-template-columns:1fr;gap:2px}
+  .axis-row .lab{order:2}
+  .axis-row svg text{font-size:26px}
+  figure{padding:12px 10px 10px;margin-left:-4px;margin-right:-4px}
+  .toc{columns:1}
+  .sticky{font-size:15px}
+  .handed .mini{max-width:none}
+}
+.head-gap-title{margin:18px 0 2px}
+.dir{position:relative;height:22px;font-size:12.5px;color:var(--ink2)}
+.dir span{position:absolute;top:2px;white-space:nowrap;padding:0 6px}
+
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="index.html">The result, for every reader (INTERNAL · results page →)</a><a href="../squeeze/index.html">The squeeze test (INTERNAL · example →)</a><a href="../../trainers/glossary.html">Glossary (INTERNAL · glossary →)</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<div class="prose">
+<div class="kicker">A plimsoll example · the scrambled-recipe test · for readers who know AI</div>
+<h1>Method, statistics and related work</h1>
+<p class="lede">The results page (<a href="index.html">INTERNAL · results page →</a>) is written for a reader who knows no AI. This page is for one who does: the design as preregistered, the statistics and their limits at these group sizes, the threats to validity, and where the question sits in the published literature. Every number here is computed from the same files as the results page by the same program, and <code>-verify</code> refuses either page if a number drifts.</p>
+
+<ol class="toc">
+<li><a href="#design">The design</a></li>
+<li><a href="#statistics">The statistics, and their limits</a></li>
+<li><a href="#exploratory">An exploratory check: exact permutation tests</a></li>
+<li><a href="#threats">Threats to validity</a></li>
+<li><a href="#related">Related work</a></li>
+<li><a href="#practice">Small preregistered experiments: what the literature asks for</a></li>
+<li><a href="#agents">Every agent, in numbers</a></li>
+<li><a href="#files">Files and verification</a></li>
+</ol>
+
+<h2 id="design"><span class="num">1</span>The design</h2>
+<p><b>Question.</b> Does a fresh coding agent use the plan it is handed? The treatment is a 32-token recipe distilled by a model from an earlier agent's full record of learning this course (the squeeze test's "honest" recipe). The primary control is the same recipe with its words shuffled: lexical content held fixed, structure removed. A second control is no recipe. The job file (<code>examples/squeeze/jobs/recipe-scramble-easy.json</code>) states it this way:</p>
+<p class="quote">Does a fresh agent follow the plan it is handed, or ignore it? Fresh agents on the easy course: from the hackathon&#39;s honest 32-token recipe, from the same recipe with its words shuffled by a fixed seed (the same words, no plan), and from no recipe. Run in two stages: the eight no-recipe agents first; then the recipe and scrambled groups, equal in size, up to the 16 each listed here, sized (-build) from the first stage&#39;s measured cost alone. Every agent has the same tools and the same practice budget (fly calls are limited, and the reason is cost); each controller is graded in sandboxes of its own on the loop&#39;s 16 practice flights and on 64 fresh flights, every run signed. Scores come from the signed grading runs only; agents.json reads each agent&#39;s recipe use, its controller&#39;s code and its answer to the question asked after.</p>
+
+<h3>Arms and sizes</h3>
+<div class="scroll"><table>
+<thead><tr><th>Arm</th><th>What the agent read after the course description</th><th class="n">Agents</th><th>Stage</th></tr></thead>
+<tbody>
+<tr><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe (<code>recipe</code>)</td><td><code>Filter velocity; fast/slow accel disturbance observer; yaw &#43; local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.</code></td><td class="n">16</td><td>recipe</td></tr>
+<tr><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe (<code>scrambled</code>)</td><td><code>filter; accel smooth disturbance &#43; ramp fast/slow lock; local exit abort; gate integrals; predictive pos pad observer; Filter ref cross yaw descent. velocity;</code></td><td class="n">16</td><td>recipe</td></tr>
+<tr><td><span class="swatch" style="background:var(--none)"></span>No recipe (<code>none</code>)</td><td>No recipe: the course, the baseline controller and the tools.</td><td class="n">8</td><td>baseline</td></tr>
+</tbody></table></div>
+<p>The no-recipe arm ran first (8 agents, 12:31 to 12:42 UTC on 2026-11-07) as a ceiling check: had its mean landings reached 90% of the fresh set, the rule would not have read landings, since a course that easy leaves no headroom for a plan to show. It landed 85.5%, so the two recipe arms ran (16 and 16 agents, 12:46 to 13:22 UTC, 4 minutes after the first stage ended), interleaved: rebuilds were started in turn across the two groups, so neither group ran wholly before the other. The recipe arms' size was fixed by the first stage's measured cost alone (the job's <code>-build</code>), never by its score; the job lists 16 as the most each may have, and both reached it.</p>
+
+<h3>What was fixed before the first agent ran</h3>
+<ul>
+<li><b>The sealed set.</b> 64 flights drawn at random (<code>fresh.json</code>, a nonce and 64 32-bit seeds), committed to by SHA-256 <code>d81c7b18c6cf2ade2d4cbab4178a4957b2a0fc78a23ee59db7c16ce5d230819b</code>. Both stages flew exactly this set; <code>-verify</code> recomputes each grading run's part of it from the set and refuses a run holding anything else.</li>
+<li><b>The design document</b>, SHA-256 <code>21e2f11c9c62cab0ce7e63f8b567a2e663f56e3bd9a3c4ef053c02959210f2e5</code>: the job, the system prompt, each arm's brief and after-session question, the tool definitions, the budgets, the request settings, the scrambled recipe and the code checks. Each stage's <code>run.json</code> records this digest; the program recomputes it from the public job file.</li>
+<li><b>The registered rule</b> (<code>experiment.json</code>): two measures per agent, three pairwise differences of means with 95% and 90% percentile bootstrap intervals from resampling agents within arm (10,000 draws, seed 20261106, CPython's <code>random.Random</code>, reproduced in Go), a ceiling rule on the untreated arm (90%), equivalence margins (10% of the fresh set on landings, 1 item on words), and four outcomes tried in order. The date the rule was written is recorded privately, not on these pages; a reader can check the rule's words and its application, not its timestamp.</li>
+<li><b>The scramble.</b> The honest recipe's whitespace-separated words, punctuation attached, Fisher-Yates shuffled by a splitmix64 generator from seed 20261106, written out in <code>job.go</code> so no library's generator is involved. One shuffle, the same for every scrambled agent.</li>
+</ul>
+
+<h3>The two measures, and the one thing asked</h3>
+<ul>
+<li><b>landed</b>: fresh flights landed, of 64: the agent&#39;s final controller graded in sandboxes of its own on the 64 sealed fresh flights, read from the signed grading runs.</li>
+<li><b>words</b>: recipe words named in code: how many of the recipe&#39;s 7 items have a pattern that matches a name (an identifier) in the agent&#39;s final controller, comments removed, that the shared baseline controller does not already hold; a measure of the recipe&#39;s words taken up, not of what the code does.</li>
+<li><b>Asked, not measured.</b> After the last turn, with no tool available, each agent was asked whether and how it followed its recipe (no-recipe agents: what approach it took and why). The answer is recorded and quoted; it enters no score. Separating the agent's account from the measured behavior was a reader's suggestion and is the point of the comparison in the results page's verdict "What the agents say they used, their code does not name".</li>
+</ul>
+
+<h3>The four outcomes, in the order the rule tries them</h3>
+<ul class="outcomes">
+<li class="fired"><span class="name">ORDER SHOWED</span><span class="pill">this run</span><br>recipe minus scrambled has its 95% interval above zero on recipe words named in code, or on landings when they are read: the recipe in its order moved the words the code names, or the landings, beyond the same words shuffled. It does not show the code does what the recipe says.</li>
+<li><span class="name">WORDS ONLY</span><br>not that, but recipe minus none and scrambled minus none both have their 95% intervals above zero on recipe words named in code: the agents took up the words, and the order they came in did not show.</li>
+<li><span class="name">NO RECIPE EFFECT SEEN</span><br>recipe minus scrambled has its 90% interval inside the margin (1 item of words; 10 points of landings, when read), and so does recipe minus none on words: the recipe moved nothing these two measures can see.</li>
+<li><span class="name">INCONCLUSIVE</span><br>anything else.</li>
+</ul>
+
+<h3>Equal affordances</h3>
+<p>Every arm had the same model (<code>claude-sonnet-5-5</code>, Messages API, effort <code>medium</code>, at most 16,000 output tokens a turn, a 150,000-token prompt cap), the same system prompt, the same baseline controller, the same three tools, and the same budget: 30 turns and 20 <code>fly</code> calls of up to 8 new random flights, plus the course's 4 smoke flights. The simulator was never in an agent's sandbox: <code>fly</code> ran the agent's <code>controller.js</code> in a separate sandbox and returned per-flight results only, so an agent could practice but not read the generator or the sealed seeds. The brief's tail for each arm:</p>
+<pre>A builder before you worked on exactly this task for a long time. Everything it learned was compressed into this recipe, which is all you get from it:
+
+    Filter velocity; fast/slow accel disturbance observer; yaw &#43; local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.
+
+Build controller.js following the recipe. You may fly the smoke flights and any new flights you choose; you will not see the flights you are graded on. Leave your best version in controller.js, and end your reply with one line: SMOKE=&lt;passed&gt;/4.</pre>
+<pre>Build the best one you can in controller.js. You may fly the smoke flights and any new flights you choose; you will not see the flights you are graded on. Leave your best version in controller.js, and end your reply with one line: SMOKE=&lt;passed&gt;/4.</pre>
+<p>The system prompt, the same for every agent:</p>
+<pre>You are building a flight controller in a Linux sandbox. You have three tools. write_file writes a file into your work directory. run_code runs JavaScript or Python in your sandbox; files persist between calls. fly flies controller.js from your work directory in a separate sandbox that holds the simulator and answers with each flight&#39;s result; it flies controller.js only as your last write_file of it left it, so write controller.js with write_file. Read API.md first. Build, fly, read the results, fix, and fly again.</pre>
+
+<h2 id="statistics"><span class="num">2</span>The statistics, and their limits</h2>
+<p><b>Unit of analysis.</b> The agent. Each agent's score is the fraction of the 64 sealed flights its final controller landed; the 64 flights of one controller are not independent trials (they share the controller), so the rule resamples agents, not flights. With 16, 16 and 8 agents the effective sample is small, and everything below follows from that.</p>
+<p><b>The intervals.</b> Percentile bootstrap: for a pair, draw each arm's agents with replacement (10,000 times), recompute the difference of means, and take the 2.5th and 97.5th percentiles (95%) or the 5th and 95th (90%). Known limits at these sizes: the percentile interval tends to be too narrow in small samples, so its nominal 95% is optimistic (Hesterberg, below); the bootstrap distribution of a mean of 8 values has few distinct resamples; and landings are bounded above (several agents sit at 60 of 64), so the arm distributions are skewed toward the ceiling. The result page's reading "wholly above zero" is therefore a little less than a 95% claim, and the registered rule was written knowing a run this small could only show a large effect.</p>
+<p><b>What the primary pair shows.</b> Recipe minus scrambled on landings: &#43;7.7 points, 95% interval &#43;2.8 to &#43;12.6, 90% interval &#43;3.6 to &#43;11.8. The interval's width, about 10 points, is the run's resolution: a true effect of a few points could not have shown. On recipe words named in code the pair's difference is 0 with interval 0 to 0: every agent in both arms scored 0, so the bootstrap has nothing to resample and the interval is degenerate, which is the "too little variety" failure of the bootstrap, not evidence of a tight estimate.</p>
+<p><b>The secondary pairs.</b> Recipe minus none &#43;2.4 points (95% -1.5 to &#43;6.4); scrambled minus none -5.3 points (95% -11.0 to &#43;0.6; 90% -10.2 to -0.4). Both hold zero at 95%. The rule names them "others": they are read, not decided on, and the results page labels the reading that the scrambled words hurt more than the recipe helped as the author's, not the rule's.</p>
+<p><b>Equivalence and the 90% interval.</b> The outcome NO RECIPE EFFECT SEEN is a two one-sided tests reading: a difference whose 90% interval lies inside the margin (10% on landings, 1 item on words) is declared too small to matter. The 90% interval is the standard choice for a 5% equivalence test. It did not fire here.</p>
+<p><b>Multiplicity.</b> Three pairs and two measures give six intervals, but the rule orders its outcomes so that one comparison decides ORDER SHOWED (the primary pair, on words, or on landings when read), and the ceiling rule chose the measure before any interval was computed. No correction is applied to the secondary pairs, and none is claimed; they are descriptive.</p>
+<p><b>Why the per-arm means carry no interval.</b> An earlier draft showed each arm's mean with its own bootstrap interval. They were removed: the rule puts its intervals on differences, a lone arm's interval invites the reader to compare intervals by eye (which is not a test of the difference), and with 8 agents such an interval is especially unreliable.</p>
+
+<h2 id="exploratory"><span class="num">3</span>An exploratory check: exact permutation tests</h2>
+<p><span class="mark explore">EXPLORATORY</span> The registered rule used bootstrap intervals and nothing else. The tests below were not registered and decide nothing; they are here because a reader who knows the percentile bootstrap's small-sample habits will ask what a method with no resampling assumption says about the same data. They are reported in full so that they can be read as a check on the registered reading, not as a second result.</p>
+<p>For each pair, the exact permutation (shuffle) test of the difference in mean fresh flights landed: of every way to deal the pooled agents of the two arms into two groups of the observed sizes, the share whose difference of means is at least as far from zero as the observed one (two-sided). Scores are whole flights of the same total, so the count is exact, by a dynamic program over subset size and summed landings; nothing is sampled. The null hypothesis is exchangeability: that the arm labels carry no information.</p>
+<div class="scroll"><table id="perm-table">
+<thead><tr><th>Pair</th><th class="n">Sizes</th><th class="n">Observed difference</th><th class="n">Deals at least as extreme</th><th class="n">Of all deals</th><th class="n">Two-sided p</th></tr></thead>
+<tbody>
+<tr><td>recipe minus scrambled</td><td class="n">16 vs 16</td><td class="n">&#43;4.9 flights of 64</td><td class="n">4,324,694</td><td class="n">601,080,390</td><td class="n">0.007</td></tr>
+<tr><td>recipe minus none</td><td class="n">16 vs 8</td><td class="n">&#43;1.6 flights of 64</td><td class="n">171,994</td><td class="n">735,471</td><td class="n">0.234</td></tr>
+<tr><td>scrambled minus none</td><td class="n">16 vs 8</td><td class="n">-3.4 flights of 64</td><td class="n">131,350</td><td class="n">735,471</td><td class="n">0.179</td></tr>
+</tbody></table></div>
+<p>Read beside the registered result: the primary pair's permutation p of 0.007 is on the same side of the conventional line as the bootstrap interval that excludes zero, so the registered reading does not rest on the bootstrap's small-sample optimism alone. The two secondary pairs' values (0.234 and 0.179) sit where their bootstrap intervals, which hold zero, put them. These numbers were computed after the result was known, from the published scores, and should be weighed as such.</p>
+
+<h2 id="threats"><span class="num">4</span>Threats to validity</h2>
+<ul>
+<li><b>The control cannot separate "followed the plan's content" from "garbled text cost something".</b> The scrambled recipe is nonsense an agent must still read and decide about. The honest order's win is consistent with agents using the plan, and equally with a coherent note costing nothing while an incoherent one costs time or seeds a worse first idea. The natural follow-up is a coherent but wrong control: the harder course's recipe, the same seven items kept whole and reordered, or a plausible recipe for a different task. If the honest recipe still wins, the content mattered. That is a proposal, not something done here.</li>
+<li><b>Ceiling.</b> The untreated arm landed 85.5%, under the 90% rule but close to it. Headroom for a plan to help was about 14 points; the test is more sensitive to a plan that hurts than to one that helps.</li>
+<li><b>The words measure is a lexical proxy.</b> "Recipe words named in code" counts identifier patterns, comments removed, baseline identifiers excluded. It has false negatives (a filter named <code>fv</code> is a filter) and the registered outcomes say so. A measure of what the code does (unit tests on the controller's behavior, or an instrumented simulator) was not available; its absence is why the words measure decided nothing here and why the rule reads landings first when it may.</li>
+<li><b>Two stages, 4 minutes apart.</b> The untreated arm ran before the two treated arms, with the same model id and sealed set. A hosted model can change between calls; host load differed; the grading's median wall time was 8.6 s in stage 1 and 8.5 s in stage 2. The primary pair ran within one stage, interleaved, and is not exposed to this; the secondary pairs are.</li>
+<li><b>The baseline does most of the work.</b> Every agent started from a working controller. The agents' own accounts say they patched it and stopped when the smoke flights passed; a recipe competes with "the baseline already flies" for the agent's attention. A weaker baseline or a harder course would raise the value of a plan, at the cost of comparability with the squeeze test.</li>
+<li><b>Self-report is unsigned and post hoc.</b> The after-session answers are the model's text, recorded by the harness outside plimsoll. They are tied to the graded controller by its SHA-256 but are not evidence of what the code does, and the literature below gives reasons to expect them to be unfaithful.</li>
+<li><b>One model, one course, one recipe, one shuffle.</b> A single fixed shuffle means the scrambled arm's result is a property of that permutation, not of shuffling in general; a word order that happened to read almost sensibly, or one that put a misleading phrase first, would move the result. Nothing here generalizes to another model or a harder course.</li>
+<li><b>Practice budget.</b> 20 fly calls of 8 flights is a cost-driven limit. Three of the 40 agents (<code>easy.recipe.12</code>, honest recipe, <code>easy.scrambled.8</code>, scrambled recipe, <code>easy.scrambled.12</code>, scrambled recipe) used every call; the other 37 used fewer. An agent that would have followed the plan given more iterations is indistinguishable here from one that would not.</li>
+<li><b>Sizes were set by cost.</b> The treated arms' size came from stage 1's spend, not from a power analysis; the intervals above are the honest statement of what the run could resolve.</li>
+</ul>
+
+<h2 id="related"><span class="num">5</span>Related work</h2>
+<p>Each source below was opened and its abstract read before it was cited; the one-line summaries are of the abstracts, and a reader should go to the paper for the detail. The question this experiment asks sits at the meeting of four literatures.</p>
+
+<h3>Do agents execute the plans they declare or are given?</h3>
+<ul class="ref">
+<li><span class="t">Oota, Herrera, Cabot Sagrera, López de Prado and Khan (2026), "Do LLM Agents Execute the Plans They Declare? From Planning-Mode Declaration to Pattern-Specific Execution"</span> (<a href="https://arxiv.org/abs/2609.38108">EXTERNAL · paper ↗</a>). The abstract reports that under a generic plan-then-act executor only 22% to 45% of trajectories across three benchmarks preserved the planning structure the model had declared, and that executors built to enforce a pattern do enforce it ("pattern-specific executors enforce the intended structure"). The closest published cousin of this experiment's question: here the plan was handed to the agent rather than declared by it, and the agents' accounts of partial use are the same gap between stated and executed plan.</li>
+<li><span class="t">Valmeekam, Marquez, Olmo, Sreedharan and Kambhampati (2022, revised 2023), "PlanBench: An Extensible Benchmark for Evaluating Large Language Models on Planning and Reasoning about Change"</span> (<a href="https://arxiv.org/abs/2206.10498">EXTERNAL · paper ↗</a>). A benchmark drawn from automated-planning domains on which, per its abstract, "LLM performance falls quite short" at plan generation. Relevant as the other side of the coin: this experiment did not ask the agents to plan, it handed them one, and asked whether it was used.</li>
+<li><span class="t">Zhou, Lu, Mishra, Brahma, Basu, Luan, Zhou and Hou (2023), "Instruction-Following Evaluation for Large Language Models"</span> (<a href="https://arxiv.org/abs/2311.07911">EXTERNAL · paper ↗</a>). IFEval scores instruction following with "verifiable instructions", checked by code rather than by a judge. The principle this experiment borrows: whether a plan was followed is read from the artifact by code, never from the model's own account.</li>
+</ul>
+
+<h3>Is the model's account of what it used faithful?</h3>
+<ul class="ref">
+<li><span class="t">Turpin, Michael, Perez and Bowman (2023), "Language Models Don't Always Say What They Think: Unfaithful Explanations in Chain-of-Thought Prompting"</span> (<a href="https://arxiv.org/abs/2305.04388">EXTERNAL · paper ↗</a>). Biasing features in a prompt (such as the order of answer options) shift a model's answers while its step-by-step explanation never mentions them; explanations can "systematically misrepresent the true reason for a model's prediction". The direct reason this page treats the agents' after-session answers as text to be quoted, not as evidence.</li>
+<li><span class="t">Lanham and others (2023), "Measuring Faithfulness in Chain-of-Thought Reasoning"</span> (<a href="https://arxiv.org/abs/2307.13702">EXTERNAL · paper ↗</a>). Perturbs a model's stated reasoning and measures whether its answer moves; finds reliance on stated reasoning varies widely by task and that larger models tend to produce less faithful reasoning on most tasks.</li>
+<li><span class="t">Chen and others (2025), "Reasoning Models Don't Always Say What They Think"</span> (<a href="https://arxiv.org/abs/2505.05410">EXTERNAL · paper ↗</a>). Inserts hints into prompts and checks whether the model's reasoning acknowledges using a hint it used; the abstract reports reveal rates "often below 20%". The nearest published analogue to "did the agent say it used the recipe": here every honest-recipe agent volunteered partial use, which is the opposite failure and still not a measurement.</li>
+</ul>
+
+<h3>How much does word order matter to a language model?</h3>
+<ul class="ref">
+<li><span class="t">Sinha, Jia, Hupkes, Pineau, Williams and Kiela (2021), "Masked Language Modeling and the Distributional Hypothesis: Order Word Matters Pre-training for Little"</span> (<a href="https://arxiv.org/abs/2104.06644">EXTERNAL · paper ↗</a>). Models pretrained on word-shuffled text still do well on many downstream tasks, which the authors attribute to "higher-order word co-occurrence statistics". A reason to have expected the scrambled recipe to carry much of the honest one's value: the words alone carry a lot.</li>
+<li><span class="t">Pham, Bui, Mai and Nguyen (2020, revised 2021), "Out of Order: How Important Is The Sequential Order of Words in a Sentence in Natural Language Understanding Tasks?"</span> (<a href="https://arxiv.org/abs/2012.15180">EXTERNAL · paper ↗</a>). Shuffling input words often leaves a classifier's predictions unchanged on GLUE tasks; the models lean on "superficial cues". Same expectation, from the input side. Against both, the agents here did worse with the shuffled recipe, which is why the garbled-text explanation above has to be taken seriously: an agent is not a classifier, and it must act on what it reads.</li>
+<li><span class="t">Lu, Bartolo, Moore, Riedel and Stenetorp (2021; ACL 2022), "Fantastically Ordered Prompts and Where to Find Them: Overcoming Few-Shot Prompt Order Sensitivity"</span> (<a href="https://arxiv.org/abs/2104.08786">EXTERNAL · paper ↗</a>). The order of a prompt's examples can swing a model between near state-of-the-art and near chance. Order sensitivity at the prompt level, with the same content, is established; this experiment is a small instance of it inside an agent loop.</li>
+<li><span class="t">Sclar, Choi, Tsvetkov and Suhr (2023; ICLR 2024), "Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design"</span> (<a href="https://arxiv.org/abs/2310.11324">EXTERNAL · paper ↗</a>). Models are "extremely sensitive to subtle changes in prompt formatting"; the authors argue for reporting a range over plausible formats rather than one number. A single fixed shuffle, as here, is one point of such a range.</li>
+</ul>
+
+<h3>Where the design's choices came from</h3>
+<p>Three suggestions from a reader who builds AI red-team agents shaped the design: score by what changed in the sandbox, never by what the agent says it did (so landings come from signed grading runs, the words measure from the code, and the agents' accounts are kept apart); scramble the plan and see whether the agent's actions change (the primary comparison); and ask whether hiding the simulator would send agents hunting for another shortcut (the simulator never entered an agent's sandbox, and each controller was checked for a random number generator and for the simulator's own generator constant: 0, 0 and 0 controllers carried a generator and 0, 0 and 0 the constant, by arm).</p>
+
+<h2 id="practice"><span class="num">6</span>Small preregistered experiments: what the literature asks for</h2>
+<ul class="ref">
+<li><span class="t">Nosek, Ebersole, DeHaven and Mellor (2018), "The preregistration revolution", PNAS</span> (<a href="https://www.pnas.org/doi/10.1073/pnas.1708274114">EXTERNAL · paper ↗</a>). Preregistration separates generating a hypothesis from testing it, against "hindsight bias" and the temptation to read a result in whatever way fits. This experiment's rule, measures, pairs, resampling and margins were fixed in <code>experiment.json</code> before the first agent ran; its exploratory section is labeled as such; what it could not do, prove its own timestamp to a reader, is stated.</li>
+<li><span class="t">Miller (2024), "Adding Error Bars to Evals: A Statistical Approach to Language Model Evaluations"</span> (<a href="https://arxiv.org/abs/2411.00640">EXTERNAL · paper ↗</a>). Treats a model evaluation as an experiment: report intervals, choose the unit of analysis, compare models with paired designs where possible, and plan the run to reduce noise. Here the unit is the agent and the comparisons are unpaired across arms, which is the main source of width in the intervals.</li>
+<li><span class="t">Agarwal, Schwarzer, Castro, Courville and Bellemare (2021), "Deep Reinforcement Learning at the Edge of the Statistical Precipice"</span> (<a href="https://arxiv.org/abs/2108.13264">EXTERNAL · paper ↗</a>). With few runs, point estimates can mislead and "reliable evaluation in the few run deep RL regime cannot ignore the uncertainty in results"; the authors recommend interval estimates and robust aggregates. The few-run regime is exactly where 16, 16 and 8 agents sit.</li>
+<li><span class="t">Hesterberg (2014), "What Teachers Should Know about the Bootstrap: Resampling in the Undergraduate Statistics Curriculum"</span> (<a href="https://arxiv.org/abs/1411.5279">EXTERNAL · paper ↗</a>). The percentile bootstrap interval "badly under-covers in small samples"; better intervals exist. The reason this page states the intervals' optimism and adds the exploratory permutation check rather than leaning on the percentile interval alone. A next run would do well to register a bootstrap-t or BCa interval, or an exact test, in the rule itself.</li>
+</ul>
+
+<h2 id="agents"><span class="num">7</span>Every agent, in numbers</h2>
+<p>From <code>evidence.json</code>: each agent's fresh and practice landings from its signed grading runs, and its session's turns and <code>fly</code> calls from the harness's record. Sorted as built.</p>
+<div class="scroll"><table id="agents-table">
+<thead><tr><th>Agent</th><th>Arm</th><th class="n">Fresh landed, of 64</th><th class="n">Practice, of 16</th><th class="n">Turns</th><th class="n">fly calls</th><th class="n">Practice flights flown</th><th>Quoted its recipe</th><th>Recipe words named in code</th><th>Said "only partly"</th></tr></thead>
+<tbody>
+<tr><td><code>easy.none.0</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">52</td><td class="n">13</td><td class="n">10</td><td class="n">6</td><td class="n">26</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.1</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">58</td><td class="n">15</td><td class="n">13</td><td class="n">8</td><td class="n">30</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.2</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">58</td><td class="n">16</td><td class="n">13</td><td class="n">6</td><td class="n">28</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.3</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">51</td><td class="n">11</td><td class="n">8</td><td class="n">4</td><td class="n">20</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.4</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">54</td><td class="n">13</td><td class="n">13</td><td class="n">9</td><td class="n">48</td><td>no</td><td>1</td><td>n/a</td></tr>
+<tr><td><code>easy.none.5</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">59</td><td class="n">14</td><td class="n">22</td><td class="n">11</td><td class="n">43</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.6</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">50</td><td class="n">14</td><td class="n">14</td><td class="n">7</td><td class="n">32</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.none.7</code></td><td><span class="swatch" style="background:var(--none)"></span>No recipe</td><td class="n">56</td><td class="n">15</td><td class="n">12</td><td class="n">10</td><td class="n">48</td><td>no</td><td>0</td><td>n/a</td></tr>
+<tr><td><code>easy.recipe.0</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">57</td><td class="n">15</td><td class="n">5</td><td class="n">2</td><td class="n">12</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.1</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">15</td><td class="n">8</td><td class="n">3</td><td class="n">16</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.2</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">59</td><td class="n">16</td><td class="n">16</td><td class="n">7</td><td class="n">32</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.3</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">15</td><td class="n">9</td><td class="n">5</td><td class="n">25</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.4</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">54</td><td class="n">15</td><td class="n">12</td><td class="n">4</td><td class="n">20</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.5</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">54</td><td class="n">11</td><td class="n">5</td><td class="n">2</td><td class="n">12</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.6</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">54</td><td class="n">15</td><td class="n">6</td><td class="n">2</td><td class="n">8</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.7</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">15</td><td class="n">16</td><td class="n">5</td><td class="n">24</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.8</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">55</td><td class="n">10</td><td class="n">12</td><td class="n">8</td><td class="n">44</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.9</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">55</td><td class="n">16</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.10</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">13</td><td class="n">9</td><td class="n">6</td><td class="n">29</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.11</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">15</td><td class="n">11</td><td class="n">4</td><td class="n">18</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.12</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">51</td><td class="n">13</td><td class="n">30</td><td class="n">20</td><td class="n">88</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.13</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">58</td><td class="n">16</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.14</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">60</td><td class="n">16</td><td class="n">6</td><td class="n">2</td><td class="n">12</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.recipe.15</code></td><td><span class="swatch" style="background:var(--recipe)"></span>Honest recipe</td><td class="n">54</td><td class="n">16</td><td class="n">5</td><td class="n">2</td><td class="n">12</td><td>yes</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.0</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">60</td><td class="n">12</td><td class="n">16</td><td class="n">9</td><td class="n">40</td><td>yes</td><td>0</td><td>no</td></tr>
+<tr><td><code>easy.scrambled.1</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">55</td><td class="n">14</td><td class="n">5</td><td class="n">1</td><td class="n">4</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.2</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">47</td><td class="n">14</td><td class="n">15</td><td class="n">6</td><td class="n">24</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.3</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">56</td><td class="n">16</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.4</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">44</td><td class="n">12</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.5</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">45</td><td class="n">9</td><td class="n">10</td><td class="n">5</td><td class="n">24</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.6</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">45</td><td class="n">10</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>no</td><td>0</td><td>no</td></tr>
+<tr><td><code>easy.scrambled.7</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">53</td><td class="n">11</td><td class="n">10</td><td class="n">5</td><td class="n">28</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.8</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">46</td><td class="n">11</td><td class="n">30</td><td class="n">20</td><td class="n">96</td><td>no</td><td>0</td><td>no</td></tr>
+<tr><td><code>easy.scrambled.9</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">60</td><td class="n">16</td><td class="n">15</td><td class="n">10</td><td class="n">52</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.10</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">50</td><td class="n">10</td><td class="n">9</td><td class="n">4</td><td class="n">16</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.11</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">45</td><td class="n">12</td><td class="n">6</td><td class="n">2</td><td class="n">8</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.12</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">59</td><td class="n">14</td><td class="n">26</td><td class="n">20</td><td class="n">92</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.13</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">53</td><td class="n">15</td><td class="n">4</td><td class="n">1</td><td class="n">4</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.14</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">45</td><td class="n">12</td><td class="n">11</td><td class="n">4</td><td class="n">16</td><td>no</td><td>0</td><td>yes</td></tr>
+<tr><td><code>easy.scrambled.15</code></td><td><span class="swatch" style="background:var(--scrambled)"></span>Scrambled recipe</td><td class="n">59</td><td class="n">14</td><td class="n">6</td><td class="n">3</td><td class="n">16</td><td>no</td><td>0</td><td>no</td></tr>
+</tbody></table></div>
+
+<h2 id="files"><span class="num">8</span>Files and verification</h2>
+<p>Beside this page: <code>experiment.json</code> (stages in order, the registered rule, list prices), <code>evidence.json</code> (every number both pages state, including each agent's per-flight bits), and under <code>stages/baseline/</code> and <code>stages/recipe/</code> each stage's <code>bundle.jsonl.gz</code>, <code>harness.pub</code>, <code>fresh.json</code>, <code>run.json</code>, <code>transcripts.jsonl.gz</code>, <code>evidence.json</code> and <code>agents.json</code>. <code>run.json</code>'s <code>model_base</code> (<code>http://127.0.0.1:37749</code> and <code>http://127.0.0.1:42949</code>, one a stage) is a local relay on the experimenter's machine that enforced the spending cap and forwarded each call to the model's provider; the model itself ran on its maker's servers. From a clone of the repository:</p>
+<pre>go run ./examples/squeeze -job examples/squeeze/jobs/recipe-scramble-easy.json -staged -verify -out docs/examples/squeeze-recipe</pre>
+<p>That checks every signature in both bundles, every record against its stored request and answer, the leak scans, that every grading run held the sealed set the run committed to, that both stages were made under the design the program writes, that each agent's record follows from its transcript and signed grading runs (the transcript's controller text must hash to the graded controller; its system and user prompts must be the design's for its arm), and that <code>evidence.json</code>, the results page and this page are byte for byte what those files render. The bootstrap intervals, the rule's outcome and the permutation counts are computed again, not read. It starts no sandbox and calls no model.</p>
+<p>The cost of the run, $6.25 over 478 model calls at list prices, is stated on the results page with its breakdown.</p>
+
+<div class="foot">
+<p>Sources are linked where cited. The results page for every reader: <a href="index.html">INTERNAL · results page →</a>. The harness, <code>examples/squeeze</code> (<a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">EXTERNAL · source repo ↗</a>).</p>
+<p>This page is written by <code>examples/squeeze -staged</code> from the files beside it; <code>-verify</code> checks that it still is.</p>
+</div>
+</div>
+</main>
+</body>
+</html>

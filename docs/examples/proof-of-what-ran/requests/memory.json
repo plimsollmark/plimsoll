@@ -1,0 +1,6 @@
+{
+  "protocol": 5,
+  "javascript": {
+    "code": "var piles = [];\ntry {\n  for (;;) piles.push(new Array(1e6).fill(7));\n} catch (e) {\n  console.log(\"kept \" + piles.length + \" piles of a million numbers, then: \" + e);\n}\n"
+  }
+}

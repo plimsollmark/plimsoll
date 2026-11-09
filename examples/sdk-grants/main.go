@@ -22,6 +22,11 @@
 //	go run ./examples/sdk-grants -verify   # recheck the published files; starts nothing
 //	go run ./examples/sdk-grants -render   # rewrite the page from evidence.json
 //	go run ./examples/sdk-grants -derive   # rebuild evidence.json and the page from the published raw files
+//
+// -live is the same libraries against the real APIs, and it spends: a few calls, each with a
+// hard token limit, which the program refuses to start if they could pass $0.25 at list price.
+// It needs NEBIUS_API_KEY and ANTHROPIC_API_KEY in its environment, hands them to the daemon
+// alone, and writes docs/examples/sdk-grants/live/ only if every check holds. No test or gate runs it.
 package main
 
 import (
@@ -41,10 +46,20 @@ func main() {
 	verify := flag.Bool("verify", false, "recheck the published files and write nothing")
 	render := flag.Bool("render", false, "rewrite index.html from the published evidence.json; start nothing")
 	rederive := flag.Bool("derive", false, "rebuild evidence.json and index.html from the published raw files (the bundle, the statement, the stub's log, the profiles); start nothing")
+	live := flag.Bool("live", false, "call the real APIs (spends, at most about a hundredth of a cent; needs NEBIUS_API_KEY and ANTHROPIC_API_KEY); see the package comment")
+	workspace := flag.String("anthropic-workspace", "", "with -live: the anthropic-workspace-id header, for an Anthropic key not scoped to one workspace")
 	flag.Parse()
 
 	var err error
 	switch {
+	case *live:
+		var c config
+		if c, err = newConfig(*out, *work, *build); err == nil {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			err = runLive(ctx, liveConfig{repo: c.repo, work: filepath.Join(c.work, "live"), out: c.out, build: c.build,
+				apis: realAPIs, upstream: "real", workspace: *workspace, console: os.Stdout})
+		}
 	case *rederive:
 		var c config
 		if c, err = newConfig(*out, *work, false); err == nil {

@@ -101,3 +101,24 @@ that `onChatSuspend` closed the sandbox. The test builds the agent with a 3-seco
 (`codeChatAgent({ idleTimeoutInSeconds: 3 })`) instead of Trigger.dev's default 30, so
 that wait is real time but short. The harness does not
 run task-level `onComplete`, so that hook is not exercised.
+
+## Development dependencies
+
+The command-line tool overrides esbuild (the JavaScript builder) to 0.25.12 and
+Zod (input validation) to 4.6.6 or newer within version 4, because its own ranges
+still select versions with published security advisories. Prisma's configuration
+loader stays at the previously locked 6.12.0, within the build tool's declared
+`^6.10.0` range: newer version 6.19.3 adds an affected `deepmerge-ts` dependency.
+
+**Known development-only warning:** npm audit still reports minimatch, the file-name
+pattern matcher, and its parent command-line tool. The advisory requires
+`optimizationLevel >= 2`; Trigger.dev 4.8.3 calls `makeRe(externalName)` with the
+default level 1. The reported failure mode is not enabled by that call. Forcing
+minimatch 11 is incompatible: it removes `makeRe` and prevents the command-line
+tool from starting. Keep the supported version until Trigger.dev updates that call,
+and review these overrides when upgrading the tool. The sandbox daemon does not
+load these packages.
+
+Sources: [minimatch's affected mode (EXTERNAL · security advisory ↗)](https://github.com/advisories/GHSA-g3hv-75wg-m249),
+[Zod fix (EXTERNAL · security advisory ↗)](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5),
+[recursive-object merge issue (EXTERNAL · security advisory ↗)](https://github.com/advisories/GHSA-ggr8-5vv4-36mx).

@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -337,5 +339,93 @@ def score(trajectory, target):
 	}
 	if _, err := run([]string{"build", "-mode", "refuse", "-source", filepath.Join(dir, "harness", "tiny.py")}, io.Discard, io.Discard); err == nil {
 		t.Error("a set from a file of no distinctive line was built")
+	}
+}
+
+// imageArchive is an image as docker save writes it: one layer holding files, then the
+// configuration.
+func imageArchive(t *testing.T, path string, files map[string]string, config string) {
+	t.Helper()
+	var layer bytes.Buffer
+	lw := tar.NewWriter(&layer)
+	for _, name := range []string{"app/main.py", "usr/src/harness/sim.py", "opt/data.xz"} {
+		content, ok := files[name]
+		if !ok {
+			continue
+		}
+		if err := lw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := lw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	ow := tar.NewWriter(&out)
+	for _, m := range [][2]string{{"blobs/sha256/layer", layer.String()}, {"blobs/sha256/config", config}} {
+		if err := ow.WriteHeader(&tar.Header{Name: m[0], Mode: 0o644, Size: int64(len(m[1])), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ow.Write([]byte(m[1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ow.Close(); err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, out.String())
+}
+
+// scan-image over a saved archive: the harness baked into an image is found in its layer,
+// a seed in the image's environment too; an image holding neither is clean, and one
+// holding only an xz stream it cannot read exits 3 and says which file.
+func TestScanImageFindsWhatAnImageCarries(t *testing.T) {
+	dir := t.TempDir()
+	sim := "import numpy as np\n\ndef step(state, u, dt):\n    return state + dt * (u - 0.3 * state)\n"
+	write(t, filepath.Join(dir, "harness", "sim.py"), sim)
+	write(t, filepath.Join(dir, "seeds.txt"), "731904\n")
+	var set bytes.Buffer
+	if code, err := run([]string{"build", "-mode", "refuse", "-file", filepath.Join(dir, "harness"), "-values", filepath.Join(dir, "seeds.txt")}, &set, io.Discard); err != nil || code != 0 {
+		t.Fatalf("build: %d, %v", code, err)
+	}
+	setPath := filepath.Join(dir, "set.json")
+	write(t, setPath, set.String())
+	scanOf := func(files map[string]string, config string) (int, string) {
+		t.Helper()
+		img := filepath.Join(t.TempDir(), "image.tar")
+		imageArchive(t, img, files, config)
+		var out bytes.Buffer
+		code, err := run([]string{"scan-image", "-set", setPath, "-archive", img}, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("scan-image: %v", err)
+		}
+		return code, out.String()
+	}
+
+	code, out := scanOf(map[string]string{"app/main.py": "print(1)\n", "usr/src/harness/sim.py": sim}, `{"config":{"Env":["SEED=731904"]}}`)
+	if code != 1 || !strings.Contains(out, "harness/sim.py (refuse): blobs/sha256/layer:usr/src/harness/sim.py") ||
+		!strings.Contains(out, "seeds.txt:1 (refuse): blobs/sha256/config") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out = scanOf(map[string]string{"app/main.py": "print(1)\n"}, `{"config":{"Env":["PATH=/usr/bin"]}}`)
+	if code != 0 || !strings.Contains(out, "clean: 2 files in 1 layers of archive ") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// An xz stream header: the magic, the stream flags and their CRC-32.
+	flags := []byte{0x00, 0x04}
+	xz := append([]byte("\xfd7zXZ\x00"), flags...)
+	xz = binary.LittleEndian.AppendUint32(xz, crc32.ChecksumIEEE(flags))
+	code, out = scanOf(map[string]string{"opt/data.xz": string(xz) + "the rest of the stream"}, `{}`)
+	if code != 3 || !strings.Contains(out, "incomplete: blobs/sha256/layer:opt/data.xz: an xz stream") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+
+	for _, args := range [][]string{{"scan-image", "-set", setPath}, {"scan-image", "-archive", "x"}, {"scan-image", "-set", setPath, "-archive", "x", "img"}} {
+		if code, err := run(args, io.Discard, io.Discard); code != 2 || err == nil {
+			t.Fatalf("%v: exit %d, %v; want a usage error", args, code, err)
+		}
 	}
 }

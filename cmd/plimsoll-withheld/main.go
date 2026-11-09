@@ -1,7 +1,8 @@
 // Command plimsoll-withheld builds a withheld set for plimsolld's ship scan
 // (PLIMSOLL_WITHHELD_FILE) from the files and values that must never enter a sandbox,
-// and scans a directory against a set offline. It writes digests, never a value, and
-// never contacts a daemon. docs/ship-scan.md is the operator's account.
+// and scans a directory, or a container image, against a set offline. It writes digests,
+// never a value, and never contacts a plimsoll daemon. docs/ship-scan.md is the
+// operator's account.
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -57,6 +59,31 @@ const usage = `Usage:
       bounds (the daemon refuses such a call when the set has a refuse entry). Exit
       status 1 when anything was found or a bound was reached.
 
+  plimsoll-withheld scan-image -set FILE IMAGE
+  plimsoll-withheld scan-image -set FILE -archive PATH
+      Scan a container image against a set, as docker save writes it (from the
+      docker CLI, or a saved archive): every regular file of every layer on its own,
+      with its path, so a file a later layer deletes is still found (it is still in
+      the image's bytes), and the image configuration (its environment, labels and
+      build history) whole. Run it before an image is pushed anywhere a sandbox
+      provider stores it: whoever stores and runs an image can read it. A file
+      larger than 64 MiB, a layer compressed with zstd, or a file holding what reads
+      as an archive past the scan's bounds or in a format it does not read (common in
+      compiled libraries) is listed as incomplete. Exit status 1 when anything was
+      found, 3 when nothing was found but some file was not read whole, 0 when the
+      image is clean; the last line names the image ID and the set's digest.
+
+  plimsoll-withheld known-unreadable -set FILE -known FILE IMAGE
+      Create or update the known-unreadable list for this image's inspected content
+      ID, keeping every other image's list. Records each unreadable file's path,
+      reason and whole size. Run after reviewing what scan-image could not read.
+      This acknowledges unread bytes; it does not prove they hold no withheld
+      material. A rebuilt image has a new ID and needs a new list. The daemon reads
+      it through PLIMSOLL_WITHHELD_KNOWN_FILE and refuses any unreadable file not
+      listed with the same ID, path, reason and size, for audit-only sets too.
+      Updates are atomic; concurrent writers refuse while FILE.lock exists. After
+      an interrupted writer, check it has stopped before removing that directory.
+
 The set holds SHA-256 digests and labels (a file's path, a values file's name and
 line), never a value. A short value is still recovered from its digest by trying
 every candidate, so a set of short seeds is as sensitive as the seeds.
@@ -90,6 +117,14 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, build(args[1:], stdout, stderr)
 	case "scan":
 		return scan(args[1:], stdout, stderr)
+	case "known-unreadable":
+		code, err := knownUnreadable(args[1:], stdout, stderr)
+		if err != nil {
+			err = errors.New(withheld.CleanWhere(err.Error()))
+		}
+		return code, err
+	case "scan-image":
+		return scanImage(args[1:], stdout, stderr)
 	case "-h", "-help", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0, nil
@@ -157,7 +192,7 @@ func build(args []string, stdout, stderr io.Writer) error {
 	for _, root := range files {
 		err := eachFile(root, stderr, func(path, name string, content []byte) error {
 			if len(withheld.Normalize(content)) == 0 {
-				fmt.Fprintf(stderr, "plimsoll-withheld: %s is empty (or only blank lines); skipped, since it would match every empty file\n", path)
+				fmt.Fprintf(stderr, "plimsoll-withheld: %s is empty (or only blank lines); skipped, since it would match every empty file\n", withheld.CleanWhere(path))
 				return nil
 			}
 			d := withheld.FileDigest(content)
@@ -173,7 +208,7 @@ func build(args []string, stdout, stderr io.Writer) error {
 		err := eachFile(root, stderr, func(path, name string, content []byte) error {
 			digests := withheld.SourceDigests(content)
 			if len(digests) < withheld.MinSourceLines {
-				fmt.Fprintf(stderr, "plimsoll-withheld: %s has %d distinctive lines, fewer than the %d a source entry needs; skipped\n", path, len(digests), withheld.MinSourceLines)
+				fmt.Fprintf(stderr, "plimsoll-withheld: %s has %d distinctive lines, fewer than the %d a source entry needs; skipped\n", withheld.CleanWhere(path), len(digests), withheld.MinSourceLines)
 				return nil
 			}
 			lines := make([]string, len(digests))
@@ -280,6 +315,91 @@ func scan(args []string, stdout, stderr io.Writer) (int, error) {
 	return 0, nil
 }
 
+// scanImage scans one image, from the docker CLI or a saved archive, against a set.
+func scanImage(args []string, stdout, stderr io.Writer) (int, error) {
+	fl := flag.NewFlagSet("scan-image", flag.ContinueOnError)
+	setPath := fl.String("set", "", "the withheld set file")
+	archivePath := fl.String("archive", "", "an image archive docker save wrote, instead of IMAGE")
+	if err := fl.Parse(args); err != nil {
+		return 2, err
+	}
+	if *setPath == "" || (*archivePath == "") == (fl.NArg() == 0) || fl.NArg() > 1 {
+		return 2, errors.New("scan-image needs -set FILE and one IMAGE, or -set FILE and -archive PATH")
+	}
+	set, err := withheld.Load(*setPath)
+	if err != nil {
+		return 2, err
+	}
+	ctx := context.Background()
+	var (
+		archive io.Reader
+		what    string
+		wait    = func() error { return nil }
+	)
+	if *archivePath != "" {
+		f, err := os.Open(*archivePath)
+		if err != nil {
+			return 2, err
+		}
+		defer f.Close()
+		archive, what = f, "archive "+*archivePath
+	} else {
+		// The ID first, and the save by that ID, so a tag moved meanwhile cannot make the
+		// clean line name an image that was not the one read.
+		out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", fl.Arg(0)).Output()
+		if err != nil {
+			return 2, fmt.Errorf("docker image inspect %s: %w", fl.Arg(0), err)
+		}
+		id := strings.TrimSpace(string(out))
+		save := exec.CommandContext(ctx, "docker", "save", id)
+		save.Stderr = stderr
+		pipe, err := save.StdoutPipe()
+		if err != nil {
+			return 2, err
+		}
+		if err := save.Start(); err != nil {
+			return 2, fmt.Errorf("docker save: %w", err)
+		}
+		archive, what = pipe, "image "+id+" ("+fl.Arg(0)+")"
+		// After the scan: what follows the archive's end marker is drained, so docker save
+		// is not left blocked writing it; after a failed scan docker save is stopped.
+		wait = func() error {
+			if _, err := io.Copy(io.Discard, pipe); err != nil {
+				_ = save.Process.Kill()
+			}
+			return save.Wait()
+		}
+	}
+	res, err := set.ScanImage(ctx, archive)
+	if err != nil {
+		if c, ok := archive.(io.Closer); ok && *archivePath == "" {
+			_ = c.Close() // docker save then stops on a broken pipe
+		}
+	}
+	if werr := wait(); err == nil && werr != nil {
+		err = fmt.Errorf("docker save: %w", werr)
+	}
+	if err != nil {
+		return 2, err
+	}
+	for _, f := range res.Found {
+		fmt.Fprintf(stdout, "%s (%s): %s\n", f.Label, f.Mode, strings.Join(f.Where, ", "))
+	}
+	for _, in := range res.Incomplete {
+		fmt.Fprintf(stdout, "incomplete: %s: %s\n", in.Where, in.Bound.Text())
+	}
+	switch {
+	case len(res.Found) > 0:
+		fmt.Fprintf(stdout, "found: %d entries in %d files, %d layers of %s against set %s\n", len(res.Found), res.Files, res.Layers, what, set.Digest())
+		return 1, nil
+	case len(res.Incomplete) > 0:
+		fmt.Fprintf(stdout, "nothing found, %d of %d files not read whole, %d layers of %s against set %s\n", len(res.Incomplete), res.Files, res.Layers, what, set.Digest())
+		return 3, nil
+	}
+	fmt.Fprintf(stdout, "clean: %d files in %d layers of %s against set %s\n", res.Files, res.Layers, what, set.Digest())
+	return 0, nil
+}
+
 // eachFile calls fn on root, or on every regular file under it, in lexical order,
 // with the file's path and its name from root's parent. Anything else it meets (a
 // symbolic link, a device) is skipped and said on stderr, and a root with no regular
@@ -295,7 +415,7 @@ func eachFile(root string, stderr io.Writer, fn func(path, name string, content 
 			return nil
 		}
 		if !d.Type().IsRegular() {
-			fmt.Fprintf(stderr, "plimsoll-withheld: %s is not a regular file (%s); skipped\n", path, d.Type())
+			fmt.Fprintf(stderr, "plimsoll-withheld: %s is not a regular file (%s); skipped\n", withheld.CleanWhere(path), d.Type())
 			return nil
 		}
 		content, err := os.ReadFile(path)
