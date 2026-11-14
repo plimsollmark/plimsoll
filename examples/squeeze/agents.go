@@ -296,7 +296,7 @@ func agentRecords(dir string, job *Job, ev *Evidence) ([]AgentRecord, error) {
 		}
 		out = append(out, r)
 	}
-	regs, err := readRegrades(dir, job, ev.FreshSHA256)
+	regs, err := readRegrades(dir, job, ev.FreshSHA256, rf.DesignSHA256)
 	if err != nil {
 		return nil, err
 	}

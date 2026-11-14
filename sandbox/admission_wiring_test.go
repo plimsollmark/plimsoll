@@ -26,6 +26,7 @@ func (f *fullProvider) SupportsModules() bool             { f.mark("ModuleCapabl
 func (f *fullProvider) SupportsJavaScriptGrants() bool    { f.mark("GrantCapable"); return true }
 func (f *fullProvider) SupportsProjectGrants() bool       { return true }
 func (f *fullProvider) Environments() Environments        { f.mark("Describer"); return Environments{} }
+func (f *fullProvider) Qualification() string             { f.mark("Qualifier"); return "stated" }
 func (f *fullProvider) Preflight(context.Context) error   { f.mark("Preflighter"); return nil }
 func (f *fullProvider) SmokeTest(context.Context) error   { f.mark("SmokeTester"); return nil }
 func (f *fullProvider) Drain(context.Context) error       { f.mark("Drainer"); return nil }
@@ -90,6 +91,7 @@ func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 			}
 			return ok
 		},
+		"Qualifier":   func(s Sandbox) bool { c, ok := s.(Qualifier); return ok && c.Qualification() == "stated" },
 		"Preflighter": func(s Sandbox) bool { c, ok := s.(Preflighter); return ok && c.Preflight(ctx) == nil },
 		"SmokeTester": func(s Sandbox) bool { c, ok := s.(SmokeTester); return ok && c.SmokeTest(ctx) == nil },
 		"Drainer":     func(s Sandbox) bool { c, ok := s.(Drainer); return ok && c.Drain(ctx) == nil },

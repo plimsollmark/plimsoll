@@ -346,9 +346,17 @@ type DescribeResponse struct {
 	// when it keeps none: never used, interpreters already running, each handed to one
 	// session, or to one Run cell that asked for it (RunRequest.prefer_warm), and deleted
 	// after. Stated with supports_sessions; informational.
-	SessionPool   uint32 `protobuf:"varint,21,opt,name=session_pool,json=sessionPool,proto3" json:"session_pool,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SessionPool uint32 `protobuf:"varint,21,opt,name=session_pool,json=sessionPool,proto3" json:"session_pool,omitempty"`
+	// isolation_qualification is the sentence the provider's vendor or design requires to
+	// stand beside the tier wherever it is stated, empty for a provider with none. The
+	// WSL containers provider's per-run mode says there that Microsoft states WSL is not a
+	// security sandbox for untrusted code, and names gVisor's position when it is on.
+	// Informational, like the tier: configuration and provider evidence, never runtime
+	// attestation. A client reads it and must not require it: run records and the protocol
+	// number do not carry it.
+	IsolationQualification string `protobuf:"bytes,22,opt,name=isolation_qualification,json=isolationQualification,proto3" json:"isolation_qualification,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *DescribeResponse) Reset() {
@@ -512,6 +520,13 @@ func (x *DescribeResponse) GetSessionPool() uint32 {
 		return x.SessionPool
 	}
 	return 0
+}
+
+func (x *DescribeResponse) GetIsolationQualification() string {
+	if x != nil {
+		return x.IsolationQualification
+	}
+	return ""
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
@@ -3176,7 +3191,7 @@ var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"\x19plimsoll/v1/sandbox.proto\x12\vplimsoll.v1\"\x11\n" +
-	"\x0fDescribeRequest\"\xfc\a\n" +
+	"\x0fDescribeRequest\"\xb5\b\n" +
 	"\x10DescribeResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12)\n" +
@@ -3197,7 +3212,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x13session_environment\x18\x12 \x01(\v2\x1f.plimsoll.v1.PayloadEnvironmentR\x12sessionEnvironment\x125\n" +
 	"\x17max_sessions_per_caller\x18\x13 \x01(\rR\x14maxSessionsPerCaller\x123\n" +
 	"\x16max_sessions_per_owner\x18\x14 \x01(\rR\x13maxSessionsPerOwner\x12!\n" +
-	"\fsession_pool\x18\x15 \x01(\rR\vsessionPoolJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
+	"\fsession_pool\x18\x15 \x01(\rR\vsessionPool\x127\n" +
+	"\x17isolation_qualification\x18\x16 \x01(\tR\x16isolationQualificationJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +

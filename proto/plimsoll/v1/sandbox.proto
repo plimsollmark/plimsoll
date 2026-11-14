@@ -107,6 +107,14 @@ message DescribeResponse {
   // session, or to one Run cell that asked for it (RunRequest.prefer_warm), and deleted
   // after. Stated with supports_sessions; informational.
   uint32 session_pool = 21;
+  // isolation_qualification is the sentence the provider's vendor or design requires to
+  // stand beside the tier wherever it is stated, empty for a provider with none. The
+  // WSL containers provider's per-run mode says there that Microsoft states WSL is not a
+  // security sandbox for untrusted code, and names gVisor's position when it is on.
+  // Informational, like the tier: configuration and provider evidence, never runtime
+  // attestation. A client reads it and must not require it: run records and the protocol
+  // number do not carry it.
+  string isolation_qualification = 22;
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.

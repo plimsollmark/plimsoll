@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/plimsollmark/plimsoll/internal/withheld"
@@ -52,15 +53,15 @@ const usage = `Usage:
       scanned, such as the judge that ships the hidden cases. -min-length is the
       shortest value accepted (default 6, at least 4).
 
-  plimsoll-withheld scan -set FILE PATH ...
+  plimsoll-withheld scan -set FILE [-format text|sarif] PATH ...
       Scan files, or directories of them, against a set as the daemon would scan a
       call carrying them, inside the archives they hold too (tar, gzip, bzip2, zip),
       and list what was found and any file whose archives passed one of the scan's
       bounds (the daemon refuses such a call when the set has a refuse entry). Exit
       status 1 when anything was found or a bound was reached.
 
-  plimsoll-withheld scan-image -set FILE IMAGE
-  plimsoll-withheld scan-image -set FILE -archive PATH
+  plimsoll-withheld scan-image -set FILE [-format text|sarif] IMAGE
+  plimsoll-withheld scan-image -set FILE [-format text|sarif] -archive PATH
       Scan a container image against a set, as docker save writes it (from the
       docker CLI, or a saved archive): every regular file of every layer on its own,
       with its path, so a file a later layer deletes is still found (it is still in
@@ -72,6 +73,16 @@ const usage = `Usage:
       compiled libraries) is listed as incomplete. Exit status 1 when anything was
       found, 3 when nothing was found but some file was not read whole, 0 when the
       image is clean; the last line names the image ID and the set's digest.
+
+  -format sarif writes either scan's result as a SARIF 2.1.0 file instead, for
+  GitHub code scanning and other readers of the standard: one result per find
+  (rule find) and per file not read whole (rule unreadable), each naming the
+  entry's label, the file's path (in an image, the layer and the path) and, for a
+  value found in a line of a scanned file, the line. It holds no withheld value
+  and no file content, and does not name a path the scan finds a value in; it is
+  scanned against the set before it is written, and nothing is written when a
+  label, a layer's name or a path given on the command line holds a value. The
+  exit status is the same as the text output's.
 
   plimsoll-withheld known-unreadable -set FILE -known FILE IMAGE
       Create or update the known-unreadable list for this image's inspected content
@@ -273,34 +284,80 @@ func build(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
+// formatFlag adds -format to fl: text (the default) or sarif.
+func formatFlag(fl *flag.FlagSet) *string {
+	return fl.String("format", "text", "the output: text, or sarif (SARIF 2.1.0, for GitHub code scanning)")
+}
+
+func checkFormat(format string) error {
+	if format != "text" && format != "sarif" {
+		return fmt.Errorf("-format must be text or sarif, not %q", format)
+	}
+	return nil
+}
+
+// scannedFile is one file scan read, by its index in the parts (2i is its path, 2i+1
+// its content).
+type scannedFile struct {
+	path    string
+	content []byte
+}
+
 func scan(args []string, stdout, stderr io.Writer) (int, error) {
 	fl := flag.NewFlagSet("scan", flag.ContinueOnError)
 	setPath := fl.String("set", "", "the withheld set file")
+	format := formatFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2, err
 	}
 	if *setPath == "" || fl.NArg() == 0 {
 		return 2, errors.New("scan needs -set FILE and at least one PATH")
 	}
+	if err := checkFormat(*format); err != nil {
+		return 2, err
+	}
 	set, err := withheld.Load(*setPath)
 	if err != nil {
 		return 2, err
 	}
-	var parts []withheld.Part
+	var (
+		parts []withheld.Part
+		files []scannedFile
+	)
 	for _, root := range fl.Args() {
 		err := eachFile(root, stderr, func(path, _ string, content []byte) error {
+			// For SARIF a part is named by its file's index, which no name can make
+			// ambiguous; the text output names it by its path.
+			where := path
+			if *format == "sarif" {
+				where = "f" + strconv.Itoa(len(files))
+			}
+			files = append(files, scannedFile{path: path, content: content})
 			parts = append(parts,
-				withheld.Part{Where: path + " (path)", Data: []byte(path)},
-				withheld.Part{Where: path, Data: content, Whole: true})
+				withheld.Part{Where: where + " (path)", Data: []byte(path)},
+				withheld.Part{Where: where, Data: content, Whole: true})
 			return nil
 		})
 		if err != nil {
 			return 2, err
 		}
 	}
-	res, err := set.Scan(context.Background(), parts)
+	ctx := context.Background()
+	res, err := set.Scan(ctx, parts)
 	if err != nil {
 		return 2, err
+	}
+	code := 0
+	if len(res.Found) > 0 || len(res.Incomplete) > 0 {
+		code = 1
+	}
+	if *format == "sarif" {
+		raw, err := scanSARIF(ctx, set, files, res)
+		if err != nil {
+			return 2, err
+		}
+		_, err = stdout.Write(raw)
+		return code, err
 	}
 	for _, f := range res.Found {
 		fmt.Fprintf(stdout, "%s (%s): %s\n", f.Label, f.Mode, strings.Join(f.Where, ", "))
@@ -308,11 +365,99 @@ func scan(args []string, stdout, stderr io.Writer) (int, error) {
 	for _, in := range res.Incomplete {
 		fmt.Fprintf(stdout, "incomplete: %s: %s\n", in.Where, in.Bound.Text())
 	}
-	if len(res.Found) > 0 || len(res.Incomplete) > 0 {
-		return 1, nil
+	if code != 0 {
+		return code, nil
 	}
 	fmt.Fprintf(stdout, "clean: %d files against set %s\n", len(parts)/2, set.Digest())
 	return 0, nil
+}
+
+// scanSARIF is scan's result as a SARIF file: each part is named by its file's index
+// ("f3", "f3 (path)").
+func scanSARIF(ctx context.Context, set *withheld.Set, files []scannedFile, res withheld.Result) ([]byte, error) {
+	place := func(where string) (sarifPlace, int, error) {
+		name, isPath := strings.CutSuffix(where, " (path)")
+		i, err := strconv.Atoi(strings.TrimPrefix(name, "f"))
+		if err != nil || !strings.HasPrefix(name, "f") || i < 0 || i >= len(files) {
+			return sarifPlace{}, 0, fmt.Errorf("internal: a part named %q", where)
+		}
+		pl := sarifPlace{path: files[i].path, part: withheld.PartContent}
+		if isPath {
+			pl.part = withheld.PartPath
+		}
+		return pl, i, nil
+	}
+	w := newSARIF(set)
+	for _, f := range res.Found {
+		for _, at := range f.Where {
+			pl, _, err := place(at)
+			if err != nil {
+				return nil, err
+			}
+			if pl.part == withheld.PartPath {
+				if err := w.hide(ctx, "", pl.path); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	lines := map[int]map[string]int{}
+	for _, f := range res.Found {
+		for _, at := range f.Where {
+			pl, i, err := place(at)
+			if err != nil {
+				return nil, err
+			}
+			if pl.part == withheld.PartContent {
+				if lines[i] == nil {
+					if lines[i], err = firstLines(ctx, set, files[i].content); err != nil {
+						return nil, err
+					}
+				}
+				pl.line = lines[i][f.Label+"\x00"+string(f.Mode)]
+			}
+			w.find(f, pl)
+		}
+	}
+	for _, in := range res.Incomplete {
+		pl, _, err := place(in.Where)
+		if err != nil {
+			return nil, err
+		}
+		w.unreadable(in, pl)
+	}
+	return w.bytes(ctx)
+}
+
+// imageSARIF is scan-image's result as a SARIF file, the image read (what) its root
+// artifact, each layer nested in it and each file in its layer.
+func imageSARIF(ctx context.Context, set *withheld.Set, what string, res withheld.ImageResult) ([]byte, error) {
+	place := func(where string) sarifPlace {
+		if p, ok := res.Places[where]; ok {
+			return sarifPlace{layer: p.Layer, path: p.Path, part: p.Part}
+		}
+		return sarifPlace{path: where, part: withheld.PartContent}
+	}
+	w := newSARIF(set)
+	w.forImage(what)
+	for _, f := range res.Found {
+		for _, at := range f.Where {
+			if pl := place(at); pl.part == withheld.PartPath {
+				if err := w.hide(ctx, pl.layer, pl.path); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	for _, f := range res.Found {
+		for _, at := range f.Where {
+			w.find(f, place(at))
+		}
+	}
+	for _, in := range res.Incomplete {
+		w.unreadable(in, place(in.Where))
+	}
+	return w.bytes(ctx)
 }
 
 // scanImage scans one image, from the docker CLI or a saved archive, against a set.
@@ -320,11 +465,15 @@ func scanImage(args []string, stdout, stderr io.Writer) (int, error) {
 	fl := flag.NewFlagSet("scan-image", flag.ContinueOnError)
 	setPath := fl.String("set", "", "the withheld set file")
 	archivePath := fl.String("archive", "", "an image archive docker save wrote, instead of IMAGE")
+	format := formatFlag(fl)
 	if err := fl.Parse(args); err != nil {
 		return 2, err
 	}
 	if *setPath == "" || (*archivePath == "") == (fl.NArg() == 0) || fl.NArg() > 1 {
 		return 2, errors.New("scan-image needs -set FILE and one IMAGE, or -set FILE and -archive PATH")
+	}
+	if err := checkFormat(*format); err != nil {
+		return 2, err
 	}
 	set, err := withheld.Load(*setPath)
 	if err != nil {
@@ -381,6 +530,21 @@ func scanImage(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 	if err != nil {
 		return 2, err
+	}
+	if *format == "sarif" {
+		code := 0
+		switch {
+		case len(res.Found) > 0:
+			code = 1
+		case len(res.Incomplete) > 0:
+			code = 3
+		}
+		raw, err := imageSARIF(ctx, set, what, res)
+		if err != nil {
+			return 2, err
+		}
+		_, err = stdout.Write(raw)
+		return code, err
 	}
 	for _, f := range res.Found {
 		fmt.Fprintf(stdout, "%s (%s): %s\n", f.Label, f.Mode, strings.Join(f.Where, ", "))

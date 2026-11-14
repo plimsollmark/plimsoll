@@ -306,6 +306,26 @@ test("a refused connection keeps the session usable", { skip }, async () => {
   }
 });
 
+// A stub daemon's Describe answer, bound to its request as the real one is.
+function describing(extra: Record<string, unknown>): PlimsollClient {
+  return new PlimsollClient({
+    baseUrl: "http://127.0.0.1:1",
+    fetch: async (_input, init) => {
+      const rid = new Headers(init?.headers).get("Plimsoll-Request-Id") ?? "";
+      return new Response(JSON.stringify({ sandbox: "stub", isolation: "vm", protocol: PROTOCOL, ...extra }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": rid },
+      });
+    },
+  });
+}
+
+test("describe reads the isolation qualification whole, and an answer without it as empty", async () => {
+  const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's.";
+  assert.equal((await describing({ isolationQualification: sentence }).describe()).isolationQualification, sentence);
+  assert.equal((await describing({}).describe()).isolationQualification, "");
+});
+
 test("describe states the daemon's protocol and provider", { skip }, async () => {
   const info = await wasm.describe();
   assert.equal(info.protocol, PROTOCOL);

@@ -19,8 +19,20 @@ import (
 // DIR/regrades/<time>/. The agents' spend is sunk, so a failed grading costs grading runs, not an
 // agent. agents.json then takes each such controller's grading from the latest regrade that
 // graded it whole (regraded names which), and -verify checks every regrade as it checks the run.
+//
+// A regrade grades under the run's own design and a commit's code: it refuses a checkout whose
+// design document (the job, the course files, the prompts, the tools) is not the one the run's
+// run.json names, and a checkout whose code is not a commit's, so the failed controllers are never
+// scored by other grading code. Its run.json records its own harness and design digest, and
+// readRegrades refuses a regrade whose record says either was other.
 
 const regradesDir = "regrades"
+
+// errDirtyRegrade is a regrade refused because the code it would grade with is not a commit's.
+var errDirtyRegrade = errors.New("a regrade grades only with a commit's code: commit or remove the changes in the harness's code first")
+
+// errOtherDesign is a regrade refused because this checkout's design is not the run's.
+var errOtherDesign = errors.New("a regrade grades only under the design its run was made under")
 
 // regrade is one regrade's directory under regradesDir and the evidence its bundle states.
 type regrade struct {
@@ -29,9 +41,10 @@ type regrade struct {
 }
 
 // readRegrades are dir's regrades in name order (a regrade's name is its time). Each must be of
-// this job, on the run's own fresh set, grading runs alone, every one holding exactly its set, and
-// its leak scan clean.
-func readRegrades(dir string, job *Job, fresh string) ([]regrade, error) {
+// this job, on the run's own fresh set and under its design (the run's run.json design digest),
+// graded with a commit's code, grading runs alone, every one holding exactly its set, and its leak
+// scan clean.
+func readRegrades(dir string, job *Job, fresh, design string) ([]regrade, error) {
 	names, err := os.ReadDir(filepath.Join(dir, regradesDir))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -51,6 +64,12 @@ func readRegrades(dir string, job *Job, fresh string) ([]regrade, error) {
 		}
 		if rf.Job != job.Name || rf.FreshSHA256 != fresh || len(rf.Regrade) == 0 {
 			return nil, fmt.Errorf("%s is not a regrade of this run (job %q, fresh set %s)", sub, rf.Job, rf.FreshSHA256)
+		}
+		if design == "" || rf.DesignSHA256 != design {
+			return nil, fmt.Errorf("%s: %w: it records design %q, the run %q", sub, errOtherDesign, rf.DesignSHA256, design)
+		}
+		if !rf.Harness.Clean {
+			return nil, fmt.Errorf("%s: %w (%s): %s", sub, errDirtyRegrade, rf.Harness.From, strings.Join(rf.Harness.Dirty, "; "))
 		}
 		ev, err := deriveRun(sub, job)
 		if err != nil {
@@ -91,6 +110,26 @@ func regradePublished(ctx context.Context, dir string, job *Job, daemonURL, runt
 	if job.builds() == 0 {
 		return errors.New("-regrade is for a building run's agents (agents.json); a run of imported controllers is graded again with -fresh")
 	}
+	var parent RunFile
+	if err := readJSON(filepath.Join(dir, "run.json"), &parent); err != nil {
+		return err
+	}
+	tree := harnessTree()
+	fmt.Printf("harness   | %s (%s), clean %v\n", tree.Commit, tree.From, tree.Clean)
+	if !tree.Clean {
+		return fmt.Errorf("%w (%s): %s", errDirtyRegrade, tree.From, strings.Join(tree.Dirty, "; "))
+	}
+	if parent.DesignSHA256 == "" {
+		return fmt.Errorf("%w: %s records no design digest, so nothing ties a regrade to it", errOtherDesign, filepath.Join(dir, "run.json"))
+	}
+	// The design recomputed from the job and the course this program embeds, as the run computed it.
+	design, err := checkDesign(job, parent.API, parent.Model, "")
+	if err != nil {
+		return err
+	}
+	if design != parent.DesignSHA256 {
+		return fmt.Errorf("%w: this checkout's design (the job, the course files, the prompts and tools) is %s, and the run's run.json names %s; regrade from the commit the run was made at", errOtherDesign, design, parent.DesignSHA256)
+	}
 	ev, err := derive(dir, job)
 	if err != nil {
 		return err
@@ -124,10 +163,6 @@ func regradePublished(ctx context.Context, dir string, job *Job, daemonURL, runt
 		fmt.Printf("regrade   | every agent's controller in %s is graded; nothing to grade again\n", dir)
 		return nil
 	}
-	var parent RunFile
-	if err := readJSON(filepath.Join(dir, "run.json"), &parent); err != nil {
-		return err
-	}
 	freshFile, err := os.ReadFile(filepath.Join(dir, "fresh.json"))
 	if err != nil {
 		return err
@@ -139,7 +174,7 @@ func regradePublished(ctx context.Context, dir string, job *Job, daemonURL, runt
 	if err := json.Unmarshal(freshFile, &fresh); err != nil {
 		return err
 	}
-	l := &live{job: job, parallel: parallel, daemon: daemonURL, token: os.Getenv("PLIMSOLL_TOKEN"), tree: harnessTree()}
+	l := &live{job: job, parallel: parallel, daemon: daemonURL, token: os.Getenv("PLIMSOLL_TOKEN"), tree: tree}
 	if daemonURL == "" {
 		base, token, stop, err := startDaemon(ctx, runtime, image, parallel, false)
 		if err != nil {
@@ -160,7 +195,7 @@ func regradePublished(ctx context.Context, dir string, job *Job, daemonURL, runt
 	defer bundle.Close()
 	fmt.Printf("regrade   | %d controllers of %s whose grading failed: %s\n", len(units), dir, strings.Join(ids, ", "))
 	rf := RunFile{Job: job.Name, Started: time.Now().UTC().Truncate(time.Second), Sealed: parent.Sealed, FreshSHA256: parent.FreshSHA256,
-		FreshGiven: true, Regrade: ids, Harness: l.tree, Built: []Built{}, Missing: []Missing{}, Failures: []string{}}
+		FreshGiven: true, DesignSHA256: design, Regrade: ids, Harness: l.tree, Built: []Built{}, Missing: []Missing{}, Failures: []string{}}
 	l.grade(ctx, units, fresh, freshFile, &rf)
 	if err := harness.Checkpoint(); err != nil {
 		return err

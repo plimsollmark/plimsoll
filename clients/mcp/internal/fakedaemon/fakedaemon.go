@@ -51,11 +51,16 @@ type Provider struct {
 	// OpenDelay holds every session open this long; CloseDelay every close of an open
 	// session.
 	OpenDelay, CloseDelay time.Duration
+	// Sentence is the qualification it states beside its tier (Describe's isolation_qualification).
+	Sentence string
 
 	mu      sync.Mutex
 	release chan struct{}
 	blocked chan struct{}
 }
+
+// Qualification is the sentence the provider states beside its tier, "" for none.
+func (p *Provider) Qualification() string { return p.Sentence }
 
 func (p *Provider) tier() sandbox.IsolationClass {
 	if p.Tier == sandbox.IsolationUnknown {
@@ -267,12 +272,14 @@ type Options struct {
 	// Pool is the session pool the daemon states (SANDBOX_SESSION_POOL); Warm is how
 	// many warm-only opens the provider hands a session before it refuses them.
 	Pool, Warm int
+	// Qualification is the sentence the daemon states beside its tier.
+	Qualification string
 }
 
 // Serve starts a daemon over a Provider.
 func Serve(t testing.TB, o Options) *Daemon {
 	t.Helper()
-	p := &Provider{Sessions: &sandboxtest.Sessions{Warm: o.Warm}, Tier: o.Tier, ResultTier: o.ResultTier, SessionLanguages: o.SessionLanguages, OpenDelay: o.OpenDelay, CloseDelay: o.CloseDelay}
+	p := &Provider{Sessions: &sandboxtest.Sessions{Warm: o.Warm}, Tier: o.Tier, ResultTier: o.ResultTier, SessionLanguages: o.SessionLanguages, OpenDelay: o.OpenDelay, CloseDelay: o.CloseDelay, Sentence: o.Qualification}
 	svc := rpc.NewSandboxService(p)
 	svc.Sessions = rpc.SessionConfig{MaxSessions: o.Sessions, MaxPerOwner: o.PerOwner, Pool: o.Pool, Lifetime: time.Hour, IdleTimeout: time.Hour}
 	calls := &callCount{n: map[string]int{}}

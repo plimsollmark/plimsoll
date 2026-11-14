@@ -186,6 +186,29 @@ def full_backlog() -> Tuple[socket.socket, List[socket.socket], int]:
     raise AssertionError("the accept queue never filled, so a connect cannot be made to wait")
 
 
+class DescribeQualification(unittest.TestCase):
+    """Describe's isolation_qualification is read whole, and its absence reads as empty."""
+
+    SENTENCE = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's."
+
+    def setUp(self) -> None:
+        self.server = Server()
+        self.addCleanup(self.server.close)
+
+    def describe(self, extra: Dict[str, Any]) -> Any:
+        from plimsoll_client import PROTOCOL
+
+        body = {"sandbox": "stub", "isolation": "vm", "protocol": PROTOCOL, **extra}
+        self.server.answers["Describe"] = (200, json.dumps(body).encode())
+        return Client(self.server.url).describe()
+
+    def test_an_answer_carrying_the_sentence_is_read_back_whole(self) -> None:
+        self.assertEqual(self.describe({"isolationQualification": self.SENTENCE}).isolation_qualification, self.SENTENCE)
+
+    def test_an_answer_without_it_reads_as_empty(self) -> None:
+        self.assertEqual(self.describe({}).isolation_qualification, "")
+
+
 class Handle(unittest.TestCase):
     def setUp(self) -> None:
         self.server = Server()

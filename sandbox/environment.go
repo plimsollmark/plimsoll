@@ -52,6 +52,14 @@ type Describer interface {
 	Environments() Environments
 }
 
+// Qualifier is the optional interface through which a provider states the sentence that
+// goes with its tier wherever the tier is stated. Describe reports it as
+// isolation_qualification; a provider that does not implement it, or returns "", has none.
+// Informational, like the tier: it is not part of a run record.
+type Qualifier interface {
+	Qualification() string
+}
+
 // quickJSIdentity names the embedded interpreter by its content, computed once.
 var quickJSIdentity = sync.OnceValue(func() string {
 	sum := sha256.Sum256(qjsWasm)

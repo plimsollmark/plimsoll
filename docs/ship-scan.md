@@ -415,6 +415,67 @@ the push. A scan catches the mistake of shipping withheld material; it does not 
 image from its host, which can read what it stores and runs, scanned or not
 ([INTERNAL · Docker Cloud →](dockercloud.md)).
 
+## SARIF output
+
+`plimsoll-withheld scan` and `scan-image` take `-format sarif` and write their result as a
+SARIF file instead of text. <dfn>*SARIF*</dfn> (the Static Analysis Results Interchange
+Format, version 2.1.0) is a standard JSON layout for "a checker found this, in this file, at
+this line, this serious", published by the standards body OASIS
+([EXTERNAL · official docs ↗](https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/sarif-v2.1.0-errata01-os-complete.html)).
+Uploaded from an automated build to GitHub, each result becomes an alert on the repository's
+code scanning page, with GitHub's own dismiss-and-track workflow; GitLab reads the format from
+its release 18.11, behind its `sarif_ingestion` feature flag
+([EXTERNAL · official docs ↗](https://docs.gitlab.com/user/application_security/detect/sarif/)).
+
+- **One result per find**, rule `find`, level `error`: the entry's label and mode, the file's
+  path, and the line when the entry is a value found within one line of a scanned file (as
+  written, escaped there, or in one line of base64 wrapped over lines). A file or source entry
+  matches a whole file, and a value found only across lines or inside an archive has no single
+  line, so those results name the file alone; so does every result of an image, whose files'
+  lines the command does not keep. In an image's report the file is an artifact nested in its
+  layer's, which is nested in the image's (SARIF's way of naming a file inside an archive), and
+  the message names the layer.
+- **One result per file not read whole**, rule `unreadable`, level `warning`, with the reason in
+  words (an xz stream, a file over 64 MiB).
+- **The exit status is the text output's**: 1 on a find; for `scan-image`, 3 when nothing was
+  found but a file was not read whole; 0 when clean.
+
+**What it never holds**, since it is made to be uploaded: a withheld value, a file's content,
+or any text of a scanned file but its path. A path in which the scan finds a withheld value (a
+directory named after a seed) is not named either: the results for its file point at the
+nearest directory above it whose path holds none, and say that the path is withheld. The set's
+digest is not stated, because a set of a few short values can be recovered from its digest just
+as the values can ("The withheld set"); the text output's last line, kept locally, is the
+evidence of which set was scanned for. Before writing, the command scans the whole SARIF file
+against the set, and writes nothing, naming the entry, if anything is found there: a label, an
+image layer's name or a path given on the command line that holds a value.
+`TestSARIFCanaryHoldsNoWithheldValue` plants fresh values in every place a scanned file or image
+can carry one (its text in another letter case, escaped, in base64, in a `.tar.gz`, its name,
+its directory's name, a symbolic link's target, the image's environment), checks that both
+commands report each of them, and fails if either report holds any;
+`TestSARIFCanaryCatchesAPlantedLeak` puts a leak back on purpose and checks that the canary
+sees it and that the scan before writing refuses it.
+
+Upload it from a GitHub Actions workflow:
+
+```yaml
+permissions:
+  security-events: write
+steps:
+  - run: plimsoll-withheld scan -set withheld.json -format sarif task/ > withheld.sarif
+    continue-on-error: true # it exits 1 on a find, and the upload must still run
+  - uses: github/codeql-action/upload-sarif@v4
+    with:
+      sarif_file: withheld.sarif
+```
+
+Paths are reported as given on the command line, so scan with paths relative to the
+repository's root for GitHub to place each alert on its file. The workflow needs the set, and a
+set of short values is as sensitive as the values, so keep such a set out of a public
+repository (a repository secret, for instance). **Code scanning on a private or internal
+GitHub repository needs GitHub Code Security enabled, a paid license**
+([EXTERNAL · official docs ↗](https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/uploading-a-sarif-file-to-github)).
+
 ## What a find does
 
 Each entry has a <dfn>*mode*</dfn>, the set's unless the entry states its own:

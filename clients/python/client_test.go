@@ -75,6 +75,12 @@ func TestPython(t *testing.T) {
 
 	fixture := filepath.Join(t.TempDir(), "digests.json")
 	writeFixture(t, fixture)
+	// A Python test verifies a signed run bundle with plimsoll-attest;
+	// built here, so it runs rather than skips on a machine with none on PATH.
+	attest := filepath.Join(t.TempDir(), "plimsoll-attest")
+	if out, err := exec.Command("go", "build", "-o", attest, "github.com/plimsollmark/plimsoll/cmd/plimsoll-attest").CombinedOutput(); err != nil {
+		t.Fatalf("building plimsoll-attest: %v\n%s", err, out)
+	}
 	tlsURL, tlsCA := serveTLS(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())))
 
 	env := append(os.Environ(),
@@ -110,6 +116,7 @@ func TestPython(t *testing.T) {
 		"PLIMSOLL_GO_PROTOCOL="+strconv.FormatUint(uint64(protocol.Number), 10),
 		"PLIMSOLL_GO_RECORD_VERSION="+strconv.Itoa(record.Version),
 		"PLIMSOLL_DIGEST_FIXTURE="+fixture,
+		"PLIMSOLL_ATTEST="+attest,
 		"PLIMSOLL_INTEGRATION_REQUIRED=1",
 		"PYTHONPATH=src",
 		"PYTHONDONTWRITEBYTECODE=1",

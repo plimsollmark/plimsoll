@@ -744,6 +744,36 @@ func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
 	}
 }
 
+// qualifyingFake is a provider that states a sentence beside its tier.
+type qualifyingFake struct {
+	fakeSandbox
+	sentence string
+}
+
+func (q *qualifyingFake) Qualification() string { return q.sentence }
+
+// Describe carries the sentence a provider states beside its tier, whole, and nothing for
+// a provider that states none or whose sentence is empty. Run records do not carry it.
+func TestDescribeCarriesTheIsolationQualification(t *testing.T) {
+	const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code."
+	for name, tc := range map[string]struct {
+		sb   sandbox.Sandbox
+		want string
+	}{
+		"a provider with one":  {&qualifyingFake{sentence: sentence}, sentence},
+		"a provider with none": {&fakeSandbox{}, ""},
+		"an empty sentence":    {&qualifyingFake{}, ""},
+	} {
+		resp, err := NewSandboxService(tc.sb).Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.Msg.GetIsolationQualification(); got != tc.want {
+			t.Errorf("%s: isolation_qualification = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
 // TestAFailedRunStillCountsItsBrokeredCalls: a run that fails after it brokered calls
 // against the operator's API still reports them on its audit line; that failed run is
 // the one an operator investigates (external review of v0.10.0, finding 12, 2026-09-28).

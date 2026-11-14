@@ -224,6 +224,15 @@ func (a *admissionSandbox) Environments() Environments {
 	return Environments{}
 }
 
+// Qualification forwards the sentence the wrapped provider states beside its tier, so
+// Describe through the decorator carries it; a provider with none states none.
+func (a *admissionSandbox) Qualification() string {
+	if q, ok := a.Sandbox.(Qualifier); ok {
+		return q.Qualification()
+	}
+	return ""
+}
+
 // SupportsModules forwards the wrapped provider's static capability, like
 // SupportsProjects.
 func (a *admissionSandbox) SupportsModules() bool {
@@ -266,6 +275,7 @@ var (
 	_ ModuleCapable      = (*admissionSandbox)(nil)
 	_ GrantCapable       = (*admissionSandbox)(nil)
 	_ Describer          = (*admissionSandbox)(nil)
+	_ Qualifier          = (*admissionSandbox)(nil)
 	_ Preflighter        = (*admissionSandbox)(nil)
 	_ SmokeTester        = (*admissionSandbox)(nil)
 	_ OrphanReconciler   = (*admissionSandbox)(nil)

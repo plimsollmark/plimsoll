@@ -302,6 +302,11 @@ type Info struct {
 	// with SessionOptions.WarmOnly, can answer without a sandbox being made for it.
 	// Stated with SupportsSessions.
 	SessionPool int
+	// IsolationQualification is the sentence the provider states beside its tier, "" when
+	// it has none (the WSL containers provider's per-run mode states Microsoft's). Show
+	// it wherever the tier is shown. Informational, like the tier, and a daemon that
+	// states none is a normal answer: do not require it.
+	IsolationQualification string
 	// SessionEnvironment is where a session's calls run (every kind in one sandbox;
 	// on docker the project image), stated with SupportsSessions. Informational, like
 	// Environments.
@@ -342,6 +347,7 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		SessionsPerCaller:        int(resp.Msg.GetMaxSessionsPerCaller()),
 		SessionsPerOwner:         int(resp.Msg.GetMaxSessionsPerOwner()),
 		SessionPool:              int(resp.Msg.GetSessionPool()),
+		IsolationQualification:   resp.Msg.GetIsolationQualification(),
 		Environments: sandbox.Environments{
 			JavaScript: payloadEnvironment(resp.Msg.GetJavascriptEnvironment()),
 			Project:    payloadEnvironment(resp.Msg.GetProjectEnvironment()),

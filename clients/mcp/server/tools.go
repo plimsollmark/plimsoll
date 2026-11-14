@@ -617,6 +617,11 @@ func (s *Server) serverInfo(ctx context.Context, _ struct{}) (infoOutput, *failu
 			out.Daemon.SandboxLanguages = names(s.offered(info.SessionEnvironment))
 		}
 		line = fmt.Sprintf("The daemon runs %s at the %q tier (%s) and %s sessions.", info.Sandbox, info.Isolation, tierNote, keeps)
+		// In the summary, not a field of daemonInfo: a field changes the tool's output schema and
+		// with it the surface digest the recorded tour (examples/tour) is checked against.
+		if info.IsolationQualification != "" {
+			line += " It states beside that tier: " + info.IsolationQualification
+		}
 	}
 	out.Summary = fmt.Sprintf("%s MCP server %s, tools %v, surface digest %s. %s", Name, Version, tools, out.SurfaceDigest, line)
 	return out, nil

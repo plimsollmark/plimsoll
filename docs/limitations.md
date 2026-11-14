@@ -92,6 +92,23 @@ Part of the [plimsoll README](../README.md).
   <dfn>*hypervisor*</dfn> (the program that runs virtual machines) or checks a kernel wall
   cryptographically. If your <dfn>*threat model*</dfn> (the attacks
   you must hold out against) needs attestation, no tier here supplies it.
+- **The `wslc` provider is not a security sandbox by its own vendor's account.** Microsoft
+  states that WSL, the Windows Subsystem for Linux that the provider's WSL containers run
+  in, is "not a security sandbox for running untrusted code". Inside each of its virtual
+  machines a container gets no read-only root filesystem, no <dfn>*seccomp*</dfn> profile
+  (the kernel's filter on which requests a process may make) beyond docker's default, no
+  no-new-privileges, no per-run process limit and no user <dfn>*namespaces*</dfn> (which map
+  a container's root user to a powerless one outside it): five controls the docker provider
+  applies. Its process count, `--ulimit nproc`, counts every process of the code's user in
+  the virtual machine, so the shared mode, whose runs share one, runs one run at a time. The
+  per-run mode relies on `wslc system session enter`, a command Microsoft has not
+  documented. With gVisor on inside the per-run mode's virtual machines, a run is
+  occasionally refused because its session was lost, cause not yet known. CI runs on hosted
+  Linux runners, which have no WSL, so it tests the provider against a stand-in only; the
+  live suites run by hand on a Windows machine, and they have run on one machine and one WSL
+  release. <dfn>*Hardened mode*</dfn> (the
+  daemon's strict production check, `PLIMSOLL_HARDENED=1`) refuses the provider in both
+  modes ([INTERNAL · WSL containers →](wslc.md)).
 - **There is no single control point across several daemons.** Each daemon is configured
   and controlled on its own.
 - **Nothing updates itself.** Updates are manual. The QuickJS build is

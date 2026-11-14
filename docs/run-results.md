@@ -99,11 +99,12 @@ already have happened**; it is never marked and never a safe automatic retry.
 
 ### A project behaves the same on every provider
 
-The `docker`, `openshell` and `agentsandbox` providers run a project's steps through a
-runner inside the sandbox; `e2b` and `dockercloud` run each step through the
+The `docker`, `openshell`, `agentsandbox` and `wslc` providers run a project's steps
+through a runner inside the sandbox; `e2b` and `dockercloud` run each step through the
 platform's own command API.
 Both paths keep one contract, and the suite in `sandbox/projecttest` holds every
-provider to it, sessions included:
+provider but `wslc` to it, sessions included (`wslc` runs the same runner but is not in
+that suite; its own tests: [wslc.md](wslc.md#tests)):
 
 - Steps run in order in the work directory and stop at the first that fails.
 - A step the run's deadline ends is reported with exit 124, with what it wrote before
@@ -121,7 +122,7 @@ provider to it, sessions included:
   run inside the VM: the 32 MiB is counted for each stream separately rather than for
   both together, and past it the step is stopped by its next write to that stream, so
   a step that stops writing may still run to its end (it is reported as flooded all the
-  same). And on `docker`, `openshell` and `agentsandbox` the runner reports all of a
+  same). And on `docker`, `openshell`, `agentsandbox` and `wslc` the runner reports all of a
   project's steps in one answer of bounded size, so across the whole project it keeps
   about 2 MiB of step output in all; past that, later output is cut and flagged even
   under a step's own 1 MiB.

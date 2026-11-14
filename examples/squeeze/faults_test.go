@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
@@ -134,7 +136,7 @@ func TestGradingAndHarnessFaultsAreKeptApart(t *testing.T) {
 }
 
 // The recipe items measure is recipe words named in code: an item counts when a pattern matches
-// an identifier the shared baseline does not hold. The audit's cases (squeeze-recipe-8): the
+// an identifier the shared baseline does not hold. The audit's cases: the
 // baseline names one item itself (its altitude integral, integralY) and scores 0 once its
 // identifiers are left out; Number.isInteger is not an integral and speedSmooth is not a
 // setpoint filter; a thrust ramp and any abort still count, as words named; an unnamed filter,
@@ -229,11 +231,20 @@ func TestAStoppedRunKeepsWhatItMade(t *testing.T) {
 	}
 }
 
-// A controller whose grading failed is graded again with no model call (-regrade): on the run's
-// own sets, signed by a key of the regrade's own into regrades/<name>/; agents.json then takes its
-// scores from there and says which regrade, -verify checks the regrade's bundle, and a second
-// regrade finds nothing to do.
-func TestARegradeRecoversAFailedGrading(t *testing.T) {
+// cleanTree stands for a checkout whose code is a commit's, whatever this checkout holds, until
+// the test ends.
+func cleanTree(t *testing.T) {
+	t.Helper()
+	saved := harnessTree
+	harnessTree = func() Tree { return Tree{Commit: strings.Repeat("c", 40), Clean: true, From: "test"} }
+	t.Cleanup(func() { harnessTree = saved })
+}
+
+// failedGrading publishes a building run of two agents into a new directory, one of whose
+// controllers (the cheater's, which runs slow on the fresh set's second part) has a grading that
+// failed.
+func failedGrading(t *testing.T) (string, *Job) {
+	t.Helper()
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Messages []chatMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -264,41 +275,166 @@ func TestARegradeRecoversAFailedGrading(t *testing.T) {
 	if err := runAndPublish(context.Background(), job, root, out, daemonFor(t, slow), "", "", 2, modelOpts{api: "chat", model: "fake", base: fake.URL, keyEnv: "FAKE_MODEL_KEY", maxTokens: 100000}, givenFresh{}); err != nil {
 		t.Fatal(err)
 	}
-	agent := func(group string) AgentRecord {
-		t.Helper()
-		var agents []AgentRecord
-		if err := readJSON(filepath.Join(out, "agents.json"), &agents); err != nil {
-			t.Fatal(err)
-		}
-		for _, a := range agents {
-			if a.Group == group {
-				return a
-			}
-		}
-		t.Fatalf("no agent of group %s", group)
-		return AgentRecord{}
+	return out, job
+}
+
+// agentOf is the agents.json record of dir's agent of group.
+func agentOf(t *testing.T, dir, group string) AgentRecord {
+	t.Helper()
+	var agents []AgentRecord
+	if err := readJSON(filepath.Join(dir, "agents.json"), &agents); err != nil {
+		t.Fatal(err)
 	}
-	if a := agent("cheater"); a.GradeProblem == "" || a.Valid {
+	for _, a := range agents {
+		if a.Group == group {
+			return a
+		}
+	}
+	t.Fatalf("no agent of group %s", group)
+	return AgentRecord{}
+}
+
+// A controller whose grading failed is graded again with no model call (-regrade): on the run's
+// own sets, signed by a key of the regrade's own into regrades/<name>/; agents.json then takes its
+// scores from there and says which regrade, -verify checks the regrade's bundle, a second
+// regrade finds nothing to do, and the regrade's run.json records its own harness and the run's
+// design digest.
+func TestARegradeRecoversAFailedGrading(t *testing.T) {
+	cleanTree(t)
+	out, job := failedGrading(t)
+	if a := agentOf(t, out, "cheater"); a.GradeProblem == "" || a.Valid {
 		t.Fatalf("before the regrade: %+v", a)
 	}
 	steady := &lab{Sessions: &sandboxtest.Sessions{}}
 	if err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2); err != nil {
 		t.Fatal(err)
 	}
-	a := agent("cheater")
+	a := agentOf(t, out, "cheater")
 	if a.GradeProblem != "" || !a.Valid || a.Regraded == "" || a.Fresh != 16 || a.FreshTotal != 16 {
 		t.Fatalf("after the regrade: %+v", a)
 	}
-	if other := agent("honest"); other.Regraded != "" {
+	if other := agentOf(t, out, "honest"); other.Regraded != "" {
 		t.Fatalf("a controller graded whole was regraded: %+v", other)
 	}
 	if len(steady.projects) != 1+2 {
 		t.Fatalf("the regrade ran %d grading runs; want the one controller's practice run and its two fresh parts", len(steady.projects))
+	}
+	var parent, rf RunFile
+	if err := readJSON(filepath.Join(out, "run.json"), &parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := readJSON(filepath.Join(out, regradesDir, a.Regraded, "run.json"), &rf); err != nil {
+		t.Fatal(err)
+	}
+	if rf.DesignSHA256 == "" || rf.DesignSHA256 != parent.DesignSHA256 || rf.Harness.Commit != strings.Repeat("c", 40) || !rf.Harness.Clean {
+		t.Fatalf("the regrade's run.json records design %q (the run's %q) and harness %+v", rf.DesignSHA256, parent.DesignSHA256, rf.Harness)
 	}
 	if err := verifyPublished(out, job); err != nil {
 		t.Fatalf("a regraded run must verify: %v", err)
 	}
 	if err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2); err != nil || len(steady.projects) != 3 {
 		t.Fatalf("a second regrade: %v, %d runs", err, len(steady.projects))
+	}
+}
+
+// A regrade grades only with a commit's code: from a checkout whose
+// harness code holds a change, it is refused before any grading run, and nothing is written.
+func TestARegradeFromADirtyTreeIsRefused(t *testing.T) {
+	cleanTree(t)
+	out, job := failedGrading(t)
+	harnessTree = func() Tree {
+		return Tree{Commit: strings.Repeat("c", 40), Clean: false, Dirty: []string{" M examples/squeeze/grade.go"}, From: "test"}
+	}
+	steady := &lab{Sessions: &sandboxtest.Sessions{}}
+	err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2)
+	if !errors.Is(err, errDirtyRegrade) || !strings.Contains(err.Error(), "grade.go") {
+		t.Fatalf("a regrade from a dirty tree: %v", err)
+	}
+	if len(steady.projects) != 0 {
+		t.Fatalf("a refused regrade ran %d grading runs", len(steady.projects))
+	}
+	if _, err := os.Stat(filepath.Join(out, regradesDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused regrade wrote %s", regradesDir)
+	}
+}
+
+// A regrade grades only under the run's own design: from a checkout
+// whose course file changed since the run (a simulator edited by one line), the design recomputed
+// from the job and the embedded course is not the one the run's run.json names, and the regrade is
+// refused before any grading run.
+func TestARegradeUnderAChangedCourseFileIsRefused(t *testing.T) {
+	cleanTree(t)
+	out, job := failedGrading(t)
+	changed := fstest.MapFS{}
+	if err := fs.WalkDir(embeddedCourse, "course", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := embeddedCourse.ReadFile(p)
+		if p == "course/sim.mjs" {
+			b = append(b, []byte("\n// a change made after the run\n")...)
+		}
+		changed[p] = &fstest.MapFile{Data: b}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saved := courseFS
+	courseFS = changed
+	t.Cleanup(func() { courseFS = saved })
+	steady := &lab{Sessions: &sandboxtest.Sessions{}}
+	err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2)
+	if !errors.Is(err, errOtherDesign) || !strings.Contains(err.Error(), "run.json names") {
+		t.Fatalf("a regrade under a changed course file: %v", err)
+	}
+	if len(steady.projects) != 0 {
+		t.Fatalf("a refused regrade ran %d grading runs", len(steady.projects))
+	}
+	courseFS = saved
+	if err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2); err != nil {
+		t.Fatalf("the same regrade under the run's own course: %v", err)
+	}
+}
+
+// -verify, and with it agents.json, reads a regrade only when its run.json records the run's
+// design digest and a commit's code, so a regrade made otherwise, or
+// written by hand, is refused rather than its scores taken.
+func TestARegradeRecordingAnotherDesignOrADirtyTreeIsRefused(t *testing.T) {
+	cleanTree(t)
+	out, job := failedGrading(t)
+	steady := &lab{Sessions: &sandboxtest.Sessions{}}
+	if err := regradePublished(context.Background(), out, job, daemonFor(t, steady), "", "", 2); err != nil {
+		t.Fatal(err)
+	}
+	name := agentOf(t, out, "cheater").Regraded
+	path := filepath.Join(out, regradesDir, name, "run.json")
+	var good RunFile
+	if err := readJSON(path, &good); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		edit func(*RunFile)
+		want error
+	}{
+		{func(rf *RunFile) { rf.DesignSHA256 = strings.Repeat("0", 64) }, errOtherDesign},
+		{func(rf *RunFile) { rf.DesignSHA256 = "" }, errOtherDesign},
+		{func(rf *RunFile) {
+			rf.Harness.Clean, rf.Harness.Dirty = false, []string{" M examples/squeeze/course/sim.mjs"}
+		}, errDirtyRegrade},
+	} {
+		rf := good
+		c.edit(&rf)
+		if err := writeJSON(path, rf); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyPublished(out, job); !errors.Is(err, c.want) {
+			t.Fatalf("a regrade recording design %q, harness %+v: %v", rf.DesignSHA256, rf.Harness, err)
+		}
+	}
+	if err := writeJSON(path, good); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPublished(out, job); err != nil {
+		t.Fatalf("the regrade as it was written: %v", err)
 	}
 }

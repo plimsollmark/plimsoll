@@ -12,12 +12,15 @@ agent-authored code with an explicitly reported isolation tier, callable over RP
 Hostile production deployments require the verified kernel or VM tiers; the WASM
 option is intentionally only process-tier.
 
-- Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.10
-  toolchain** (`toolchain go1.26.10`) and `golang.org/x/net` v0.60.0: `govulncheck ./...` is
-  clean there. 1.26.9 has GO-2026-6809 (crypto/x509 distrusting compromised intermediate
+- Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.11
+  toolchain** (`toolchain go1.26.11`) and `golang.org/x/net` v0.62.0: `govulncheck ./...` is
+  clean there, modules included (v0.60.0 has GO-2026-6860 and GO-2026-6866, in its HTML parser,
+  which plimsoll does not call). 1.26.10 has GO-2026-6859 (an HTTP/1 server panic when a handler reading a
+  `MaxBytesReader` body sets a header, published 2026-11-11; the RPC layer caps every request
+  body with one), 1.26.9 has GO-2026-6809 (crypto/x509 distrusting compromised intermediate
   certificates, published 2026-10-21), and 1.26.6 had eleven stdlib advisories published on
   2026-10-08, among them an HTTP/2 server crash and HTTP/2 memory exhaustion in paths this
-  TCB calls. Build plimsolld with >= 1.26.10.
+  TCB calls. Build plimsolld with >= 1.26.11.
 - Direct dependencies are Connect, protobuf, wazero, and `golang.org/x/net`;
   `x/sys` and `x/text` are indirect. Do not add dependencies casually: this is a
   hostile-code TCB.
@@ -38,7 +41,7 @@ Read the document for the subsystem you touch, not all of them.
 | The ship scan (each call's payload against the operator's withheld set; `internal/withheld`, `cmd/plimsoll-withheld`) | [docs/ship-scan.md](docs/ship-scan.md) |
 | Hardened mode | [docs/hardened-mode.md](docs/hardened-mode.md) |
 | Callers and tokens | [docs/callers.md](docs/callers.md) |
-| Docker Cloud, OpenShell, Kubernetes agent-sandbox operator guides | [docs/dockercloud.md](docs/dockercloud.md), [docs/openshell.md](docs/openshell.md), [docs/agentsandbox.md](docs/agentsandbox.md) |
+| Docker Cloud, OpenShell, Kubernetes agent-sandbox, WSL containers operator guides | [docs/dockercloud.md](docs/dockercloud.md), [docs/openshell.md](docs/openshell.md), [docs/agentsandbox.md](docs/agentsandbox.md), [docs/wslc.md](docs/wslc.md) |
 | Guest dependencies and images | [docs/guest-dependencies.md](docs/guest-dependencies.md), [docs/dependencies.md](docs/dependencies.md) |
 | The efficiency advisor | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) |
 | Placement across daemons | [docs/placement.md](docs/placement.md) |
@@ -126,8 +129,8 @@ Result semantics that every change must keep:
 ## Providers (`SANDBOX_PROVIDER`)
 
 `Build(getenv)` selects one and fails closed: a malformed safety setting or an unknown name
-is an error, and unset is **Disabled**. plimsolld builds `openshell` and `agentsandbox`
-itself, outside `Build`.
+is an error, and unset is **Disabled**. plimsolld builds `openshell`, `agentsandbox` and
+`wslc` itself, outside `Build`.
 
 | Value | Provider | Tier |
 |---|---|---|
@@ -137,6 +140,7 @@ itself, outside `Build`.
 | `dockercloud` | Docker Cloud Sandboxes microVM | vm (billed by the second) |
 | `openshell` | NVIDIA OpenShell through a gateway | container |
 | `agentsandbox` | Kubernetes agent-sandbox pod from a warm pool | read from the runtime class: `kata-clh`, `kata-clh-runtime-rs`, `kata` vm; `runsc` kernel; `runc` container; anything else refused |
+| `wslc` | WSL containers on Windows, through `wslc.exe` over WSL interop | `per-run` mode, the default: vm (a Hyper-V VM per run, gVisor inside it optional); `shared` mode: container, weaker than docker under runc. Microsoft's statement that WSL is "not a security sandbox for running untrusted code" goes with the tier, and hardened mode refuses both modes |
 | unset | Disabled | none; any other value fails `Build` |
 
 **A reported tier is configuration and provider evidence plus the behavioral startup
@@ -198,7 +202,7 @@ are pinned by go.mod `tool` directives.
 **CI** ([.github/workflows/](.github/workflows/)) runs `make audit`, `make clients-suite`,
 `make capsule-suite`, `make sbom-suite`, `make mcp-suite` and `make docker-suite` under
 runc, and the docker suite under runsc in a separate workflow. No CI run exercises E2B,
-Docker Cloud or OpenShell: **never add an E2B key or a Docker token to repository
+Docker Cloud, OpenShell or WSL containers: **never add an E2B key or a Docker token to repository
 secrets.** Third-party actions are pinned by commit SHA.
 
 **Module identity.** `github.com/plimsollmark/plimsoll` resolves from `proxy.golang.org`

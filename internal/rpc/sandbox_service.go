@@ -234,6 +234,10 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 	if d, ok := s.Sandbox.(sandbox.Describer); ok {
 		env = d.Environments()
 	}
+	qualification := ""
+	if q, ok := s.Sandbox.(sandbox.Qualifier); ok {
+		qualification = q.Qualification()
+	}
 	supportsJavaScriptGrants, supportsProjectGrants := false, false
 	if gc, ok := s.Sandbox.(sandbox.GrantCapable); ok {
 		supportsJavaScriptGrants = gc.SupportsJavaScriptGrants()
@@ -266,14 +270,15 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 			Pids:     nonNegative(s.Resources.PidsLimit),
 			DiskMb:   nonNegative(s.Resources.DiskMB),
 		},
-		Policy:               env.Policy,
-		SupportsSessions:     supportsSessions,
-		SessionLifetimeMs:    sessionLifetime,
-		SessionIdleTimeoutMs: sessionIdle,
-		SessionEnvironment:   sessionEnv,
-		MaxSessionsPerCaller: sessionCap(supportsSessions, s.Sessions.MaxPerCaller),
-		MaxSessionsPerOwner:  sessionCap(supportsSessions, s.Sessions.MaxPerOwner),
-		SessionPool:          sessionCap(supportsSessions, s.Sessions.Pool),
+		Policy:                 env.Policy,
+		SupportsSessions:       supportsSessions,
+		SessionLifetimeMs:      sessionLifetime,
+		SessionIdleTimeoutMs:   sessionIdle,
+		SessionEnvironment:     sessionEnv,
+		MaxSessionsPerCaller:   sessionCap(supportsSessions, s.Sessions.MaxPerCaller),
+		MaxSessionsPerOwner:    sessionCap(supportsSessions, s.Sessions.MaxPerOwner),
+		SessionPool:            sessionCap(supportsSessions, s.Sessions.Pool),
+		IsolationQualification: qualification,
 	}), nil
 }
 

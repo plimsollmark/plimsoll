@@ -439,6 +439,21 @@ func TestEvidenceThatDoesNotCheckIsNeverAResultOrARetry(t *testing.T) {
 	}
 }
 
+// server_info shows the sentence the daemon states beside its tier, whole, and says nothing
+// of one when the daemon states none.
+func TestServerInfoShowsTheIsolationQualification(t *testing.T) {
+	const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code."
+	d := fakedaemon.Serve(t, fakedaemon.Options{Qualification: sentence})
+	info := connect(t, local(d.URL)).ok("server_info", nil)
+	if !strings.Contains(info["summary"].(string), "It states beside that tier: "+sentence) {
+		t.Errorf("a daemon that states one: %v", info)
+	}
+	info = connect(t, local(fakedaemon.Serve(t, fakedaemon.Options{}).URL)).ok("server_info", nil)
+	if strings.Contains(info["summary"].(string), "beside that tier") {
+		t.Errorf("a daemon that states none: %v", info)
+	}
+}
+
 func TestADaemonThatDoesNotAnswer(t *testing.T) {
 	c := connect(t, local(fakedaemon.DownURL(t)))
 	if f := c.fail("run_code", map[string]any{"code": "1"}); f.Ran != "no" {

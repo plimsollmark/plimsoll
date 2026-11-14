@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -16,7 +17,14 @@ import (
 // answers for any seed they could guess).
 //
 //go:embed course/sim.mjs course/host.mjs course/fly.mjs course/task-easy.mjs course/task-hard.mjs course/API-easy.md course/API-hard.md course/baselines/stabilizer.js
-var courseFS embed.FS
+var embeddedCourse embed.FS
+
+// courseFS is the course this program flies and states in its design document: the embedded
+// files. A test replaces it to stand for a checkout whose course changed since a run.
+var courseFS interface {
+	fs.ReadDirFS
+	fs.ReadFileFS
+} = embeddedCourse
 
 // cpuBudgetSeconds is the controller's CPU time per flight, from loading its code to landing; the
 // runtime's own start, before any controller code runs, is not counted (course/sim.mjs).

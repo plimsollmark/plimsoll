@@ -2,7 +2,7 @@ module github.com/plimsollmark/plimsoll/clients/mcp
 
 go 1.26.2
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	connectrpc.com/connect v1.20.0
@@ -21,7 +21,7 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 )
 
 require (
@@ -30,12 +30,12 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.11
 )
 
 replace github.com/plimsollmark/plimsoll => ../..

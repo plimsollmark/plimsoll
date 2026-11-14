@@ -350,6 +350,10 @@ class Info:
     with one, a cell run with ``run_cell(prefer_warm=True)``, or a session opened with
     ``open_session(warm_only=True)``, can answer without a sandbox being made for it.
     Stated with ``supports_sessions``."""
+    isolation_qualification: str = ""
+    """The sentence the provider states beside its tier, empty when it has none (the WSL
+    containers provider's per-run mode states Microsoft's). Show it wherever the tier is
+    shown; informational, and a daemon that states none is a normal answer."""
 
 
 @dataclass(frozen=True)

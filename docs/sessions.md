@@ -120,6 +120,7 @@ which every implementation runs. The suite checks that:
 | `e2b` | Yes. <dfn>*E2B*</dfn> is a hosted service that runs each sandbox in a small virtual machine of its own. How it keeps the boundary between calls: [E2B](#e2b) below. |
 | `dockercloud` | Not yet. Docker Cloud sessions are held back until the open's check can read every listener inside Docker's machine. |
 | `wasm` | No. The engine runs in the daemon's own process, and keeping hostile code's state there between calls is the wrong direction. |
+| `wslc` | No. The WSL containers provider runs each snippet or project in a fresh container, in its per-run mode inside a fresh virtual machine as well, and keeps none open between calls ([wslc.md](wslc.md#what-it-does-not-do)). |
 
 ## Turning them on
 

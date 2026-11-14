@@ -33,7 +33,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-guard-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
+.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-guard-live dockercloud-suite openshell-suite agentsandbox-suite wslc-suite wslc-gvisor-suite wslc-docker-check modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -41,6 +41,7 @@ GATE_TOOLS := gate-tools.versions
 ##   skip without node or as root (root defeats the runner guard they test)
 audit: tools-check build vet modules race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
+	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) wslc-docker-check; else echo "skip wslc-docker-check (set DOCKER=1)"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE or _STORE_IMAGE, and unless SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL)"; fi
 	@if [ "$(OPENSHELL)" = "1" ]; then $(MAKE) openshell-suite; else echo "skip openshell-suite (set OPENSHELL=1 with a gateway and SANDBOX_OPENSHELL_GATEWAY_URL, _CA_FILE, _CERT_FILE, _KEY_FILE, _IMAGE)"; fi
@@ -439,6 +440,38 @@ agentsandbox-suite:
 	   echo "agentsandbox-suite: required coverage was skipped:" >&2; \
 	   grep -E '^ *--- SKIP' tmp/agentsandbox-suite.log >&2; exit 1; fi
 	@exit "$$(cat tmp/agentsandbox-suite.status)"
+
+# The WSL containers provider's live suites run on a Windows machine with WSL 3.0.5 or later,
+# from a WSL distribution, by hand: CI's hosted Linux runners have no WSL, so no CI job runs
+# them. They spend nothing (WSL containers run on the machine itself), and a missing
+# configuration or a skipped test fails them. wslc-docker-check is the part any machine with
+# docker can run: the shared mode's run path, plimsoll's runner and the smoke test's
+# boundary test against a real container, through a stand-in for wslc.exe that answers with
+# the local docker (sandbox/wslc/testdata/docker-standin.sh). It checks plimsoll's side of
+# the path and is never evidence about WSL containers; make audit runs it with DOCKER=1. It
+# leaves out the per-run tests, which need real Hyper-V sessions, and the environment canary,
+# whose control starts a Windows program through interop.
+#
+#   SANDBOX_WSLC_IMAGE          the sandbox image, loaded into the WSL containers session
+#   SANDBOX_WSLC_PATH           wslc.exe, when it is not at the default path
+#   SANDBOX_WSLC_RUNSC_PATH, SANDBOX_WSLC_RUNSC_SHA512, SANDBOX_WSLC_RUNSC_HELPERS
+#                               wslc-gvisor-suite only: the operator's runsc (docs/wslc.md)
+#
+## wslc-suite: the live WSL containers provider suite, by hand on a Windows machine from a WSL distribution; a missing configuration or a skipped test FAILS
+wslc-suite:
+	@mkdir -p tmp
+	@{ WSLC_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestLive' -count=1 -v; echo $$? > tmp/wslc-suite.status; } 2>&1 | tee tmp/wslc-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/wslc-suite.log; then echo "wslc-suite: required coverage was skipped:" >&2; grep -E '^ *--- SKIP' tmp/wslc-suite.log >&2; exit 1; fi
+	@exit $$(cat tmp/wslc-suite.status)
+## wslc-gvisor-suite: the live tests of gVisor inside each per-run WSL containers VM, by hand on a Windows machine from a WSL distribution; a missing configuration or a skipped test FAILS
+wslc-gvisor-suite:
+	@mkdir -p tmp
+	@{ WSLC_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestGVisorLive' -count=1 -v -timeout 30m; echo $$? > tmp/wslc-gvisor-suite.status; } 2>&1 | tee tmp/wslc-gvisor-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/wslc-gvisor-suite.log; then echo "wslc-gvisor-suite: required coverage was skipped:" >&2; grep -E '^ *--- SKIP' tmp/wslc-gvisor-suite.log >&2; exit 1; fi
+	@exit $$(cat tmp/wslc-gvisor-suite.status)
+## wslc-docker-check: with DOCKER=1, the wslc provider's shared-mode run path and boundary test against the local docker through a stand-in for wslc.exe; never evidence about WSL containers
+wslc-docker-check:
+	@if [ "$(DOCKER)" = "1" ]; then WSLC_LIVE=1 SANDBOX_WSLC_PATH=$(CURDIR)/sandbox/wslc/testdata/docker-standin.sh SANDBOX_WSLC_IMAGE=plimsoll/sandbox:latest $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestLive' -skip '^(TestLivePerRun|TestLiveEnvironmentCanary)' -count=1; else echo "skip wslc-docker-check (set DOCKER=1)"; fi
 
 # The guarded-egress path is the one claim `make audit E2B=1` cannot make: its live
 # test skips unless three deployment-specific variables are set, and a skip inside a

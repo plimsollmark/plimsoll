@@ -263,7 +263,11 @@ design), `-build` (how many of each of those groups, at most the job's), `-seal`
 `-regrade DIR` (grade again, with no model call, the controllers of a
 building run's agents whose grading failed, on its own sealed sets, signed into
 `DIR/regrades/<time>/`; `agents.json` then takes their scores from there and names the regrade,
-and `-verify` checks it).
+and `-verify` checks it). A regrade grades only under the run's own design and with a commit's
+code: it refuses a checkout whose design document, recomputed from the job and the course this
+program embeds, is not the one the run's `run.json` names, and a checkout whose code holds a
+change, before any grading run. Its `run.json` records its own harness and design digest, and
+`-verify` refuses a regrade whose record names another design or code that was not a commit's.
 
 What a run keeps when it does not finish: `run.json` names the harness's commit and whether its
 code was the commit's (`harness`; `-paid` refuses code that is not); each agent's transcript is

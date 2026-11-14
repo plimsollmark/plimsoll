@@ -768,3 +768,36 @@ func TestVersion2RecordStatingUnansweredIsDataLoss(t *testing.T) {
 		t.Fatalf("err = %v, want DataLoss wrapping record.ErrMismatch", err)
 	}
 }
+
+// qualifiedSandbox is a provider that states a sentence beside its tier.
+type qualifiedSandbox struct {
+	sandbox.Sandbox
+	sentence string
+}
+
+func (q qualifiedSandbox) Qualification() string { return q.sentence }
+
+// Info carries the provider's qualification whole, and an answer without one reads as empty.
+func TestDescribeReadsTheIsolationQualification(t *testing.T) {
+	const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code."
+	for name, tc := range map[string]struct {
+		sb   sandbox.Sandbox
+		want string
+	}{
+		"with a sentence": {qualifiedSandbox{sandboxtest.Wasm(), sentence}, sentence},
+		"without one":     {sandboxtest.Wasm(), ""},
+	} {
+		mux := http.NewServeMux()
+		path, h := rpc.NewHandler(rpc.NewSandboxService(tc.sb), connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+		mux.Handle(path, h)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		info, err := newRemote(t, srv.URL).Describe(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.IsolationQualification != tc.want {
+			t.Errorf("%s: IsolationQualification = %q, want %q", name, info.IsolationQualification, tc.want)
+		}
+	}
+}

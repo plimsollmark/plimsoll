@@ -42,6 +42,54 @@ type ImageResult struct {
 	// that file's whole size (known.go): the evidence a known-unreadable list is checked
 	// against. A file the scan gave up on for two reasons is listed once for each.
 	Unreadable []Unreadable
+	// Places names, for every Where in Result (a find's or an incomplete part's), the
+	// layer, the path and the part it stands for, as written in the archive, so a report
+	// can state them apart (a SARIF file's nested artifacts) rather than split the Where
+	// string, whose ":" a layer's or a path's name may hold too. Two places with one
+	// Where keep the first.
+	Places map[string]Place
+}
+
+// Place is what a Where of an image scan stands for.
+type Place struct {
+	// Layer is the layer's member name in the image archive, as written; empty for a
+	// member that is not a layer (the configuration, a manifest).
+	Layer string
+	// Path is the file's path in the layer, or the member's name for a member that is
+	// not a layer; empty for a layer the scan did not read (zstd).
+	Path string
+	// Part is what of the file the Where names: PartContent, PartPath or PartLinkTarget.
+	Part string
+}
+
+// The parts of a file a Place names.
+const (
+	PartContent    = "content"
+	PartPath       = "path"
+	PartLinkTarget = "link target"
+)
+
+// place records, for every Where that res names, its place from places.
+func (out *ImageResult) place(res Result, places map[string]Place) {
+	if out.Places == nil {
+		out.Places = map[string]Place{}
+	}
+	note := func(where string) {
+		if _, ok := out.Places[where]; ok {
+			return
+		}
+		if p, ok := places[where]; ok {
+			out.Places[where] = p
+		}
+	}
+	for _, f := range res.Found {
+		for _, w := range f.Where {
+			note(w)
+		}
+	}
+	for _, in := range res.Incomplete {
+		note(in.Where)
+	}
 }
 
 // ScanImage scans an image archive (`docker save`) against s: each layer's regular files
@@ -81,10 +129,11 @@ func (s *Set) ScanImage(ctx context.Context, archive io.Reader) (ImageResult, er
 		case layerZstd:
 			out.Layers++
 			inc := []Incomplete{{Where: CleanWhere(h.Name), Bound: BoundZstd}}
+			out.place(Result{Incomplete: inc}, map[string]Place{CleanWhere(h.Name): {Layer: h.Name, Part: PartContent}})
 			m.add(Result{Incomplete: inc})
 			m.unreadable(unreadableKey(h.Name), h.Size, inc)
 		default:
-			if err := s.scanFile(ctx, CleanWhere(h.Name), unreadableKey(h.Name), h.Name, h.Size, layer, &out, m); err != nil {
+			if err := s.scanFile(ctx, CleanWhere(h.Name), unreadableKey(h.Name), "", h.Name, layer, h.Size, &out, m); err != nil {
 				return ImageResult{}, err
 			}
 		}
@@ -157,18 +206,21 @@ func (s *Set) scanLayer(ctx context.Context, rawLayer string, layer io.Reader, o
 		key := unreadableKey(rawLayer, h.Name)
 		switch h.Typeflag {
 		case tar.TypeReg:
-			if err := s.scanFile(ctx, where, key, h.Name, h.Size, tr, out, m); err != nil {
+			if err := s.scanFile(ctx, where, key, rawLayer, h.Name, tr, h.Size, out, m); err != nil {
 				return err
 			}
 		default:
 			parts := []Part{{Where: where + " (path)", Data: []byte(h.Name)}}
+			places := map[string]Place{where + " (path)": {Layer: rawLayer, Path: h.Name, Part: PartPath}}
 			if h.Linkname != "" {
 				parts = append(parts, Part{Where: where + " (link target)", Data: []byte(h.Linkname)})
+				places[where+" (link target)"] = Place{Layer: rawLayer, Path: h.Name, Part: PartLinkTarget}
 			}
 			res, err := s.Scan(ctx, parts)
 			if err != nil {
 				return err
 			}
+			out.place(res, places)
 			m.add(res)
 			m.unreadable(key, h.Size, res.Incomplete)
 		}
@@ -178,7 +230,8 @@ func (s *Set) scanLayer(ctx context.Context, rawLayer string, layer io.Reader, o
 // scanFile scans one file of the image whole, with its path, reading at most
 // MaxImageFileBytes of it. key and size name it in a known-unreadable list: size is the
 // file's whole size from its header, also when only the first MaxImageFileBytes are read.
-func (s *Set) scanFile(ctx context.Context, where, key, path string, size int64, r io.Reader, out *ImageResult, m *merge) error {
+// layer is the raw name of the layer holding it, empty for a member of the archive itself.
+func (s *Set) scanFile(ctx context.Context, where, key, layer, path string, r io.Reader, size int64, out *ImageResult, m *merge) error {
 	data, err := io.ReadAll(io.LimitReader(r, MaxImageFileBytes+1))
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", where, err)
@@ -194,6 +247,10 @@ func (s *Set) scanFile(ctx context.Context, where, key, path string, size int64,
 	if cut {
 		res.Incomplete = append(res.Incomplete, Incomplete{Where: where, Bound: BoundImageFileBytes})
 	}
+	out.place(res, map[string]Place{
+		where + " (path)": {Layer: layer, Path: path, Part: PartPath},
+		where:             {Layer: layer, Path: path, Part: PartContent},
+	})
 	out.Files++
 	m.add(res)
 	m.unreadable(key, size, res.Incomplete)

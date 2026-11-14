@@ -142,3 +142,43 @@ func TestScanImageRefusesAnArchiveThatIsNotOne(t *testing.T) {
 		t.Fatal("a non-tar archive scanned without an error")
 	}
 }
+
+// Places states each Where of a find or an incomplete part apart, the layer, the path and
+// the part, as written, so a report need not split the Where string (a layer named
+// "a:b" and one named "a" holding "b:..." would read alike).
+func TestScanImagePlacesEachWhere(t *testing.T) {
+	s := setOf(t, ModeAudit, nil, value(harnessSeed, "seeds.txt:1", ""), file(harnessSource, "harness/sim.py", ""))
+	res := scanImage(t, s, savedImage(t))
+	for where, want := range map[string]Place{
+		"blobs/sha256/l1:usr/src/harness/sim.py": {Layer: "blobs/sha256/l1", Path: "usr/src/harness/sim.py", Part: PartContent},
+		"blobs/sha256/cfg":                       {Path: "blobs/sha256/cfg", Part: PartContent},
+	} {
+		if got, ok := res.Places[where]; !ok || got != want {
+			t.Errorf("Places[%q] = %+v (%v), want %+v", where, got, ok, want)
+		}
+	}
+	zstd := string([]byte{0x28, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0})
+	var lb bytes.Buffer
+	w := tar.NewWriter(&lb)
+	for _, h := range []*tar.Header{
+		{Name: "opt/" + harnessSeed + "/x", Mode: 0o644, Typeflag: tar.TypeReg},
+		{Name: "opt/link", Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: "/srv/" + harnessSeed},
+	} {
+		if err := w.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res = scanImage(t, s, layerTarOf(t, [2]string{"blobs/sha256/z", zstd}, [2]string{"blobs/sha256/a:b", lb.String()}))
+	for where, want := range map[string]Place{
+		"blobs/sha256/z": {Layer: "blobs/sha256/z", Part: PartContent},
+		"blobs/sha256/a:b:opt/" + harnessSeed + "/x (path)": {Layer: "blobs/sha256/a:b", Path: "opt/" + harnessSeed + "/x", Part: PartPath},
+		"blobs/sha256/a:b:opt/link (link target)":           {Layer: "blobs/sha256/a:b", Path: "opt/link", Part: PartLinkTarget},
+	} {
+		if got, ok := res.Places[where]; !ok || got != want {
+			t.Errorf("Places[%q] = %+v (%v), want %+v", where, got, ok, want)
+		}
+	}
+}

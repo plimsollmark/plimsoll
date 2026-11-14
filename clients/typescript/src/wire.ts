@@ -146,6 +146,7 @@ export type WireDescribeResponse = {
   maxSessionsPerOwner?: number;
   sessionEnvironment?: WirePayloadEnvironment;
   sessionPool?: number;
+  isolationQualification?: string;
 };
 
 export type WireOpenSessionRequest = {

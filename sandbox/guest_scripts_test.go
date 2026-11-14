@@ -32,6 +32,23 @@ var guestScriptTests = map[string]string{
 	"e2b.go:vmSmokeProbe":                  "TestDockerRunsTheE2BSmokeScript",
 }
 
+// targetGuestScripts are the Node programs of a provider whose sandboxes no docker-suite run
+// can start (wslc: WSL containers on Windows), keyed like guestScriptTests, each with the
+// test that runs it in a docker container through a stand-in for the provider's own
+// program, and the Makefile target that runs that test, which make audit runs with DOCKER=1.
+var targetGuestScripts = map[string]privateGuestScript{
+	"wslc/smoke.go:probeScript": {test: "TestLiveSmokeTestEvidence", target: "wslc-docker-check"},
+}
+
+// privateGuestScripts are the Node programs of providers that exist only in a working copy
+// and never ship, keyed like guestScriptTests, each with the test that runs it in a
+// locked-down docker container and the make target (in that copy's local.mk, appended to
+// make audit) that runs the test when DOCKER=1. A file of that copy's own fills it; it is
+// empty wherever no such provider exists.
+var privateGuestScripts = map[string]privateGuestScript{}
+
+type privateGuestScript struct{ test, target string }
+
 // nodeScript reports whether a string literal is a Node program: what such a program
 // calls that no other string in the tree does.
 func nodeScript(s string) bool {
@@ -84,6 +101,14 @@ func TestEveryGuestScriptRunsInTheDockerSuite(t *testing.T) {
 		if dockerOwn(key) {
 			continue // the docker provider's own programs run in every docker-suite run
 		}
+		if p, ok := targetGuestScripts[key]; ok {
+			checkTargetGuestScript(t, key, p, "../Makefile")
+			continue
+		}
+		if p, ok := privateGuestScripts[key]; ok {
+			checkTargetGuestScript(t, key, p, "../local.mk")
+			continue
+		}
 		name, ok := guestScriptTests[key]
 		if !ok {
 			t.Errorf("%s is a Node program sent into a sandbox with no docker-suite test that runs it; add one and name it in guestScriptTests", key)
@@ -104,6 +129,51 @@ func TestEveryGuestScriptRunsInTheDockerSuite(t *testing.T) {
 		if !found[key] {
 			t.Errorf("guestScriptTests names %s, which is no longer a Node program in the source", key)
 		}
+	}
+	for key := range targetGuestScripts {
+		if !found[key] {
+			t.Errorf("targetGuestScripts names %s, which is no longer a Node program in the source", key)
+		}
+	}
+	for key := range privateGuestScripts {
+		if !found[key] {
+			t.Errorf("privateGuestScripts names %s, which is no longer a Node program in the source", key)
+		}
+	}
+}
+
+// checkTargetGuestScript holds a program to the same rule through its own make target, in
+// the Makefile (a published provider's) or in a working copy's local.mk (a private one's):
+// the test exists, the target's go test line selects it in its package under DOCKER=1 and
+// does not skip it, and make audit runs the target (the Makefile's audit recipe with
+// DOCKER=1, or local.mk's EXTRA_AUDIT).
+func checkTargetGuestScript(t *testing.T, key string, p privateGuestScript, makefile string) {
+	t.Helper()
+	dir := filepath.Dir(strings.SplitN(key, ":", 2)[0])
+	if !testDefined(t, dir, p.test) {
+		t.Errorf("%s names %s, which no test file in sandbox/%s defines", key, p.test, dir)
+	}
+	b, err := os.ReadFile(makefile)
+	if err != nil {
+		t.Errorf("%s names the target %s, but this tree has no %s to run it: %v", key, p.target, makefile, err)
+		return
+	}
+	mk := string(b)
+	recipe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(p.target) + `:\n\t(.+)$`).FindStringSubmatch(mk)
+	if recipe == nil {
+		t.Errorf("%s names the target %s, which %s does not define", key, p.target, makefile)
+		return
+	}
+	line := regexp.MustCompile(`DOCKER\)" = "1" \]; then .*go test ` + regexp.QuoteMeta(pkgPath(dir)) + ` -run '([^']+)'(?: -skip '([^']+)')?`).FindStringSubmatch(recipe[1])
+	if line == nil || !regexp.MustCompile(line[1]).MatchString(p.test) || line[2] != "" && regexp.MustCompile(line[2]).MatchString(p.test) {
+		t.Errorf("%s's target %s does not run %s in %s under DOCKER=1", key, p.target, p.test, pkgPath(dir))
+	}
+	audited := regexp.MustCompile(`(?m)^EXTRA_AUDIT \+=.*\b` + regexp.QuoteMeta(p.target) + `\b`)
+	if filepath.Base(makefile) == "Makefile" {
+		audited = regexp.MustCompile(`(?m)^\t@if \[ "\$\(DOCKER\)" = "1" \]; then \$\(MAKE\) ` + regexp.QuoteMeta(p.target) + `;`)
+	}
+	if !audited.MatchString(mk) {
+		t.Errorf("%s's target %s is not run by make audit", key, p.target)
 	}
 }
 

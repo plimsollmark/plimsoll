@@ -228,6 +228,12 @@ export type Info = {
    * answer without a sandbox being made for it. Stated with supportsSessions.
    */
   sessionPool: number;
+  /**
+   * The sentence the provider states beside its tier, "" when it has none (the WSL
+   * containers provider's per-run mode states Microsoft's). Show it wherever the tier is
+   * shown; informational, and a daemon that states none is a normal answer.
+   */
+  isolationQualification: string;
   environments: { javascript: PayloadEnvironment; project: PayloadEnvironment; module: PayloadEnvironment; policy: string };
   resources: { memoryMb: number; cpus: number; pids: number; diskMb: number };
 };
@@ -600,6 +606,7 @@ export class PlimsollClient {
       maxSessionsPerCaller: m.maxSessionsPerCaller ?? 0,
       maxSessionsPerOwner: m.maxSessionsPerOwner ?? 0,
       sessionPool: m.sessionPool ?? 0,
+      isolationQualification: m.isolationQualification ?? "",
       environments: {
         javascript: env(m.javascriptEnvironment),
         project: env(m.projectEnvironment),

@@ -2,23 +2,25 @@ module github.com/plimsollmark/plimsoll
 
 go 1.26.2
 
-// The canonical build uses the security-patched 1.26.10 toolchain (govulncheck is
-// clean there; 1.26.9 has GO-2026-6809 in crypto/x509, and earlier 1.26.x had stdlib
+// The canonical build uses the security-patched 1.26.11 toolchain (govulncheck is
+// clean there; 1.26.10 has GO-2026-6859, an HTTP/1 server panic when a handler that
+// reads a MaxBytesReader body sets a header, and the RPC layer caps every body with
+// one; 1.26.9 has GO-2026-6809 in crypto/x509, and earlier 1.26.x had stdlib
 // advisories in the reverse-proxy and HTTP/2 paths this TCB calls). A `toolchain`
 // line binds only this module's own build, not the version it requires of
-// dependents, so build plimsolld with >= 1.26.10.
-toolchain go1.26.10
+// dependents, so build plimsolld with >= 1.26.11.
+toolchain go1.26.11
 
 require (
 	connectrpc.com/connect v1.20.0
 	github.com/tetratelabs/wazero v1.12.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
 
 tool (

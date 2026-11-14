@@ -54,6 +54,7 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 | `e2b` | an E2B <dfn>*microVM*</dfn>, a small virtual machine made for one run | **VM** | isolation by <dfn>*hardware virtualization*</dfn>, the processor's own separation between virtual machines |
 | `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | **VM** | the same, on Docker's machines |
 | `openshell` | a sandbox from an <dfn>*OpenShell*</dfn> gateway (NVIDIA's agent sandbox runtime), created with docker | container | platforms that already run an OpenShell gateway; the same caveat as docker under `runc` |
+| `wslc` | a container from WSL containers (WSLC), the container engine Microsoft ships inside the Windows Subsystem for Linux, started through `wslc.exe` from a daemon in a WSL distribution | per-run mode, the default, a Hyper-V virtual machine for each run: **VM**, always with Microsoft's statement that WSL is "not a security sandbox for running untrusted code"; shared mode, one virtual machine for every run: container | a Windows machine with nothing installed beyond WSL. <dfn>*Hardened mode*</dfn> (the daemon's strict production check, `PLIMSOLL_HARDENED=1`) refuses it in both modes; the shared mode is weaker than docker under `runc`, with five of its controls missing ([wslc.md](wslc.md#controls)) |
 
 > **The WASM tier runs inside the daemon.** It is neither an operating-system wall nor a
 > virtual machine wall. An <dfn>*escape*</dfn>, a bug that lets code out of the QuickJS
@@ -62,7 +63,9 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 
 The container tier, with docker's default runtime `runc`, shares the host's kernel. For
 hostile code in production, use a VM provider (`e2b`, `dockercloud`), or `docker` with
-`SANDBOX_DOCKER_RUNTIME=runsc`.
+`SANDBOX_DOCKER_RUNTIME=runsc`. The `wslc` per-run mode reports `vm` but is not one of
+them: its vendor states that WSL is not a security sandbox for running untrusted code
+([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 Every provider whose walls depend on the host or on a remote service runs a startup
 **`SmokeTest`** that checks behaviour, not just configuration, and the daemon serves
@@ -90,6 +93,13 @@ lack of any network API, and its startup check reads only its settings.
   a network policy in force that blocks every connection, file upload, the command wrapper, the step's working
   directory and egress denial from inside
   ([dockercloud.md](dockercloud.md#startup-smoke-test)).
+- The WSL containers test inspects the image, then runs a boundary test through exactly the
+  path a run takes, and refuses to serve unless the container it got has loopback alone, no
+  capability, the code's user, the memory limit, a <dfn>*seccomp*</dfn> filter (the kernel's
+  filter on which requests a process may make), no GPU device, no Windows folder and no
+  writable place but its four tmpfs mounts. In the per-run mode it does that in two fresh
+  virtual machines whose boot IDs it has never seen
+  ([wslc.md](wslc.md#startup-smoke-test-and-readiness)).
 
 **Exactly what the kernel and vm tiers rest on**, because a security claim nobody could
 prove wrong is not worth reading.
@@ -107,8 +117,17 @@ prove wrong is not worth reading.
 - For `dockercloud`, the vm tier also follows from which provider it is: Docker Cloud
   Sandboxes runs each sandbox in a microVM, and its startup test proves the policy that
   blocks every connection and the blocked egress, not the hypervisor.
+- For `wslc` in its per-run mode, the vm tier follows from how each run is started: in a
+  virtual machine of its own, which WSL containers start for the run with Hyper-V and
+  plimsolld deletes after it. Its startup test proves that its two boundary-test runs landed
+  in two virtual machines never seen before (boot IDs that differ from each other, from the
+  user's shared WSL containers machine and from the WSL distribution), and every run refuses
+  a boot ID already seen; it does not prove the hypervisor. Microsoft states that WSL is not
+  a security sandbox for running untrusted code; `Describe`, the startup log and
+  `plimsolld -h` carry that sentence beside the tier, and hardened mode refuses the provider
+  ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
-All three are stronger than a sentence in a datasheet and weaker than
+All four are stronger than a sentence in a datasheet and weaker than
 <dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software is
 running. If your <dfn>*threat model*</dfn> (the attacks you must hold out against) needs
 attestation, neither tier here supplies it.
@@ -120,6 +139,19 @@ plimsoll reports `container` even where that runtime is gVisor. Its startup test
 from inside a sandbox that only `/tmp` accepts writes, that egress is refused, that the
 requested limits are in the sandbox's cgroup, and that cancelling a command kills it
 ([openshell.md](openshell.md)).
+
+A provider may also state a sentence that must stand beside its tier wherever the tier is
+shown, for example a vendor's own statement about the wall under it. A caller reads it from
+`Describe`, as `isolation_qualification` (`Info.IsolationQualification` in the Go client,
+`isolation_qualification` in the Python client, `isolationQualification` in the TypeScript
+client, and in the summary of the <dfn>*MCP*</dfn> (Model Context Protocol) server's
+`server_info`); it is empty for a provider with none. It is informational, like the tier:
+no <dfn>*run record*</dfn> (the daemon's signed statement of what it ran and where) and no
+run request carries it, and it does not change the <dfn>*protocol number*</dfn> (the version
+the daemon and its client must agree on), so a client shows it and does not require it.
+Today only the `wslc` provider's per-run mode states one: Microsoft's statement about WSL,
+and gVisor's position when gVisor runs inside its virtual machines
+([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 ## Asserting a floor
 

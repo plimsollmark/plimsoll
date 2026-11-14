@@ -358,6 +358,7 @@ class Client:
             max_sessions_per_caller=m.get_int("maxSessionsPerCaller", UINT32),
             max_sessions_per_owner=m.get_int("maxSessionsPerOwner", UINT32),
             session_pool=m.get_int("sessionPool", UINT32),
+            isolation_qualification=m.get_str("isolationQualification"),
             javascript_environment=_payload_environment(m.get_msg("javascriptEnvironment")),
             project_environment=_payload_environment(m.get_msg("projectEnvironment")),
             module_environment=_payload_environment(m.get_msg("moduleEnvironment")),

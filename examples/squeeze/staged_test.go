@@ -258,7 +258,7 @@ func renderThenVerify(dir string, job *Job) error {
 	return verifyStaged(dir, job)
 }
 
-// squeeze-recipe-17: an agent whose transcript is left out is refused, even with its run.json entry
+// An agent whose transcript is left out is refused, even with its run.json entry
 // removed too and the page rendered again, since the signed bundle still grades it and its group
 // falls short of the stage's build size.
 func TestStagedRefusesAMissingTranscript(t *testing.T) {
@@ -302,7 +302,7 @@ func TestStagedRefusesAMissingTranscript(t *testing.T) {
 	}
 }
 
-// squeeze-recipe-18: a transcript whose controller text was edited, its declared digest kept, is
+// A transcript whose controller text was edited, its declared digest kept, is
 // refused: the text read for the words measure and the generator checks must be the graded one.
 func TestStagedRefusesAnEditedControllerText(t *testing.T) {
 	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
@@ -322,7 +322,7 @@ func TestStagedRefusesAnEditedControllerText(t *testing.T) {
 	}
 }
 
-// squeeze-recipe-23: a transcript whose session differs from the design's for its group (another
+// A transcript whose session differs from the design's for its group (another
 // brief, another system prompt, another after-session question, another recipe) is refused, each
 // on its own, even with the page rendered again.
 func TestStagedRefusesASessionOutsideTheDesign(t *testing.T) {
@@ -587,7 +587,7 @@ func popcount(x int) int {
 
 // The method page's practice-budget sentence and the course figure's caption are written from
 // the data: the agents at the fly-call cap are the ones the evidence says, and the caption
-// says all landed only when every recorded flight did (squeeze-recipe-31 and -33).
+// says all landed only when every recorded flight did.
 func TestPracticeCapAndCourseCaptionAreComputed(t *testing.T) {
 	p := publishedPage(t)
 	capped := p.FlyCapped()
