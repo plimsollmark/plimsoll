@@ -215,7 +215,7 @@ docker-suite:
 # requirements.in names the framework version, requirements.txt is every package it pulls in,
 # pinned with hashes (make py-frameworks-lock writes it), installed with --require-hashes
 # --no-deps so nothing is resolved at install time and local and CI runs test the same set. The
-# locks are compiled for PY_FRAMEWORKS_PYTHON (CI's python3); another version fails here rather
+# locks are compiled for PY_FRAMEWORKS_PYTHON (CI's jobs install it with setup-python); another version fails here rather
 # than quietly installing a different set. A stamp of the lock decides whether an environment is
 # current; any change rebuilds it from scratch.
 PY_FRAMEWORKS_PYTHON := 3.12

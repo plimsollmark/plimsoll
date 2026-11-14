@@ -100,6 +100,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The framework locks (clients/python/frameworks) are compiled for Python 3.12, and
+      # make py-frameworks refuses any other python3. ubuntu-latest became Ubuntu 26.04
+      # (python3 3.14) in November 2026, so the version is set here, not taken from the image.
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
       - name: Report the daemon and its runtimes
         run: docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
 
@@ -129,6 +137,14 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+
+      # The framework locks (clients/python/frameworks) are compiled for Python 3.12, and
+      # make py-frameworks refuses any other python3. ubuntu-latest became Ubuntu 26.04
+      # (python3 3.14) in November 2026, so the version is set here, not taken from the image.
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

@@ -41,6 +41,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The framework locks (clients/python/frameworks) are compiled for Python 3.12, and
+      # make py-frameworks refuses any other python3. ubuntu-latest became Ubuntu 26.04
+      # (python3 3.14) in November 2026, so the version is set here, not taken from the image.
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
       # The committed installer: downloads the pinned release bundle, checks it
       # against the SHA-512 in docker/gvisor.versions, verifies the executable set,
       # installs, registers the runsc runtime with sidecar auto-download disabled,
