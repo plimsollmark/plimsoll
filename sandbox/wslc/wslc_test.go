@@ -233,7 +233,11 @@ func TestPreflight(t *testing.T) {
 			t.Errorf("version %q: %v", v, err)
 		}
 	}
-	missing := Config{Path: filepath.Join(t.TempDir(), "wslc.exe"), Image: "plimsoll/sandbox:latest"}
+	// A machine with no WSL containers and none of the per-run mode's Windows programs (a
+	// Linux CI runner): the answer names the missing wslc.exe, the first thing to fix.
+	none := t.TempDir()
+	missing := Config{Path: filepath.Join(none, "wslc.exe"), Image: "plimsoll/sandbox:latest",
+		PowerShell: filepath.Join(none, "powershell.exe"), Mkfs: filepath.Join(none, "mkfs.ext4")}
 	pm, err := New(missing)
 	if err != nil {
 		t.Fatal(err)

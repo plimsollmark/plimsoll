@@ -82,6 +82,11 @@ type RunSessionEvidence struct {
 // powershell.exe and mkfs.ext4 are where the configuration says too. It runs at startup
 // and on every /readyz.
 func (p *Provider) Preflight(ctx context.Context) error {
+	// wslc.exe and its version first: on a machine without WSL containers that is the
+	// answer the operator needs, not the per-run mode's programs at their Windows paths.
+	if _, err := p.version(ctx); err != nil {
+		return err
+	}
 	if p.pr != nil {
 		for _, prog := range []string{p.cfg.PowerShell, p.cfg.Mkfs} {
 			if st, err := os.Stat(prog); err != nil || !st.Mode().IsRegular() {
@@ -94,8 +99,7 @@ func (p *Provider) Preflight(ctx context.Context) error {
 			}
 		}
 	}
-	_, err := p.version(ctx)
-	return err
+	return nil
 }
 
 // version runs `wslc version --format json`, which prints the package version without a

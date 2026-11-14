@@ -77,6 +77,13 @@ func TestDockerCloudWrapperUptimeUnderASecond(t *testing.T) {
 	}
 }
 
+// timeoutKillCode is whether rc is what the host's `timeout -s KILL` reports for a command
+// it killed: 137 (128 + SIGKILL) from GNU coreutils and busybox, 124 from the timeout of
+// Ubuntu 26.04, which GitHub's ubuntu-latest runner became in November 2026 (it reported 124
+// one second into `sleep 30`). execGuarded counts both as a timeout when the wrapper's own
+// clock shows the limit passed, so this host stand-in accepts both.
+func timeoutKillCode(rc int) bool { return rc == 137 || rc == 124 }
+
 func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 	t.Parallel()
 	for _, tool := range []string{"sh", "timeout", "head", "yes", "sleep"} {
@@ -109,10 +116,10 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 			t.Fatalf("len(stdout)=%d len(stderr)=%d rc=%d flooded=%v", len(out), len(errb), rc, flooded)
 		}
 	})
-	t.Run("time limit kills with 137", func(t *testing.T) {
+	t.Run("time limit kills with 137 or 124", func(t *testing.T) {
 		_, _, rc, elapsed, _ := runWrapperOnHost(t, 1, 11, "sleep", "30")
-		if rc != 137 || elapsed < time.Second || elapsed > 10*time.Second {
-			t.Fatalf("rc=%d elapsed=%v, want 137 after about 1s", rc, elapsed)
+		if !timeoutKillCode(rc) || elapsed < time.Second || elapsed > 10*time.Second {
+			t.Fatalf("rc=%d elapsed=%v, want 137 or 124 after about 1s", rc, elapsed)
 		}
 	})
 	t.Run("a child left holding the streams does not keep the answer past the limit", func(t *testing.T) {
@@ -127,8 +134,8 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 		// dash reports the command's kill on the guest's stderr ("Killed"), as it always
 		// has; the readers' kills are not reported.
 		if string(out) != "two\n" || strings.ReplaceAll(string(errb), "Killed\n", "") != "err\n" || strings.Count(string(errb), "Killed") > 1 ||
-			rc != 137 || flooded || elapsed > 5*time.Second {
-			t.Fatalf("stdout=%q stderr=%q rc=%d flooded=%v elapsed=%v; want the output, 137, about 2s", out, errb, rc, flooded, elapsed)
+			!timeoutKillCode(rc) || flooded || elapsed > 5*time.Second {
+			t.Fatalf("stdout=%q stderr=%q rc=%d flooded=%v elapsed=%v; want the output, 137 or 124, about 2s", out, errb, rc, flooded, elapsed)
 		}
 	})
 	t.Run("a guest line in the trailer's shape is the guest's, not the trailer", func(t *testing.T) {

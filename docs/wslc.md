@@ -496,7 +496,8 @@ otherwise: `TestProcessesStartOnlyThroughHostCommand`, `TestWSLCEnvironmentIsPat
 - **Host-API grants** (a run's permission to call listed routes of one API through plimsoll's broker): refused before
   anything starts, marked not dispatched with reason `unsupported`, since a container with no network has no path to
   the broker.
-- **plimsoll sessions**: not offered.
+- **plimsoll sessions** (one sandbox kept for many calls): not built yet. Every call gets a fresh container, and in
+  the per-run mode a fresh VM.
 - **Module runs** (a compiled simulator run once per row of a parameter table): refused with reason `unsupported`.
 - **Serve under hardened mode**, in either mode, with or without gVisor.
 - **A per-container process limit**: `SANDBOX_PIDS` fails startup ([Controls](#controls)).
