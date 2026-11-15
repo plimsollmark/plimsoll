@@ -192,6 +192,12 @@ and `plimsoll_client.crewai.PlimsollCodeTool`, a CrewAI tool
 Each is imported only when used, so the client keeps no dependencies; install the
 framework with the extra of the same name:
 
+For CrewAI there is also a package of its own, `crewai-plimsoll`, named the way CrewAI's
+tool-publishing guide asks so a PyPI search finds it: `pip install crewai-plimsoll` installs
+CrewAI and this client at the same release, and `from crewai_plimsoll import Client,
+CodeExecutor, PlimsollCodeTool` gives the same classes
+([its source (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/crewai-plimsoll)).
+
 The `crewai` extra installs CrewAI, which installs ChromaDB for its own memory and
 knowledge features. Every ChromaDB release up to 1.5.9, the latest on 2026-10-08, is
 affected by advisories against a running Chroma server's HTTP API, with no fixed release

@@ -325,11 +325,16 @@ func TestClientVersionsAgree(t *testing.T) {
 		}
 		return string(m[1])
 	}
+	crewai := filepath.Join("crewai-plimsoll", "src", "crewai_plimsoll", "__init__.py")
 	versions := map[string]string{
 		"package.json":                           pkg.Version,
 		"package-lock.json":                      lock.Version,
 		"python/pyproject.toml":                  python("pyproject.toml", `^version = "([^"]+)"$`),
 		"python/src/plimsoll_client/_version.py": python(filepath.Join("src", "plimsoll_client", "_version.py"), `^__version__ = "([^"]+)"$`),
+		// crewai-plimsoll moves with the release and requires the plimsoll-client of the same number.
+		"python/crewai-plimsoll/pyproject.toml":           python(filepath.Join("crewai-plimsoll", "pyproject.toml"), `^version = "([^"]+)"$`),
+		"python/crewai-plimsoll/ its plimsoll-client pin": python(filepath.Join("crewai-plimsoll", "pyproject.toml"), `^\s*"plimsoll-client==([^"]+)",$`),
+		"python/crewai-plimsoll/.../__init__.py":          python(crewai, `^__version__ = "([^"]+)"$`),
 	}
 	for _, v := range versions {
 		if v != pkg.Version || v == "" {

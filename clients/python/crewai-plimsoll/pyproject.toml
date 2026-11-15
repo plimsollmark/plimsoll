@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# A CrewAI tool package, named as CrewAI's tool-publishing guide asks (the crewai- prefix,
+# found by PyPI search). The tool itself is plimsoll_client.crewai.PlimsollCodeTool; this
+# package depends on that exact plimsoll-client release, and its version moves with
+# plimsoll's releases (TestClientVersionsAgree in clients/typescript checks both).
+[project]
+name = "crewai-plimsoll"
+version = "0.27.1"
+description = "A CrewAI tool that runs agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "crewai>=1.15.23,<2",
+    "plimsoll-client==0.27.1",
+]
+keywords = ["crewai", "sandbox", "code execution", "agents", "gvisor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://plimsollmark.github.io/plimsoll/integrations/crewai/index.html"
+Source = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/crewai-plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crewai_plimsoll = ["py.typed"]

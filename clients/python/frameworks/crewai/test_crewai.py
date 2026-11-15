@@ -120,5 +120,30 @@ class CrewAITests(ToolCases, unittest.TestCase):
             PlimsollCodeTool(object())  # type: ignore[arg-type]
 
 
+class CrewAIPlimsollPackageTests(unittest.TestCase):
+    """crewai-plimsoll (clients/python/crewai-plimsoll) re-exports plimsoll-client's own classes, at its version."""
+
+    def test_names_are_plimsoll_clients_own(self) -> None:
+        import crewai_plimsoll
+        from plimsoll_client import Client
+
+        self.assertIs(crewai_plimsoll.PlimsollCodeTool, PlimsollCodeTool)
+        self.assertIs(crewai_plimsoll.CodeExecutor, CodeExecutor)
+        self.assertIs(crewai_plimsoll.Client, Client)
+        self.assertEqual(sorted(crewai_plimsoll.__all__), ["Client", "CodeExecutor", "PlimsollCodeTool"])
+
+    def test_version_is_plimsoll_clients(self) -> None:
+        import crewai_plimsoll
+        import plimsoll_client
+
+        self.assertEqual(crewai_plimsoll.__version__, plimsoll_client.__version__)
+
+    def test_the_tool_runs_through_the_package(self) -> None:
+        import crewai_plimsoll
+
+        out = json.loads(crewai_plimsoll.PlimsollCodeTool(echo()).run(code="print(1)"))
+        self.assertIs(out["ran"], True)
+
+
 if __name__ == "__main__":
     unittest.main()

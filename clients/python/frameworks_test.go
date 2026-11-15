@@ -58,7 +58,8 @@ func TestPythonFrameworks(t *testing.T) {
 		"PLIMSOLL_WASM_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), nil, nil),
 		"PLIMSOLL_SESSIONS_URL="+fakeSessionsURL(t),
 		"PLIMSOLL_INTEGRATION_REQUIRED=1",
-		"PYTHONPATH=src",
+		// crewai-plimsoll/src: the crewai-plimsoll package, which the CrewAI suite imports.
+		"PYTHONPATH=src"+string(os.PathListSeparator)+filepath.Join("crewai-plimsoll", "src"),
 		"PYTHONDONTWRITEBYTECODE=1",
 	)
 	for _, req := range dirs {

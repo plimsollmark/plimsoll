@@ -2,3 +2,5 @@
 # tests need the daemons clients/python/client_test.go serves, which do not ship with it.
 prune tests
 prune frameworks
+# crewai-plimsoll is a package of its own, built and published from its directory.
+prune crewai-plimsoll
