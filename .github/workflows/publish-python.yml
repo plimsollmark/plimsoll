@@ -44,18 +44,8 @@ jobs:
           git diff --quiet "$tag" HEAD -- clients/python || { echo "::error::clients/python differs from $tag"; exit 1; }
           grep -qx "__version__ = \"$version\"" clients/python/src/plimsoll_client/_version.py ||
             { echo "::error::_version.py does not say $version"; exit 1; }
-          # crewai-plimsoll (clients/python/crewai-plimsoll, inside the tree checked above) moves
-          # with the release and requires the plimsoll-client of the same number.
-          crewai="$(python3 -c "import tomllib; d = tomllib.load(open('clients/python/crewai-plimsoll/pyproject.toml', 'rb'))['project']; print(d['version'], *d['dependencies'])")"
-          case " $crewai " in
-            " $version "*" plimsoll-client==$version "*) ;;
-            *) echo "::error::crewai-plimsoll is not $version requiring plimsoll-client==$version: $crewai"; exit 1 ;;
-          esac
-          grep -qx "__version__ = \"$version\"" clients/python/crewai-plimsoll/src/crewai_plimsoll/__init__.py ||
-            { echo "::error::crewai_plimsoll/__init__.py does not say $version"; exit 1; }
       - run: python3 -m pip install --require-hashes --no-deps -r clients/python/build-requirements.txt
       - run: python3 -m build --no-isolation --outdir dist clients/python
-      - run: python3 -m build --no-isolation --outdir dist clients/python/crewai-plimsoll
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

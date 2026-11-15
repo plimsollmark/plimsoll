@@ -1,0 +1,66 @@
+# Publishes crewai-plimsoll (clients/python/crewai-plimsoll), the CrewAI tool package, to PyPI
+# through trusted publishing, from a workflow of its own: PyPI scopes the token a workflow
+# gets to the projects of the one publisher its claims match, and plimsoll-client's
+# publisher (publish-python.yml) never covered this project, so a shared workflow's uploads
+# of it were refused (v0.27.1, 2026-11-14). The same release rules as publish-python.yml: the
+# package's version must have a tag `v<version>`, a release's tag must be that tag,
+# clients/python must be byte-identical to it at the commit being built, and the package
+# must require the plimsoll-client of the same number.
+#
+# PyPI side: the crewai-plimsoll project's trusted publisher (owner plimsollmark, repository
+# plimsoll, workflow publish-crewai.yml, environment pypi). Actions are pinned by commit SHA.
+name: publish-crewai
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: crewai-plimsoll's version is a release tag, and the files are the tag's
+        run: |
+          version="$(python3 -c "import tomllib; print(tomllib.load(open('clients/python/crewai-plimsoll/pyproject.toml', 'rb'))['project']['version'])")"
+          tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = release ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::release $GITHUB_REF_NAME does not match crewai-plimsoll's version $version"
+            exit 1
+          fi
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "::error::no tag $tag"; exit 1; }
+          git diff --quiet "$tag" HEAD -- clients/python || { echo "::error::clients/python differs from $tag"; exit 1; }
+          grep -qx "__version__ = \"$version\"" clients/python/crewai-plimsoll/src/crewai_plimsoll/__init__.py ||
+            { echo "::error::crewai_plimsoll/__init__.py does not say $version"; exit 1; }
+          python3 -c "import tomllib, sys; d = tomllib.load(open('clients/python/crewai-plimsoll/pyproject.toml', 'rb'))['project']; sys.exit(0 if 'plimsoll-client==$version' in d['dependencies'] else 'crewai-plimsoll does not require plimsoll-client==$version')"
+      - run: python3 -m pip install --require-hashes --no-deps -r clients/python/build-requirements.txt
+      - run: python3 -m build --no-isolation --outdir dist clients/python/crewai-plimsoll
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/crewai-plimsoll
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

@@ -86,6 +86,12 @@ release's tag must be `v` plus the client's version, and `clients/python` must b
 as at that tag. A release made before the workflow existed is published by running the
 workflow by hand on `main`.
 
+The CrewAI package `crewai-plimsoll` (clients/python/crewai-plimsoll, which gives a CrewAI agent a function that runs code in plimsoll) carries the same version and requires
+the `plimsoll-client` of the same number. It is published by its own workflow,
+[publish-crewai.yml](../.github/workflows/publish-crewai.yml), with the same checks, and its PyPI trusted publisher
+names that workflow. A project's trusted-publishing token covers only the projects of the publisher its workflow
+matched, so sharing `publish-python.yml` left this package's uploads refused.
+
 ## Freezing the record vectors at a release
 
 A <dfn>*run record*</dfn> (the daemon's signed statement of what it ran and where, which
