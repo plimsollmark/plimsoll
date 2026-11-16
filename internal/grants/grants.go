@@ -607,6 +607,9 @@ func validateProfileName(name string) error {
 	if len(name) > MaxProfileNameBytes {
 		return fmt.Errorf("name exceeds %d bytes", MaxProfileNameBytes)
 	}
+	if strings.EqualFold(name, "none") {
+		return fmt.Errorf("name %q is reserved: a run's bill of materials writes none for a run that named no profile (plimsoll:grant)", name)
+	}
 	for _, r := range name {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
 			return fmt.Errorf("name may contain only letters, digits, '.', '_' and '-'")

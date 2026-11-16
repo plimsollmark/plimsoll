@@ -205,7 +205,7 @@
 </div>
 <h3>Checks actually run by the emitter</h3><p>These receipts come from checking the generated BOM and {{if .Verdict}}four{{else}}three{{end}} separately altered copies. The original source files are unchanged.</p><pre class="check-box">{{range .Checks}}{{.}}
 {{end}}</pre>
-<details><summary>Every BOM field and where it came from</summary><div class="table-wrap"><label class="filter">Find a field or source<input type="search" placeholder="For example: exit_code, timeout, image" aria-label="Filter {{.Title}} field mapping"></label><table><thead><tr><th>Field</th><th>Source</th></tr></thead><tbody>{{range .Mappings}}<tr><td><code>{{.Field}}</code></td><td>{{.Source}}</td></tr>{{end}}</tbody></table></div></details>
+<details><summary>Every BOM field and where it came from</summary><p>What each <code>plimsoll:</code> property means, its format, where it goes and how often: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/cyclonedx-properties.md">EXTERNAL · official docs, the plimsoll property taxonomy ↗</a></p><div class="table-wrap"><label class="filter">Find a field or source<input type="search" placeholder="For example: exit_code, timeout, image" aria-label="Filter {{.Title}} field mapping"></label><table><thead><tr><th>Field</th><th>Source</th></tr></thead><tbody>{{range .Mappings}}<tr><td><code>{{.Field}}</code></td><td>{{.Source}}</td></tr>{{end}}</tbody></table></div></details>
 <details><summary>Raw CycloneDX JSON</summary><pre class="raw-bom">{{.JSON}}</pre></details>
 </section>{{end}}
 

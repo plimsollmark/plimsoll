@@ -58,7 +58,10 @@ server. Every profile carries an `allowed_callers` list: the IDs of the
 list then permits nothing beyond that scope; it is meant for a profile shared on purpose,
 never as a placeholder, and the daemon logs a warning naming each such profile at
 startup. No caller can present `*` as its own ID: the daemon's caller check refuses that
-ID.
+ID. A profile's name is 1 to 128 letters, digits, `.`, `_` and `-`, and `none`, in any
+case, is reserved: a run's bill of materials writes `none` in `plimsoll:grant` for a run
+that named no profile ([the property taxonomy](cyclonedx-properties.md)), so the daemon
+refuses to load a profile of that name.
 
 A profile is off limits to calls inside a
 [session (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#session),

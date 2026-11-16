@@ -323,7 +323,7 @@ func TestLoadAdviceRetention(t *testing.T) {
 	base := `"base_url":"https://x","allow":["GET /a"],"allowed_callers":["test"],"token":{"type":"static","env":"HUE_TOKEN"}`
 	p := writeGrants(t, `{"profiles":{
 	  "silent":{`+base+`,"advice":"operator"},
-	  "none":{`+base+`,"advice":"operator","advice_retention":"none"},
+	  "retain-none":{`+base+`,"advice":"operator","advice_retention":"none"},
 	  "aggregate":{`+base+`,"advice":"operator","advice_retention":"aggregate"},
 	  "detailed":{`+base+`,"advice":"operator","advice_retention":"detailed"}
 	}}`)
@@ -332,10 +332,10 @@ func TestLoadAdviceRetention(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	for name, want := range map[string]AdviceRetention{
-		"silent":    RetentionNone, // absent field defaults to none (opt-in)
-		"none":      RetentionNone,
-		"aggregate": RetentionAggregate,
-		"detailed":  RetentionDetailed,
+		"silent":      RetentionNone, // absent field defaults to none (opt-in)
+		"retain-none": RetentionNone,
+		"aggregate":   RetentionAggregate,
+		"detailed":    RetentionDetailed,
 	} {
 		prof, ok := r.Get(name)
 		if !ok {
@@ -368,6 +368,21 @@ func TestLoadRejectsTrailingDataAndInvalidProfileNames(t *testing.T) {
 		if _, err := Load(writeGrants(t, body)); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+// TestLoadRejectsTheReservedProfileNameNone: plimsoll:grant in a run's bill of materials
+// is the profile's name, or none when the request named no profile, so a profile called
+// none (in any case) would make a granted run read as one without a grant.
+func TestLoadRejectsTheReservedProfileNameNone(t *testing.T) {
+	for _, name := range []string{"none", "None", "NONE"} {
+		_, err := Load(writeGrants(t, `{"profiles":{"`+name+`":{"base_url":"https://x","allowed_callers":["test"]}}}`))
+		if err == nil || !strings.Contains(err.Error(), "is reserved") {
+			t.Errorf("profile %q: got %v, want it refused as reserved", name, err)
+		}
+	}
+	if err := validateProfileName("nonexistent"); err != nil {
+		t.Errorf("a name that merely starts with none was refused: %v", err)
 	}
 }
 

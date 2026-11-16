@@ -136,7 +136,7 @@ func propertySource(name string) string {
 	switch key {
 	case "bytes":
 		return "Byte length of request.project.files[].content."
-	case "request_sha256", "result_sha256", "record_sha256", "provider", "isolation", "environment", "software_identity", "policy":
+	case "request_sha256", "result_sha256", "record_sha256", "provider", "isolation", "environment", "software_identity", "policy", "instance":
 		return "Signed record: " + key + "."
 	case "minimum_isolation", "timeout_ms", "trace_id":
 		return "Stored request: " + key + "; the bundle link signs the exact stored bytes."
