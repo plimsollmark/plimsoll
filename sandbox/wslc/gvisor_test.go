@@ -197,7 +197,7 @@ func TestGVisorFromEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := prov.Sandbox.(*Provider)
-	if !p.GVisor() || p.cfg.RunscPath != kit.runsc || len(p.cfg.RunscHelpers) != 2 || p.IsolationClass() != sandbox.IsolationVM {
+	if !p.GVisor() || p.cfg.RunscPath != kit.runsc || len(p.cfg.RunscHelpers) != 2 || p.IsolationClass() != sandbox.IsolationContainer {
 		t.Fatalf("config: %+v", p.cfg)
 	}
 	for name, c := range map[string]struct {
@@ -222,14 +222,15 @@ func TestGVisorFromEnv(t *testing.T) {
 // `wslc system session run tar`; the settings and the proof scripts travel on the standard
 // input of `sh`; every argument is interop-safe; the digests are read back from the store;
 // the evidence names the runtime, the runsc version and digest and the platform; the tier
-// stays vm, stated with gVisor's position added.
+// is unchanged (container, without SANDBOX_WSLC_ACCEPT_VM_TIER=1), stated with gVisor's
+// position added.
 func TestGVisorSmokeTestStatesGVisor(t *testing.T) {
 	p, f, kit := gvisorProvider(t, nil)
 	if err := p.SmokeTest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	p.drain()
-	if p.IsolationClass() != sandbox.IsolationVM {
+	if p.IsolationClass() != sandbox.IsolationContainer {
 		t.Fatalf("tier %v", p.IsolationClass())
 	}
 	ev, ok := p.Evidence()
@@ -309,8 +310,8 @@ func TestGVisorSmokeTestStatesGVisor(t *testing.T) {
 func TestGVisorRunsAreProvenAndCarryThePolicy(t *testing.T) {
 	p, f, _ := readyGVisor(t, nil)
 	before := f.state().RunRuntimes
-	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
-	if err != nil || res.Policy != PolicyGVisor || res.Isolation != sandbox.IsolationVM || res.ExitCode != 0 {
+	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationContainer})
+	if err != nil || res.Policy != PolicyGVisor || res.Isolation != sandbox.IsolationContainer || res.ExitCode != 0 {
 		t.Fatalf("snippet: %+v %v", res, err)
 	}
 	pr, err := p.RunProject(context.Background(), sandbox.ProjectRequest{Files: []sandbox.File{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"}})

@@ -54,7 +54,7 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 | `e2b` | an E2B <dfn>*microVM*</dfn>, a small virtual machine made for one run | **VM** | isolation by <dfn>*hardware virtualization*</dfn>, the processor's own separation between virtual machines |
 | `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | **VM** | the same, on Docker's machines |
 | `openshell` | a sandbox from an <dfn>*OpenShell*</dfn> gateway (NVIDIA's agent sandbox runtime), created with docker | container | platforms that already run an OpenShell gateway; the same caveat as docker under `runc` |
-| `wslc` | a container from WSL containers (WSLC), the container engine Microsoft ships inside the Windows Subsystem for Linux, started through `wslc.exe` from a daemon in a WSL distribution | per-run mode, the default, a Hyper-V virtual machine for each run: **VM**, always with Microsoft's statement that WSL is "not a security sandbox for running untrusted code"; shared mode, one virtual machine for every run: container | a Windows machine with nothing installed beyond WSL. <dfn>*Hardened mode*</dfn> (the daemon's strict production check, `PLIMSOLL_HARDENED=1`) refuses it in both modes; the shared mode is weaker than docker under `runc`, with five of its controls missing ([wslc.md](wslc.md#controls)) |
+| `wslc` | a container from WSL containers (WSLC), the container engine Microsoft ships inside the Windows Subsystem for Linux, started through `wslc.exe` from a daemon in a WSL distribution | per-run mode, the default: container, or **VM** with the operator's opt-in. The per-run mode gives each run its own Hyper-V VM. It reports the `container` tier, because Microsoft states that WSL is not a security sandbox for running untrusted code; an operator who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then reports `vm` with that statement attached. Shared mode, one virtual machine for every run: container | a Windows machine with nothing installed beyond WSL. <dfn>*Hardened mode*</dfn> (the daemon's strict production check, `PLIMSOLL_HARDENED=1`) refuses it in both modes; the shared mode is weaker than docker under `runc`, with five of its controls missing ([wslc.md](wslc.md#controls)) |
 
 > **The WASM tier runs inside the daemon.** It is neither an operating-system wall nor a
 > virtual machine wall. An <dfn>*escape*</dfn>, a bug that lets code out of the QuickJS
@@ -63,8 +63,12 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 
 The container tier, with docker's default runtime `runc`, shares the host's kernel. For
 hostile code in production, use a VM provider (`e2b`, `dockercloud`), or `docker` with
-`SANDBOX_DOCKER_RUNTIME=runsc`. The `wslc` per-run mode reports `vm` but is not one of
-them: its vendor states that WSL is not a security sandbox for running untrusted code
+`SANDBOX_DOCKER_RUNTIME=runsc`. The `wslc` per-run mode is not one of them. The per-run
+mode gives each run its own Hyper-V VM. It reports the `container` tier, because
+Microsoft states that WSL is not a security sandbox for running untrusted code; an
+operator who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then
+reports `vm` with that statement attached. By default, then, a request that requires `vm`
+or `kernel` is refused before anything runs
 ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 Every provider whose walls depend on the host or on a remote service runs a startup
@@ -117,15 +121,17 @@ prove wrong is not worth reading.
 - For `dockercloud`, the vm tier also follows from which provider it is: Docker Cloud
   Sandboxes runs each sandbox in a microVM, and its startup test proves the policy that
   blocks every connection and the blocked egress, not the hypervisor.
-- For `wslc` in its per-run mode, the vm tier follows from how each run is started: in a
-  virtual machine of its own, which WSL containers start for the run with Hyper-V and
-  plimsolld deletes after it. Its startup test proves that its two boundary-test runs landed
-  in two virtual machines never seen before (boot IDs that differ from each other, from the
-  user's shared WSL containers machine and from the WSL distribution), and every run refuses
-  a boot ID already seen; it does not prove the hypervisor. Microsoft states that WSL is not
-  a security sandbox for running untrusted code; `Describe`, the startup log and
-  `plimsolld -h` carry that sentence beside the tier, and hardened mode refuses the provider
-  ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
+- For `wslc` in its per-run mode, the vm tier is stated only when the operator sets
+  `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, accepting Microsoft's statement below; without it the
+  mode reports `container`. Where it is stated, it follows from how each run is started:
+  in a virtual machine of its own, which WSL containers start for the run with Hyper-V
+  and plimsolld deletes after it. Its startup test proves that its two boundary-test runs
+  landed in two virtual machines never seen before (boot IDs that differ from each other,
+  from the user's shared WSL containers machine and from the WSL distribution), and every
+  run refuses a boot ID already seen; it does not prove the hypervisor. Microsoft states
+  that WSL is not a security sandbox for running untrusted code; `Describe`, the startup
+  log and `plimsolld -h` carry that sentence beside the tier, and hardened mode refuses
+  the provider ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 All four are stronger than a sentence in a datasheet and weaker than
 <dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software is
@@ -149,8 +155,11 @@ client, and in the summary of the <dfn>*MCP*</dfn> (Model Context Protocol) serv
 no <dfn>*run record*</dfn> (the daemon's signed statement of what it ran and where) and no
 run request carries it, and it does not change the <dfn>*protocol number*</dfn> (the version
 the daemon and its client must agree on), so a client shows it and does not require it.
-Today only the `wslc` provider's per-run mode states one: Microsoft's statement about WSL,
-and gVisor's position when gVisor runs inside its virtual machines
+Today only the `wslc` provider states one, and it does in both of its modes: each carries
+Microsoft's statement about WSL; the shared mode's also says that its runs share one
+virtual machine and are weaker than docker under `runc`; the per-run mode's also says
+which tier it reports and the setting that changes it, and adds gVisor's position when
+gVisor runs inside its virtual machines
 ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 ## Asserting a floor
@@ -168,8 +177,12 @@ The official client also checks the tier that comes back. A mismatch is
 code may already have run.
 
 `SANDBOX_MIN_ISOLATION` is the operator's floor for the whole daemon, checked at startup and
-held on every run: it is merged into each request's minimum, so a provider that finds a weaker
-boundary after startup refuses the run, not dispatched, and `/readyz` reports not ready.
+held on every run. At startup it is checked before the provider's startup checks start
+anything, for every provider whose configuration fixes its tier; docker under gVisor
+(`runsc`), `agentsandbox` and `openshell` learn their tier from those checks, so they are
+checked after them. On every run it is merged into each request's minimum, so a provider that finds a
+weaker boundary after startup refuses the run, not dispatched, and `/readyz` reports not
+ready.
 It does not replace a caller's own floor on each request: a `Describe` answer the caller
 read earlier can be out of date, and must never be what allows a weaker run later.
 A daemon started with `PLIMSOLL_HARDENED=1` adds a floor of its own, `kernel`, which it

@@ -48,14 +48,16 @@ func TestWSLCVariablesAreUnderTheDaemonsGuards(t *testing.T) {
 }
 
 // Hardened mode refuses wslc whatever else is in order, in both modes: the shared mode's
-// tier is container, and the per-run mode's vm tier, which the generic tier check would
-// pass, is refused by the descriptor in its own words (whether hardened mode may ever
-// accept it waits on the project owner).
+// tier is container, as is the per-run mode's by default, and the per-run mode's vm tier
+// with SANDBOX_WSLC_ACCEPT_VM_TIER=1, which the generic tier check would pass, is refused
+// by the descriptor in its own words (whether hardened mode may ever accept it waits on the
+// project owner).
 func TestHardenedModeRefusesWSLC(t *testing.T) {
 	for _, tc := range []struct {
-		mode string
-		tier sandbox.IsolationClass
-	}{{"shared", sandbox.IsolationContainer}, {"per-run", sandbox.IsolationVM}} {
+		mode   string
+		accept bool
+		tier   sandbox.IsolationClass
+	}{{"shared", false, sandbox.IsolationContainer}, {"per-run", false, sandbox.IsolationContainer}, {"per-run", true, sandbox.IsolationVM}} {
 		f := hardenedDockerFacts()
 		f.Provider, f.Isolation = wslc.Name, tc.tier
 		env := hardenedEnv()
@@ -68,6 +70,9 @@ func TestHardenedModeRefusesWSLC(t *testing.T) {
 			env["SANDBOX_WSLC_RUNSC_PATH"] = "/usr/local/bin/runsc"
 			env["SANDBOX_WSLC_RUNSC_SHA512"] = strings.Repeat("a", 128)
 		}
+		if tc.accept {
+			env["SANDBOX_WSLC_ACCEPT_VM_TIER"] = "1"
+		}
 		err := enforceHardenedPolicy(getenvFrom(env), f)
 		if err == nil || !strings.Contains(err.Error(), "hardened mode does not serve wslc in either mode") {
 			t.Fatalf("hardened mode with wslc %s (tier %s): %v", tc.mode, tc.tier, err)
@@ -76,12 +81,23 @@ func TestHardenedModeRefusesWSLC(t *testing.T) {
 }
 
 // Each mode's tier is stated with its own qualification on the startup log: the per-run
-// mode's vm with the per-run sentence, the shared mode's container with the shared one, and
-// both carry Microsoft's statement. A tier logged with no sentence, or with the other
-// mode's, fails.
+// mode's container with the per-run sentence, its vm (with SANDBOX_WSLC_ACCEPT_VM_TIER=1)
+// with the accepted one, the shared mode's container with the shared one, and all carry
+// Microsoft's statement. A tier logged with no sentence, or with another's, fails.
 func TestWSLCStartupLogQualifiesTheTier(t *testing.T) {
-	for _, mode := range []string{"shared", "per-run", ""} {
-		env := map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_MODE": mode}
+	for _, tc := range []struct {
+		mode, accept string
+		tier         sandbox.IsolationClass
+		sentence     string
+	}{
+		{"shared", "", sandbox.IsolationContainer, wslc.SharedQualification},
+		{"per-run", "", sandbox.IsolationContainer, wslc.PerRunQualification},
+		{"", "", sandbox.IsolationContainer, wslc.PerRunQualification},
+		{"per-run", "1", sandbox.IsolationVM, wslc.PerRunAcceptedQualification},
+		{"", "1", sandbox.IsolationVM, wslc.PerRunAcceptedQualification},
+	} {
+		mode := tc.mode
+		env := map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_MODE": mode, "SANDBOX_WSLC_ACCEPT_VM_TIER": tc.accept}
 		p, err := buildProvider(getenvFrom(env))
 		if err != nil {
 			t.Fatal(err)
@@ -92,11 +108,8 @@ func TestWSLCStartupLogQualifiesTheTier(t *testing.T) {
 			got[args[i].(string)] = args[i+1]
 		}
 		q := got["isolation_qualification"]
-		switch {
-		case mode != "shared" && (p.Sandbox.IsolationClass() != sandbox.IsolationVM || q != wslc.PerRunQualification):
-			t.Fatalf("per-run: tier %s, qualification %v", p.Sandbox.IsolationClass(), q)
-		case mode == "shared" && (p.Sandbox.IsolationClass() != sandbox.IsolationContainer || q != wslc.SharedQualification):
-			t.Fatalf("shared: tier %s, qualification %v", p.Sandbox.IsolationClass(), q)
+		if p.Sandbox.IsolationClass() != tc.tier || q != tc.sentence {
+			t.Fatalf("mode %q, accept %q: tier %s, qualification %v", mode, tc.accept, p.Sandbox.IsolationClass(), q)
 		}
 		if s, _ := q.(string); !strings.Contains(s, "Microsoft states that WSL is not a security sandbox for running untrusted code") {
 			t.Fatalf("mode %q: the qualification lacks Microsoft's statement: %v", mode, q)
@@ -127,8 +140,8 @@ func TestWSLCIsBuiltOnlyWhenNamed(t *testing.T) {
 
 // With gVisor on, the startup log states the runtime, and the tier's qualification carries
 // gVisor's own position: an added wall inside the VM, with the VM wall's qualification
-// unchanged. The tier stays vm. Off, the log says runc and the qualification is the
-// per-run mode's alone.
+// unchanged. The tier stays container (gVisor does not raise it). Off, the log says runc
+// and the qualification is the per-run mode's alone.
 func TestWSLCStartupLogStatesTheRuntime(t *testing.T) {
 	for _, gvisor := range []bool{false, true} {
 		env := map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_MODE": "per-run"}
@@ -141,7 +154,7 @@ func TestWSLCStartupLogStatesTheRuntime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Sandbox.IsolationClass() != sandbox.IsolationVM {
+		if p.Sandbox.IsolationClass() != sandbox.IsolationContainer {
 			t.Fatalf("gvisor=%v: tier %s", gvisor, p.Sandbox.IsolationClass())
 		}
 		args := providers[wslc.Name].resourceLog(p.Sandbox, p.Resources)
@@ -167,23 +180,38 @@ func TestWSLCStartupLogStatesTheRuntime(t *testing.T) {
 }
 
 // The qualification reaches a caller that asks the daemon what it is: Describe, served by
-// the RPC layer over the real provider, carries Microsoft's sentence in the per-run mode
-// (the default), the shared mode's own sentence in the shared mode, and with gVisor on ends with gVisor's own
-// sentence. The tier is unchanged either way.
+// the RPC layer over the real provider, carries the per-run sentence with the container tier
+// in the per-run mode (the default), the accepted sentence with the vm tier once the
+// operator sets SANDBOX_WSLC_ACCEPT_VM_TIER=1, the shared mode's own sentence in the shared
+// mode, and with gVisor on ends with gVisor's own sentence. gVisor does not change the tier.
 func TestWSLCDescribeStatesTheQualification(t *testing.T) {
 	base := map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest"}
 	gvisor := map[string]string{"SANDBOX_WSLC_GVISOR": "1", "SANDBOX_WSLC_RUNSC_PATH": "/usr/local/bin/runsc", "SANDBOX_WSLC_RUNSC_SHA512": strings.Repeat("a", 128)}
+	accept := map[string]string{"SANDBOX_WSLC_ACCEPT_VM_TIER": "1"}
+	merged := func(ms ...map[string]string) map[string]string {
+		out := map[string]string{}
+		for _, m := range ms {
+			for k, v := range m {
+				out[k] = v
+			}
+		}
+		return out
+	}
 	for _, tc := range []struct {
 		name  string
 		extra map[string]string
 		tier  string
 		want  func(q string) bool
 	}{
-		{"default (per-run)", nil, "vm", func(q string) bool { return q == wslc.PerRunQualification }},
-		{"per-run", map[string]string{"SANDBOX_WSLC_MODE": "per-run"}, "vm", func(q string) bool { return q == wslc.PerRunQualification }},
+		{"default (per-run)", nil, "container", func(q string) bool { return q == wslc.PerRunQualification }},
+		{"per-run", map[string]string{"SANDBOX_WSLC_MODE": "per-run"}, "container", func(q string) bool { return q == wslc.PerRunQualification }},
+		{"per-run accepted", accept, "vm", func(q string) bool { return q == wslc.PerRunAcceptedQualification }},
 		{"shared", map[string]string{"SANDBOX_WSLC_MODE": "shared"}, "container", func(q string) bool { return q == wslc.SharedQualification }},
-		{"per-run with gVisor", gvisor, "vm", func(q string) bool {
-			return strings.HasPrefix(q, wslc.PerRunQualification) && strings.HasSuffix(q, wslc.GVisorQualification)
+		{"per-run with gVisor", gvisor, "container", func(q string) bool {
+			return q == wslc.PerRunQualification+" "+wslc.GVisorQualification
+		}},
+		{"per-run with gVisor, accepted", merged(gvisor, accept), "vm", func(q string) bool {
+			return q == wslc.PerRunAcceptedQualification+" "+wslc.GVisorQualification
 		}},
 	} {
 		env := map[string]string{}
@@ -202,6 +230,93 @@ func TestWSLCDescribeStatesTheQualification(t *testing.T) {
 		}
 		if q := resp.Msg.GetIsolationQualification(); !tc.want(q) || resp.Msg.GetIsolation() != tc.tier {
 			t.Errorf("%s: Describe states tier %q with qualification %q", tc.name, resp.Msg.GetIsolation(), q)
+		}
+	}
+}
+
+// A daemon whose operator requires vm (or kernel) of the wslc per-run mode refuses to start
+// until the operator accepts Microsoft's statement: the startup check returns an error
+// naming the provider, the tier it reports and the floor, with the sentence that names the
+// setting. With the setting, vm and kernel are met; container is met either way.
+func TestWSLCDaemonFloorVMRefusesToStartWithoutAcceptance(t *testing.T) {
+	build := func(extra map[string]string) sandbox.Sandbox {
+		t.Helper()
+		env := map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest"}
+		for k, v := range extra {
+			env[k] = v
+		}
+		p, err := buildProvider(getenvFrom(env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.Sandbox
+	}
+	floor := func(raw string) sandbox.IsolationClass {
+		t.Helper()
+		want, required, err := minimumIsolationWith(getenvFrom(map[string]string{"SANDBOX_MIN_ISOLATION": raw}))
+		if err != nil || !required {
+			t.Fatalf("SANDBOX_MIN_ISOLATION=%s: %v, required %v", raw, err, required)
+		}
+		return want
+	}
+	def := build(nil)
+	for _, raw := range []string{"vm", "kernel"} {
+		err := operatorMinimumError(def, floor(raw), true)
+		if err == nil {
+			t.Fatalf("SANDBOX_MIN_ISOLATION=%s on the default per-run mode: no error", raw)
+		}
+		for _, want := range []string{`"wslc"`, "reports isolation container", "SANDBOX_MIN_ISOLATION=" + raw, "SANDBOX_WSLC_ACCEPT_VM_TIER=1"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("SANDBOX_MIN_ISOLATION=%s: %v does not name %q", raw, err, want)
+			}
+		}
+	}
+	if err := operatorMinimumError(def, floor("container"), true); err != nil {
+		t.Fatalf("a container floor on the default per-run mode: %v", err)
+	}
+	if err := operatorMinimumError(def, sandbox.IsolationUnknown, false); err != nil {
+		t.Fatalf("no floor: %v", err)
+	}
+	accepted := build(map[string]string{"SANDBOX_WSLC_ACCEPT_VM_TIER": "1"})
+	for _, raw := range []string{"vm", "kernel", "container"} {
+		if err := operatorMinimumError(accepted, floor(raw), true); err != nil {
+			t.Fatalf("SANDBOX_MIN_ISOLATION=%s with the setting: %v", raw, err)
+		}
+	}
+}
+
+// -h states the values SANDBOX_WSLC_ACCEPT_VM_TIER takes exactly as the provider reads them
+// (sandbox.BoolFromEnv): unset, 0 or false is off and the per-run mode reports container;
+// 1 or true is on and it reports vm; letter case and surrounding spaces are ignored; any
+// other value refuses startup (finding wslc-31: -h named only unset, 0 and 1).
+func TestWSLCAcceptVMTierHelpListsTheValuesTheCodeAccepts(t *testing.T) {
+	help := strings.Join(strings.Fields(wslcUsage), " ")
+	start := strings.Index(help, "SANDBOX_WSLC_ACCEPT_VM_TIER per-run only")
+	end := strings.Index(help, "SANDBOX_WSLC_MAX_SESSIONS")
+	if start < 0 || end < start {
+		t.Fatalf("no SANDBOX_WSLC_ACCEPT_VM_TIER section in -h")
+	}
+	section := help[start:end]
+	for _, claim := range []string{"Off (unset, 0 or false)", "On (1 or true)",
+		"Letter case and spaces around the value are ignored; any other value refuses startup",
+		"In the shared mode any value refuses startup, 0 included"} {
+		if !strings.Contains(section, claim) {
+			t.Errorf("-h does not say %q: %s", claim, section)
+		}
+	}
+	for value, tier := range map[string]sandbox.IsolationClass{
+		"": sandbox.IsolationContainer, "0": sandbox.IsolationContainer, "false": sandbox.IsolationContainer,
+		"FALSE": sandbox.IsolationContainer, " 0 ": sandbox.IsolationContainer,
+		"1": sandbox.IsolationVM, "true": sandbox.IsolationVM, "True": sandbox.IsolationVM, " 1 ": sandbox.IsolationVM,
+		"yes": sandbox.IsolationUnknown, "on": sandbox.IsolationUnknown, "t": sandbox.IsolationUnknown, "2": sandbox.IsolationUnknown,
+	} {
+		p, err := buildProvider(getenvFrom(map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest",
+			"SANDBOX_WSLC_ACCEPT_VM_TIER": value}))
+		switch {
+		case tier == sandbox.IsolationUnknown && err == nil:
+			t.Errorf("SANDBOX_WSLC_ACCEPT_VM_TIER=%q, a value -h does not list, started at %s", value, p.Sandbox.IsolationClass())
+		case tier != sandbox.IsolationUnknown && (err != nil || p.Sandbox.IsolationClass() != tier):
+			t.Errorf("SANDBOX_WSLC_ACCEPT_VM_TIER=%q: %v, %v; want %s", value, p.Sandbox, err, tier)
 		}
 	}
 }

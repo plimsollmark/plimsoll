@@ -21,6 +21,8 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/agentsandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/openshell"
 )
 
 // floorTestProvider is SANDBOX_PROVIDER=floor-test, registered only in a child daemon
@@ -69,15 +71,155 @@ func (*staleTierSandbox) RunModule(context.Context, sandbox.ModuleRequest) (sand
 
 func (*staleTierSandbox) SupportsProjects() bool { return true }
 
-func registerFloorTestProvider() {
-	providers[floorTestProvider] = providerDescriptor{
-		build: func(getenv func(string) string) (sandbox.Provider, error) {
-			res, err := sandbox.ResourcesFromEnv(getenv)
-			return sandbox.Provider{Sandbox: &staleTierSandbox{stated: sandbox.IsolationKernel}, Resources: res}, err
-		},
-		usage:            "\n  SANDBOX_PROVIDER=floor-test a provider the floor test registers in its child daemon\n",
-		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"},
-		hardened:         func(func(string) string, func(string, ...any), func(error)) {},
+// The startup-order test's two providers, registered beside floor-test. Each writes a line
+// to the file PLIMSOLLD_STARTUP_RECORD names when one of its startup checks runs
+// ("preflight", then "smoke"), so the test sees from outside the child daemon whether they
+// ran. floor-test-config reports container from its configuration, as the wslc per-run
+// mode does by default; floor-test-checks reports container until its Preflight proves
+// kernel, as docker under runsc does, and its descriptor says so (tierFromChecks).
+const (
+	floorTestConfigProvider = "floor-test-config"
+	floorTestChecksProvider = "floor-test-checks"
+)
+
+type startupRecorder struct {
+	staleTierSandbox
+	name, record string
+	proves       sandbox.IsolationClass // the tier Preflight sets; unknown leaves the configured one
+}
+
+func (r *startupRecorder) Name() string { return r.name }
+
+func (r *startupRecorder) note(step string) error {
+	f, err := os.OpenFile(r.record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(step + "\n")
+	return err
+}
+
+func (r *startupRecorder) Preflight(context.Context) error {
+	if r.proves != sandbox.IsolationUnknown {
+		r.mu.Lock()
+		r.stated = r.proves
+		r.mu.Unlock()
+	}
+	return r.note("preflight")
+}
+
+func (r *startupRecorder) SmokeTest(context.Context) error { return r.note("smoke") }
+
+func registerFloorTestProviders() {
+	register := func(build func(getenv func(string) string) sandbox.Sandbox, name string, fromChecks func(sandbox.Sandbox) bool) {
+		providers[name] = providerDescriptor{
+			build: func(getenv func(string) string) (sandbox.Provider, error) {
+				res, err := sandbox.ResourcesFromEnv(getenv)
+				return sandbox.Provider{Sandbox: build(getenv), Resources: res}, err
+			},
+			usage:            "\n  SANDBOX_PROVIDER=" + name + " a provider the floor tests register in their child daemon\n",
+			hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"},
+			hardened:         func(func(string) string, func(string, ...any), func(error)) {},
+			tierFromChecks:   fromChecks,
+		}
+	}
+	register(func(func(string) string) sandbox.Sandbox {
+		return &staleTierSandbox{stated: sandbox.IsolationKernel}
+	}, floorTestProvider, nil)
+	register(func(getenv func(string) string) sandbox.Sandbox {
+		return &startupRecorder{staleTierSandbox: staleTierSandbox{stated: sandbox.IsolationContainer},
+			name: floorTestConfigProvider, record: getenv("PLIMSOLLD_STARTUP_RECORD")}
+	}, floorTestConfigProvider, nil)
+	register(func(getenv func(string) string) sandbox.Sandbox {
+		return &startupRecorder{staleTierSandbox: staleTierSandbox{stated: sandbox.IsolationContainer},
+			name: floorTestChecksProvider, record: getenv("PLIMSOLLD_STARTUP_RECORD"), proves: sandbox.IsolationKernel}
+	}, floorTestChecksProvider, func(sandbox.Sandbox) bool { return true })
+}
+
+// The real main(): SANDBOX_MIN_ISOLATION above a tier the configuration fixes ends startup
+// before the provider's Preflight or smoke test runs (finding wslc-29: the wslc per-run
+// mode's smoke test boots two Hyper-V VMs), with the same error and exit status as before.
+// A provider whose checks establish its tier is held to the floor after them instead: it
+// starts when they prove enough, and is refused, after them, when they do not. With the
+// check after the smoke test only, as before, the first case found both checks run.
+func TestOperatorFloorRefusesBeforeStartupChecks(t *testing.T) {
+	base := []string{"PLIMSOLLD_FLOOR_TEST_PROVIDER=1", "SANDBOX_MEMORY_MB=256", "PLIMSOLL_TOKEN=" + strings.Repeat("t", 32),
+		"PLIMSOLL_ADDR=127.0.0.1:0", "PLIMSOLL_METRICS_ADDR=off"}
+	env := func(record, provider, floor string) []string {
+		return append([]string{"PLIMSOLLD_STARTUP_RECORD=" + record, "SANDBOX_PROVIDER=" + provider, "SANDBOX_MIN_ISOLATION=" + floor}, base...)
+	}
+	ran := func(record string) string {
+		b, err := os.ReadFile(record)
+		if errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(strings.Fields(string(b)), ",")
+	}
+	const refused = "provider does not meet the required isolation tier"
+	for _, c := range []struct {
+		provider, floor string
+		started         bool
+		checks          string // the startup checks that ran, in order
+	}{
+		{floorTestConfigProvider, "vm", false, ""},
+		{floorTestConfigProvider, "kernel", false, ""},
+		{floorTestConfigProvider, "container", true, "preflight,smoke"},
+		{floorTestChecksProvider, "kernel", true, "preflight,smoke"},
+		{floorTestChecksProvider, "vm", false, "preflight,smoke"},
+	} {
+		t.Run(c.provider+"/"+c.floor, func(t *testing.T) {
+			record := filepath.Join(t.TempDir(), "record")
+			if c.started {
+				d := startDaemon(t, env(record, c.provider, c.floor), 30*time.Second)
+				d.stop(t, 30*time.Second)
+				// readyz is never polled here, so the checks ran once, at startup.
+				if got := ran(record); got != c.checks {
+					t.Fatalf("startup checks %q, want %q; log:\n%s", got, c.checks, d.logText())
+				}
+				return
+			}
+			code, log := exitDaemon(t, env(record, c.provider, c.floor), 30*time.Second)
+			if code != 1 || !strings.Contains(log, refused) || !strings.Contains(log, "below SANDBOX_MIN_ISOLATION="+c.floor) {
+				t.Fatalf("exit %d, want 1 with %q; log:\n%s", code, refused, log)
+			}
+			if got := ran(record); got != c.checks {
+				t.Fatalf("startup checks %q before the floor refused the provider, want %q; log:\n%s", got, c.checks, log)
+			}
+		})
+	}
+}
+
+// Which providers' tiers are known from configuration alone, as built from their settings:
+// docker under runc and the wslc per-run mode are, docker under runsc is not (Preflight
+// proves kernel), and the two providers whose first check reads the tier say so.
+func TestTierKnownBeforeChecks(t *testing.T) {
+	for _, c := range []struct {
+		env   map[string]string
+		known bool
+	}{
+		{map[string]string{"SANDBOX_PROVIDER": "docker"}, true},
+		{map[string]string{"SANDBOX_PROVIDER": "docker", "SANDBOX_DOCKER_RUNTIME": "runsc"}, false},
+		{map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest"}, true},
+		{map[string]string{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_ACCEPT_VM_TIER": "1"}, true},
+		{map[string]string{"SANDBOX_PROVIDER": "wasm"}, true},
+		{map[string]string{}, true}, // disabled
+	} {
+		p, err := buildProvider(getenvFrom(c.env))
+		if err != nil {
+			t.Fatalf("%v: %v", c.env, err)
+		}
+		if got := tierKnownBeforeChecks(p.Sandbox); got != c.known {
+			t.Errorf("%v: tier known before the checks %t, want %t", c.env, got, c.known)
+		}
+	}
+	for _, name := range []string{agentsandbox.Name, openshell.Name} {
+		if f := providers[name].tierFromChecks; f == nil || !f(nil) {
+			t.Errorf("%s: its tier is unknown until its first check, but its descriptor does not say the checks establish it", name)
+		}
 	}
 }
 

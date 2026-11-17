@@ -67,9 +67,17 @@ const (
 // surface that states it.
 const SharedQualification = "One WSLC session VM shared by every run (a container per run in the caller's default session). Microsoft states that WSL is not a security sandbox for running untrusted code; the wall between two runs is runc's, and this mode is weaker than plimsoll's docker provider under runc."
 
-// PerRunQualification is the sentence that goes with the per-run mode's tier on every
-// surface that states it.
-const PerRunQualification = "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights."
+// perRunFacts is what both of the per-run mode's sentences state about its wall.
+const perRunFacts = "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights."
+
+// PerRunQualification is the sentence that goes with the per-run mode's tier, container,
+// on every surface that states it, when the operator has not set
+// SANDBOX_WSLC_ACCEPT_VM_TIER=1.
+const PerRunQualification = "Reported as container: " + perRunFacts + " An operator who accepts that statement sets SANDBOX_WSLC_ACCEPT_VM_TIER=1 and this mode then reports vm."
+
+// PerRunAcceptedQualification is the sentence that goes with the per-run mode's tier, vm,
+// when the operator has set SANDBOX_WSLC_ACCEPT_VM_TIER=1.
+const PerRunAcceptedQualification = perRunFacts + " The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1."
 
 var (
 	sessionNameRE = regexp.MustCompile(`^` + SessionPrefix + `[0-9a-f]{16}$`)

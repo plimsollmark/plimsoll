@@ -60,8 +60,9 @@ const (
 	// proven to be the default runtime of its own VM; the run's record names it. A run
 	// without it never started under gVisor, and in this mode no run starts under runc.
 	PolicyGVisor = "gvisor:proven"
-	// GVisorQualification is added to PerRunQualification wherever the tier is stated when
-	// gVisor is on.
+	// GVisorQualification is added to the per-run mode's sentence (PerRunQualification or
+	// PerRunAcceptedQualification) wherever the tier is stated when gVisor is on. gVisor does
+	// not change the tier.
 	GVisorQualification = "gVisor, a user-space kernel on its systrap platform, also runs inside that VM as an added wall: the VM's default container runtime is read back as gVisor's before each run, a run is refused when it is not, and the VM wall's qualification above is unchanged."
 )
 
@@ -76,17 +77,22 @@ var (
 )
 
 // Qualification is the sentence that goes with this provider's tier wherever it is stated
-// (the startup log): the per-run mode's, with gVisor's own position added when it is on.
-// The shared mode has its own: the tier there is a plain word that the docker provider
-// also states, so the sentence says what the word does not.
+// (Describe, the startup log): the per-run mode's, the one for container or, when the
+// operator set SANDBOX_WSLC_ACCEPT_VM_TIER=1, the one for vm, with gVisor's own position
+// added when it is on. The shared mode has its own: the tier there is a plain word that
+// the docker provider also states, so the sentence says what the word does not.
 func (p *Provider) Qualification() string {
-	switch {
-	case p.cfg.Mode != ModePerRun:
+	if p.cfg.Mode != ModePerRun {
 		return SharedQualification
-	case p.cfg.GVisor:
-		return PerRunQualification + " " + GVisorQualification
 	}
-	return PerRunQualification
+	q := PerRunQualification
+	if p.cfg.AcceptVMTier {
+		q = PerRunAcceptedQualification
+	}
+	if p.cfg.GVisor {
+		q += " " + GVisorQualification
+	}
+	return q
 }
 
 // GVisor is whether gVisor is the runtime of every run (SANDBOX_WSLC_GVISOR=1).

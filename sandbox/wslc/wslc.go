@@ -18,12 +18,17 @@
 //     which session it landed in.
 //   - per-run (the default): every run gets a session of its own (perrun.go): a fresh VM booted from a
 //     fresh copy of a template disk this provider builds itself (template.go), deleted
-//     after the run. The tier is vm, stated with PerRunQualification: the VM wall is
-//     Hyper-V's, the controls Absent lists are still absent inside it, and the Windows
-//     components around it run with the user's rights.
+//     after the run. The VM wall is Hyper-V's, the controls Absent lists are still absent
+//     inside it, and the Windows components around it run with the user's rights. The tier
+//     is container, stated with PerRunQualification, unless the operator sets
+//     SANDBOX_WSLC_ACCEPT_VM_TIER=1 (Config.AcceptVMTier); then it is vm, stated with
+//     PerRunAcceptedQualification.
 //
 // Microsoft states that WSL is not a security sandbox for running untrusted code (wsl.dev,
-// security model). Hardened mode refuses this provider in both modes.
+// security model). That is why the per-run mode reports container by default: every floor
+// (a request's minimum, SANDBOX_MIN_ISOLATION, placement across daemons) compares against
+// the tier reported here, so a vm or kernel floor refuses this provider unless its operator
+// has accepted that statement. Hardened mode refuses this provider in both modes.
 //
 // What the provider does about it. Every run starts with every control WSLC has (runArgv),
 // every argument is a fixed flag or a checked ID (exec.go), the runner's plan travels over
@@ -90,7 +95,8 @@ type Mode string
 const (
 	// ModeShared runs every run as a container in the default session (tier container).
 	ModeShared Mode = "shared"
-	// ModePerRun gives every run a session, a VM, of its own (tier vm).
+	// ModePerRun gives every run a session, a VM, of its own (tier container, or vm with
+	// Config.AcceptVMTier).
 	ModePerRun Mode = "per-run"
 )
 
@@ -146,6 +152,15 @@ type Config struct {
 	RunscPath    string
 	RunscSHA512  string
 	RunscHelpers map[string]string
+
+	// AcceptVMTier (SANDBOX_WSLC_ACCEPT_VM_TIER=1, per-run mode only; FromEnv refuses the
+	// variable in the shared mode whatever its value) is the operator
+	// accepting Microsoft's statement that WSL is not a security sandbox for running
+	// untrusted code, for this daemon: the per-run mode then reports vm, stated with
+	// PerRunAcceptedQualification, and a vm or kernel floor admits it. Off, the per-run
+	// mode reports container, and such a floor refuses it before anything starts. gVisor
+	// inside the VMs does not change the tier either way.
+	AcceptVMTier bool
 }
 
 const (
@@ -208,6 +223,10 @@ func (c Config) workMB() int {
 	return defaultWorkMB
 }
 
+// acceptVMTierPerRunOnly is the refusal of SANDBOX_WSLC_ACCEPT_VM_TIER in the shared mode:
+// FromEnv's for any value of the variable there, validate's for AcceptVMTier.
+const acceptVMTierPerRunOnly = "SANDBOX_WSLC_ACCEPT_VM_TIER applies to SANDBOX_WSLC_MODE=per-run only: the shared mode has no VM of its own to accept"
+
 var pinnedRE = regexp.MustCompile(`@(sha256:[0-9a-f]{64})$`)
 
 func (c Config) validate() error {
@@ -223,6 +242,9 @@ func (c Config) validate() error {
 		}
 		if c.GVisor || c.RunscPath != "" || c.RunscSHA512 != "" || len(c.RunscHelpers) > 0 {
 			add("SANDBOX_WSLC_GVISOR and SANDBOX_WSLC_RUNSC_* apply to SANDBOX_WSLC_MODE=per-run only: the shared mode runs in the caller's own default session, whose docker settings this provider never rewrites")
+		}
+		if c.AcceptVMTier {
+			add("%s", acceptVMTierPerRunOnly)
 		}
 	case ModePerRun:
 		if c.MaxSessions < 1 || c.MaxSessions > maxMaxSessions {
@@ -328,9 +350,12 @@ func New(cfg Config) (*Provider, error) {
 
 func (*Provider) Name() string { return Name }
 
-// IsolationClass is vm in the per-run mode and container in the shared mode.
+// IsolationClass is vm in the per-run mode when the operator has accepted Microsoft's
+// statement (Config.AcceptVMTier), and container otherwise: in the per-run mode without
+// it, and always in the shared mode. Every floor compares against this one value, so
+// nothing else needs to know the setting.
 func (p *Provider) IsolationClass() sandbox.IsolationClass {
-	if p.cfg.Mode == ModePerRun {
+	if p.cfg.Mode == ModePerRun && p.cfg.AcceptVMTier {
 		return sandbox.IsolationVM
 	}
 	return sandbox.IsolationContainer
@@ -386,6 +411,11 @@ func (*Provider) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.Modu
 // no grant, and a smoke test that has passed. Each refusal ran nothing.
 func (p *Provider) admit(floor sandbox.IsolationClass, rule sandbox.SoftwareRule, grant *sandbox.HostAPIGrant) (*verified, error) {
 	if err := sandbox.CheckMinimumIsolation(p.IsolationClass(), floor); err != nil {
+		if errors.Is(err, sandbox.ErrInsufficientIsolation) && p.cfg.Mode == ModePerRun && !p.cfg.AcceptVMTier {
+			// The floor is above container: say which setting would meet it, keeping the
+			// mark and the sentinel.
+			err = fmt.Errorf("%w; the wslc per-run mode counts as container against a floor unless the operator sets SANDBOX_WSLC_ACCEPT_VM_TIER=1", err)
+		}
 		return nil, err
 	}
 	if err := rule.Check(""); err != nil {

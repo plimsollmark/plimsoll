@@ -25,6 +25,9 @@ func init() {
 			return []string{"SANDBOX_DISK_MB"}
 		},
 		pinnedImages: true,
+		// The tier is read from the runtime class each check finds (Provider.IsolationClass),
+		// and is unknown until the first.
+		tierFromChecks: func(sandbox.Sandbox) bool { return true },
 		// The channel to sandboxd is TLS, but every pod's terminator serves the same
 		// certificate, so it proves the peer is a plimsoll sandbox pod, not the pod dialed
 		// (Claude Security scan, 2026-11-07, finding F1). Someone who can rewrite traffic

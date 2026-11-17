@@ -375,6 +375,14 @@ func main() {
 		slog.Error("SANDBOX_MIN_ISOLATION is not a valid tier", "error", err, "want", "vm|kernel|container|process")
 		os.Exit(1)
 	}
+	// A tier the configuration fixes is held to the floor now, before anything starts
+	// work: the wslc per-run mode's smoke test builds a template disk and boots two Hyper-V
+	// VMs, which a floor above its tier would otherwise refuse only after they ran (finding
+	// wslc-29). The providers whose startup checks establish the tier (tierFromChecks:
+	// docker under runsc, agentsandbox, openshell) are held to it after those checks, below.
+	if tierKnownBeforeChecks(sb) {
+		exitBelowFloor(sb, want, requireMinimum)
+	}
 
 	// Resolve the effective limiter envelope (env parsing + aggregate-memory clamp +
 	// validation) in one typed, unit-tested function so main() only wires the result.
@@ -584,14 +592,10 @@ func main() {
 	// current evidence falls below it.
 	proven := sb.IsolationClass()
 
-	// SANDBOX_MIN_ISOLATION, parsed before the smoke test, against what it proved.
-	if requireMinimum {
-		if !sb.IsolationClass().Meets(want) {
-			slog.Error("provider does not meet the required isolation tier",
-				"provider", sb.Name(), "provider_isolation", sb.IsolationClass().String(), "required", want.String())
-			os.Exit(1)
-		}
-	}
+	// SANDBOX_MIN_ISOLATION against what the checks proved: the only check for a provider
+	// whose checks establish its tier, and for every other one a second look at a tier
+	// already held to the floor before anything started.
+	exitBelowFloor(sb, want, requireMinimum)
 
 	// The single most security-relevant fact is the boundary strength; make a weak
 	// default loud. docker under runc is namespaces only, NOT a hostile-code boundary.
@@ -881,6 +885,15 @@ func newMetricsServer(addr string, handler http.Handler, tlsConf *tls.Config) *h
 	srv.ReadTimeout = 10 * time.Second
 	srv.WriteTimeout = 10 * time.Second
 	return srv
+}
+
+// exitBelowFloor ends startup when the provider's tier is below SANDBOX_MIN_ISOLATION.
+func exitBelowFloor(sb sandbox.Sandbox, want sandbox.IsolationClass, required bool) {
+	if err := operatorMinimumError(sb, want, required); err != nil {
+		slog.Error("provider does not meet the required isolation tier",
+			"provider", sb.Name(), "provider_isolation", sb.IsolationClass().String(), "required", want.String(), "error", err)
+		os.Exit(1)
+	}
 }
 
 // readyzHandler re-runs the provider's bounded Preflight, and with a daemon floor

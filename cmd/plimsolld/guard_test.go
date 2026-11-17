@@ -275,6 +275,9 @@ func TestLocalSettingsFailBeforeTheSmokeTest(t *testing.T) {
 		"unreadable TLS keypair": {[]string{"PLIMSOLL_TLS_CERT=/nonexistent/cert.pem", "PLIMSOLL_TLS_KEY=/nonexistent/key.pem"}, "invalid TLS configuration"},
 		"hardened, shared token": {[]string{"PLIMSOLL_HARDENED=1"}, "before the smoke test"},
 		"bad clients file":       {[]string{"PLIMSOLL_CLIENTS_FILE=/nonexistent/clients.json"}, "PLIMSOLL_CLIENTS_FILE"},
+		// Under runc the tier is container whatever Preflight finds, so a floor above it
+		// is refused before Preflight, as the wslc per-run mode's is (finding wslc-29).
+		"floor above runc": {[]string{"SANDBOX_MIN_ISOLATION=kernel"}, "does not meet the required isolation tier"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := append(slices.Clone(base), tc.env...)

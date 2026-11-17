@@ -20,7 +20,7 @@ The provider has two modes, chosen with `SANDBOX_WSLC_MODE`:
 | What a run gets | A WSLC session of its own: a new VM with its own Linux kernel, `dockerd` and disk, booted from a fresh copy of a template disk and deleted after the run. | A new container in the Windows user's one default WSLC session, beside every other run. |
 | Wall between two runs | Separate VMs. | <dfn>*runc*</dfn>'s (the program docker uses by default to start a container on the machine's own kernel): the runs share one kernel. |
 | Wall between a run and Windows | The run's own Hyper-V VM. | The session's Hyper-V VM, one for all runs together. |
-| Reported <dfn>*isolation tier*</dfn> (how strong the walls around a run are: `process`, `container`, `kernel` or `vm`) | `vm`, always with Microsoft's statement beside it ([below](#the-tier-and-why-hardened-mode-refuses-it)). | `container`. |
+| Reported <dfn>*isolation tier*</dfn> (how strong the walls around a run are: `process`, `container`, `kernel` or `vm`) | `container`, with Microsoft's statement beside it; `vm` once the operator sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1` ([below](#the-tier-and-why-hardened-mode-refuses-it)). | `container`. |
 | Hardened mode | Refused. | Refused. |
 | Runs at once | Up to `SANDBOX_WSLC_MAX_SESSIONS` (default 2), each in its own VM. | One at a time ([below](#what-each-run-does)). |
 | gVisor inside | Optional, off by default ([below](#gvisor-inside-each-per-run-vm)). | Not offered. |
@@ -53,10 +53,16 @@ in Microsoft's documentation. Its unit tests run against a stand-in program that
 misreading of Microsoft's code would be shared by the provider and the stand-in, which is why the live suite exists.
 
 **What was measured, and on what.** Every statement on this page that something was measured or seen comes from one
-machine: a laptop running Windows 11 Pro (version 26H2, build 26300) with about 31 GiB of memory, WSL 3.0.5.0 (the newest stable WSL release on
-the [WSL release list (EXTERNAL · source repo ↗)](https://github.com/microsoft/WSL/releases) as of 2026-11-14, released
-2026-11-03), the real `wslc.exe`, and plimsoll's sandbox image. No other machine, WSL release or Windows edition has
-been tried.
+machine: a laptop running Windows 11 Pro (version 26H2, build 26300) with about 31 GiB of memory, WSL 3.0.5.0 (the
+newest stable WSL release on the [WSL release list (EXTERNAL · source repo ↗)](https://github.com/microsoft/WSL/releases)
+as of 2026-11-14, released 2026-11-03), the real `wslc.exe`, and plimsoll's sandbox image. No other machine, WSL release
+or Windows edition has been tried. Its Windows is a released one, not a preview: on 2026-11-15 the machine reported build
+26300.9974 (`cmd.exe /c ver`, and `CurrentBuild` and `UBR` under the registry key
+`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`), which Microsoft lists as the 2026-11-10 update of version 26H2 in
+its General Availability Channel
+([Windows 11 release information (EXTERNAL · official docs ↗)](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information)),
+and no Windows Insider channel is selected on this machine: the registry key where Windows records the chosen Insider
+channel, `HKLM\SOFTWARE\Microsoft\WindowsSelfHost\UI\Selection` (its value `UIBranch`), does not exist there.
 
 - **The live suite** (`make wslc-suite`, [Tests](#tests)) passed seven of seven tests, none skipped, on 2026-11-13, and
   again on 2026-11-14 on the code as released, after the cleanup rule and the run-folder lock changed ([One plimsolld to a run folder](#one-plimsolld-to-a-run-folder)). In the shared mode it covers the
@@ -64,12 +70,16 @@ been tried.
   timeout. In the per-run mode it covers the smoke test's two VMs, a run's tier and result, nothing left once the
   teardowns end, and two kill tests: one kills the process holding a run's VM; the other starts a separate process
   that runs the provider (its startup checks and one snippet), kills that process with SIGKILL once its run's container
-  exists, and requires a fresh provider to find no session and no run folder left.
+  exists, and requires a fresh provider to find no session and no run folder left. Two tests of the per-run tier were
+  added for v0.27.2: by default a `vm` and a `kernel` floor are refused, not dispatched, with no session made for them,
+  and with `SANDBOX_WSLC_ACCEPT_VM_TIER=1` a `vm` floor runs and its result states `vm`. The suite passed nine of nine,
+  none skipped, on 2026-11-15.
 - **gVisor's live tests** (`make wslc-gvisor-suite`) passed three of three on 2026-11-13: two snippets printed gVisor's
   kernel string from inside the sandbox, a VM whose docker settings were deliberately not rewritten was refused with
   no run started, and nothing was left behind after two runs at once and a refused one. Rerun repeatedly on
   2026-11-14, one of them failed intermittently ([Known limitation](#known-limitation-a-lost-session-with-gvisor-on));
-  the three passed again that day on the code as released.
+  the three passed again that day on the code as released, and on 2026-11-15 with the per-run tier change of v0.27.2,
+  where a run under gVisor states `container` without the setting.
 
 **What CI can and cannot test.** plimsoll's CI runs on GitHub's hosted Linux runners, which have no WSL, so it builds
 the package and runs its unit tests against the stand-in program only. GitHub's hosted Windows Server 2025 image lists
@@ -101,22 +111,79 @@ and its section on untrusted workloads and containers:
 
 The VMs this provider starts are WSL's own, not VMs managed outside WSL.
 
-- **Per-run mode: `vm`.** The tier names the mechanism, a Hyper-V VM per run. plimsolld states it with this
-  qualification, word for word:
+Three more sentences of the same page bear on what this provider states, each quoted here beside what plimsoll's own
+evidence says about it. From its section on trust boundaries
+([WSL security model, trust boundaries (EXTERNAL · official docs ↗)](https://wsl.dev/technical-documentation/security/#trust-boundaries)):
+
+> WSL 2 distributions and sessions for the same Windows user can share a utility virtual machine.
+
+In the shared mode every run does share one: the Windows user's default WSLC session, beside that user's own
+containers. In the per-run mode, the startup smoke test requires its two boundary-test runs to land in VMs whose boot
+IDs (the random identifier Linux picks at each boot) differ from each other, from the default session's and from the
+WSL distribution's, and every run refuses a boot ID already seen ([Freshness](#freshness)). On the one machine and WSL
+release above, each run had a VM of its own. That is a reading of boot IDs on that machine, not a promise from
+Microsoft: a WSL release that put two sessions in one VM would repeat a boot ID, and the run would be refused.
+
+> Launching WSL from elevated and non-elevated Windows processes does not create separate guest security boundaries.
+
+plimsoll relies on no separation by elevation. Running plimsolld from an elevated Windows process changes which
+default session the shared mode lands in (`wslc-cli-admin-<user>` instead of `wslc-cli-<user>`,
+[below](#what-each-run-does)), not how well it is kept apart from the other one.
+
+From its section on configuration settings
+([WSL security model, configuration settings (EXTERNAL · official docs ↗)](https://wsl.dev/technical-documentation/security/#configuration-settings)):
+
+> Unless a setting is explicitly documented as a security control, do not use it as a containment boundary.
+
+Every control this provider applies is a `wslc container run` flag (`--network none`, `--cap-drop ALL`, `--user`,
+`--memory`, `--cpus`, `--ulimit`, `--tmpfs` and the rest, [Controls](#controls)). Neither of Microsoft's pages on WSL
+containers
+([WSL container (EXTERNAL · official docs ↗)](https://learn.microsoft.com/en-us/windows/wsl/wsl-container),
+[WSL container settings (EXTERNAL · official docs ↗)](https://learn.microsoft.com/en-us/windows/wsl/wsl-container-settings),
+read on 2026-11-15) documents any of them as a security control. plimsoll does not take them on trust: the startup smoke
+test checks the effect of each it can from inside a container before serving
+([Startup smoke test](#startup-smoke-test-and-readiness)); the CPU limit, for one, is passed and never read back
+([What it does not do](#what-it-does-not-do)). That is evidence that each took effect on that container, not a
+statement from Microsoft that it holds as a boundary.
+
+- **Per-run mode: `container`, or `vm` once the operator accepts Microsoft's statement.** The per-run mode gives each
+  run its own Hyper-V VM. It reports the `container` tier, because Microsoft states that WSL is not a security sandbox
+  for running untrusted code; an operator who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then
+  reports `vm` with that statement attached.
+
+  A <dfn>*floor*</dfn> is the weakest tier a run will accept: a request's `minimum_isolation`, the daemon's
+  `SANDBOX_MIN_ISOLATION`, and a router's choice among daemons ([INTERNAL · placement →](placement.md)) each compare
+  against the tier this mode reports. So with the default, a `vm` or `kernel` floor refuses the mode before anything
+  starts, marked not dispatched with the reason `isolation`
+  ([INTERNAL · run results →](run-results.md#did-anything-run-the-error-says-so)), and a daemon started with
+  `SANDBOX_MIN_ISOLATION=vm` or `kernel` refuses to start, before its smoke test builds the template or boots any VM. A
+  `container` floor still runs. plimsolld states the tier with one of two qualifications, word for word. By default:
+
+  > Reported as container: Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security
+  > sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay,
+  > shares, interop) run with the user's rights. An operator who accepts that statement sets
+  > SANDBOX_WSLC_ACCEPT_VM_TIER=1 and this mode then reports vm.
+
+  With `SANDBOX_WSLC_ACCEPT_VM_TIER=1`:
 
   > Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running
   > untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run
-  > with the user's rights.
+  > with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.
 
-  With gVisor on, this sentence follows it:
+  v0.27.0 and v0.27.1 reported `vm` for this mode with no setting, so a `vm` floor admitted it there; from v0.27.2 on it
+  reports `container` until the operator sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`.
+
+  With gVisor on, this sentence follows either one:
 
   > gVisor, a user-space kernel on its systrap platform, also runs inside that VM as an added wall: the VM's default
   > container runtime is read back as gVisor's before each run, a run is refused when it is not, and the VM wall's
   > qualification above is unchanged.
 
-  What is read before each run is the VM's default runtime, after the settings are written and `dockerd` reloads. The
-  runtime of a container itself is read in the startup smoke test, not at each run, so a `dockerd` that restarted
-  between the read-back and `container run` would not be seen.
+  gVisor does not raise the tier: it stays `container` by default, and `vm` with the setting, never `kernel`, because
+  nothing has audited a `kernel` claim for gVisor inside these VMs. What is read before each run is the VM's default
+  runtime, after the settings are written and `dockerd` reloads. The runtime of a container itself is read in the
+  startup smoke test, not at each run, so a `dockerd` that restarted between the read-back and `container run` would
+  not be seen.
 
 - **Shared mode: `container`**, never `vm` and never `kernel`. Every run shares the session VM's Linux kernel, its
   `dockerd` (which runs as root) and its storage disk, and the wall between two runs is runc's. It is weaker than
@@ -137,10 +204,12 @@ Python client, `isolationQualification` in the TypeScript client, and the summar
 The startup log carries it too (`isolation_qualification`), and so do `plimsolld -h` and this
 page. It is informational, like the tier: no run record (the daemon's statement of what it ran and where) and no run
 request carries it, and the protocol number did not change for it, so a client shows it and does not require it. A
-run's record carries the tier name alone, and with gVisor on also the policy `gvisor:proven`
-([below](#gvisor-inside-each-per-run-vm)).
+run's record carries the provider's name, `wslc`, and the tier name alone, and with gVisor on also the policy
+`gvisor:proven` ([below](#gvisor-inside-each-per-run-vm)). From v0.27.2 on, a record that names `wslc` and `vm` was
+made by a daemon whose operator set `SANDBOX_WSLC_ACCEPT_VM_TIER=1`. A record does not name the daemon's release, so a
+record from v0.27.0 or v0.27.1, which stated `vm` with no setting, cannot be told apart by its fields.
 
-The four reasons hardened mode refuses the per-run mode's `vm`:
+The four reasons hardened mode refuses the per-run mode, whatever tier it reports:
 
 1. **Microsoft disclaims it.** Hardened mode is plimsoll's statement that every protection it advertises is in force.
    plimsoll does not make that statement for a wall whose vendor says, in the sentences above, that WSL is not one.
@@ -187,6 +256,7 @@ The provider's variables (`plimsolld -h` lists every variable the daemon reads):
 | Variable | Default | What it does, and what fails startup |
 |---|---|---|
 | `SANDBOX_WSLC_MODE` | `per-run` | `per-run` or `shared`; any other value fails startup. |
+| `SANDBOX_WSLC_ACCEPT_VM_TIER` | off | Per-run mode only. Off (unset, `0` or `false`), the per-run mode reports `container`, so a request's `vm` or `kernel` floor is refused before anything starts and `SANDBOX_MIN_ISOLATION=vm` or `kernel` fails startup. On (`1` or `true`) is the operator accepting Microsoft's statement that WSL is not a security sandbox for running untrusted code, and the mode then reports `vm` with that statement attached ([The tier](#the-tier-and-why-hardened-mode-refuses-it)). Hardened mode refuses the provider either way. Letter case and spaces around the value are ignored; any other value fails startup. In the shared mode any value fails startup, `0` and `false` included, since the setting means nothing there. |
 | `SANDBOX_WSLC_IMAGE` | none: required | The image every run starts. Letters, digits and `. _ : / @ -` only, not starting with `-`, because it becomes an argument to `wslc.exe` ([What crosses to Windows](#what-crosses-to-windows)). |
 | `SANDBOX_REQUIRE_PINNED_IMAGES` | off | `1` requires `SANDBOX_WSLC_IMAGE` in the form `name@sha256:<64 hex digits>`, and the smoke test then refuses an image whose repository digests, as `wslc image inspect` reports them, do not include that digest. |
 | `SANDBOX_WSLC_PATH` | `/mnt/c/Program Files/WSL/wslc.exe` | `wslc.exe` as the distribution sees it (where the WSL package installs it); an absolute path. |
@@ -242,7 +312,7 @@ user's processes across the whole session VM, so with two runs at once one could
 `fork` failed. A run takes the provider's single place before its container starts and gives it back after the
 container is removed. A second run waits for its turn, no longer than its own time budget and no longer than its
 caller's context; a run whose wait ends first is refused before anything started, marked not dispatched with reason
-`capacity` ([INTERNAL · run results →](run-results.md)), so a caller may retry it. The cost is throughput: concurrent
+`capacity` ([INTERNAL · run results →](run-results.md#did-anything-run-the-error-says-so)), so a caller may retry it. The cost is throughput: concurrent
 callers are served in turn. A run that does not end cleanly has its container removed by name
 (`wslc container remove --force`, three tries). A removal that keeps failing is logged, and the container then ends
 when its runner's own time budget does, since `--rm` removes it when it exits.
@@ -399,8 +469,9 @@ whose docker settings plimsoll never rewrites.
   `/etc/resolv.conf`, `/etc/hostname` and `/etc/hosts` alone, while the VM's side requires the container to have no
   bind mount or volume. Every other check runs unchanged. The boundary test's container is held for 10 s while the VM's
   side is read, in each of the two VMs, so gVisor adds at least 20 s to startup.
-- **The tier stays `vm`**, with Microsoft's sentence beside it and gVisor's sentence added
-  ([above](#the-tier-and-why-hardened-mode-refuses-it)). Hardened mode still refuses the provider.
+- **The tier does not change**: `container`, or `vm` with `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, never `kernel`, with
+  Microsoft's sentence beside it and gVisor's sentence added ([above](#the-tier-and-why-hardened-mode-refuses-it)).
+  Hardened mode still refuses the provider.
 
 What it adds: a break-out would have to defeat gVisor and then the VM, two unrelated walls. gVisor brings its own wall
 around system calls, which answers most of the missing seccomp choice. It does not answer Microsoft's statement, and the
@@ -500,6 +571,10 @@ otherwise: `TestProcessesStartOnlyThroughHostCommand`, `TestWSLCEnvironmentIsPat
   the per-run mode a fresh VM.
 - **Module runs** (a compiled simulator run once per row of a parameter table): refused with reason `unsupported`.
 - **Serve under hardened mode**, in either mode, with or without gVisor.
+- **Meet a `vm` or `kernel` floor by default.** The per-run mode gives each run its own Hyper-V VM. It reports the
+  `container` tier, because Microsoft states that WSL is not a security sandbox for running untrusted code; an operator
+  who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then reports `vm` with that statement
+  attached. gVisor inside the VMs does not raise the tier ([The tier](#the-tier-and-why-hardened-mode-refuses-it)).
 - **A per-container process limit**: `SANDBOX_PIDS` fails startup ([Controls](#controls)).
 - **Name the platform image a run used.** `Describe` names the image by the ID the smoke test read
   (`wslc-image:sha256:...`), but WSLC does not report which platform manifest a run used, so a request that carries a
@@ -533,7 +608,8 @@ otherwise: `TestProcessesStartOnlyThroughHostCommand`, `TestWSLCEnvironmentIsPat
 - `make wslc-suite` is the live suite: by hand, on a Windows machine with WSL 3.0.5 or later, from a WSL distribution,
   with `SANDBOX_WSLC_IMAGE` set (and `SANDBOX_WSLC_PATH` when `wslc.exe` is elsewhere). It sets `WSLC_LIVE=1`, fails
   rather than skips when its configuration is missing, and is never part of the ordinary gate. It costs nothing: WSLC
-  runs on the machine itself. It covers both modes, the per-run mode with at most two VMs at once.
+  runs on the machine itself. It covers both modes, the per-run mode with at most two VMs at once, and the per-run
+  mode's tier with and without `SANDBOX_WSLC_ACCEPT_VM_TIER=1`.
 - `make wslc-gvisor-suite` is gVisor's live suite, run the same way with the three `SANDBOX_WSLC_RUNSC_*` settings as
   well: a run printing gVisor's kernel string, a VM whose settings were not rewritten refused with no run started, and
   nothing left behind. Find the binary with `command -v runsc`, its digest with `sha512sum`, and each helper's with

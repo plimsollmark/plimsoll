@@ -39,8 +39,19 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 	if err != nil {
 		return sandbox.Provider{}, err
 	}
+	// The setting means nothing in the shared mode, so any value fails there, 0 and false
+	// included: an operator who set it expected it to change something (finding wslc-32).
+	// Config.validate refuses AcceptVMTier there for a caller of New.
+	mode := Mode(strings.TrimSpace(getenv("SANDBOX_WSLC_MODE")))
+	if mode == ModeShared && strings.TrimSpace(getenv("SANDBOX_WSLC_ACCEPT_VM_TIER")) != "" {
+		return sandbox.Provider{}, errors.New("wslc: " + acceptVMTierPerRunOnly)
+	}
+	acceptVM, err := sandbox.BoolFromEnv(getenv, "SANDBOX_WSLC_ACCEPT_VM_TIER")
+	if err != nil {
+		return sandbox.Provider{}, err
+	}
 	p, err := New(Config{
-		Mode:               Mode(strings.TrimSpace(getenv("SANDBOX_WSLC_MODE"))),
+		Mode:               mode,
 		MaxSessions:        maxSessions,
 		RunRoot:            getenv("SANDBOX_WSLC_RUN_ROOT"),
 		Path:               getenv("SANDBOX_WSLC_PATH"),
@@ -54,6 +65,7 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		RunscPath:          getenv("SANDBOX_WSLC_RUNSC_PATH"),
 		RunscSHA512:        strings.TrimSpace(getenv("SANDBOX_WSLC_RUNSC_SHA512")),
 		RunscHelpers:       helpers,
+		AcceptVMTier:       acceptVM,
 	})
 	if err != nil {
 		return sandbox.Provider{}, err

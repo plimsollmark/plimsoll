@@ -1,6 +1,9 @@
 package main
 
-import "github.com/plimsollmark/plimsoll/sandbox/openshell"
+import (
+	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/openshell"
+)
 
 // The openshell provider is built here rather than in sandbox.Build: its generated
 // OpenShell protocol code registers the protobuf names NVIDIA's OpenShell Go SDK also
@@ -13,6 +16,8 @@ func init() {
 		// refuses SANDBOX_PIDS; SANDBOX_DISK_MB sizes /tmp.
 		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
 		pinnedImages:     true,
+		// The tier is unknown until the first driver check (Provider.IsolationClass).
+		tierFromChecks: func(sandbox.Sandbox) bool { return true },
 	}
 }
 

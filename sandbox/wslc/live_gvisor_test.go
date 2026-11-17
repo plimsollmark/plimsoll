@@ -84,7 +84,8 @@ func liveGVisor(t *testing.T) *Provider {
 }
 
 // A run under gVisor with the provider's own flags prints gVisor's kernel string, states the
-// vm tier and the policy that says gVisor was proven on for it, and the smoke test's evidence
+// container tier (gVisor does not raise it; the operator has not set
+// SANDBOX_WSLC_ACCEPT_VM_TIER=1) and the policy that says gVisor was proven on for it, and the smoke test's evidence
 // names the runtime, the runsc version and digest and the platform. The startup smoke test
 // is itself the proof from inside and from the VM's side, so reaching here means it passed.
 func TestGVisorLiveRunPrintsGVisorKernel(t *testing.T) {
@@ -99,7 +100,7 @@ func TestGVisorLiveRunPrintsGVisorKernel(t *testing.T) {
 	}
 	t.Logf("gVisor evidence: runtime %s, %s, sha512 %s, platform %s, Sentry seccomp %s, %d Sentry processes, helpers %v; template %d bytes built in %v; seccomp inside %q",
 		g.Runtime, g.RunscVersion, g.RunscSHA512, g.Platform, g.SentrySeccomp, g.SentryCount, g.Helpers, ev.TemplateBytes, ev.TemplateBuild, ev.Seccomp)
-	if p.IsolationClass() != sandbox.IsolationVM {
+	if p.IsolationClass() != sandbox.IsolationContainer {
 		t.Fatalf("tier %v", p.IsolationClass())
 	}
 	if q := p.Qualification(); !strings.HasSuffix(q, GVisorQualification) {
@@ -111,7 +112,7 @@ func TestGVisorLiveRunPrintsGVisorKernel(t *testing.T) {
 		start := time.Now()
 		res, err := p.RunJavaScript(ctx, sandbox.Request{
 			Code:             "console.log(require('fs').readFileSync('/proc/version', 'utf8').trim() + ' uid ' + process.getuid())",
-			MinimumIsolation: sandbox.IsolationVM})
+			MinimumIsolation: sandbox.IsolationContainer})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +121,7 @@ func TestGVisorLiveRunPrintsGVisorKernel(t *testing.T) {
 		if res.ExitCode != 0 || !strings.Contains(strings.ToLower(out), "gvisor") || !strings.HasSuffix(out, "uid 61000") {
 			t.Fatalf("a run under gVisor: %+v", res)
 		}
-		if res.Policy != PolicyGVisor || res.Isolation != sandbox.IsolationVM {
+		if res.Policy != PolicyGVisor || res.Isolation != sandbox.IsolationContainer {
 			t.Fatalf("the run's evidence: policy %q, isolation %v", res.Policy, res.Isolation)
 		}
 	}

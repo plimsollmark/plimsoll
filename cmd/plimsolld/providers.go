@@ -40,6 +40,13 @@ type providerDescriptor struct {
 	// remoteMemory: runs draw on another machine's memory, so SANDBOX_TOTAL_MEMORY_MB
 	// does not clamp this daemon's concurrency.
 	remoteMemory bool
+	// tierFromChecks reports whether the provider's startup checks (Preflight, then the
+	// smoke test) establish its tier, so it is not known from its configuration alone.
+	// plimsolld holds SANDBOX_MIN_ISOLATION against every other provider's tier before
+	// anything starts work, and against these only after the checks. nil: the tier is
+	// known from configuration, which is the strict default, since a provider wrongly
+	// left nil is refused at startup rather than started.
+	tierFromChecks func(sb sandbox.Sandbox) bool
 	// resourceLog is the startup log's account of the resource envelope; nil logs the
 	// envelope as enforced on each run.
 	resourceLog func(sb sandbox.Sandbox, res sandbox.Resources) []any
@@ -67,6 +74,13 @@ var providers = map[string]providerDescriptor{
 			if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP_SDK")) == "unconfined" {
 				fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP_SDK=unconfined")
 			}
+		},
+		// Under runsc the tier is kernel only once Preflight has verified that the daemon
+		// registers runsc (DockerSandbox.IsolationClass); under any other runtime it is
+		// container whatever the checks find.
+		tierFromChecks: func(sb sandbox.Sandbox) bool {
+			d, ok := sb.(*sandbox.DockerSandbox)
+			return !ok || d.Runtime == "runsc"
 		},
 	},
 	"dockercloud": {

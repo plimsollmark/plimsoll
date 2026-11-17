@@ -59,21 +59,22 @@ func leftovers(t *testing.T, p *Provider, f *fake) []string {
 }
 
 // The per-run smoke test builds its own template, runs the probe in two fresh sessions,
-// and states the vm tier with what it read: two boot IDs that differ from each other, from
-// the default session's and from this distribution's; the GPU device in the session VM and
-// not in the container; the Windows folders the session VM mounts.
-func TestPerRunSmokeTestStatesVMAndEvidence(t *testing.T) {
+// and states the tier (container, since the operator has not set
+// SANDBOX_WSLC_ACCEPT_VM_TIER=1) with what it read: two boot IDs that differ from each
+// other, from the default session's and from this distribution's; the GPU device in the
+// session VM and not in the container; the Windows folders the session VM mounts.
+func TestPerRunSmokeTestStatesTheTierAndEvidence(t *testing.T) {
 	s := goodSetup(t)
 	f := newFake(t, s)
 	p := f.provider(perRun)
 	if err := p.SmokeTest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p.IsolationClass() != sandbox.IsolationVM {
+	if p.IsolationClass() != sandbox.IsolationContainer {
 		t.Fatalf("the per-run tier is %v", p.IsolationClass())
 	}
 	ev, ok := p.Evidence()
-	if !ok || ev.Mode != ModePerRun || len(ev.RunSessions) != 2 {
+	if !ok || ev.Mode != ModePerRun || len(ev.RunSessions) != 2 || ev.VMTierAccepted {
 		t.Fatalf("evidence: %+v", ev)
 	}
 	a, b := ev.RunSessions[0], ev.RunSessions[1]
@@ -144,7 +145,7 @@ func TestPerRunEachRunHasASessionOfItsOwn(t *testing.T) {
 	}
 	wg.Wait()
 	for i := range results {
-		if errs[i] != nil || results[i].Isolation != sandbox.IsolationVM || results[i].ExitCode != 0 {
+		if errs[i] != nil || results[i].Isolation != sandbox.IsolationContainer || results[i].ExitCode != 0 {
 			t.Fatalf("run %d: %+v %v", i, results[i], errs[i])
 		}
 	}
@@ -549,14 +550,21 @@ func TestPerRunArgvIsInteropSafe(t *testing.T) {
 	}
 }
 
-// The floor a request may ask of the per-run mode is vm; of the shared mode, container.
+// The floor a request may ask of the per-run mode is container, or vm once the operator
+// sets SANDBOX_WSLC_ACCEPT_VM_TIER=1 (vmtier_test.go); of the shared mode, container.
 func TestPerRunFloor(t *testing.T) {
 	p, _ := readyPerRun(t, nil)
-	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM}); err != nil {
+	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationContainer}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
+	refusal(t, err, sandbox.RefusalIsolation)
+	a, _ := readyPerRun(t, nil, func(c *Config) { c.AcceptVMTier = true })
+	if _, err := a.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM}); err != nil {
 		t.Fatal(err)
 	}
 	q, _ := ready(t)
-	_, err := q.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
+	_, err = q.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
 	refusal(t, err, sandbox.RefusalIsolation)
 }
 
@@ -587,7 +595,7 @@ func TestModeFromEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p := prov.Sandbox.(*Provider); p.Mode() != ModePerRun || p.IsolationClass() != sandbox.IsolationVM || p.cfg.MaxSessions != 2 {
+		if p := prov.Sandbox.(*Provider); p.Mode() != ModePerRun || p.IsolationClass() != sandbox.IsolationContainer || p.cfg.MaxSessions != 2 {
 			t.Fatalf("mode %v: %v, %v, %d sessions", set, p.Mode(), p.IsolationClass(), p.cfg.MaxSessions)
 		}
 	}

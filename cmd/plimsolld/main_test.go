@@ -32,7 +32,7 @@ import (
 func TestMain(m *testing.M) {
 	if os.Getenv("PLIMSOLLD_RUN_MAIN") == "1" {
 		if os.Getenv("PLIMSOLLD_FLOOR_TEST_PROVIDER") == "1" {
-			registerFloorTestProvider() // floor_test.go
+			registerFloorTestProviders() // floor_test.go
 		}
 		main()
 		os.Exit(0)

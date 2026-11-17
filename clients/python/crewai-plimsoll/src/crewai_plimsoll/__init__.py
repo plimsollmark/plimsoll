@@ -17,4 +17,4 @@ from plimsoll_client.crewai import PlimsollCodeTool
 from plimsoll_client.execution import CodeExecutor
 
 __all__ = ["Client", "CodeExecutor", "PlimsollCodeTool"]
-__version__ = "0.27.1"
+__version__ = "0.27.2"

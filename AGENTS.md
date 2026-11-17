@@ -140,7 +140,7 @@ is an error, and unset is **Disabled**. plimsolld builds `openshell`, `agentsand
 | `dockercloud` | Docker Cloud Sandboxes microVM | vm (billed by the second) |
 | `openshell` | NVIDIA OpenShell through a gateway | container |
 | `agentsandbox` | Kubernetes agent-sandbox pod from a warm pool | read from the runtime class: `kata-clh`, `kata-clh-runtime-rs`, `kata` vm; `runsc` kernel; `runc` container; anything else refused |
-| `wslc` | WSL containers on Windows, through `wslc.exe` over WSL interop | `per-run` mode, the default: vm (a Hyper-V VM per run, gVisor inside it optional); `shared` mode: container, weaker than docker under runc. Microsoft's statement that WSL is "not a security sandbox for running untrusted code" goes with the tier, and hardened mode refuses both modes |
+| `wslc` | WSL containers on Windows, through `wslc.exe` over WSL interop | `per-run` mode, the default: container, or vm with `SANDBOX_WSLC_ACCEPT_VM_TIER=1` (gVisor inside its VMs optional, and it does not change the tier). The per-run mode gives each run its own Hyper-V VM. It reports the `container` tier, because Microsoft states that WSL is not a security sandbox for running untrusted code; an operator who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then reports `vm` with that statement attached. `shared` mode: container, weaker than docker under runc. Microsoft's statement goes with the tier in both modes, and hardened mode refuses both modes |
 | unset | Disabled | none; any other value fails `Build` |
 
 **A reported tier is configuration and provider evidence plus the behavioral startup

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,34 +25,58 @@ import (
 // (no smoke test, so no startup sweep).
 func livePerRunProvider(t *testing.T) *Provider {
 	t.Helper()
+	return livePerRunProviderFrom(t, perRunEnv)
+}
+
+// livePerRunProviderFrom is livePerRunProvider over the environment given.
+func livePerRunProviderFrom(t *testing.T, getenv func(string) string) *Provider {
+	t.Helper()
 	if !liveRequested() {
 		t.Skip("set WSLC_LIVE=1 (make wslc-suite) on a host with wslc.exe")
 	}
 	if os.Getenv("SANDBOX_WSLC_IMAGE") == "" {
 		t.Fatal("WSLC_LIVE=1 needs SANDBOX_WSLC_IMAGE")
 	}
-	prov, err := FromEnv(perRunEnv)
+	prov, err := FromEnv(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return prov.Sandbox.(*Provider)
 }
 
-// perRunEnv is this process's environment with the per-run mode and two sessions at most.
+// perRunEnv is this process's environment with the per-run mode, two sessions at most, and
+// the default tier (container): SANDBOX_WSLC_ACCEPT_VM_TIER is unset here whatever this
+// process has, so an operator's own setting cannot change what these tests check.
 func perRunEnv(k string) string {
 	switch k {
 	case "SANDBOX_WSLC_MODE":
 		return "per-run"
 	case "SANDBOX_WSLC_MAX_SESSIONS":
 		return "2"
+	case "SANDBOX_WSLC_ACCEPT_VM_TIER":
+		return ""
 	}
 	return os.Getenv(k)
+}
+
+// acceptedEnv is perRunEnv with SANDBOX_WSLC_ACCEPT_VM_TIER=1: the operator accepts
+// Microsoft's statement, and the per-run mode reports vm.
+func acceptedEnv(k string) string {
+	if k == "SANDBOX_WSLC_ACCEPT_VM_TIER" {
+		return "1"
+	}
+	return perRunEnv(k)
 }
 
 // livePerRun is a per-run provider from this process's environment, its smoke test passed.
 func livePerRun(t *testing.T) *Provider {
 	t.Helper()
-	p := livePerRunProvider(t)
+	return livePerRunReady(t, livePerRunProvider(t))
+}
+
+// livePerRunReady runs p's startup checks (Preflight and the smoke test) and returns it.
+func livePerRunReady(t *testing.T, p *Provider) *Provider {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	if err := p.Preflight(ctx); err != nil {
@@ -93,12 +118,13 @@ func liveLeft(t *testing.T, p *Provider) []string {
 
 // The per-run mode on the real WSLC: the smoke test's two sessions are two VMs (boot IDs
 // that differ from each other, from the default session's and from this distribution's),
-// a run reports the vm tier and runs the guest's code, and once the teardowns are done no
-// session with the prefix is listed and no directory is left.
+// a run reports the container tier (the operator has not set SANDBOX_WSLC_ACCEPT_VM_TIER=1)
+// and runs the guest's code, and once the teardowns are done no session with the prefix is
+// listed and no directory is left.
 func TestLivePerRunSmokeAndRun(t *testing.T) {
 	p := livePerRun(t)
 	ev, ok := p.Evidence()
-	if !ok || ev.Mode != ModePerRun || len(ev.RunSessions) != 2 {
+	if !ok || ev.Mode != ModePerRun || len(ev.RunSessions) != 2 || ev.VMTierAccepted {
 		t.Fatalf("evidence: %+v", ev)
 	}
 	a, b := ev.RunSessions[0], ev.RunSessions[1]
@@ -107,18 +133,18 @@ func TestLivePerRunSmokeAndRun(t *testing.T) {
 	}
 	t.Logf("template %d bytes built in %v; session 1 %s boot %s result %v teardown %v; session 2 %s boot %s result %v teardown %v; gpu in VM %q, in container %q; Windows mounts %q",
 		ev.TemplateBytes, ev.TemplateBuild, a.Name, a.BootID, a.Result, a.Teardown, b.Name, b.BootID, b.Result, b.Teardown, ev.GPUInSessionVM, ev.GPUInContainer, ev.SessionVMWindowsMounts)
-	if p.IsolationClass() != sandbox.IsolationVM {
-		t.Fatalf("tier %v", p.IsolationClass())
+	if p.IsolationClass() != sandbox.IsolationContainer || p.Qualification() != PerRunQualification {
+		t.Fatalf("tier %v, qualification %q", p.IsolationClass(), p.Qualification())
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	start := time.Now()
-	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: "console.log('per-run ok ' + process.getuid())", MinimumIsolation: sandbox.IsolationVM})
+	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: "console.log('per-run ok ' + process.getuid())", MinimumIsolation: sandbox.IsolationContainer})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("a run took %v to its result", time.Since(start))
-	if res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "per-run ok 61000" || res.Isolation != sandbox.IsolationVM {
+	if res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "per-run ok 61000" || res.Isolation != sandbox.IsolationContainer {
 		t.Fatalf("result: %+v", res)
 	}
 	if err := p.Drain(ctx); err != nil {
@@ -126,6 +152,84 @@ func TestLivePerRunSmokeAndRun(t *testing.T) {
 	}
 	if left := liveLeft(t, p); len(left) != 0 {
 		t.Fatalf("left after the teardowns: %v", left)
+	}
+}
+
+// With SANDBOX_WSLC_ACCEPT_VM_TIER=1 on the real WSLC, the per-run mode reports vm with the
+// accepted sentence, a vm floor runs, and the run's result states vm.
+func TestLivePerRunAcceptedTierIsVM(t *testing.T) {
+	p := livePerRunReady(t, livePerRunProviderFrom(t, acceptedEnv))
+	ev, ok := p.Evidence()
+	if !ok || !ev.VMTierAccepted {
+		t.Fatalf("evidence: %+v", ev)
+	}
+	if p.IsolationClass() != sandbox.IsolationVM || p.Qualification() != PerRunAcceptedQualification {
+		t.Fatalf("tier %v, qualification %q", p.IsolationClass(), p.Qualification())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: "console.log('accepted ' + process.getuid())", MinimumIsolation: sandbox.IsolationVM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("a vm-floor run with the setting: exit %d, stdout %q, tier %s", res.ExitCode, res.Stdout, res.Isolation)
+	if res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "accepted 61000" || res.Isolation != sandbox.IsolationVM {
+		t.Fatalf("result: %+v", res)
+	}
+	if err := p.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if left := liveLeft(t, p); len(left) != 0 {
+		t.Fatalf("left after the teardowns: %v", left)
+	}
+}
+
+// On the real WSLC with the default configuration, a vm floor and a kernel floor are each
+// refused before dispatch, for the isolation reason, on a snippet and on a project, and
+// `wslc system session list` shows no session made for them.
+func TestLivePerRunVMFloorRefused(t *testing.T) {
+	p := livePerRun(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := p.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := p.listSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, floor := range []sandbox.IsolationClass{sandbox.IsolationVM, sandbox.IsolationKernel} {
+		_, err := p.RunJavaScript(ctx, sandbox.Request{Code: "console.log('must not run')", MinimumIsolation: floor})
+		reason, marked := sandbox.NotDispatchedReason(err)
+		if !errors.Is(err, sandbox.ErrInsufficientIsolation) || !marked || reason != sandbox.RefusalIsolation {
+			t.Fatalf("snippet at %s: %v (marked %v, reason %v)", floor, err, marked, reason)
+		}
+		t.Logf("snippet at %s refused: %v", floor, err)
+		_, err = p.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"node -e 'console.log(1)'"}, MinimumIsolation: floor})
+		reason, marked = sandbox.NotDispatchedReason(err)
+		if !errors.Is(err, sandbox.ErrInsufficientIsolation) || !marked || reason != sandbox.RefusalIsolation {
+			t.Fatalf("project at %s: %v (marked %v, reason %v)", floor, err, marked, reason)
+		}
+	}
+	if err := p.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := p.listSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var made []string
+	for _, n := range after {
+		if !slices.Contains(before, n) {
+			made = append(made, n)
+		}
+	}
+	t.Logf("sessions listed before %q, after %q", before, after)
+	if len(made) != 0 {
+		t.Fatalf("refused runs made sessions: %q", made)
+	}
+	if left := liveLeft(t, p); len(left) != 0 {
+		t.Fatalf("left: %v", left)
 	}
 }
 

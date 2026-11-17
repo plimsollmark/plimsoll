@@ -18,12 +18,13 @@ func init() {
 		// Every container gets --memory and --cpus, and the four tmpfs mounts are sized
 		// from SANDBOX_DISK_MB; there is no process limit, so SANDBOX_PIDS is refused.
 		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
-		// Hardened mode refuses wslc in both modes. The shared mode is container tier with
-		// five of the docker provider's controls absent (wslc.Absent); the per-run mode's VM
-		// wall is Hyper-V's, but the same controls are absent inside it, the CLI cannot turn
-		// off the session VM's GPU sharing, and its vendor disclaims WSL as a sandbox for
-		// untrusted code. Whether hardened mode may ever accept the per-run mode is the
-		// project owner's decision, not this file's.
+		// Hardened mode refuses wslc in both modes, whatever tier it reports. The shared mode
+		// is container tier with five of the docker provider's controls absent (wslc.Absent);
+		// the per-run mode's VM wall is Hyper-V's (tier container, or vm with
+		// SANDBOX_WSLC_ACCEPT_VM_TIER=1), but the same controls are absent inside it, the CLI
+		// cannot turn off the session VM's GPU sharing, and its vendor disclaims WSL as a
+		// sandbox for untrusted code. Whether hardened mode may ever accept the per-run mode
+		// is the project owner's decision, not this file's.
 		hardened: func(_ func(string) string, fail func(string, ...any), _ func(error)) {
 			fail("hardened mode does not serve wslc in either mode: the shared mode is container tier, below the docker provider under runc; in the per-run mode the VM wall is Hyper-V's, but inside it there is still no read-only root, seccomp choice, no-new-privileges, process limit or user namespaces, and the session VM's GPU sharing cannot be turned off; and Microsoft states that WSL is not a security sandbox for running untrusted code")
 		},
@@ -34,6 +35,9 @@ func init() {
 				// The tier is stated with its qualification wherever it is stated.
 				args = append(args, "wslc_mode", p.Mode(), "isolation_qualification", p.Qualification(),
 					"pids", "no per-container limit (--ulimit nproc counts per uid in the run's own VM)")
+				if ev, ok := p.Evidence(); ok {
+					args = append(args, "wslc_vm_tier_accepted", ev.VMTierAccepted)
+				}
 			} else {
 				args = append(args, "wslc_mode", wslc.ModeShared, "isolation_qualification", p.Qualification(),
 					"pids", "no per-container limit (--ulimit nproc counts per uid across the session VM, so the shared mode runs one run at a time)")
@@ -58,8 +62,8 @@ func init() {
 						}
 						args = append(args, "smoke_run_boot_ids", strings.Join(boots, ","), "template_bytes", ev.TemplateBytes)
 						if g := ev.GVisor; g != nil {
-							// gVisor is an added wall inside each VM, proven on at each run; the
-							// tier stays vm and hardened mode still refuses the provider.
+							// gVisor is an added wall inside each VM, proven on at each run; it
+							// does not change the tier, and hardened mode still refuses the provider.
 							args = append(args, "gvisor_runtime", g.Runtime, "gvisor_runsc_version", g.RunscVersion,
 								"gvisor_runsc_sha512", g.RunscSHA512, "gvisor_platform", g.Platform,
 								"gvisor_sentry_seccomp", g.SentrySeccomp, "gvisor_run_policy", wslc.PolicyGVisor)
@@ -95,16 +99,18 @@ const wslcUsage = `
                              Snippets and projects only: no grants, sessions or modules.
                              Guide: docs/wslc.md.
   SANDBOX_WSLC_MODE          per-run (default) or shared.
-                             per-run, tier vm, always stated with its qualification
-                             (Describe carries it as isolation_qualification, and the
-                             startup log too): a Hyper-V VM per run (one WSLC session
-                             per run), booted from a fresh copy of a template disk
-                             plimsolld builds at startup and deleted after the run; the
-                             VM wall is Hyper-V's, and the Windows components around it
-                             (network relay, shares, interop) run with the user's
-                             rights. Uses wslc.exe's undocumented "system session
-                             enter", powershell.exe (System32) and /usr/sbin/mkfs.ext4;
-                             about 0.9 GB of Windows memory per live run. Each per-run
+                             per-run, tier container (vm with
+                             SANDBOX_WSLC_ACCEPT_VM_TIER=1), always stated with its
+                             qualification (Describe carries it as
+                             isolation_qualification, and the startup log too): a
+                             Hyper-V VM per run (one WSLC session per run), booted from
+                             a fresh copy of a template disk plimsolld builds at
+                             startup and deleted after the run; the VM wall is
+                             Hyper-V's, and the Windows components around it (network
+                             relay, shares, interop) run with the user's rights. Uses
+                             wslc.exe's undocumented "system session enter",
+                             powershell.exe (System32) and /usr/sbin/mkfs.ext4; about
+                             0.9 GB of Windows memory per live run. Each per-run
                              plimsolld needs a run folder of its own: it ends only
                              sessions whose folder is under its run folder, and a
                              second process on the same folder refuses to start.
@@ -116,15 +122,32 @@ const wslcUsage = `
                              across the session VM, so a second run waits for its turn,
                              no longer than its own timeout, and is refused (not
                              dispatched, capacity) if the wait ends first.
+  SANDBOX_WSLC_ACCEPT_VM_TIER
+                             per-run only, off by default. Off (unset, 0 or false),
+                             the per-run mode reports the container tier, because
+                             Microsoft states that WSL is not a security sandbox for
+                             running untrusted code: a vm or kernel floor (a
+                             request's minimum_isolation, SANDBOX_MIN_ISOLATION,
+                             placement) refuses it, not dispatched (isolation), and
+                             SANDBOX_MIN_ISOLATION=vm or kernel refuses startup. On
+                             (1 or true) is the operator accepting that statement:
+                             the mode then reports vm, stated with the same
+                             qualification plus that the operator set this. Letter
+                             case and spaces around the value are ignored; any other
+                             value refuses startup. gVisor does not change the tier.
+                             In the shared mode any value refuses startup, 0
+                             included: the setting means nothing there
   SANDBOX_WSLC_MAX_SESSIONS  per-run only: the most runs in VMs of their own at once
                              (default 2, at most 16); a run past it is refused, not
                              dispatched, and a run waits while an ended one's VM is
                              still being torn down
   SANDBOX_WSLC_GVISOR        per-run only, off by default: 1 makes gVisor (runsc, the
                              systrap platform) the runtime inside every run's VM, an
-                             added wall inside the Hyper-V VM. The tier stays vm and
-                             is stated with gVisor's position added; hardened mode
-                             still refuses the provider. The template carries runsc
+                             added wall inside the Hyper-V VM. The tier does not
+                             change (container, or vm with
+                             SANDBOX_WSLC_ACCEPT_VM_TIER=1) and is stated with
+                             gVisor's position added; hardened mode still refuses
+                             the provider. The template carries runsc
                              (streamed in at startup and checked by SHA-512 inside
                              the VM). WSLC rewrites the docker settings at every VM
                              boot, so each run writes them again, reloads dockerd and

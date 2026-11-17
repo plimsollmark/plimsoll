@@ -41,6 +41,31 @@ func minimumIsolationWith(getenv func(string) string) (sandbox.IsolationClass, b
 	return want, true, nil
 }
 
+// operatorMinimumError is SANDBOX_MIN_ISOLATION (want, when required) against the tier the
+// provider reports: nil when it is met or unset, else an error naming the provider and both
+// tiers, with the provider's own qualification when it states one (the wslc per-run mode's
+// names the setting that would raise its tier). plimsolld asks it before the provider's
+// startup checks when tierKnownBeforeChecks, and again after them.
+func operatorMinimumError(sb sandbox.Sandbox, want sandbox.IsolationClass, required bool) error {
+	if !required || sb.IsolationClass().Meets(want) {
+		return nil
+	}
+	err := fmt.Errorf("provider %q reports isolation %s, below SANDBOX_MIN_ISOLATION=%s", sb.Name(), sb.IsolationClass(), want)
+	if q, ok := sb.(sandbox.Qualifier); ok && q.Qualification() != "" {
+		err = fmt.Errorf("%w; it states: %s", err, q.Qualification())
+	}
+	return err
+}
+
+// tierKnownBeforeChecks reports whether the provider's tier is known from its configuration
+// alone, so SANDBOX_MIN_ISOLATION can be held against it before its startup checks start
+// any work: false only for a provider whose descriptor says its checks establish the tier
+// (tierFromChecks: docker under runsc, agentsandbox, openshell).
+func tierKnownBeforeChecks(sb sandbox.Sandbox) bool {
+	f := providers[sb.Name()].tierFromChecks
+	return f == nil || !f(sb)
+}
+
 // loadLimiterConfig resolves the limiter envelope from getenv (injectable for tests).
 // providerName and perRunMemMB drive the SANDBOX_TOTAL_MEMORY_MB clamp: a count is not
 // a resource budget, so when a total is set the max-concurrent is clamped so

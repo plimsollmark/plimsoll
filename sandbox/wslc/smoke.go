@@ -66,6 +66,10 @@ type Evidence struct {
 	// GVisor is what the smoke test read about gVisor in the per-run VMs; nil when
 	// SANDBOX_WSLC_GVISOR is off.
 	GVisor *GVisorEvidence
+	// VMTierAccepted is, in the per-run mode, whether the operator set
+	// SANDBOX_WSLC_ACCEPT_VM_TIER=1, so the tier stated is vm rather than container. It is
+	// configuration, not something the smoke test read.
+	VMTierAccepted bool
 }
 
 // RunSessionEvidence is one per-run session the smoke test used.
@@ -446,6 +450,7 @@ func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env
 		ev.RunSessions = append(ev.RunSessions, rs)
 	}
 	ev.BootID, ev.ReadAt = "", time.Now().UTC() // each run's VM has its own: RunSessions
+	ev.VMTierAccepted = p.cfg.AcceptVMTier
 	cand.evidence = ev
 	p.mu.Lock()
 	p.state = cand

@@ -62,12 +62,13 @@ Docker Cloud creates a billed virtual machine; isolation is checked once the smo
 has proven the isolation level. Every violation is reported at once, so it is one fix pass rather
 than a startup loop.
 
-One provider is refused whatever <dfn>*isolation tier*</dfn> (how strong the walls around a
-run are) it reports: `wslc`, WSL containers on Windows, in both of its modes, the per-run
-mode's `vm` included, with or without <dfn>*gVisor*</dfn> (Google's sandbox kernel) inside
-its virtual machines. Microsoft states that WSL is not a security sandbox for running
-untrusted code, and inside each of its virtual machines five of the docker provider's
-controls are missing ([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
+One provider is refused whatever <dfn>*isolation tier*</dfn> (how strong the walls around
+a run are) it reports: `wslc`, WSL containers on Windows, in both of its modes, the
+per-run mode's `vm` (stated only with `SANDBOX_WSLC_ACCEPT_VM_TIER=1`) included, with or
+without <dfn>*gVisor*</dfn> (Google's sandbox kernel) inside its virtual machines.
+Microsoft states that WSL is not a security sandbox for running untrusted code, and
+inside each of its virtual machines five of the docker provider's controls are missing
+([wslc.md](wslc.md#the-tier-and-why-hardened-mode-refuses-it)).
 
 ## Isolation is a floor on every run, not only a startup check
 
