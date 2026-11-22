@@ -57,7 +57,7 @@ import { PlimsollClient } from "@plimsollmark/client";
 
 const plimsoll = new PlimsollClient({ baseUrl: "https://plimsoll.internal:8443", token: process.env.PLIMSOLL_TOKEN });
 
-const info = await plimsoll.describe(); // provider, tier, supportsSessions, ...
+const info = await plimsoll.describe(); // sandbox, isolation, supportsSessions, ...
 const r = await plimsoll.runJavaScript("console.log(6 * 7)", { minimumIsolation: "container", timeoutMs: 10_000 });
 r.stdout; // "42\n"; a non-zero r.exitCode is a normal result, not an error
 

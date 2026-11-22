@@ -941,6 +941,24 @@ class AgentFrameworkPlimsollPackageTests(unittest.TestCase):
         self.assertIn('approval_mode="always_require"', readme)
         self.assertIn("LocalShellTool", readme)
 
+    def test_the_readme_says_the_harness_drops_the_shell_for_a_client_without_shell_support(self) -> None:
+        # Review finding release-102: on a clean install of 0.28.0 the README's example ran nothing in
+        # plimsoll and exited 0, because the chat client did not implement SupportsShellTool and the
+        # harness skipped the shell with a log line. What the README says is what the framework does.
+        class NoShell(Scripted):
+            get_shell_tool = None  # type: ignore[assignment]
+
+        client = NoShell()
+        self.assertNotIsInstance(client, SupportsShellTool)
+        with self.assertLogs(level="WARNING") as logged:
+            agent = harness(client, PlimsollShellTool(FakeClient(), minimum_isolation="kernel"))
+        self.assertNotIn("run_shell", [t.name for t in agent.default_options.get("tools") or []])
+        self.assertTrue(any("Shell tool not available" in line for line in logged.output))
+        readme = self._text("agent-framework-plimsoll", "README.md")
+        self.assertIn("implements Agent Framework's `SupportsShellTool`", readme)
+        self.assertIn('logs "Shell tool not available"', readme)
+        self.assertIn("isinstance(chat_client, SupportsShellTool)", readme)
+
     def test_the_readme_and_the_example_agree_on_whether_the_package_is_released(self) -> None:
         # Review finding release-34: the PyPI page's install line carries the until-the-next-release
         # note the example's header carries, and the release takes both away together.

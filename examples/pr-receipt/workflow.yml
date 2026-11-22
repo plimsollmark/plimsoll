@@ -86,9 +86,14 @@ jobs:
         with:
           version: v29.9.0
           daemon-config: ${{ steps.docker_config.outputs.config }}
-      # Trusted Dockerfile only. No dependency installation from the PR on the host.
+      # Trusted Dockerfile only. No dependency installation from the PR on the host. The
+      # Dockerfile copies plimsoll's native helper from the named build context nativehelper,
+      # as make docker-images passes it; without it the build fails before any receipt.
       - name: Build the project toolchain image
-        run: docker build -t plimsoll/sandbox:latest tools/plimsoll/docker
+        run: >-
+          docker build
+          --build-context nativehelper=tools/plimsoll/sandbox/internal/nativehelper/program
+          -t plimsoll/sandbox:latest tools/plimsoll/docker
       - name: Run the project and check its receipt
         id: run
         env:

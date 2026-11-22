@@ -43,6 +43,13 @@ The tool is Agent Framework's shell executor (`start`, `run`, `close`, `as_funct
 model as its `run_shell` tool and its environment provider runs a few commands through it to tell the model what shell it
 has. With an agent of your own, `client.get_shell_tool(func=shell.as_function())` is the same tool.
 
+**The chat client has to carry a shell tool.** `create_harness_agent` gives the model the shell only when the chat client
+implements Agent Framework's `SupportsShellTool`; otherwise it logs "Shell tool not available" as a warning, leaves the shell
+out, and the agent answers without running anything in plimsoll. `OpenAIChatClient` (OpenAI's Responses API) and
+`AnthropicClient` carry it, and so do the clients built on them (Foundry, Azure AI, and Anthropic on Bedrock, Foundry and
+Vertex); `OpenAIChatCompletionClient` and the Ollama, Gemini, Bedrock and GitHub Copilot clients do not (read from those
+packages' source as published on 2026-11-22). Check with `isinstance(chat_client, SupportsShellTool)` before relying on it.
+
 What the shell tool needs and does:
 
 - **The floor is yours to set.** `minimum_isolation` (`process`, `container`, `kernel` or `vm`) has no default. When the

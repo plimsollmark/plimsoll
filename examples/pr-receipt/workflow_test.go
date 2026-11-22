@@ -235,3 +235,94 @@ func TestTheWorkflowsCheckoutStatesTheRelease(t *testing.T) {
 		})
 	}
 }
+
+// Every docker build in a published workflow of a Dockerfile that copies from a named build
+// context must pass that context, as make docker-images does. v0.28.0 shipped this workflow's
+// build without --build-context nativehelper=..., so every user's job failed at the image
+// build and made no receipt (finding release-104, found on a real GitHub run): no test built
+// the image the way the workflow does.
+func TestEveryWorkflowDockerBuildPassesTheContextsItsDockerfileNeeds(t *testing.T) {
+	files, err := filepath.Glob("../../.github/workflows/*.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, "workflow.yml")
+	from := regexp.MustCompile(`(?m)^\s*COPY\s+--from=([a-z][a-z0-9_-]*)\s`)
+	stage := regexp.MustCompile(`(?mi)^\s*FROM\s+\S+\s+AS\s+([a-z0-9_-]+)\s*$`)
+	checked := 0
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cmd := range workflowDockerBuilds(string(raw)) {
+			fields := strings.Fields(cmd)
+			dir, dockerfile := fields[len(fields)-1], ""
+			for i, w := range fields {
+				if w == "-f" && i+1 < len(fields) {
+					dockerfile = fields[i+1]
+				}
+			}
+			// Map the workflow's checkout path back to this repository.
+			local := func(p string) string {
+				p = strings.TrimPrefix(p, "tools/plimsoll/")
+				return filepath.Join("..", "..", p)
+			}
+			path := filepath.Join(local(dir), "Dockerfile")
+			if dockerfile != "" {
+				path = local(dockerfile)
+			}
+			df, err := os.ReadFile(path)
+			if err != nil {
+				continue // not one of plimsoll's own Dockerfiles
+			}
+			stages := map[string]bool{}
+			for _, m := range stage.FindAllStringSubmatch(string(df), -1) {
+				stages[strings.ToLower(m[1])] = true
+			}
+			for _, m := range from.FindAllStringSubmatch(string(df), -1) {
+				name := m[1]
+				if stages[name] {
+					continue
+				}
+				checked++
+				if !strings.Contains(cmd, "--build-context "+name+"=") {
+					t.Errorf("%s: %q builds %s, which copies from the build context %q, without --build-context %s=...", f, cmd, path, name, name)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no docker build of a Dockerfile with a named build context was found; the check reads nothing")
+	}
+}
+
+// workflowDockerBuilds returns each docker build command of a workflow's run: steps, a folded
+// or literal block's lines joined, so a command split across lines reads as one.
+func workflowDockerBuilds(text string) []string {
+	lines := strings.Split(text, "\n")
+	indent := func(l string) int { return len(l) - len(strings.TrimLeft(l, " ")) }
+	var cmds []string
+	for i := 0; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		t = strings.TrimPrefix(t, "- ")
+		if !strings.HasPrefix(t, "run:") {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(t, "run:"))
+		var parts []string
+		if body == ">-" || body == ">" || body == "|" || body == "|-" {
+			base := indent(lines[i])
+			for j := i + 1; j < len(lines) && (strings.TrimSpace(lines[j]) == "" || indent(lines[j]) > base); j++ {
+				parts = append(parts, strings.TrimSpace(lines[j]))
+			}
+		} else {
+			parts = []string{body}
+		}
+		joined := strings.Join(parts, " ")
+		for _, m := range regexp.MustCompile(`docker build( +[^;&|]+)`).FindAllString(joined, -1) {
+			cmds = append(cmds, strings.TrimSpace(m))
+		}
+	}
+	return cmds
+}
