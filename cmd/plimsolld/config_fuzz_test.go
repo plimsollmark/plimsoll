@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -31,8 +32,8 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 		getenv := func(k string) string { return env[k] }
 
 		env["SANDBOX_MEMORY_MB"] = perRunMem
-		perRunMemMB, err := envIntWith(getenv, "SANDBOX_MEMORY_MB", 256)
-		if err != nil {
+		perRunMemMB, err := settings.MemoryMB.Get(getenv)
+		if err != nil || perRunMemMB == 0 {
 			perRunMemMB = 256 // unparseable per-run memory would already fail Build
 		}
 		lc, err := loadLimiterConfig(getenv, provider, perRunMemMB, 0)
@@ -51,7 +52,7 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 			}
 		}
 
-		if on, err := sandbox.BoolFromEnv(getenv, "PLIMSOLL_HARDENED"); err == nil && on {
+		if on, err := settings.Hardened.Get(getenv); err == nil && on {
 			// Hardened may only turn ON for the canonical spellings (case/space
 			// normalized) — never for a typo the parser guessed at.
 			if norm := strings.ToLower(strings.TrimSpace(hardened)); norm != "1" && norm != "true" {

@@ -111,8 +111,11 @@ const brokerNoRetryHeader = "X-Should-Retry"
 // credential, budgets, upstream transport, and metadata-only trace are private to
 // one run; provider adapters only translate their framing to/from brokerCall.
 type brokerSession struct {
-	grant     *HostAPIGrant
-	token     string
+	grant *HostAPIGrant
+	token string
+	// copies is what applyCredential sends upstream for token, as bytes: every exact
+	// copy is removed from an answer before the guest reads it (broker_scrub.go).
+	copies    [][]byte
 	origin    *url.URL
 	transport http.RoundTripper
 	requests  chan struct{}
@@ -287,6 +290,7 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 	return &brokerSession{
 		grant:     grant,
 		token:     token,
+		copies:    credentialCopies(grant, token),
 		origin:    origin,
 		transport: transport,
 		requests:  make(chan struct{}, maxHostConcurrent),
@@ -355,10 +359,7 @@ func (b *brokerSession) End() {
 	if b == nil {
 		return
 	}
-	b.mu.Lock()
-	b.ended = true
-	b.mu.Unlock()
-	b.end()
+	b.revoke()
 	done := make(chan struct{})
 	go func() {
 		b.inflight.Wait()
@@ -368,6 +369,16 @@ func (b *brokerSession) End() {
 	case <-done:
 	case <-time.After(brokerEndWait):
 	}
+}
+
+// revoke is End without the wait: a call in flight loses its upstream request and a
+// call that arrives later is refused. A call that revokes its own grant uses it, since End
+// would wait for that call.
+func (b *brokerSession) revoke() {
+	b.mu.Lock()
+	b.ended = true
+	b.mu.Unlock()
+	b.end()
 }
 
 // enter counts a call in flight, or reports that the run's authority has ended.
@@ -490,14 +501,24 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 			b.trace.recordDenied()
 			return brokerError(http.StatusRequestEntityTooLarge, "host api request body exceeds the route's limit")
 		}
+		// A JSON body whose top level names _method, or that is not JSON, is refused
+		// here, before anything is sent (broker_override.go). A body of another type
+		// is not read.
+		if len(body) > 0 {
+			if err := checkBufferedBody(contentType, body); err != nil {
+				b.trace.recordDenied()
+				return overrideRefusal(err)
+			}
+		}
 		reserved = int64(len(body))
 	} else if call.Body != nil && call.ContentLength != 0 {
 		reserved = call.ContentLength
 		if reserved < 0 {
 			reserved = limit // undeclared: the route's whole limit is held until the call settles
 		}
+		// A JSON body is read as it passes (streamScannerFor); any other is not.
 		held := reserved
-		upload = &capReader{r: call.Body, remaining: reserved, settle: func(sent int64) {
+		upload = &capReader{r: call.Body, remaining: reserved, scan: streamScannerFor(contentType), settle: func(sent int64) {
 			b.sent.Add(sent - held) // what was held less what went
 		}}
 	}
@@ -592,6 +613,25 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	// broker error in place of the upstream response, whatever status the upstream
 	// sent, and the row keeps that status so the trace still says what happened.
 	if err != nil || resp == nil || resp.Body == nil {
+		if refusal := upload.refused(); refusal != nil && !upload.over() {
+			// The JSON body named the override field, or was not JSON: the piece that
+			// did was withheld and the upstream request broken off, so the API never got
+			// a whole body. It did get the request: the transport sends the headers
+			// before it reads the body, an API's handler runs on the headers, and one
+			// that reads JSON as it arrives acts on the pieces before the refused one.
+			// So the call is the over-limit path's whatever was sent of its body: the
+			// route cap stays spent and the call has a row with the bytes sent (finding
+			// hunt-security-31 for a body piece; release-98 for the headers alone). Only
+			// a refusal made before the request was built, a buffered body's, is counted
+			// as denied with its charge given back.
+			b.trace.record(CallRow{
+				Method:   strings.ToUpper(route.Method),
+				Route:    route.Path,
+				ReqBytes: sentBytes(),
+				Latency:  time.Since(started),
+			})
+			return overrideRefusal(refusal)
+		}
 		b.trace.record(CallRow{
 			Method:   strings.ToUpper(route.Method),
 			Route:    route.Path,
@@ -633,6 +673,19 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		return brokerError(http.StatusBadGateway, "host api unavailable")
 	}
 
+	// The guest must not read back what the broker attached, nor learn whether an answer
+	// held it anywhere: an answer that holds a copy of the credential is withheld whole and
+	// ends the run's grant (credentialMatched).
+	answerHeader := []byte(resp.Header.Get("Content-Type"))
+	if holdsCopy(responseBody, b.copies) || holdsCopy(answerHeader, b.copies) {
+		return b.credentialMatched(CallRow{
+			Method:   strings.ToUpper(route.Method),
+			Route:    route.Path,
+			Status:   resp.StatusCode,
+			ReqBytes: sentBytes(),
+			Latency:  latency,
+		})
+	}
 	b.trace.record(CallRow{
 		Method:    strings.ToUpper(route.Method),
 		Route:     route.Path,
@@ -650,7 +703,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 		b.breaker.open(time.Now(), retryAfterCooldown(resp.Header.Get("Retry-After")), resp.StatusCode == http.StatusTooManyRequests)
 	}
-	answerType := resp.Header.Get("Content-Type")
+	answerType := string(answerHeader)
 	if answerType == "" || strings.IndexFunc(answerType, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		answerType = "application/octet-stream"
 	}
@@ -664,18 +717,35 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 // answer without its final event ([DONE], message_stop) and raises. Memory is one
 // piece, never the answer. The row records the bytes delivered; Delivered is true only
 // when the upstream ended the stream itself within the caps. The breaker reads the
-// status as for a buffered answer.
+// status as for a buffered answer. Copies of the credential are looked for on the way
+// (streamScrubber): the unfinished last word of a piece waits for the next, and a
+// stream the broker cuts loses that word, so a cut never hands over part of a copy. A
+// Content-Type that holds a copy is the buffered answer's case (credentialMatched),
+// since nothing has gone yet; a piece that holds one is not sent, the stream is cut
+// there, and the run's grant ends (credentialMatched too).
 func (b *brokerSession) stream(sink StreamSink, resp *http.Response, route HostRoute, reqBytes int, started time.Time, cancel context.CancelFunc, callTimer *time.Timer) brokerResponse {
 	callTimer.Stop()
 	idle := time.AfterFunc(hostStreamIdleTimeout, cancel)
 	defer idle.Stop()
+	contentType := resp.Header.Get("Content-Type")
+	if holdsCopy([]byte(contentType), b.copies) {
+		cancel()
+		return b.credentialMatched(CallRow{
+			Method:   strings.ToUpper(route.Method),
+			Route:    route.Path,
+			Status:   resp.StatusCode,
+			ReqBytes: reqBytes,
+			Latency:  time.Since(started),
+		})
+	}
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 		b.breaker.open(time.Now(), retryAfterCooldown(resp.Header.Get("Retry-After")), resp.StatusCode == http.StatusTooManyRequests)
 	}
-	contentType := resp.Header.Get("Content-Type")
 	w := sink.Begin(resp.StatusCode, contentType)
+	scrub := newStreamScrubber(b.copies) // nil with no credential to look for
 	buf := make([]byte, streamPiece)
-	written := 0
+	written := 0 // bytes read from the upstream, against the cap
+	sent := 0    // bytes handed to the guest
 	delivered := false
 	for {
 		n, err := resp.Body.Read(buf)
@@ -684,8 +754,17 @@ func (b *brokerSession) stream(sink StreamSink, resp *http.Response, route HostR
 				n = maxHostResponseBytes - written
 			}
 			if n > 0 {
-				if _, werr := w.Write(buf[:n]); werr != nil {
-					break // the guest stopped reading
+				piece := buf[:n]
+				if scrub != nil {
+					if piece = scrub.next(piece); scrub.hit {
+						break // the piece that holds a copy is not sent
+					}
+				}
+				if len(piece) > 0 {
+					if _, werr := w.Write(piece); werr != nil {
+						break // the guest stopped reading
+					}
+					sent += len(piece)
 				}
 				written += n
 			}
@@ -697,22 +776,67 @@ func (b *brokerSession) stream(sink StreamSink, resp *http.Response, route HostR
 		}
 		if err == io.EOF {
 			delivered = true
+			if scrub != nil {
+				if tail := scrub.end(); scrub.hit {
+					delivered = false // nor is a held last word that holds one
+				} else if len(tail) > 0 {
+					if _, werr := w.Write(tail); werr != nil {
+						delivered = false // the guest stopped reading before the end
+					} else {
+						sent += len(tail)
+					}
+				}
+			}
 			break
 		}
 		if err != nil {
 			break // an idle cut, the run's deadline, or the upstream broke off
 		}
 	}
-	b.trace.record(CallRow{
+	row := CallRow{
 		Method:    strings.ToUpper(route.Method),
 		Route:     route.Path,
 		Status:    resp.StatusCode,
 		Delivered: delivered,
 		ReqBytes:  reqBytes,
-		RespBytes: written,
+		RespBytes: sent,
 		Latency:   time.Since(started),
-	})
+	}
+	if scrub != nil {
+		scrub.drop() // a cut stream: what was held is not sent (streamScrubber.end)
+		if scrub.hit {
+			cancel()
+			b.credentialMatched(row)
+			return brokerResponse{Status: resp.StatusCode, ContentType: contentType, Streamed: true}
+		}
+	}
+	b.trace.record(row)
 	return brokerResponse{Status: resp.StatusCode, ContentType: contentType, Streamed: true}
+}
+
+// errCredentialMatched is the broker's answer in place of an upstream answer that held a
+// copy of the run's credential (credentialMatched).
+const errCredentialMatched = "host api answer held this run's credential; the broker withheld the answer and ended the run's grant"
+
+// credentialMatched is what the broker does with an upstream answer that holds a copy of
+// the credential it attached (finding hunt-security-32). Until 2026-11-20 it replaced each
+// copy with a mark in place and sent the rest, and that told code that can shape an answer
+// which of the strings it had a route reflect equals the credential: tens of thousands of
+// guesses per call, none of them leaving a trace. Now a match is an event: the answer is
+// withheld whole (the guest gets this fixed error, or, in a stream already begun, the
+// stream cut before the piece that held it), the row records the call as not delivered
+// with CredentialMatched set, which the audit line names as a possible guessing attempt,
+// and the run's grant ends, so every later call of the run (or of the session's call) is
+// refused. A guest still learns that a call of its run met the credential, and in a cut
+// stream about where; that is why a credential used with a grant must be random
+// (docs/capability-grants.md): no threshold here tells a guessable one from a random one.
+// The grant is revoked without waiting for the calls in flight, this one among them (End
+// waits for them). sent is the bytes a stream had already handed over.
+func (b *brokerSession) credentialMatched(row CallRow) brokerResponse {
+	row.Delivered, row.CredentialMatched = false, true
+	b.trace.record(row)
+	b.revoke()
+	return brokerError(http.StatusBadGateway, errCredentialMatched)
 }
 
 // isEventStream reports whether a Content-Type names server-sent events.
@@ -854,20 +978,29 @@ var errUploadClosed = errors.New("host api request body was closed")
 type capReader struct {
 	r      io.Reader
 	settle func(sent int64) // called once, by the first Close, with the bytes handed over
+	// scan reads each piece before it is handed over, for a JSON body
+	// (streamScannerFor); a piece that completes the override field's name, or that is
+	// not JSON, is withheld and the request fails with the scanner's error, as does the
+	// body's end when the scanner refuses it there. Nil reads nothing.
+	scan overrideScanner
 
 	mu        sync.Mutex
 	remaining int64
 	sent      int64
 	pastCap   bool
+	refusal   error // the scanner's, once it refused
 	closed    bool
 }
 
 func (c *capReader) Read(p []byte) (int, error) {
 	c.mu.Lock()
-	closed, remaining := c.closed, c.remaining
+	closed, remaining, refusal := c.closed, c.remaining, c.refusal
 	c.mu.Unlock()
 	if closed {
 		return 0, errUploadClosed
+	}
+	if refusal != nil {
+		return 0, refusal
 	}
 	var n int
 	var err error
@@ -879,6 +1012,17 @@ func (c *capReader) Read(p []byte) (int, error) {
 		}
 		n, err = c.r.Read(p)
 	}
+	var scanErr error
+	if n > 0 && c.scan != nil {
+		if scanErr = c.scan.feed(p[:n]); scanErr != nil {
+			n, err = 0, scanErr // this piece never goes
+		}
+	}
+	if err == io.EOF && c.scan != nil {
+		if scanErr = c.scan.end(); scanErr != nil {
+			n, err = 0, scanErr // nor does the body's end
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed { // closed while this read waited on the guest: these bytes never go
@@ -888,6 +1032,9 @@ func (c *capReader) Read(p []byte) (int, error) {
 	c.sent += int64(n)
 	if err == errRequestOverCap {
 		c.pastCap = true
+	}
+	if scanErr != nil {
+		c.refusal = scanErr
 	}
 	return n, err
 }
@@ -924,6 +1071,16 @@ func (c *capReader) progress() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sent
+}
+
+// refused is the scanner's refusal of the guest's body, or nil. A nil reader has none.
+func (c *capReader) refused() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refusal
 }
 
 // over reports whether the guest's body ran past the limit.

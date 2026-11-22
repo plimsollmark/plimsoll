@@ -37,12 +37,13 @@ through which a daemon reports what it offers), then ranked, then sent:
 
 | `Requirement` field | Effect |
 |---|---|
-| `Backend` | Use this backend only. One that cannot take the request is an error, not a fallback: the caller asked for it by name. |
-| `Provider` | Keep only backends reporting this provider id (`docker`, `e2b`, `openshell`, ...). |
+| `Backend` | Use this backend only. One that cannot take the request is an error, not a fallback: the caller asked for it by name. A name no backend in the pool has is refused with that name. |
+| `Provider` | Keep only backends reporting this provider id (`docker`, `e2b`, `openshell`, ...). For a single run the pool checks the returned record too, as for `Environment`: a daemon restarted with another provider since its last `Describe` answer runs the request, and the pool returns `ErrProviderMismatch` with the result, never a success and never a retry, since the code ran. For a sandbox kept open for many calls it only chooses the daemon ([below](#sessions)). |
 | `MinimumIsolation` | Keep only backends whose current isolation evidence meets this <dfn>*floor*</dfn>: the weakest <dfn>*isolation tier*</dfn> (sandbox strength: `process`, `container`, `kernel` or `vm`) the caller accepts. The pool merges it with the request's own `MinimumIsolation` (the stronger wins; an invalid one is refused) and writes the result onto the request. The daemon then checks it again immediately before <dfn>*dispatch*</dfn> (handing the code over to run), and the client checks the evidence that comes back, so a backend whose tier dropped since its last `Describe` refuses or fails that check instead of running below the floor. |
-| `Environment` | The older filter on the exact identity of the outer image or interpreter. That identity can change on a rebuild that changed nothing, when an OCI image index (explained below this table) includes fresh build metadata. The pool checks the returned record too, but an out-of-date description can let a run happen before that check. Use `Software` when you require one execution image. |
+| `Environment` | The older filter on the exact identity of the outer image or interpreter. That identity can change on a rebuild that changed nothing, when an OCI image index (explained below this table) includes fresh build metadata. For a single run the pool checks the returned record too, but an out-of-date description can let a run happen before that check. For a <dfn>*session*</dfn>, one sandbox kept open for many calls, it only chooses the daemon ([below](#sessions)). Use `Software` when you require one execution image. |
 | `Software` | Select one exact software identity (which image the code ran in, explained below this table) or an approved set of identities. The pool filters on `Describe` and sends the rule with the request. The daemon checks its current selection before dispatch, and the client verifies the selected identity and the rule in the <dfn>*run record*</dfn>, the daemon's statement of what it ran and where, which comes back with every result. An unknown identity fails a required rule. |
-| `GrantProfile` | The request carries a grant, so keep only backends that support grants for that kind of payload. |
+| `GrantProfile` | A single run carries a grant, so keep only backends that support grants for that kind of payload. `OpenSession` refuses it: a session's calls can be snippets or projects, so a session names the kinds that carry a grant in `SessionGrants`. |
+| `SessionGrants` | For `OpenSession` only: which kinds of call in the session carry a grant (`Snippets`, `Projects`, or both). Keep only backends that state grant support for each of them. A single run refuses it. |
 | `Prefer` | Rank the backends that are left (by tier, by a price table of the caller's own, by anything in `client.Info`). Without it, the order the backends were given decides. |
 
 The kind of payload comes from the method called: a project needs `supports_project`,
@@ -78,8 +79,8 @@ than one tested image, use `SoftwareApproved` with an explicit list.
 - The same rule can be put directly on `sandbox.Request`, `ProjectRequest` or
   `ModuleRequest` when calling one daemon. When the pool's requirement and the request
   both state a rule, only identities both rules accept will do.
-- For a <dfn>*session*</dfn>, one sandbox kept open for many calls, the rule is supplied
-  through `client.SessionOptions.Software` at open, then included in every call's record.
+- For a session, the rule is supplied through `client.SessionOptions.Software` at open,
+  then included in every call's record.
 - Without a rule, a request runs on whatever image the daemon has, as it always did:
   plimsoll cannot infer which image a caller tested. A caller promising a tested
   environment should set `SoftwareExact`.
@@ -125,6 +126,13 @@ seconds (`Describe` is a small call, so that fails only a daemon that is not ans
 and a backend whose description failed is not asked again for 5 seconds, so one down
 daemon costs each request at most one bounded attempt, not its whole deadline.
 
+Every description, whether `Refresh` or a request asked for it, has those 5 seconds, and
+runs to its end even when the caller that asked gives up. What it learns is the daemon's
+state, kept for every caller, so one caller's deadline or dropped connection is never
+stored as the daemon's failure; that caller gets its own context error (`context.Canceled`
+or `context.DeadlineExceeded`). While one description of a backend is in progress, other
+requests and `Refresh` wait for its answer instead of asking the daemon again.
+
 ## Sessions
 
 A [session](sessions.md) lives on one daemon, so `OpenSession` places it once and
@@ -132,6 +140,16 @@ every call on the returned session goes to that daemon. The pool keeps only back
 whose `Describe` states session support, and matches a required environment and software
 rule against the session environment `Describe` states (`session_environment`), not the
 snippet one: on docker every call of a session runs in the project image.
+
+For a session, the `Environment` and `Provider` requirements only decide which daemon opens it. Nothing
+checks it afterwards: the pool hands back the session as the daemon opened it, its calls
+go straight to that daemon, and their run records are not compared with the requirement.
+So a daemon whose session image changed after its last `Describe` answer opens the session
+in the new image, and every call runs there with no error. When a session must run in an
+approved image, use `Software` instead. The open sends the rule to the daemon, which does
+not hand over a sandbox whose image the rule does not allow; the client refuses an open
+whose answer states such an image, and checks that every call's run record states the
+image the open stated.
 
 ## What this does not do
 

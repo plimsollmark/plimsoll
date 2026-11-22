@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -37,6 +39,23 @@ import (
 //     where the guest cannot signal, attach to or replace them. Before any guest code,
 //     the open locks every empty password and stops sshd, then proves from the guest
 //     that sudo, su and an ssh login to root all fail (e2b_session.js).
+//   - The template is the operator's machine image, not plimsoll's, and the work
+//     folder carries no no-execute mark, so nothing stops a file the session wrote
+//     from being loaded by a program that goes looking for one. So every program of
+//     plimsoll's here (the open, the stager, the lister, the sweep, the identity check,
+//     the relays, the artifact reader, the launcher, and the setpriv that drops to the
+//     guest) starts in /, which the session cannot write (a library search folder
+//     given relatively is then a folder of the root), under
+//     sessionkit.ControlArgvClosed: an empty environment (envd hands every process
+//     PATH, HOME, USER, LOGNAME, the sandbox's environment variables and the request's,
+//     none of which passes /usr/bin/env -i), an empty OpenSSL settings file, and the
+//     program by the full path the open found for it on the root before any of the
+//     session's code ran (e2b_session.js pin), never by a search. The guest's own
+//     processes get envd's environment as the open read it (guestEnv), handed to them
+//     explicitly, and change into the work folder themselves. What plimsoll does not
+//     check: a template that replaces the system files these programs load (a library,
+//     the loader's settings, /etc/ld.so.preload), or sets a variable that loads code
+//     into /bin/sh and /usr/bin/env before -i clears it. That is the operator's.
 //   - envd writes files as root and may follow a link the guest planted, so a call's
 //     files reach the guest through a root-only staging directory and a root program
 //     that becomes the guest before writing them; a relay starts as root and drops to
@@ -80,7 +99,33 @@ const (
 	e2bInputChunk = 1 << 20
 	// e2bRootUser is who envd starts plimsoll's own programs as.
 	e2bRootUser = "root"
+	// e2bControlDir is the working folder envd starts every process of a session in:
+	// the root, which the session cannot write. A guest process changes into the work
+	// folder itself (e2bGuestStart), as the guest.
+	e2bControlDir = "/"
+	// e2bEnv is the first program of every command (sessionkit.ControlArgv names it);
+	// the open checks it is the root's own.
+	e2bEnv = "/usr/bin/env"
+	// e2bGuestStart, run by the pinned sh as the guest, changes into its first argument
+	// and execs the rest, so the process keeps its PID.
+	e2bGuestStart = `cd "$1" || exit 125; shift; exec "$@"`
 )
+
+// A pause's budget is held under SuspendBound, which a session layer's suspend budget is
+// derived from: a larger number here does not compile.
+const _ = uint64(SuspendBound - e2bPauseBudget)
+
+// e2bRequiredBins are the programs the open must find on the root: every later start
+// names them by the path it found (e2b_session.js pin). python3 is pinned where the
+// machine has it.
+var e2bRequiredBins = []string{"node", "sh", "setpriv"}
+
+// e2bEnvName is an environment variable's name as the guest's environment may carry it.
+var e2bEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// e2bEnvDropped are names in envd's environment that describe the process that read it,
+// or that a guest process gets from plimsoll instead (HOME, the work folder).
+var e2bEnvDropped = map[string]bool{"HOME": true, "PWD": true, "OLDPWD": true, "SHLVL": true, "_": true}
 
 // e2bSessionDirs are the directories the guest can write, which the sweep measures
 // against the session's disk budget by walking them.
@@ -90,7 +135,11 @@ var e2bSessionDirs = []string{e2bSessionWork, "/tmp", "/var/tmp", "/dev/shm"}
 var errE2BDraining = fmt.Errorf("%w: the e2b provider is shutting down", ErrAtCapacity)
 
 // SupportsSessions reports that E2B keeps sessions: the conformance suite passes
-// against the live service (make e2b-session-live).
+// against the live service (make e2b-session-live). On a template whose node is too old
+// for sessionkit.NodeSignalFlag every open is refused, with words that say so
+// (e2bSessionNodeRefused), and on one with no node outside /usr/local (E2B's base) too
+// (e2bSessionNoNode); a daemon with sessions on fails its startup session smoke
+// test there rather than state sessions it cannot open.
 func (e *E2B) SupportsSessions() bool { return true }
 
 // SessionEnvironments is the runs' environments: one template runs every payload kind.
@@ -112,6 +161,14 @@ type e2bSession struct {
 	life   *sessionkit.Life
 	grants e2bGrantChannel
 	routes *RouteBudget // route caps span the session's granted calls
+	// bins is each program plimsoll starts here, by the path the open found it at;
+	// guestEnv is envd's environment as the open read it, NAME=value, which every guest
+	// process is handed. Both are set before any of the session's code runs.
+	bins     map[string]string
+	guestEnv []string
+	// usrLocal is what the open's closing of /usr/local did (e2b_session.js,
+	// closeUsrLocal): the entries it checked, how many it changed, and how long it took.
+	usrLocal e2bUsrLocal
 	// billEnd is the latest end of E2B's own lifetime for the sandbox (its timeout, set
 	// at create and at each resume; Unix nanoseconds): past it the sandbox bills no
 	// compute. billsUntil is billEnd once a delete has given up, else 0.
@@ -139,6 +196,18 @@ func (e *E2B) OpenSession(ctx context.Context, opts SessionOptions) (Session, er
 	}
 	if err := e.admit(opts.MinimumIsolation, SoftwareRule{}); err != nil {
 		return nil, err
+	}
+	// A template the startup check found unable to hold a session is refused before a
+	// sandbox is made for it (and billed): the open would fail there. The check read the
+	// node a session's own programs use (the closed PATH's, e2bSessionNode), not the
+	// steps' node: none there is the open's own refusal (e2bSessionNoNode), one too old
+	// for the flag is e2bSessionNodeRefused. What the check could not tell, the open finds.
+	switch n := e.smokeSessionNode(); {
+	case !n.read:
+	case n.version == "":
+		return nil, e2bSessionNoNode()
+	case sessionkit.CheckNodeVersion(n.version) != nil:
+		return nil, e2bSessionNodeRefused("the startup check read node's version " + truncateForError(n.version) + " from the node a session's programs use")
 	}
 	// No pool, so a warm-only open finds nothing and makes nothing: it must never make a
 	// billed sandbox.
@@ -225,7 +294,12 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 		return fmt.Errorf("e2b session: %w", err)
 	}
 	s.opened = rec
-	argv, err := sessionkit.ControlArgv(nil, "node", "-e", e2bSessionJS, "open", strconv.Itoa(s.uid), e2bSessionWork, e2bSessionStage)
+	// The one start by name: node through the control PATH (sessionkit.ControlPathClosed:
+	// E2B's template build leaves /usr/local writable by every user in the machine, so
+	// nothing of plimsoll's is ever looked for there), before any of the session's code,
+	// so nothing the session writes can be what is found. The open then pins every
+	// program later starts name by path.
+	argv, err := sessionkit.ControlArgvClosedByName(nil, sessionkit.NodeArgv("-e", e2bSessionJS, "open", strconv.Itoa(s.uid), e2bSessionWork, e2bSessionStage)...)
 	if err != nil {
 		return err
 	}
@@ -234,15 +308,47 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 		return fmt.Errorf("e2b session: prepare the machine: %w", err)
 	}
 	if !out.Exited || out.ExitCode != 0 {
+		// The open is the session's first program started with sessionkit.NodeSignalFlag;
+		// a node that does not know it exits 9 before running any of it. Nothing of the
+		// caller's has run, and the template's own words stay out of the refusal.
+		if out.Exited && out.ExitCode == 9 && sessionkit.NodeFlagRefused(out.Stderr) {
+			return e2bSessionNodeRefused("the session's open exited 9: node: bad option: " + sessionkit.NodeSignalFlag)
+		}
+		// The control PATH holds no node (e2bNoControlNode, which the startup check
+		// reads too).
+		if e2bNoControlNode(out.Exited, out.ExitCode, out.Stderr) {
+			return e2bSessionNoNode()
+		}
+		// The open could not take the write permission on /usr/local back from the
+		// session's user (e2b_session.js, closeUsrLocal); its words are the open's own.
+		if out.Exited && out.ExitCode == e2bOpenUsrLocalExit {
+			return e2bSessionUsrLocalOpen(strings.TrimSpace(out.Stderr))
+		}
+		// The open refused the machine (e2b_session.js, refuse): a pinned program the
+		// guest could change, no setpriv, a guest uid that is an account, a drop it could
+		// not prove, and the rest. Nothing of the caller's has run.
+		if out.Exited && out.ExitCode == e2bOpenRefusedExit {
+			return e2bSessionOpenRefused(out.Stderr)
+		}
 		return fmt.Errorf("e2b session: the machine cannot hold a session (exit %d): %s", out.ExitCode, truncateForError(strings.TrimSpace(out.Stderr)))
 	}
 	var prepared struct {
-		Envd int `json:"envd"`
+		Envd     int               `json:"envd"`
+		Bins     map[string]string `json:"bins"`
+		UsrLocal e2bUsrLocal       `json:"usrLocal"`
 	}
 	if err := json.Unmarshal([]byte(out.Stdout), &prepared); err != nil || prepared.Envd <= 1 {
 		return fmt.Errorf("e2b session: the machine's preparation reported %q", truncateForError(out.Stdout))
 	}
-	list, err := sessionkit.ControlArgv(nil, sessionkit.ListArgv()...)
+	if err := checkE2BBins(prepared.Bins); err != nil {
+		return fmt.Errorf("e2b session: %w", err)
+	}
+	s.bins = prepared.Bins
+	s.usrLocal = prepared.UsrLocal
+	if s.guestEnv, err = s.readGuestEnv(ctx); err != nil {
+		return err
+	}
+	list, err := s.control(nil, sessionkit.ListArgv()...)
 	if err != nil {
 		return err
 	}
@@ -261,7 +367,180 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 	// a relay is confirmed by its parent, envd, which starts every relay.
 	s.life.Interps.Checker = s.check
 	s.life.Interps.RelayParent = prepared.Envd
+	// An interpreter is guest-facing: the launcher (plimsoll's, started clean) execs it
+	// by its pinned path with the guest's environment, as a snippet's node gets it.
+	s.life.Interps.Bins = map[string]string{}
+	for _, name := range []string{"node", "python3"} {
+		if p, ok := s.bins[name]; ok {
+			s.life.Interps.Bins[name] = p
+		}
+	}
+	s.life.Interps.Start = append(append([]string{e2bEnv, "-i"}, s.guestEnv...), "HOME="+e2bSessionWork)
 	return nil
+}
+
+// e2bSessionNodeRefused is the refusal of a session on a template whose node does not
+// accept sessionkit.NodeSignalFlag (finding rust-native-helper-35): every program of
+// plimsoll's in a session starts with it, while a single run starts none, so the provider
+// serves single runs there and refuses sessions, before any of the caller's code has run,
+// as unsupported, which a caller or router reads as "use another backend" (connect's
+// Unimplemented over RPC, never an internal error). E2B's base template carried node
+// v20.9.0 on 2026-11-20. found says what showed the node: the startup check's reading or
+// the open's exit; never the template's own words. The template's name is not said: a
+// caller is never told one (DescribeResponse states no mutable name).
+func e2bSessionNodeRefused(found string) error {
+	return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: an E2B session cannot open on this template: %w (%s). "+
+		"Single runs work on it; for sessions the operator builds plimsoll's E2B template (e2b/README.md in plimsoll's repository) and sets E2B_TEMPLATE to it",
+		ErrUnsupported, sessionkit.ErrNodeFlagRefused, found))
+}
+
+// ErrE2BNoControlNode is the refusal of a session on a template with no node where
+// plimsoll's own programs look for one.
+var ErrE2BNoControlNode = errors.New("plimsoll's own programs take node from " + strings.ReplaceAll(sessionkit.ControlPathClosed, ":", ", ") + " and found none there")
+
+// e2bSessionNoNode is the refusal of a session on a template whose only node is under
+// /usr/local (finding rust-native-helper-40): node's own images and E2B's base template
+// put it there, and E2B's template build leaves that folder writable by every user in
+// the machine, so plimsoll's own programs never take a node from it. Nothing of the
+// caller's has run. Like e2bSessionNodeRefused it is unsupported, not an internal
+// error, and says how the operator gets a template that serves sessions.
+func e2bSessionNoNode() error {
+	return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: an E2B session cannot open on this template: %w. "+
+		"E2B's template build leaves /usr/local, where node's own images put node, writable by every user in the machine, so a node there could be replaced by the session's code. "+
+		"Single runs work on it; for sessions the operator builds plimsoll's E2B template (e2b/README.md in plimsoll's repository), which puts a node in /usr/bin, and sets E2B_TEMPLATE to it",
+		ErrUnsupported, ErrE2BNoControlNode))
+}
+
+// e2bOpenRefusedExit is the open's exit when it refuses the machine, with its reason as
+// the last line of its standard error (e2b_session.js, refuse).
+const e2bOpenRefusedExit = 2
+
+// ErrE2BOpenRefused is the refusal of a session whose open refused its machine.
+var ErrE2BOpenRefused = errors.New("the session's open refused the machine before any of the session's code ran")
+
+// e2bSessionOpenRefused is the refusal of a session whose open refused its machine
+// (e2b_session.js, refuse, exit 2). The machine is the template's, so the reason is
+// environment (another backend may have a template that holds a session, as for a docker
+// image the provider refuses), and it wraps ErrUnsupported, as the other template
+// refusals do, so a caller over RPC gets Unimplemented with these words, never an
+// internal error: none of the caller's code has run. The words are the open's own, its
+// refusal line, the last line of its standard error; nothing else of that stream is
+// kept. Until 2026-11-20 this refusal reached a caller unmarked, as an internal error.
+func e2bSessionOpenRefused(stderr string) error {
+	why := strings.TrimSpace(stderr)
+	if i := strings.LastIndexByte(why, '\n'); i >= 0 {
+		why = strings.TrimSpace(why[i+1:])
+	}
+	if why == "" {
+		why = "it gave no reason"
+	}
+	return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: an E2B session cannot open on this template: %w (%s). "+
+		"For sessions the operator builds plimsoll's E2B template (e2b/README.md in plimsoll's repository) and sets E2B_TEMPLATE to it",
+		ErrUnsupported, ErrE2BOpenRefused, truncateForError(why)))
+}
+
+// e2bOpenUsrLocalExit is the open's exit when something under /usr/local stays the
+// session's user's to write after the open took the write permission back
+// (e2b_session.js, usrLocalExit).
+const e2bOpenUsrLocalExit = 24
+
+// e2bUsrLocal is the open's report of closing /usr/local: the files and folders the
+// session's user was checked against (those under /usr/local and the folders above it),
+// how many lost a write permission, and the time it took in milliseconds.
+type e2bUsrLocal struct {
+	Entries int     `json:"entries"`
+	Changed int     `json:"changed"`
+	MS      float64 `json:"ms"`
+}
+
+// ErrE2BUsrLocalOpen is the refusal of a session on a template where the open could not
+// make /usr/local closed to the session's user.
+var ErrE2BUsrLocalOpen = errors.New("the session's open could not take the write permission on /usr/local away from the session's user")
+
+// e2bSessionUsrLocalOpen is the refusal of a session whose open found something under
+// /usr/local that the session's user could still write after the open took the write
+// permission back (finding hunt-quality-55). E2B's template build leaves the folder
+// writable by every user, and programs that run as root (E2B's own among them) live and
+// look there, so session code that could write it could make itself root in its
+// machine. Nothing of the caller's has run. why is the open's own account of the first
+// such path. Unsupported, as the other template refusals are, with the way out.
+func e2bSessionUsrLocalOpen(why string) error {
+	return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: an E2B session cannot open on this template: %w (%s). "+
+		"E2B's template build leaves /usr/local writable by every user in the machine, and a session's open takes that back before any of the session's code runs; on this template it could not. "+
+		"Single runs work on it; for sessions the operator builds plimsoll's E2B template (e2b/README.md in plimsoll's repository) and sets E2B_TEMPLATE to it",
+		ErrUnsupported, ErrE2BUsrLocalOpen, truncateForError(why)))
+}
+
+// checkE2BBins checks the open's pinned programs: every required one there, each a
+// clean absolute path outside every folder the guest can write.
+func checkE2BBins(bins map[string]string) error {
+	for _, name := range e2bRequiredBins {
+		if bins[name] == "" {
+			return fmt.Errorf("the machine's preparation pinned no %s", name)
+		}
+	}
+	for name, p := range bins {
+		if !e2bEnvName.MatchString(name) || !strings.HasPrefix(p, "/") || path.Clean(p) != p || strings.ContainsAny(p, "\x00\n") {
+			return fmt.Errorf("the machine's preparation pinned %q as %q", truncateForError(name), truncateForError(p))
+		}
+		for _, d := range append([]string{e2bSessionOwn, e2bSessionStage}, e2bSessionDirs...) {
+			if p == d || strings.HasPrefix(p, d+"/") {
+				return fmt.Errorf("the machine's preparation pinned %s in %s, a folder the session writes", name, d)
+			}
+		}
+	}
+	return nil
+}
+
+// readGuestEnv reads the environment envd hands a process of root's, which every guest
+// process gets, as it did when envd started it directly: before any of the session's
+// code, by the pinned /usr/bin/env, in /. Names that describe the reader (e2bEnvDropped)
+// and names no shell could carry are left out.
+func (s *e2bSession) readGuestEnv(ctx context.Context) ([]string, error) {
+	out, err := s.e.envdRun(ctx, s.machine(), envdProcess{user: e2bRootUser, cmd: e2bEnv, args: []string{"-0"}, cwd: e2bControlDir}, 64<<10, 4096)
+	if err != nil {
+		return nil, fmt.Errorf("e2b session: read the machine's environment: %w", err)
+	}
+	if !out.exited || out.exitCode != 0 || out.stdoutTruncated {
+		return nil, fmt.Errorf("e2b session: reading the machine's environment exited %d (truncated %v)", out.exitCode, out.stdoutTruncated)
+	}
+	var env []string
+	for _, kv := range strings.Split(out.stdout, "\x00") {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok || !e2bEnvName.MatchString(name) || e2bEnvDropped[name] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	slices.Sort(env)
+	return env, nil
+}
+
+// control is argv, one of plimsoll's own programs, as it starts here: under
+// sessionkit.ControlArgvClosed with env, its program by the path the open pinned (a
+// name is looked up; a path must be one the open pinned).
+func (s *e2bSession) control(env map[string]string, argv ...string) ([]string, error) {
+	if len(argv) == 0 {
+		return nil, errors.New("e2b session: no program")
+	}
+	bin, err := s.pinned(argv[0])
+	if err != nil {
+		return nil, err
+	}
+	return sessionkit.ControlArgvClosed(env, append([]string{bin}, argv[1:]...)...)
+}
+
+// pinned is the path the open found name at, or name itself when it is such a path.
+func (s *e2bSession) pinned(name string) (string, error) {
+	if p, ok := s.bins[name]; ok {
+		return p, nil
+	}
+	for _, p := range s.bins {
+		if name == p {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("e2b session: %q is no program the open found on the machine's root", truncateForError(name))
 }
 
 // hooks are what the session's lifecycle does to its microVM.
@@ -275,7 +554,7 @@ func (s *e2bSession) hooks() sessionkit.Hooks {
 		Resume:             s.resume,
 		ReadBack:           s.readBack,
 		Sweep: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
-			argv, err := sessionkit.ControlArgv(nil, argv...)
+			argv, err := s.control(nil, argv...)
 			if err != nil {
 				return sessionkit.ExecResult{}, err
 			}
@@ -403,7 +682,7 @@ func (s *e2bSession) resume(ctx context.Context) error {
 		s.vm.trafficAccessToken = got.TrafficAccessToken
 	}
 	s.mu.Unlock()
-	argv, err := sessionkit.ControlArgv(nil, sessionkit.SweepArgv(0, sessionkit.MeasureWalk, nil, s.life.Keep())...)
+	argv, err := s.control(nil, sessionkit.SweepArgv(0, sessionkit.MeasureWalk, nil, s.life.Keep())...)
 	if err != nil {
 		return err
 	}
@@ -461,9 +740,9 @@ func (s *e2bSession) lend(ctx context.Context, grant *HostAPIGrant, timeout time
 // CA of the E2B proxy the guard is reached through (see e2bGuestCABundle).
 var e2bGuardEnv = map[string]string{"NODE_EXTRA_CA_CERTS": e2bGuestCABundle}
 
-// root runs argv, one of plimsoll's own programs, as root.
+// root runs argv, one of plimsoll's own programs as control builds it, as root, in /.
 func (s *e2bSession) root(ctx context.Context, argv []string, outCap, errCap int) (sessionkit.ExecResult, error) {
-	out, err := s.e.envdRun(ctx, s.machine(), envdProcess{user: e2bRootUser, cmd: argv[0], args: argv[1:]}, outCap, errCap)
+	out, err := s.e.envdRun(ctx, s.machine(), envdProcess{user: e2bRootUser, cmd: argv[0], args: argv[1:], cwd: e2bControlDir}, outCap, errCap)
 	return sessionkit.ExecResult{
 		Stdout: out.stdout, Stderr: out.stderr,
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
@@ -473,7 +752,7 @@ func (s *e2bSession) root(ctx context.Context, argv []string, outCap, errCap int
 
 // check runs the interpreter driver's identity check as root.
 func (s *e2bSession) check(ctx context.Context, argv []string, _ map[string]string, _ []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
-	argv, err := sessionkit.ControlArgv(nil, argv...)
+	argv, err := s.control(nil, argv...)
 	if err != nil {
 		return sessionkit.ExecResult{}, err
 	}
@@ -487,14 +766,49 @@ func (s *e2bSession) dropArgs() []string {
 	return []string{"--reuid=" + g, "--regid=" + g, "--clear-groups", "--no-new-privs", "--"}
 }
 
-// guest runs argv as the guest, in the work directory, with envd's environment plus
-// HOME (the work directory) and env.
+// asGuest is inner run as the guest: the pinned setpriv, a control program started as
+// root in /, drops to the guest and execs inner, which keeps the PID.
+func (s *e2bSession) asGuest(inner []string) ([]string, error) {
+	return s.control(nil, append(append([]string{"setpriv"}, s.dropArgs()...), inner...)...)
+}
+
+// guest runs argv, a guest-facing command, as the guest, in the work directory, with
+// envd's environment as the open read it plus HOME (the work directory) and env. The
+// pinned sh changes into the work directory as the guest, then /usr/bin/env -i hands
+// argv that environment, so no root process of the chain starts in the work directory
+// or holds the machine's environment.
 func (s *e2bSession) guest(ctx context.Context, argv []string, env map[string]string, outCap, errCap int) (procOutput, error) {
-	envs := map[string]string{"HOME": e2bSessionWork}
-	maps.Copy(envs, env)
-	return s.e.envdRun(ctx, s.machine(), envdProcess{
-		user: e2bRootUser, cmd: "setpriv", args: append(s.dropArgs(), argv...), cwd: e2bSessionWork, envs: envs,
-	}, outCap, errCap)
+	sh, err := s.pinned("sh")
+	if err != nil {
+		return procOutput{}, err
+	}
+	inner := append([]string{sh, "-c", e2bGuestStart, "sh", e2bSessionWork, e2bEnv, "-i"}, s.guestEnv...)
+	inner = append(inner, "HOME="+e2bSessionWork)
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		if !e2bEnvName.MatchString(k) {
+			return procOutput{}, fmt.Errorf("e2b session: %q is not an environment variable name", k)
+		}
+		inner = append(inner, k+"="+env[k])
+	}
+	full, err := s.asGuest(append(inner, argv...))
+	if err != nil {
+		return procOutput{}, err
+	}
+	return s.e.envdRun(ctx, s.machine(), envdProcess{user: e2bRootUser, cmd: full[0], args: full[1:], cwd: e2bControlDir}, outCap, errCap)
+}
+
+// guestControl runs argv, one of plimsoll's own programs, as the guest, in /, started
+// as control starts one with env: the artifact reader and the interpreter launcher.
+func (s *e2bSession) guestControl(ctx context.Context, argv []string, env map[string]string, outCap, errCap int) (procOutput, error) {
+	inner, err := s.control(env, argv...)
+	if err != nil {
+		return procOutput{}, err
+	}
+	full, err := s.asGuest(inner)
+	if err != nil {
+		return procOutput{}, err
+	}
+	return s.e.envdRun(ctx, s.machine(), envdProcess{user: e2bRootUser, cmd: full[0], args: full[1:], cwd: e2bControlDir}, outCap, errCap)
 }
 
 // e2bErrno is what the stager's error code may be before it reaches a result: the
@@ -512,7 +826,17 @@ type e2bStaged struct {
 // never following a link out of it, and own files (name → content) into a fresh
 // directory of the call's own, which it returns. They travel through the root-only
 // staging directory and the root stager, which becomes the guest before writing. A
-// work file it could not write is *e2bStaged, the call's code not having run.
+// work file it could not write is *e2bStaged.
+//
+// Its error is the call's answer, and is marked not dispatched (unsent) only up to the
+// stager's start, while the call's bytes are only where the guest cannot read them (the
+// root-only staging directory). From the stager's start they are not: it writes the
+// call's own files as the guest, so code alive in the session (a thread in a kept
+// interpreter) can read them, kill the stager, which it may signal, and run the call's
+// code itself, with the call's grant already lent. So no failure of the stager is
+// marked (TestE2BSessionDockerCallWhoseStagerWasKilledIsNotMarked): no mark means the
+// code may have run, which is then true. A work file the stager reports it could not
+// write is the call's result (setup_failed), as before, never a mark.
 func (s *e2bSession) stage(ctx context.Context, work []File, own map[string]string) (dir string, refusal *e2bStaged, err error) {
 	type entry struct {
 		Path string `json:"path,omitempty"`
@@ -531,22 +855,24 @@ func (s *e2bSession) stage(ctx context.Context, work []File, own map[string]stri
 	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
-		return "", nil, err
+		return "", nil, s.unsent(ctx, err)
 	}
-	nonce := randID()
+	nonce := providerkit.RandHex(8)
 	file := e2bSessionStage + "/" + nonce + ".json"
 	dir = e2bSessionOwn + "/" + nonce
 	if err := s.e.writeFilesAs(ctx, s.machine(), e2bRootUser, []File{{Path: file, Content: string(raw)}}); err != nil {
-		return "", nil, fmt.Errorf("e2b session: stage the call's files: %w", err)
+		return "", nil, s.unsent(ctx, fmt.Errorf("e2b session: stage the call's files: %w", err))
 	}
-	argv, err := sessionkit.ControlArgv(nil, "node", "-e", e2bSessionJS, "stage", file, strconv.Itoa(s.uid), e2bSessionWork, dir)
+	argv, err := s.control(nil, sessionkit.NodeArgv("-e", e2bSessionJS, "stage", file, strconv.Itoa(s.uid), e2bSessionWork, dir)...)
 	if err != nil {
-		return "", nil, err
+		return "", nil, s.unsent(ctx, err)
 	}
+	// From here the stager may have written the call's own files as the guest: nothing
+	// below is marked (see above).
 	out, err := s.root(ctx, argv, 4096, 4096)
 	switch {
 	case err != nil:
-		return "", nil, fmt.Errorf("e2b session: write the call's files: %w", err)
+		return "", nil, s.life.CallError(ctx, fmt.Errorf("e2b session: write the call's files: %w", err))
 	case out.Exited && out.ExitCode == 0:
 		return dir, nil, nil
 	case out.Exited && out.ExitCode == 3:
@@ -555,12 +881,12 @@ func (s *e2bSession) stage(ctx context.Context, work []File, own map[string]stri
 			return "", &r, nil
 		}
 	}
-	return "", nil, fmt.Errorf("e2b session: the stager exited %d: %s", out.ExitCode, truncateForError(strings.TrimSpace(out.Stderr)))
+	return "", nil, s.life.CallError(ctx, fmt.Errorf("e2b session: the stager exited %d: %s", out.ExitCode, truncateForError(strings.TrimSpace(out.Stderr))))
 }
 
-// unsent is the error of a call none of whose code ran (its files could not be
-// staged): marked not dispatched, as the session's end, the caller's deadline, or the
-// environment.
+// unsent is the error of a call none of whose bytes have left the root-only staging
+// directory (stage): marked not dispatched, as the session's end, the caller's
+// deadline, or the environment.
 func (s *e2bSession) unsent(runCtx context.Context, err error) error {
 	if end := s.Err(); end != nil {
 		return RefuseEndedSession(end)
@@ -602,7 +928,7 @@ func (s *e2bSession) RunJavaScript(ctx context.Context, req Request) (Result, er
 	if err := s.admit(req.Grant, req.MinimumIsolation, req.Software); err != nil {
 		return fail, err
 	}
-	timeout := s.e.clampTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
+	timeout := clampRunTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
 	runCtx, done, err := s.life.Call(ctx, timeout)
 	if err != nil {
 		return fail, err
@@ -617,16 +943,22 @@ func (s *e2bSession) RunJavaScript(ctx context.Context, req Request) (Result, er
 	if req.Grant != nil {
 		code, env = withGuardHostSDK(code, req.Grant, s.e.guardConfig().URL, ""), e2bGuardEnv
 	}
-	dir, _, err := s.stage(runCtx, nil, map[string]string{"snippet.cjs": code})
+	dir, refusal, err := s.stage(runCtx, nil, map[string]string{"snippet.cjs": code})
+	if err == nil && refusal != nil {
+		// A snippet has no work files, so the stager reports this only when the work
+		// directory itself is gone (code of the session can remove it), after it wrote
+		// the snippet: unmarked, as any failure of the stager.
+		err = s.life.CallError(runCtx, errors.New("e2b session: the stager could not reach the work directory after it wrote the snippet"))
+	}
 	if err != nil {
 		// The grant was live while the staging ran, and code a session keeps can use it,
-		// so what it served is returned with the refusal (round-7 review, 2026-10-08).
+		// so what it served is returned with the error (round-7 review, 2026-10-08).
 		release()
 		fail.CallTrace = core.traceSnapshot()
-		return fail, s.unsent(runCtx, err)
+		return fail, err
 	}
 	start := time.Now()
-	out, err := s.guest(runCtx, []string{"node", dir + "/snippet.cjs"}, env, s.e.maxOutput(), s.e.maxOutput())
+	out, err := s.guest(runCtx, sessionkit.GuestNodeArgv(dir+"/snippet.cjs"), env, s.e.maxOutput(), s.e.maxOutput())
 	release() // before the trace is read: the release waits for the grant's calls in flight
 	trace := core.traceSnapshot()
 	fail.CallTrace = trace
@@ -664,7 +996,7 @@ func (s *e2bSession) RunProject(ctx context.Context, req ProjectRequest) (Projec
 	if err := s.admit(req.Grant, req.MinimumIsolation, req.Software); err != nil {
 		return fail, err
 	}
-	timeout := s.e.clampTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
+	timeout := clampRunTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
 	runCtx, done, err := s.life.Call(ctx, timeout)
 	if err != nil {
 		return fail, err
@@ -700,7 +1032,7 @@ func (s *e2bSession) runProject(ctx, runCtx context.Context, req ProjectRequest,
 	}
 	dir, refusal, err := s.stage(runCtx, req.Files, scripts)
 	if err != nil {
-		return fail, s.unsent(runCtx, err)
+		return fail, err
 	}
 	var env map[string]string
 	if req.Grant != nil {
@@ -738,16 +1070,13 @@ func (s *e2bSession) runProject(ctx, runCtx context.Context, req ProjectRequest,
 	// Artifacts are read as the guest, so a link the session's code left reads only
 	// what the guest could; the reader keeps only regular files whose real path lies
 	// inside the work directory, even after a failed or timed-out step.
-	argv, err := sessionkit.ControlArgv(nil, append([]string{"node", "-e", e2bSessionJS, "artifacts", e2bSessionWork, strconv.Itoa(maxArtifactBytesTotal)}, req.Artifacts...)...)
-	if err != nil {
-		return fail, err
-	}
+	argv := append(sessionkit.NodeArgv("-e", e2bSessionJS, "artifacts", e2bSessionWork, strconv.Itoa(maxArtifactBytesTotal)), req.Artifacts...)
 	// The grace runs from the later of the deadline and the grant's end (artifactDeadline);
 	// the session's own lifetime still bounds the call.
 	runDeadline, _ := runCtx.Deadline()
 	actx, cancelArtifacts := context.WithDeadline(ctx, artifactDeadline(runDeadline))
 	defer cancelArtifacts()
-	out, err := s.guest(actx, argv, nil, maxArtifactBytesTotal/3*4+(64<<10), 4096)
+	out, err := s.guestControl(actx, argv, nil, maxArtifactBytesTotal/3*4+(64<<10), 4096)
 	if err != nil && s.Err() != nil {
 		return fail, s.life.CallError(runCtx, err)
 	}
@@ -786,35 +1115,28 @@ func (s *e2bSession) RunCell(ctx context.Context, req CellRequest) (CellResult, 
 	if err := s.admit(nil, req.MinimumIsolation, req.Software); err != nil {
 		return fail, err
 	}
-	timeout := s.e.clampTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
+	timeout := clampRunTimeout(req.Timeout, s.e.DefaultTimeout, s.e.MaxTimeout)
 	runCtx, done, err := s.life.Call(ctx, timeout)
 	if err != nil {
 		return fail, err
 	}
 	defer done()
-	files := make([]sessionkit.File, 0, len(req.Files))
-	for _, f := range req.Files {
-		files = append(files, sessionkit.File{Path: f.Path, Content: f.Content})
-	}
 	start := time.Now()
-	out, err := s.life.Interps.RunRelayed(runCtx, s.launch, s.attach, sessionkit.Cell{
-		Language: string(req.Language), Code: req.Code, Files: files,
-		Work: e2bSessionWork, OutCap: s.e.maxOutput(), ErrCap: s.e.maxOutput(),
-	})
+	out, err := s.life.Interps.RunRelayed(runCtx, s.launch, s.attach, SessionCell(req, s.Environments().Project, e2bSessionWork, s.e.maxOutput()))
 	return SessionCellResult(runCtx, fail, out, err, time.Since(start), "", "", s.Err,
 		func() error { return nil }, func(err error) error { return s.life.CallError(runCtx, err) })
 }
 
 // launch runs the interpreter launcher as the guest: the launcher makes the
-// interpreter's directory, which the interpreter, the guest too, writes into. It
-// starts with envd's environment, which the interpreter inherits, as on OpenShell; no
-// non-interactive shell loads code from a variable but bash's BASH_ENV, and sh is not
-// bash here.
+// interpreter's directory, which the interpreter, the guest too, writes into. The
+// launcher, plimsoll's, starts clean in / by the pinned sh; the interpreter it starts
+// gets the guest's environment through Interps.Start and is named by its pinned path
+// (Interps.Bins), as on docker.
 func (s *e2bSession) launch(ctx context.Context, argv []string, env map[string]string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
 	if len(stdin) > 0 {
 		return sessionkit.ExecResult{}, errors.New("e2b session: the launcher takes no stdin")
 	}
-	out, err := s.guest(ctx, argv, env, outCap, errCap)
+	out, err := s.guestControl(ctx, argv, env, outCap, errCap)
 	return sessionkit.ExecResult{
 		Stdout: out.stdout, Stderr: out.stderr,
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
@@ -825,18 +1147,18 @@ func (s *e2bSession) launch(ctx context.Context, argv []string, env map[string]s
 // attach starts argv, a relay, as root on an envd stream held open with stdin, without
 // a deadline (envd would kill it at one). The relay becomes the guest itself
 // (PLIMSOLL_RELAY_UID), which leaves it non-dumpable: the guest can neither open its
-// pipes nor attach to it. It starts under sessionkit.ControlArgv, with env as its only
-// variables.
+// pipes nor attach to it. It starts in / under control, with env as its only
+// variables, by the node the open pinned.
 func (s *e2bSession) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
 	envs := map[string]string{"PLIMSOLL_RELAY_UID": strconv.Itoa(s.uid)}
 	maps.Copy(envs, env)
-	argv, err := sessionkit.ControlArgv(envs, argv...)
+	argv, err := s.control(envs, argv...)
 	if err != nil {
 		return nil, err
 	}
 	vm := s.machine()
 	ctx, cancel := context.WithCancel(s.life.Context())
-	resp, err := s.e.envdStart(ctx, vm, envdProcess{user: e2bRootUser, cmd: argv[0], args: argv[1:], cwd: e2bSessionWork, stdin: true})
+	resp, err := s.e.envdStart(ctx, vm, envdProcess{user: e2bRootUser, cmd: argv[0], args: argv[1:], cwd: e2bControlDir, stdin: true})
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("e2b attach: %w", err)

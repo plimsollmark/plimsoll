@@ -267,10 +267,11 @@ func deriveRun(rf runFacts, rec sandbox.RunRecord, resp *plimsollv1.RunResponse,
 			rv.Metrics = append(rv.Metrics, m)
 		}
 	}
-	switch rec.Policy {
-	case strings.Fields(obs.Daemon.Policy)[0]:
+	daemonProfiles := strings.Fields(seccompPolicy(obs.Daemon.Policy))
+	switch seccompPolicy(rec.Policy) {
+	case daemonProfiles[0]:
 		rv.PolicyIs = "default"
-	case strings.TrimPrefix(strings.Fields(obs.Daemon.Policy)[1], "sdk_env:"):
+	case strings.TrimPrefix(daemonProfiles[1], "sdk_env:"):
 		rv.PolicyIs = "variant"
 	default:
 		rv.PolicyIs = "neither"
@@ -537,11 +538,22 @@ func readProfiles(raw []byte) ([]profileView, error) {
 	return out, nil
 }
 
+// seccompPolicy is the seccomp part of a policy the daemon stated: a daemon since the guest guard
+// ends each docker policy with the guest guard's word ("guest-guard:sha256:..."), which this page does not
+// read; a policy recorded before it has none, and is returned as it is.
+func seccompPolicy(policy string) string {
+	fields := strings.Fields(policy)
+	if n := len(fields); n > 0 && strings.HasPrefix(fields[n-1], sandbox.GuestGuardPolicyPrefix) {
+		fields = fields[:n-1]
+	}
+	return strings.Join(fields, " ")
+}
+
 // diffSeccomp names both profiles by digest, checks them against the daemon's stated
 // policy, and lists the allow rules the variant adds and removes, one syscall at a time.
 func diffSeccomp(defaultRaw, variantRaw []byte, policy string) (seccompView, error) {
 	sv := seccompView{Default: "seccomp:sha256:" + sha256Hex(defaultRaw), Variant: "seccomp:sha256:" + sha256Hex(variantRaw), DefaultBytes: len(defaultRaw), VariantBytes: len(variantRaw)}
-	if want := sv.Default + " sdk_env:" + sv.Variant; policy != want {
+	if want := sv.Default + " sdk_env:" + sv.Variant; seccompPolicy(policy) != want {
 		return sv, fmt.Errorf("the daemon's policy %q is not the two published profiles' (%s)", policy, want)
 	}
 	flatten := func(raw []byte) (map[string]seccompRule, error) {
@@ -704,7 +716,7 @@ func checks(ev *evidence, rep attest.Report) []check {
 	add("refusal", "The call to a route the profile does not allow was refused by the broker, marked not to retry, made once, and never reached the API.", refOK,
 		"status %d, X-Should-Retry %q, retry count %q, %d requests at the route, %d denied on the audit line", refStatus(ref), refField(ref, "retry"), refField(ref, "count"), refAt(ref), oa.Audit.HostCallsDenied)
 	add("policy", "The two runs whose grant sets sdk_env ran under the derived variant, the control run under the default, each named by digest in its record.",
-		oa.PolicyIs == "variant" && an.PolicyIs == "variant" && pl.PolicyIs == "default" && oa.Record.Policy == ev.Seccomp.Variant && pl.Record.Policy == ev.Seccomp.Default,
+		oa.PolicyIs == "variant" && an.PolicyIs == "variant" && pl.PolicyIs == "default" && seccompPolicy(oa.Record.Policy) == ev.Seccomp.Variant && seccompPolicy(pl.Record.Policy) == ev.Seccomp.Default,
 		"openai %s, anthropic %s, plain %s", oa.PolicyIs, an.PolicyIs, pl.PolicyIs)
 	sockOK := true
 	for _, r := range []*runView{oa, an} {

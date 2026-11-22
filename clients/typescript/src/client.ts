@@ -11,17 +11,38 @@ import { isIP } from "node:net";
 import {
   checkRecord,
   checkUnanswered,
+  recordDigest,
+  recordFromWire,
   requestDigest,
   sessionFingerprint,
   softwareRuleAllows,
+  softwareRuleId,
+  statesOnlyProblem,
   type DigestPayload,
   type RunRecord,
 } from "./record.ts";
-import { LANGUAGES, OUTCOME_NAMES, TIERS } from "./tables.gen.ts";
-import { errorFromWire, NOT_DISPATCHED_HEADER, PlimsollError, REQUEST_ID_HEADER, sessionEndFromWire, unboundSuccess, type SessionEnd } from "./errors.ts";
+import {
+  CALL_ALREADY_SENT_TEXT,
+  LANGUAGES,
+  MAX_RESPONSE_BYTES,
+  MAX_SOFTWARE_IDENTITIES,
+  MAX_SOFTWARE_IDENTITY_BYTES,
+  NOT_DISPATCHED_HEADER,
+  OUTCOME_NAMES,
+  PROTOCOL,
+  RECORD_VERSION,
+  REQUEST_ID_HEADER,
+  SOFTWARE_IDENTITY_PATTERN,
+  TIERS,
+} from "./tables.gen.ts";
+import { checkpointProblem, validDaemonName, type SessionCheckpoint } from "./checkpoint.ts";
+import { CallAlreadySentError, errorFromWire, PlimsollError, sessionEndFromWire, StaleOwnerError, unboundSuccess, type SessionEnd } from "./errors.ts";
 import type {
   WireAdvice,
+  WireAttachSessionRequest,
+  WireAttachSessionResponse,
   WireCellRun,
+  WireCloseSessionRequest,
   WireCloseSessionResponse,
   WireDescribeResponse,
   WireEnvelope,
@@ -29,29 +50,34 @@ import type {
   WireOpenSessionResponse,
   WirePayloadEnvironment,
   WireRunResponse,
+  WireSessionRunRequest,
   WireSessionRunResponse,
   WireSoftwareRule,
 } from "./wire.ts";
-import { wireBytes } from "./wire.ts";
+import { trailing, wireBytes } from "./wire.ts";
 
-/** The wire protocol number this client speaks (protocol.Number in Go). */
-export const PROTOCOL = 5;
+// PROTOCOL, the wire protocol number this client speaks, and MAX_RESPONSE_BYTES, above the
+// largest legitimate project response so a misbehaving daemon cannot make the client buffer
+// without bound, are generated from the Go protocol and client packages (tables.gen.ts).
+export { PROTOCOL };
 
 const SERVICE = "plimsoll.v1.SandboxService";
 
-// Above the largest legitimate project response, so a misbehaving daemon cannot
-// make the client buffer without bound (the Go client's maxResponseBytes).
-const MAX_RESPONSE_BYTES = 32 << 20;
+const SOFTWARE_IDENTITY_FORM = new RegExp(SOFTWARE_IDENTITY_PATTERN);
 
 /** How strong the boundary is, weakest first. */
 export type Isolation = (typeof TIERS)[number];
 
-/** Whether a tier the daemon reported meets a floor. An unknown tier meets nothing. */
+/**
+ * Whether a tier the daemon reported is at least `floor`, as the Go client's
+ * IsolationClass.Meets and the Python client's meets. A tier or floor this client does
+ * not know (including an empty one) meets nothing; every known tier meets "none". A
+ * request cannot state "none" as its floor (minimumIsolation), which is a separate rule.
+ */
 export function meets(actual: string, floor: Isolation): boolean {
   const a = (TIERS as readonly string[]).indexOf(actual);
-  const f = TIERS.indexOf(floor);
-  // A floor is process, container, kernel or vm; anything else is met by nothing.
-  return a >= 0 && f >= 1 && a >= f;
+  const f = (TIERS as readonly string[]).indexOf(floor);
+  return a >= 0 && f >= 0 && a >= f;
 }
 
 /** A caller's rule for the selected software: one exact identity, or 1 to 32 approved ones. */
@@ -76,6 +102,13 @@ export type ClientOptions = {
    */
   fetch?: typeof fetch;
   /**
+   * The application's own name for this daemon, never a URL: 1 to 64 of [A-Za-z0-9._-]. A
+   * session's checkpoint states it, and attachSession takes only a checkpoint that names
+   * it, so a checkpoint read from the application's store can only reach a daemon the
+   * application configured. Without it, sessions cannot be checkpointed or attached.
+   */
+  daemonName?: string;
+  /**
    * Bounds each HTTP exchange, sending and reading the answer, in milliseconds.
    * Default 6 minutes, as the Go and Python clients. A run's timeoutMs bounds what
    * the daemon executes, not a stalled connection; a call cut off here may have run.
@@ -96,10 +129,24 @@ export type RunOptions = {
   signal?: AbortSignal;
 };
 
+/**
+ * A run of a snippet or a project, with the grant profile it selects for this call alone:
+ * it replaces the client's javascriptGrantProfile or projectGrantProfile, and "" selects
+ * none. A cell carries no grant, so runCell takes RunOptions.
+ */
+export type GrantRunOptions = RunOptions & { grantProfile?: string };
+
 /** Evidence every answered run carries: configuration and provider evidence, never attestation. */
 export type Evidence = {
   sandbox: string;
   isolation: string;
+  /**
+   * The sentence the provider's vendor or design requires beside `isolation`, as the daemon
+   * states it (only the WSL containers provider states one so far: Microsoft's statement that
+   * WSL is not a security sandbox for running untrusted code), or "" when it states none. Show
+   * it wherever you show the tier. The record repeats it, signed.
+   */
+  isolationQualification: string;
   softwareIdentity: string;
   environment: string;
   /** The sandbox instance that ran it, as a typed reference (`k8s-pod-uid:` and a pod's UID), or "" when the provider names none. */
@@ -308,7 +355,8 @@ function validateBaseUrl(raw: string, insecureHttp: boolean): string {
   if (u.protocol === "http:" && !loopback && !insecureHttp) {
     throw new PlimsollError("invalid_argument", "plimsoll: cleartext HTTP to a non-loopback daemon requires insecureHttp");
   }
-  return u.toString().replace(/\/+$/, "");
+  const s = u.toString();
+  return s.slice(0, s.length - trailing(s, "/")); // not /\/+$/, which is quadratic in a run of "/" (hunt-security-35)
 }
 
 function timeoutMs(ms: number | undefined): number {
@@ -325,11 +373,11 @@ function validateRule(rule: SoftwareRule | undefined): WireSoftwareRule | undefi
   if (!rule) return undefined;
   const ids = rule.identities;
   const ok =
-    (rule.mode === "exact" ? ids.length === 1 : rule.mode === "approved" && ids.length >= 1 && ids.length <= 32) &&
+    (rule.mode === "exact" ? ids.length === 1 : rule.mode === "approved" && ids.length >= 1 && ids.length <= MAX_SOFTWARE_IDENTITIES) &&
     new Set(ids).size === ids.length &&
-    ids.every((id) => id.length > 0 && id.length <= 256 && /^[A-Za-z0-9._:/@+-]+$/.test(id));
+    ids.every((id) => id.length > 0 && id.length <= MAX_SOFTWARE_IDENTITY_BYTES && SOFTWARE_IDENTITY_FORM.test(id));
   if (!ok) {
-    throw new PlimsollError("invalid_argument", "plimsoll: software rule needs exact with one identity or approved with 1 to 32 identities", {
+    throw new PlimsollError("invalid_argument", `plimsoll: software rule needs exact with one identity or approved with 1 to ${MAX_SOFTWARE_IDENTITIES} identities`, {
       notDispatched: "request",
     });
   }
@@ -371,6 +419,7 @@ function evidence(resp: WireRunResponse, record: RunRecord): Evidence {
   return {
     sandbox: resp.sandbox ?? "",
     isolation: resp.isolation ?? "",
+    isolationQualification: resp.isolationQualification ?? "",
     softwareIdentity: resp.softwareIdentity ?? "",
     environment: resp.environment ?? "",
     instance: resp.instance ?? "",
@@ -506,6 +555,7 @@ export class PlimsollClient {
   private readonly requestTimeoutMs: number;
   /** @internal */ readonly jsGrant: string;
   /** @internal */ readonly projectGrant: string;
+  /** @internal */ readonly daemonName: string | undefined;
 
   constructor(opts: ClientOptions) {
     this.base = validateBaseUrl(opts.baseUrl, opts.insecureHttp ?? false);
@@ -519,6 +569,10 @@ export class PlimsollClient {
     this.requestTimeoutMs = rt;
     this.jsGrant = opts.javascriptGrantProfile ?? "";
     this.projectGrant = opts.projectGrantProfile ?? "";
+    if (opts.daemonName !== undefined && !validDaemonName(opts.daemonName)) {
+      throw new PlimsollError("invalid_argument", "plimsoll: daemonName is 1 to 64 of [A-Za-z0-9._-], never a URL");
+    }
+    this.daemonName = opts.daemonName;
   }
 
   /** @internal One unary Connect call with the JSON codec. */
@@ -623,14 +677,15 @@ export class PlimsollClient {
   }
 
   /** Runs a JavaScript snippet in a fresh sandbox. */
-  async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
-    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), { javascript: { code, grantProfile: this.jsGrant || undefined } }, opts);
+  async runJavaScript(code: string, opts: GrantRunOptions = {}): Promise<JavaScriptResult> {
+    const profile = grantFor(opts, this.jsGrant);
+    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), { javascript: { code, grantProfile: profile || undefined } }, opts);
     return decoded(() => finish(resp.run, resp.record, javascriptResult, "javascript", opts.minimumIsolation));
   }
 
   /** Writes a multi-file project into a fresh sandbox and runs its steps in order. */
-  async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
-    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), projectPayload(req, this.projectGrant), opts);
+  async runProject(req: ProjectRequest, opts: GrantRunOptions = {}): Promise<ProjectResult> {
+    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), projectPayload(req, grantFor(opts, this.projectGrant)), opts);
     return decoded(() => finish(resp.run, resp.record, projectResult, "project", opts.minimumIsolation));
   }
 
@@ -700,10 +755,21 @@ export class PlimsollClient {
       opts.signal,
     );
     const s = decoded(() => new Session(this, m, rule, opts.minimumIsolation));
+    if (m.generation !== "1" && m.generation !== 1) {
+      // The session exists on the daemon either way, and nothing else holds its ID.
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", "plimsoll: the daemon's answer to the open states an ownership generation other than 1; the session was closed");
+    }
     if (decoded(() => s.fingerprint !== sessionFingerprint(m.sessionId ?? ""))) {
       // The session exists on the daemon either way, and nothing else holds its ID.
       await s.close().catch(() => undefined);
       throw new PlimsollError("data_loss", "plimsoll: the daemon's session fingerprint does not match its session ID; the session was closed");
+    }
+    if ((m.minimumIsolation ?? "") !== (opts.minimumIsolation ?? "") || decoded(() => wireRuleId(m.softwareRule)) !== softwareRuleId(rule)) {
+      // The floor and rule the daemon keeps for the session are what an attach answer
+      // repeats and a checkpoint states, so they must be the ones sent.
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", "plimsoll: the daemon's answer to the open states another floor or software rule than the open sent; the session was closed");
     }
     if (opts.minimumIsolation && !meets(s.isolation, opts.minimumIsolation)) {
       await s.close().catch(() => undefined);
@@ -714,6 +780,99 @@ export class PlimsollClient {
       throw new PlimsollError("data_loss", "plimsoll: the session's selected software is outside the requested rule");
     }
     return s;
+  }
+
+  /**
+   * Takes over the session `cp` names and carries its chain on from cp's head (Go:
+   * Remote.AttachSession): the daemon raises the session's ownership generation by one, and
+   * every call or close a worker holding an older one sends is refused before it runs
+   * (StaleOwnerError).
+   *
+   * Refused here, with nothing sent, when cp does not validate, when it names another daemon
+   * than this client's daemonName, or when the client has none. The daemon refuses an
+   * unknown, ended or another caller's session as not found, a stale generation as
+   * StaleOwnerError and a checkpoint that is not its head (a call ran after cp was saved)
+   * as CheckpointMismatchError; open development mode refuses every attach.
+   *
+   * The answer must repeat cp exactly, else data_loss, and the session is not closed: a bad
+   * answer gives this client no right to destroy a session another worker may be using. A
+   * transport failure or an abort after sending is thrown as it is and never retried: the
+   * daemon may have raised the generation, so cp may already be stale.
+   *
+   * opts.lostRequestSha256 names the call this application believes ran after cp with no
+   * answer reaching it (session.lostRequestSha256 gives it for a call of this process).
+   * With it, the daemon takes the session over from a checkpoint exactly one call behind
+   * its head when its last record is that call, following cp (the explained gap), and
+   * returns the record; it must check on its own, be the call named, at cp's next place,
+   * stating the evidence the session stated at open, and be the new head
+   * (session.lostCall). The attached session then refuses its first call if it repeats
+   * that call (CallAlreadySentError). A lost call's record the attach did not name is refused
+   * as data_loss.
+   */
+  async attachSession(cp: SessionCheckpoint, opts: { traceId?: string; signal?: AbortSignal; lostRequestSha256?: string } = {}): Promise<Session> {
+    const problem = checkpointProblem(cp);
+    if (problem) throw new PlimsollError("invalid_argument", `plimsoll: invalid session checkpoint: ${problem}`, { notDispatched: "request" });
+    const lost = opts.lostRequestSha256 ?? "";
+    if (lost !== "" && !/^[0-9a-f]{64}$/.test(lost)) {
+      throw new PlimsollError("invalid_argument", "plimsoll: the lost call's request digest is not 64 lowercase hex digits", { notDispatched: "request" });
+    }
+    if (this.daemonName === undefined || cp.daemon !== this.daemonName) {
+      throw new PlimsollError("invalid_argument", "plimsoll: the checkpoint names another daemon than this client's daemonName", { notDispatched: "request" });
+    }
+    const body: WireAttachSessionRequest = {
+      protocol: PROTOCOL,
+      session: cp.session,
+      checkpoint: { generation: cp.generation.toString(), calls: cp.calls.toString(), lastRecordSha256: cp.lastRecordSha256 },
+      traceId: opts.traceId,
+      lostRequestSha256: lost || undefined,
+    };
+    const m = await this.call<WireAttachSessionResponse>("AttachSession", body, opts.signal);
+    return decoded(() => this.attached(cp, m, lost));
+  }
+
+  // The attached session, once the answer repeats the checkpoint exactly, or carries the
+  // record of the call lost names at the checkpoint's next place and a head after it.
+  private attached(cp: SessionCheckpoint, m: WireAttachSessionResponse, lost: string): Session {
+    const info = m.sessionInfo;
+    const head = m.checkpoint;
+    let problem: string | undefined;
+    let lostCall: RunRecord | undefined;
+    if (m.lostRecord) {
+      const checked = lostRecord(cp, lost, m.lostRecord);
+      if ("problem" in checked) problem = checked.problem;
+      else lostCall = checked.record;
+    }
+    const calls = lostCall ? lostCall.sequence : cp.calls;
+    const last = lostCall ? lostCall.sha256 : cp.lastRecordSha256;
+    if (problem) {
+      // the lost call's record does not check
+    } else if (!info || !head) problem = "lacks the session or its checkpoint";
+    else if ((info.session ?? "") !== cp.session || sessionFingerprint(info.sessionId ?? "") !== cp.session) {
+      problem = "names another session, or a session ID whose SHA-256 is not the fingerprint";
+    } else if (BigInt(info.generation ?? 0) !== cp.generation + 1n || BigInt(head.generation ?? 0) !== cp.generation + 1n) {
+      problem = "states a generation other than one past the checkpoint's";
+    } else if (BigInt(head.calls ?? 0) !== calls || (head.lastRecordSha256 ?? "") !== last) {
+      problem = "states another chain head than the checkpoint's (or, across an explained gap, than the lost call's)";
+    } else if (
+      (info.sandbox ?? "") !== cp.provider || (info.isolation ?? "") !== cp.isolation ||
+      (info.isolationQualification ?? "") !== cp.isolationQualification || (info.softwareIdentity ?? "") !== cp.softwareIdentity
+    ) {
+      problem = "states another provider, tier, qualification or software than the session stated at open";
+    } else if ((info.minimumIsolation ?? "") !== cp.openFloor || wireRuleId(info.softwareRule) !== cp.openRule) {
+      problem = "states another floor or software rule than the session was opened with";
+    } else if (num(info.expiresUnixMs) !== cp.expiresUnixMs || (info.idleTimeoutMs ?? 0) !== cp.idleTimeoutMs) {
+      problem = "states another lifetime or idle timeout than the session's";
+    }
+    if (problem || !info) throw new PlimsollError("data_loss", `plimsoll: the daemon's answer to the attach ${problem}; the session was left as it is`);
+    const rule = cp.openRule && info.softwareRule ? { mode: info.softwareRule.mode, identities: [...info.softwareRule.identities] } : undefined;
+    const floor = cp.openFloor === "" ? undefined : (cp.openFloor as Exclude<Isolation, "none">);
+    return new Session(this, info, rule, floor, {
+      generation: cp.generation + 1n,
+      calls,
+      last,
+      lostCall: lostCall ? lostCall.requestSha256 : cp.lostCallSha256,
+      lostRecord: lostCall,
+    });
   }
 
   /** @internal */
@@ -747,6 +906,49 @@ export class PlimsollClient {
     }
     return { run: resp, record: r };
   }
+}
+
+// The record an attach answer returns for the call the attach named (lost), once it is a
+// live record that checks on its own, of the session cp names, at cp's next place in the
+// chain, carrying the named request digest and the evidence the session stated at open.
+// Exported for the shared test cases (internal/clientcases); not part of the package's API.
+/** @internal */
+export function lostRecord(cp: SessionCheckpoint, lost: string, m: NonNullable<WireAttachSessionResponse["lostRecord"]>): { record: RunRecord } | { problem: string } {
+  if (lost === "") return { problem: "carries a lost call's record, but the attach named no lost call" };
+  const r = recordFromWire(m);
+  if (r.version !== RECORD_VERSION) return { problem: `carries a lost call's record of version ${r.version}, not the live version ${RECORD_VERSION}` };
+  const states = statesOnlyProblem(r);
+  if (states) return { problem: `carries a lost call's record that does not check (${states})` };
+  if (recordDigest(r) !== r.sha256) return { problem: "carries a lost call's record whose own digest does not match" };
+  if (r.session !== cp.session || r.sequence !== cp.calls + 1n || r.previousSha256 !== cp.lastRecordSha256) {
+    return { problem: "carries a lost call's record that is not the checkpoint's next call" };
+  }
+  if (r.requestSha256 !== lost) return { problem: "carries the record of another call than the one the attach named" };
+  if (r.provider !== cp.provider || r.isolation !== cp.isolation || r.softwareIdentity !== cp.softwareIdentity || r.isolationQualification !== cp.isolationQualification) {
+    return { problem: "carries a lost call's record stating other evidence than the session stated at open" };
+  }
+  return { record: r };
+}
+
+// The ID of a software rule as the daemon sent it, "" for none; a rule this client would
+// not send (an unknown mode, a malformed identity) has an ID no checkpoint states.
+function wireRuleId(r: WireSoftwareRule | undefined): string {
+  if (!r || (!r.mode && !(r.identities ?? []).length)) return "";
+  try {
+    return softwareRuleId(validateRule({ mode: r.mode as SoftwareRule["mode"], identities: [...(r.identities ?? [])] }));
+  } catch {
+    return "invalid";
+  }
+}
+
+// The grant profile a run selects: the call's own when it names one ("" for none), else
+// the client's.
+function grantFor(opts: GrantRunOptions, client: string): string {
+  if (opts.grantProfile === undefined) return client;
+  if (typeof opts.grantProfile !== "string") {
+    throw new PlimsollError("invalid_argument", "plimsoll: grantProfile must be a string", { notDispatched: "request" });
+  }
+  return opts.grantProfile;
 }
 
 /** @internal */
@@ -792,6 +994,8 @@ export class Session {
   readonly fingerprint: string;
   /** The tier the daemon measured when the session opened. */
   readonly isolation: string;
+  /** The sentence the provider states beside that tier, "" when it states none. Every call's record states it too. */
+  readonly isolationQualification: string;
   readonly sandbox: string;
   /** The selected software the daemon stated at open. */
   readonly softwareIdentity: string;
@@ -799,7 +1003,9 @@ export class Session {
   readonly idleTimeoutMs: number;
   // The session ID is a capability: it goes to the daemon and nowhere else.
   readonly #id: string;
+  readonly #generation: bigint;
   readonly #client: PlimsollClient;
+  // The rule and floor given at open, which a checkpoint states.
   readonly #rule: WireSoftwareRule | undefined;
   // The floor given at open: every call carries it unless the call asks for more.
   readonly #floor: Exclude<Isolation, "none"> | undefined;
@@ -810,17 +1016,46 @@ export class Session {
   // have run it and moved its chain on, so every later call would run and then fail
   // the chain check. They are refused here instead, before anything is sent.
   #unknown: string | undefined;
+  // Set once the daemon refused a call or close because another worker attached the
+  // session: this worker must not use it again.
+  #stale: string | undefined;
+  // Set once the daemon answered this client's close.
+  #closed = false;
+  // The request digest the session's next call is refused for repeating, set by an attach
+  // across an explained gap (or inherited with a checkpoint) and spent by the next call;
+  // the record of that lost call; and the request digest of the call after which this
+  // session stopped with no answer it could check.
+  #lostCall = "";
+  #lostRecord: RunRecord | undefined;
+  #lostRequest = "";
   #queue: Promise<unknown> = Promise.resolve();
   #closing: Promise<SessionSummary> | undefined;
 
   /** @internal */
-  constructor(client: PlimsollClient, m: WireOpenSessionResponse, rule: WireSoftwareRule | undefined, floor?: Exclude<Isolation, "none">) {
+  constructor(
+    client: PlimsollClient,
+    m: WireOpenSessionResponse,
+    rule: WireSoftwareRule | undefined,
+    floor?: Exclude<Isolation, "none">,
+    attached?: { generation: bigint; calls: bigint; last: string; lostCall: string; lostRecord: RunRecord | undefined },
+  ) {
     this.#client = client;
     this.#id = m.sessionId ?? "";
+    // Every daemon opens a session at generation 1; openSession refuses an answer that
+    // says otherwise, after closing the session with this one. An attached session
+    // carries on from the checkpoint it was attached with.
+    this.#generation = attached?.generation ?? 1n;
+    if (attached) {
+      this.#calls = attached.calls;
+      this.#last = attached.last;
+      this.#lostCall = attached.lostCall;
+      this.#lostRecord = attached.lostRecord;
+    }
     this.#rule = rule;
     this.#floor = floor;
     this.fingerprint = m.session ?? "";
     this.isolation = m.isolation ?? "";
+    this.isolationQualification = m.isolationQualification ?? "";
     this.sandbox = m.sandbox ?? "";
     this.softwareIdentity = m.softwareIdentity ?? "";
     this.expiresAtMs = num(m.expiresUnixMs);
@@ -832,7 +1067,62 @@ export class Session {
    * answer it could check (the call may have run); undefined while it is usable.
    */
   get stopped(): string | undefined {
-    return this.#unknown;
+    return this.#stale ?? this.#unknown;
+  }
+
+  /**
+   * The request digest of the call after which this session stopped with no answer it could
+   * check, or "": the call that may have run, for another worker's attachSession to name
+   * (lostRequestSha256) together with a checkpoint saved before it.
+   */
+  get lostRequestSha256(): string {
+    return this.#lostRequest;
+  }
+
+  /**
+   * The record of the call that was sent once and whose answer was lost, on a session attached
+   * across an explained gap; its output is lost. The record says whether the daemon answered
+   * it: a result digest when the daemon answered, which does not show that the call ran to its
+   * end (a step stopped at its time limit and a setup that failed are answers too), an
+   * unanswered code when it ended without an answer, so that it may have done none, part or all
+   * of its work.
+   */
+  get lostCall(): RunRecord | undefined {
+    return this.#lostRecord;
+  }
+
+  /**
+   * The session's checkpoint (Go: Session.Checkpoint), for the application to save where
+   * only it can write, so another process can attachSession. It waits for a call in
+   * flight, so the head it states follows that call. Refused when the client has no
+   * daemonName and when the session is stopped, closed or ended.
+   */
+  checkpoint(): Promise<SessionCheckpoint> {
+    return this.#serial(async () => {
+      const refuse = (why: string) => new PlimsollError("failed_precondition", `plimsoll: this session cannot be checkpointed: ${why}`, { notDispatched: "request" });
+      const daemon = this.#client.daemonName;
+      if (daemon === undefined) throw refuse("the client has no daemonName");
+      if (this.stopped !== undefined) throw refuse(`it is stopped (${this.stopped})`);
+      if (this.#closed) throw refuse("it is closed");
+      if (this.#end !== undefined && this.#end.reason !== "open") throw refuse(`it ended (${this.#end.reason})`);
+      return {
+        version: 1,
+        daemon,
+        session: this.fingerprint,
+        generation: this.#generation,
+        calls: this.#calls,
+        lastRecordSha256: this.#last,
+        provider: this.sandbox,
+        isolation: this.isolation,
+        isolationQualification: this.isolationQualification,
+        softwareIdentity: this.softwareIdentity,
+        openFloor: this.#floor ?? "",
+        openRule: softwareRuleId(this.#rule),
+        expiresUnixMs: this.expiresAtMs,
+        idleTimeoutMs: this.idleTimeoutMs,
+        lostCallSha256: this.#lostCall,
+      };
+    });
   }
 
   /** The session's end once a response reported it, else undefined. */
@@ -891,6 +1181,9 @@ export class Session {
   #call(payload: Payload, opts: RunOptions): Promise<{ run: WireRunResponse; record: RunRecord }> {
     const rule = mergeRules(this.#rule, validateRule(opts.software));
     return this.#serial(async () => {
+      if (this.#stale !== undefined) {
+        throw new StaleOwnerError(`plimsoll: ${this.#stale}; this worker sends nothing more on the session`, { notDispatched: "request" });
+      }
       if (this.#unknown !== undefined) {
         throw new PlimsollError(
           "failed_precondition",
@@ -902,10 +1195,24 @@ export class Session {
       // Before the digest, which cannot encode such text either.
       refuseIllFormed({ ...env, ...payload }, "the request");
       const digest = requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) });
+      // The first call after an attach across an explained gap: a repeat of the lost call is
+      // a retry of a call that was already sent once, refused here with nothing sent, and the
+      // refusal spends the note. Only the first call is checked: any other call spends the
+      // note once it is sent, unless the daemon refuses it with the not-dispatched mark,
+      // since then nothing ran, the head is where it was, and the next call is still the
+      // first.
+      if (this.#lostCall !== "" && digest === this.#lostCall) {
+        this.#lostCall = "";
+        throw new CallAlreadySentError(`plimsoll: ${CALL_ALREADY_SENT_TEXT}; nothing was sent`);
+      }
       try {
-        return await this.#exchange(payload, opts, rule, env, digest);
+        const answered = await this.#exchange(payload, opts, rule, env, digest);
+        this.#lostCall = "";
+        return answered;
       } catch (e) {
+        if (e instanceof StaleOwnerError) this.#stale = "another worker attached the session";
         if (e instanceof PlimsollError && e.notDispatched) throw e;
+        this.#lostCall = "";
         if (e instanceof PlimsollError && e.unanswered) {
           // The call may have run, and the daemon chained its record: check it and keep
           // it in the chain, so the session goes on and the call is not hidden.
@@ -914,14 +1221,18 @@ export class Session {
             // With no response to compare it with, the record's evidence must be what the
             // session stated at open.
             const r = checked.record;
-            if (r.provider !== this.sandbox || r.isolation !== this.isolation || r.softwareIdentity !== this.softwareIdentity) {
+            if (
+              r.provider !== this.sandbox || r.isolation !== this.isolation || r.softwareIdentity !== this.softwareIdentity ||
+              r.isolationQualification !== this.isolationQualification
+            ) {
               checked = {
-                problem: `the unanswered call's record names ${r.provider} at "${r.isolation}" running "${r.softwareIdentity}", the session opened as ${this.sandbox} at "${this.isolation}" running "${this.softwareIdentity}"`,
+                problem: `the unanswered call's record names ${r.provider} at "${r.isolation}" running "${r.softwareIdentity}", the session opened as ${this.sandbox} at "${this.isolation}" running "${this.softwareIdentity}" (or the tier's qualification differs from the one stated at open)`,
               };
             }
           }
           if ("problem" in checked) {
             this.#unknown = checked.problem;
+            this.#lostRequest ||= digest;
             throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { cause: e });
           }
           this.#calls = checked.record.sequence;
@@ -930,6 +1241,7 @@ export class Session {
           throw e;
         }
         this.#unknown = e instanceof Error ? e.message : String(e);
+        this.#lostRequest ||= digest;
         throw e;
       }
     });
@@ -944,7 +1256,8 @@ export class Session {
   ): Promise<{ run: WireRunResponse; record: RunRecord }> {
     let m: WireSessionRunResponse;
     try {
-      m = await this.#client.call<WireSessionRunResponse>("SessionRun", { ...env, sessionId: this.#id, ...payload }, opts.signal);
+      const body: WireSessionRunRequest = { ...env, sessionId: this.#id, generation: this.#generation.toString(), ...payload };
+      m = await this.#client.call<WireSessionRunResponse>("SessionRun", body, opts.signal);
     } catch (e) {
       if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
       throw e;
@@ -974,12 +1287,15 @@ export class Session {
 
   /**
    * Ends the session (or collects one that ended by itself) and checks the
-   * daemon's count of executed calls against the chain this client saw. Every
-   * later call returns the first one's promise, so its summary or its error, without
-   * another request: the daemon forgets a session at its first close, and a second
-   * CloseSession would be answered NotFound. The one exception is a close refused
-   * not dispatched (its signal aborted before it was sent, say): it closed nothing,
-   * so the next call tries again. The first call's signal is the one that applies.
+   * daemon's count of executed calls against the chain this client saw. Once the
+   * daemon has answered a close with its count, every later call returns that
+   * close's promise, so its summary or its error (a count that differs from this
+   * client's chain included), without another request: the daemon forgets a session
+   * at its first close, and a second CloseSession would be answered NotFound. A close
+   * that ended any other way (lost in transit, timed out, its signal aborted, refused
+   * by the daemon, as with "the session is still ending; close it again") is sent
+   * again by the next call (finding hunt-quality-90). A call made while a close is in
+   * flight shares it, and that close's signal is the one that applies.
    */
   close(signal?: AbortSignal): Promise<SessionSummary> {
     return (this.#closing ??= this.#closeOnce(signal));
@@ -987,20 +1303,34 @@ export class Session {
 
   #closeOnce(signal: AbortSignal | undefined): Promise<SessionSummary> {
     return this.#serial(async () => {
+      if (this.#stale !== undefined) {
+        this.#closing = undefined;
+        throw new StaleOwnerError(`plimsoll: ${this.#stale}; this worker sends nothing more on the session`, { notDispatched: "request" });
+      }
       let m: WireCloseSessionResponse;
       try {
-        m = await this.#client.call<WireCloseSessionResponse>("CloseSession", { protocol: PROTOCOL, sessionId: this.#id }, signal);
+        const body: WireCloseSessionRequest = { protocol: PROTOCOL, sessionId: this.#id, generation: this.#generation.toString() };
+        m = await this.#client.call<WireCloseSessionResponse>("CloseSession", body, signal);
       } catch (e) {
-        // Refused not dispatched: the session is still open on the daemon.
-        if (e instanceof PlimsollError && e.notDispatched) this.#closing = undefined;
+        if (e instanceof StaleOwnerError) this.#stale = "another worker attached the session";
+        // No count came back, so the next close is sent: the close may never have
+        // reached the daemon, and the daemon may ask for it again.
+        this.#closing = undefined;
         throw e;
       }
-      const sum: SessionSummary = decoded(() => ({
-        session: m.session ?? "",
-        calls: BigInt(m.calls ?? 0),
-        lastRecordSha256: m.lastRecordSha256 ?? "",
-        end: sessionEndFromWire(m.ended),
-      }));
+      this.#closed = true;
+      let sum: SessionSummary;
+      try {
+        sum = decoded(() => ({
+          session: m.session ?? "",
+          calls: BigInt(m.calls ?? 0),
+          lastRecordSha256: m.lastRecordSha256 ?? "",
+          end: sessionEndFromWire(m.ended),
+        }));
+      } catch (e) {
+        this.#closing = undefined; // a count this client cannot read is no count
+        throw e;
+      }
       this.#end ??= { reason: sum.end, detail: "" };
       if (sum.session !== this.fingerprint || sum.calls !== this.#calls || sum.lastRecordSha256 !== this.#last) {
         throw new PlimsollError(

@@ -96,6 +96,7 @@ func TestOpenShellSessionPoolPassesOverADeletedMemberLive(t *testing.T) {
 	if err := p.deleteAndWait(ctx, member); err != nil {
 		t.Fatal(err)
 	}
+	// fixed-wait: 2 s stands for "the relays' streams have ended with the sandbox"; not shown safe on a slow gateway
 	time.Sleep(2 * time.Second) // the relays' streams end with the sandbox
 	s := openLive(t, p, sandbox.SessionOptions{Lifetime: 2 * time.Minute})
 	if s.b.name == member {

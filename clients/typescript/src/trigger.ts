@@ -11,7 +11,7 @@
 import { chat } from "@trigger.dev/sdk/ai";
 import { tool, type Tool } from "ai";
 
-import { CodeSandboxes, type CodeSandboxesOptions, type ExecuteCodeOutput, type SandboxKey } from "./sandboxes.ts";
+import { CodeSandboxes, refuseGrant, type CodeSandboxesOptions, type ExecuteCodeOutput, type SandboxKey } from "./sandboxes.ts";
 import { executeCodeDescription, executeCodeInput, type ExecuteCodeToolInput } from "./tool.ts";
 
 export type PlimsollCodeSandboxOptions = CodeSandboxesOptions & {
@@ -37,6 +37,9 @@ export type PlimsollCodeSandbox = {
 };
 
 export function plimsollCodeSandbox(opts: PlimsollCodeSandboxOptions): PlimsollCodeSandbox {
+  // A granted call cannot keep the run's sandbox; a chat that calls the operator's API
+  // builds the AI SDK add-on's plimsollGrantedCodeTool inside its run instead.
+  refuseGrant(opts, "plimsollGrantedCodeTool from @plimsollmark/client/ai-sdk, inside the run");
   const sandboxes = new CodeSandboxes(opts);
   const current = chat.local<{ runId: string }>({ id: opts.localId ?? "plimsollCodeSandbox" });
   // The owner warm named for each run, in this module's memory only.

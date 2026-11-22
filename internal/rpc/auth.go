@@ -35,10 +35,11 @@ var requiredScopes = map[string]string{
 	// Describe runs no code, but it describes the code-running boundary; its only
 	// audience is code-running callers, so it shares their scope.
 	plimsollv1connect.SandboxServiceDescribeProcedure: ScopeCodeRun,
-	// A session is code execution spread over calls; all three share the scope.
-	plimsollv1connect.SandboxServiceOpenSessionProcedure:  ScopeCodeRun,
-	plimsollv1connect.SandboxServiceSessionRunProcedure:   ScopeCodeRun,
-	plimsollv1connect.SandboxServiceCloseSessionProcedure: ScopeCodeRun,
+	// A session is code execution spread over calls; every procedure shares the scope.
+	plimsollv1connect.SandboxServiceOpenSessionProcedure:   ScopeCodeRun,
+	plimsollv1connect.SandboxServiceSessionRunProcedure:    ScopeCodeRun,
+	plimsollv1connect.SandboxServiceCloseSessionProcedure:  ScopeCodeRun,
+	plimsollv1connect.SandboxServiceAttachSessionProcedure: ScopeCodeRun,
 }
 
 // Principal is an authenticated caller.
@@ -111,16 +112,23 @@ func authenticatePrincipal(ctx context.Context, header string, verifier TokenVer
 // The interceptor remains the procedure-scope gate and fallback for handlers that
 // are embedded without this HTTP middleware. A refusal leaves the body unread and
 // unclosed: closing it would read it (Go's HTTP/1.x server drains a small unread body
-// on Close), and the server's unreadbody wrapper closes the connection instead.
-func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
+// on Close), and the server's unreadbody wrapper closes the connection instead. A scope
+// refusal of an authenticated caller is told to refusals (a SandboxService's
+// NoteRefusal), so the operator sees it (refusals.go); a refused credential is counted by
+// authFailureLog instead.
+func AuthenticateHTTP(verifier TokenVerifier, next http.Handler, refusals ...RefusalNoter) http.Handler {
 	errorWriter := connect.NewErrorWriter()
 	if verifier == nil {
-		// Open dev mode needs no credential, so the loopback bind is its only boundary,
-		// and a browser page that rebinds its own name to 127.0.0.1 would cross it as a
-		// same-origin request (DNS rebinding; Claude Security scan, 2026-10-27). Such a
-		// request still names the page's host, so open mode answers only a request
-		// addressed to localhost or a loopback address. This is not access control: any
-		// program on a reachable network can send that Host. A token is.
+		// Open dev mode needs no credential, so the loopback bind is its only boundary.
+		// plimsolld enforces that bind: open mode with a real provider refuses to start
+		// unless the RPC listener bound a loopback address (openModeBindError in
+		// cmd/plimsolld, judged from the bound address). An embedder that serves this
+		// handler itself must bind loopback the same way. Within that bind, a browser
+		// page that rebinds its own name to 127.0.0.1 would cross it as a same-origin
+		// request (DNS rebinding; Claude Security scan, 2026-10-27). Such a request
+		// still names the page's host, so open mode answers only a request addressed to
+		// localhost or a loopback address. This is not access control: any program that
+		// reaches the listener can send that Host. The bind and a token are.
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !loopbackHost(r.Host) {
 				_ = errorWriter.Write(w, r, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
@@ -140,8 +148,16 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 		}
 		scope, mapped := requiredScopes[r.URL.Path]
 		if !mapped || !p.HasScope(scope) {
-			_ = errorWriter.Write(w, r, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
-				fmt.Errorf("token lacks required scope %q", scope)))
+			ce := refuse(connect.CodePermissionDenied, sandbox.RefusalPermission, fmt.Errorf("token lacks required scope %q", scope))
+			// The path is the caller's text unless it names a procedure.
+			procedure := "unknown"
+			if mapped {
+				procedure = r.URL.Path
+			}
+			for _, n := range refusals {
+				n.NoteRefusal(auditCallerOf(p), procedure, ce)
+			}
+			_ = errorWriter.Write(w, r, ce)
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
@@ -302,7 +318,9 @@ func AuthInterceptor(verifier TokenVerifier) connect.UnaryInterceptorFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			procedure := req.Spec().Procedure
 			if verifier == nil { // dev mode: no verification
-				ctx = context.WithValue(ctx, principalKey{}, Principal{Scopes: []string{"*"}})
+				p := Principal{Scopes: []string{"*"}}
+				noteCaller(ctx, p)
+				ctx = context.WithValue(ctx, principalKey{}, p)
 				return next(ctx, req)
 			}
 
@@ -314,6 +332,7 @@ func AuthInterceptor(verifier TokenVerifier) connect.UnaryInterceptorFunc {
 					return nil, err
 				}
 			}
+			noteCaller(ctx, p)
 			scope, mapped := requiredScopes[procedure]
 			if !mapped || !p.HasScope(scope) {
 				return nil, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission, fmt.Errorf("token lacks required scope %q", scope))

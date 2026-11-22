@@ -25,14 +25,15 @@ import (
 // empty successful response is valid. A consumer asking "did the guest get a
 // successful response" must check both.
 type CallRow struct {
-	Seq       int           // 1-based sequence among a run's recorded calls
-	Method    string        // route method (GET/PUT/POST/DELETE/PATCH), from the Allow list
-	Route     string        // matched HostRoute.Path TEMPLATE, never the raw path
-	Status    int           // upstream HTTP status; 0 if the upstream never responded
-	Delivered bool          // the upstream response reached the guest (false: the broker returned its own error instead)
-	ReqBytes  int           // request body bytes the broker sent, or read before refusing (<= the route's request limit)
-	RespBytes int           // response body bytes returned to the guest (<= maxHostResponseBytes)
-	Latency   time.Duration // broker -> upstream -> guest round trip for this call
+	Seq               int           // 1-based sequence among a run's recorded calls
+	Method            string        // route method (GET/PUT/POST/DELETE/PATCH), from the Allow list
+	Route             string        // matched HostRoute.Path TEMPLATE, never the raw path
+	Status            int           // upstream HTTP status; 0 if the upstream never responded
+	Delivered         bool          // the upstream response reached the guest (false: the broker returned its own error instead)
+	CredentialMatched bool          // the answer held a copy of the credential: withheld, and the run's grant ended (code guessing it, or a route that echoes it)
+	ReqBytes          int           // request body bytes the broker sent, or read before refusing (<= the route's request limit)
+	RespBytes         int           // response body bytes returned to the guest (<= maxHostResponseBytes)
+	Latency           time.Duration // broker -> upstream -> guest round trip for this call
 }
 
 // SEAM(forensic-logging): CallRow is metadata-only BY CONSTRUCTION. It has no

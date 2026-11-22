@@ -159,6 +159,7 @@ func TestWasmCanceledRunIsAnError(t *testing.T) {
 	w := testWasm()
 	w.DefaultTimeout = 10 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
+	// fixed-wait: 300 ms so the cancel arrives in the endless loop; not shown safe: a cancel that came before the run started returns the same error
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	res, err := w.RunJavaScript(ctx, Request{Code: `while (true) {}`})
 	if !errors.Is(err, context.Canceled) {

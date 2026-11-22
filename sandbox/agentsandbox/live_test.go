@@ -138,7 +138,14 @@ func TestSmokeLive(t *testing.T) {
 	p := liveProvider(t)
 	defer drained(t, p)
 	if err := p.SmokeTest(context.Background()); err != nil {
-		ev, berr := p.smokeBoundary(context.Background(), p.IsolationClass())
+		peer, perr := p.claimSandbox(context.Background(), smokeTimeout)
+		if peer.claim != "" {
+			defer p.deleteLater(context.Background(), peer)
+		}
+		if perr != nil {
+			t.Fatalf("%v\nthe peer for the boundary report: %v", err, perr)
+		}
+		ev, berr := p.smokeBoundary(context.Background(), p.IsolationClass(), claims.Start(), peer)
 		b, _ := json.MarshalIndent(ev, "", "  ")
 		t.Fatalf("%v\nboundary report (%v):\n%s", err, berr, b)
 	}
@@ -149,6 +156,7 @@ func TestSmokeLive(t *testing.T) {
 	t.Logf("smoke evidence:\n%s", b)
 	// The smoke test pinned the template it proved; past the check's cache, a fresh read of
 	// the same template must still match it, or every later run would be refused.
+	// fixed-wait: the wait is the thing under test: past the check's cache, so the next Preflight reads the template again
 	time.Sleep(preflightTTL + time.Second)
 	if err := p.Preflight(context.Background()); err != nil {
 		t.Fatalf("the proven template, read again: %v", err)

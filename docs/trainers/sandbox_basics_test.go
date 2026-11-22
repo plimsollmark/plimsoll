@@ -336,7 +336,7 @@ func TestSandboxBasicsFiles(t *testing.T) {
 	if strings.Join(sent, " ") != strings.Join(recorded, " ") {
 		t.Errorf("requests-sent.txt lists %v, the bundle's requests are %v", sent, recorded)
 	}
-	if err := attest.VerifyExpected(entries, sent); err != nil {
+	if _, err := attest.VerifyExpected(entries, v, attest.Expected{Requests: sent}); err != nil {
 		t.Errorf("bundle.jsonl against requests-sent.txt: %v", err)
 	}
 
@@ -367,7 +367,7 @@ func TestSandboxBasicsFiles(t *testing.T) {
 	if report, err := attest.VerifyBundle(shortened, v); err != nil || report.Runs != 1 {
 		t.Errorf("shortened.jsonl: %d runs, %v; the page says it verifies as whole with one run", report.Runs, err)
 	}
-	if err := attest.VerifyExpected(shortened, sent); err == nil {
+	if _, err := attest.VerifyExpected(shortened, v, attest.Expected{Requests: sent}); !errors.Is(err, attest.ErrExpected) {
 		t.Error("shortened.jsonl passes against requests-sent.txt; the page says the list catches the missing calls")
 	}
 }

@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/refusedport"
 )
 
 // TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes verifies the safety
@@ -341,9 +343,10 @@ func TestE2BReportsACreateWhoseAnswerWasLost(t *testing.T) {
 	}
 
 	// Nothing listening: the request never left, so nothing can bill.
-	closed := httptest.NewServer(http.NotFoundHandler())
-	base := closed.URL
-	closed.Close()
+	// The port is held without a listener (internal/refusedport): a closed test server's
+	// port could be taken by another process before the create, and a create that reaches
+	// anything may have made a microVM.
+	base := "http://127.0.0.1:" + strconv.Itoa(refusedport.Port(t))
 	e = &E2B{APIKey: "k", APIBase: base}
 	ctx, gaveUp = WatchTeardown(context.Background())
 	if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {

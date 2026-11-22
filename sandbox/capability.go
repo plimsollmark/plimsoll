@@ -144,8 +144,9 @@ type HostAPIGrant struct {
 	// between 1 and MaxRouteRequestBytes and under the run's MaxRequestBytes.
 	RouteMaxRequestBytes map[HostRoute]int64
 	// RouteContentTypes names the media types the broker takes from the guest's
-	// Content-Type on an allow entry and sends to the API ("multipart/form-data"), with
-	// the boundary and charset parameters alone, checked. Every route takes
+	// Content-Type on an allow entry and sends to the API ("multipart/form-data"),
+	// written by the broker with only the parameters it reads and checks
+	// (requestContentType). Every route takes
 	// application/json. On a route that lists types, a body of another type is refused
 	// with 415; on a route that lists none the body is sent as application/json, as it
 	// always was, whatever the guest's header said.
@@ -191,12 +192,31 @@ func (g *HostAPIGrant) requestBudget() int64 {
 }
 
 // requestContentType is the Content-Type the broker sends for a body on route, given
-// the guest's header: application/json when the guest sent none, or JSON, or the
-// route lists no type; the guest's media type when the route lists it, rebuilt from
-// the type and its boundary and charset parameters alone, each checked (RFC 2046
-// boundary characters, at most 70; a charset of token characters), so a parameter
-// cannot carry a line break or a second header into the request. The second result is
-// false when the body's type is refused.
+// the guest's header. It is the broker's own text, never the guest's line
+// (hunt-security-11): application/json when the guest sent none, or the route lists no
+// type; otherwise the guest's media type, when it is application/json or one the route
+// lists, written by the broker with only these parameters:
+//
+//   - a JSON type (one with "/json" or "+json" in it): none. RFC 8259 defines no charset
+//     for JSON and a parser reads it as UTF-8, which is what the broker checks the body
+//     is (checkJSONBody); a charset of utf-8 is dropped, any other refused, since a
+//     parser that honored it (Express's accepts any "utf-" one) would decode bytes the
+//     broker read as something else (hunt-security-16).
+//   - a multipart type: the boundary, which the API needs to find the parts, checked
+//     against RFC 2046 (its characters, at most 70); a charset of utf-8 is dropped, any
+//     other refused.
+//   - any other type (a form, text/plain, application/octet-stream, XML): a charset
+//     from a short list (utf-8, us-ascii, iso-8859-1), written in lowercase.
+//
+// Any other parameter is refused rather than dropped, since a parameter the broker does
+// not know may change what an honest API reads (JSON:API's ext and profile, say). A
+// second media type or text after one fails mime.ParseMediaType and is refused. Last,
+// the text the broker sends answers Laravel's isJson (it searches the whole header for
+// "/json" or "+json") exactly when the broker reads the body as JSON, so a boundary
+// holding "+json" is refused too: a body the broker did not read as JSON is never
+// labeled one a framework reads as JSON. The broker reads no body but JSON; a form or
+// multipart body on a route that lists its type is forwarded unread. The second result
+// is false when the type is refused.
 func (g *HostAPIGrant) requestContentType(route HostRoute, guest string) (string, bool) {
 	types := g.RouteContentTypes[route]
 	if len(types) == 0 || strings.TrimSpace(guest) == "" {
@@ -206,27 +226,47 @@ func (g *HostAPIGrant) requestContentType(route HostRoute, guest string) (string
 	if err != nil {
 		return "", false
 	}
-	if mediaType == "application/json" {
-		return "application/json", true
-	}
-	if !slices.Contains(types, mediaType) {
+	if mediaType != "application/json" && !slices.Contains(types, mediaType) {
 		return "", false
 	}
-	kept := make(map[string]string, 2)
-	if v, ok := params["boundary"]; ok {
-		if !validBoundary(v) {
+	isJSON, isMultipart := holdsJSONMark(mediaType), strings.HasPrefix(mediaType, "multipart/")
+	kept := make(map[string]string, 1)
+	for name, v := range params {
+		switch {
+		case name == "boundary" && isMultipart:
+			if !validBoundary(v) {
+				return "", false
+			}
+			kept["boundary"] = v
+		case name == "charset" && !isJSON && !isMultipart:
+			v = strings.ToLower(v)
+			if !slices.Contains(otherBodyCharsets, v) {
+				return "", false
+			}
+			kept["charset"] = v
+		case name == "charset":
+			if !strings.EqualFold(v, "utf-8") {
+				return "", false
+			}
+		default:
 			return "", false
 		}
-		kept["boundary"] = v
 	}
-	if v, ok := params["charset"]; ok {
-		if v == "" || len(v) > 40 || !isToken(v) {
-			return "", false
-		}
-		kept["charset"] = v
+	sent := mime.FormatMediaType(mediaType, kept)
+	if sent == "" {
+		return "", false
 	}
-	return mime.FormatMediaType(mediaType, kept), true
+	// The same rule (holdsJSONMark), asked of the whole header the broker sends, as
+	// Laravel asks it, and of the media type alone, as the broker did above.
+	if holdsJSONMark(strings.ToLower(sent)) != isJSON {
+		return "", false
+	}
+	return sent, true
 }
+
+// otherBodyCharsets are the charsets the broker writes on a body type that is neither
+// JSON nor multipart: none of them reads an ASCII byte as anything but itself.
+var otherBodyCharsets = []string{"utf-8", "us-ascii", "iso-8859-1"}
 
 // validBoundary reports whether v is a multipart boundary as RFC 2046 section 5.1.1
 // defines one: 1 to 70 characters from its bchars set, not ending in a space.
@@ -287,9 +327,13 @@ const sdkEnvOriginToken = "{origin}"
 // (connection and framing headers, which a forwarded value could use to desynchronize
 // the upstream), it names the guest's own origin (Host), it carries a proxy's or
 // plimsoll's own trust (Forwarded, X-Forwarded-*, X-Plimsoll-*), an API reads it as
-// an API key (providerKeyHeaders), or it is not a valid field name at all.
+// an API key (providerKeyHeaders), a framework reads it as the request's method or path
+// (overrideHeaders), or it is not a valid field name at all.
 func passHeaderRefused(name string) bool {
 	if !validFieldName(name) {
+		return true
+	}
+	if _, override := overrideHeaderKind(name); override {
 		return true
 	}
 	lower := strings.ToLower(name)
@@ -766,6 +810,9 @@ func (g *HostAPIGrant) Validate() error {
 	}
 	seenHeaders := make(map[string]struct{}, len(g.PassHeaders))
 	for _, name := range g.PassHeaders {
+		if err := overrideHeaderRefusal("PassHeaders", name); err != nil {
+			return err
+		}
 		if !utf8.ValidString(name) || passHeaderRefused(name) {
 			return fmt.Errorf("host-api grant: PassHeaders entry %q is not a header the broker forwards (not a field name, one the broker or the transport owns, or one an API reads an API key from)", name)
 		}
@@ -777,6 +824,9 @@ func (g *HostAPIGrant) Validate() error {
 	}
 	seenSet := make(map[string]struct{}, len(g.SetHeaders))
 	for name, value := range g.SetHeaders {
+		if err := overrideHeaderRefusal("SetHeaders", name); err != nil {
+			return err
+		}
 		if !utf8.ValidString(name) || passHeaderRefused(name) {
 			return fmt.Errorf("host-api grant: SetHeaders entry %q is not a header a grant may set (not a field name, one the broker or the transport owns, or one an API reads an API key from: the credential is the token's, never a value in the profile)", name)
 		}
@@ -821,6 +871,18 @@ func (g *HostAPIGrant) Validate() error {
 		}
 	}
 	return nil
+}
+
+// overrideHeaderRefusal is the load error for a PassHeaders or SetHeaders entry that a
+// framework reads as the request's method or path, or nil.
+func overrideHeaderRefusal(field, name string) error {
+	kind, ok := overrideHeaderKind(name)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("host-api grant: %s entry %q is refused: web frameworks and servers read it as the request's %s, "+
+		"so a call the broker checked as one route could act as another the allow list never approved "+
+		"(docs/capability-grants.md, \"Method and path override\")", field, name, kind)
 }
 
 // ValidateHostRoute checks one route as a grant's Validate does: one of the five

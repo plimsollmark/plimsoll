@@ -55,10 +55,18 @@ type Receipts struct {
 	now        func() time.Time // time.Now; a test moves it
 	walks      atomic.Int64     // walks finished, read before waiting for mu
 	segment    int
-	runs       *receiptFile
+	runs       map[string]*receiptFile // the open run segment, by share
 	sessions   map[string]*receiptFile // by session fingerprint, until settled
 	index      map[string]*kept        // by record digest
-	order      []string
+	order      map[string][]string     // the index's digests, oldest first, by share
+
+	// shared turns the shares on (remote mode: Config.RequireGrant). A share is the
+	// approved app a call's grant belongs to (connectorGrant.group), or "" for calls of no
+	// app; each may have written at most shareOf the directory's room since this process
+	// started (Full). written is what each share's writes added, writtenAll their sum.
+	shared     bool
+	written    map[string]int64
+	writtenAll int64
 
 	// For tests: the next write writes half its line and fails; the next file
 	// creation fails; the next rollback's cut back fails; the write after the next
@@ -74,6 +82,7 @@ const runsPerSegment = 500
 
 type receiptFile struct {
 	name   string
+	share  string   // whose writes this file's are (Receipts.shared)
 	f      *os.File // nil once ended
 	w      *lineWriter
 	h      *attest.Harness
@@ -84,12 +93,28 @@ type receiptFile struct {
 	reason string // why a session's receipts are incomplete
 }
 
-// fail ends a session's file as incomplete for good, keeping the first reason.
-func (rf *receiptFile) fail(reason string) {
+// fail ends a session's file as incomplete for good, keeping the first reason: what
+// failed, then err as a model may see it, never with the path an operating system's
+// error names (reasonOf).
+func (rf *receiptFile) fail(what string, err error) {
 	rf.end("incomplete")
 	if rf.reason == "" {
-		rf.reason = reason
+		rf.reason = reasonOf(what, err)
 	}
+}
+
+// reasonOf is a receipt's reason: what failed, then err through shown. A reason reaches
+// answers (a receipt, a close's summary), so an error is never formatted into one as
+// text, which would keep the receipts directory's path where shown cannot find it
+// (hunt-security-24, 2026-11-20); with err nil it is what alone.
+func reasonOf(what string, err error) string {
+	switch {
+	case err == nil:
+		return what
+	case what == "":
+		return shown(err)
+	}
+	return what + ": " + shown(err)
 }
 
 // end closes the file, once, and sets its final state ("" keeps it).
@@ -141,8 +166,9 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 
 // Receipt is what a result or get_record says of a run's record.
 type Receipt struct {
-	// Status is stored (the signed line is written and synced) or failed (keeping the
-	// record failed: Reason; a checked result is still returned).
+	// Status is stored (the signed line is written and synced), failed (keeping the
+	// record failed: Reason; a checked result is still returned), or unknown (this server
+	// knows no line for the record: Reason).
 	Status string `json:"status"`
 	// Scope is what a check of the line establishes: "entry", the line on its own.
 	Scope string `json:"scope,omitempty"`
@@ -214,8 +240,11 @@ func OpenReceipts(dir, keyFile string, maxBytes int64) (*Receipts, error) {
 		keyID:    attest.KeyID(key.Public().(ed25519.PublicKey)),
 		maxBytes: maxBytes,
 		process:  fmt.Sprintf("%s-%x", time.Now().UTC().Format("20060102T150405Z"), id),
+		runs:     map[string]*receiptFile{},
 		sessions: map[string]*receiptFile{},
 		index:    map[string]*kept{},
+		order:    map[string][]string{},
+		written:  map[string]int64{},
 		now:      time.Now,
 	}
 	start := r.now()
@@ -320,7 +349,18 @@ var quotaRefresh = 30 * time.Second
 // limit, so deleting receipts lets work in at once. It is a threshold, not a
 // reservation: work admitted under the limit may take the directory past it, and
 // another writer's files can go unseen for up to quotaRefresh.
-func (r *Receipts) Full() error {
+//
+// With the shares on, a share is refused too once its writes since this process started
+// reach shareOf the room the directory had for this process's writes (the limit, less
+// what it holds that this process did not write), so one approved app filling its share
+// is refused alone and every other keeps at least that much room. Receipts already on disk
+// when the process started cannot be told apart by whose call made them (a line names no
+// grant, a file no app), so they count against no share, only against the limit: a rule
+// that counted them against one share would refuse it, the owner's calls included, for
+// what another made. A walk that finds less than this process wrote means receipts it
+// wrote were moved away, and every share starts over from that walk. A restart forgets the
+// counts, so after each one an app may write its share of the room left again.
+func (r *Receipts) Full(share string) error {
 	seen := r.walks.Load()
 	if quotaJoin != nil {
 		quotaJoin()
@@ -340,16 +380,38 @@ func (r *Receipts) Full() error {
 		if err == nil {
 			// Its age counts from when it began: a file it read early may have grown since.
 			r.used, r.measuredAt = used, now
+			if used < r.writtenAll {
+				clear(r.written)
+				r.writtenAll = 0
+			}
 		}
 	}
 	if r.measureErr != nil {
-		return fmt.Errorf("measuring the receipts directory: %w", r.measureErr)
+		return errors.New(reasonOf("measuring the receipts directory failed", r.measureErr))
 	}
 	if r.used >= r.maxBytes {
 		return fmt.Errorf("the receipts directory holds %d MB, its limit (PLIMSOLL_RECEIPTS_MAX_MB); move or delete old receipts", r.used>>20)
 	}
+	if r.shared {
+		room := r.maxBytes - max(0, r.used-r.writtenAll)
+		if w := r.written[share]; w >= shareOf(room) {
+			whose := "the calls of this approved app (all its connections)"
+			if share == "" {
+				whose = "the calls of no approved app"
+			}
+			return fmt.Errorf("%s have written %d MB of receipts since this server started, their share: half of the %d MB the receipts directory had room for, so that one app alone never fills it. Other apps' calls are not refused. This app's calls are let in again when old receipts are moved or deleted, or when the server restarts", whose, w>>20, room>>20)
+		}
+	}
 	return nil
 }
+
+// shareOf is the most one caller may hold of a resource every caller shares: half, so
+// that whatever one caller does, at least half is left for the others. The remote
+// transport's body budget is shared the same way (remotehttp's takeBody); here it bounds
+// each approved app's receipts (Receipts.Full) and each connection's kept records
+// (Server.keep). Half is the largest share that leaves another caller as much as the one
+// at its share; it does not keep a third caller's room from two callers both at theirs.
+func shareOf(pool int64) int64 { return pool / 2 }
 
 // quotaJoin, when set, is called by a check after it has noted the walks so far and
 // before it waits for mu; a test uses it to line checks up.
@@ -363,12 +425,17 @@ func (r *Receipts) count(rf *receiptFile, before int64) {
 		r.measuredAt = time.Time{}
 		return
 	}
-	r.used += st.Size() - before
+	delta := st.Size() - before
+	r.used += delta
+	if r.written[rf.share] += delta; r.written[rf.share] <= 0 {
+		delete(r.written, rf.share)
+	}
+	r.writtenAll = max(0, r.writtenAll+delta)
 }
 
 var errEnded = errors.New("the receipt store has ended: the server is shutting down")
 
-func (r *Receipts) create(name, state string) (*receiptFile, error) {
+func (r *Receipts) create(name, share, state string) (*receiptFile, error) {
 	if r.failCreate {
 		r.failCreate = false
 		return nil, errors.New("the receipt file could not be created (test)")
@@ -384,7 +451,7 @@ func (r *Receipts) create(name, state string) (*receiptFile, error) {
 		return nil, err
 	}
 	w := &lineWriter{f: f, r: r}
-	return &receiptFile{name: name, f: f, w: w, h: attest.NewHarness(r.signer, w), state: state}, nil
+	return &receiptFile{name: name, share: share, f: f, w: w, h: attest.NewHarness(r.signer, w), state: state}, nil
 }
 
 // append writes one entry through rf, ends it with a checkpoint when the file must
@@ -420,11 +487,11 @@ func (r *Receipts) append(rf *receiptFile, record func(*attest.Harness) error, c
 	}
 	switch {
 	case terr != nil:
-		err = fmt.Errorf("%w; cutting %s back failed too (%v), so it may hold part of a line", err, rf.name, terr)
+		err = fmt.Errorf("%w; cutting %s back failed too (%s), so it may hold part of a line", err, rf.name, shown(terr))
 		rf.note = "a later write to this file failed and could not be cut back: check the file with plimsoll-attest verify"
 	default:
 		if serr := rf.f.Sync(); serr != nil {
-			err = fmt.Errorf("%w; the cut back of %s could not be synced (%v), so after a crash it may hold part of a line", err, rf.name, serr)
+			err = fmt.Errorf("%w; the cut back of %s could not be synced (%s), so after a crash it may hold part of a line", err, rf.name, shown(serr))
 			rf.note = "a later write to this file failed and its cut back could not be synced: after a crash, check the file with plimsoll-attest verify"
 		}
 	}
@@ -436,20 +503,47 @@ func lineSum(line []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
+// keep indexes a stored line by its record's digest, each share keeping its own last
+// KeptRecords, so one app's calls never push another's lines out of the index.
 func (r *Receipts) keep(recordSHA256 string, rf *receiptFile, line int, sum string) {
 	if _, ok := r.index[recordSHA256]; !ok {
-		r.order = append(r.order, recordSHA256)
+		r.order[rf.share] = append(r.order[rf.share], recordSHA256)
 	}
 	r.index[recordSHA256] = &kept{file: rf, line: line, sum: sum}
-	for len(r.order) > KeptRecords {
-		delete(r.index, r.order[0])
-		r.order = r.order[1:]
+	for order := r.order[rf.share]; len(order) > KeptRecords; order = r.order[rf.share] {
+		delete(r.index, order[0])
+		r.order[rf.share] = order[1:]
 	}
 }
 
 // Record signs a checked exchange: a single run into this process's run segment, a
-// session call into its session's file. It is the client.Recorder.
+// session call into its session's file. It is the client.Recorder of the calls of no
+// approved app; an app's calls reach the store through their share's (shareRecorder).
 func (r *Receipts) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
+	return r.record("", req, resp)
+}
+
+// shareRecorder is the receipt store as the calls of one share reach it: the
+// client.Recorder of the daemon client those calls use (Server.clientsFor), so every
+// line they write counts against their share (Full).
+type shareRecorder struct {
+	r     *Receipts
+	share string
+}
+
+func (sr shareRecorder) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
+	return sr.r.record(sr.share, req, resp)
+}
+
+func (sr shareRecorder) RecordUnanswered(req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) error {
+	return sr.r.recordUnanswered(sr.share, req, rec)
+}
+
+func (sr shareRecorder) RecordClose(session string, calls uint64, last string) error {
+	return sr.r.recordClose(sr.share, session, calls, last)
+}
+
+func (r *Receipts) record(share string, req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.ended {
@@ -457,25 +551,26 @@ func (r *Receipts) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunRespon
 	}
 	rec := resp.GetRecord()
 	if fp := rec.GetSession(); fp != "" {
-		return r.sessionAppend(fp, rec.GetSequence(), rec.GetRecordSha256(), func(h *attest.Harness) error { return h.Record(req, resp) })
+		return r.sessionAppend(fp, share, rec.GetSequence(), rec.GetRecordSha256(), func(h *attest.Harness) error { return h.Record(req, resp) })
 	}
-	if r.runs == nil || r.runs.w.lines >= 2*runsPerSegment {
-		if r.runs != nil {
-			r.runs.end("")
+	rf := r.runs[share]
+	if rf == nil || rf.w.lines >= 2*runsPerSegment {
+		if rf != nil {
+			rf.end("")
 		}
+		delete(r.runs, share)
 		r.segment++
-		rf, err := r.create(fmt.Sprintf("runs-%s-%04d.jsonl", r.process, r.segment), "none")
+		created, err := r.create(fmt.Sprintf("runs-%s-%04d.jsonl", r.process, r.segment), share, "none")
 		if err != nil {
-			r.runs = nil
 			return err
 		}
-		r.runs = rf
+		rf = created
+		r.runs[share] = rf
 	}
-	rf := r.runs
 	line, sum, err := r.append(rf, func(h *attest.Harness) error { return h.Record(req, resp) }, true)
 	if err != nil {
 		rf.end("") // the next run starts a new segment
-		r.runs = nil
+		delete(r.runs, share)
 		return err
 	}
 	r.keep(rec.GetRecordSha256(), rf, line, sum)
@@ -483,19 +578,19 @@ func (r *Receipts) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunRespon
 }
 
 // sessionAppend stores call seq of session fp, which must follow the last call stored.
-func (r *Receipts) sessionAppend(fp string, seq uint64, digest string, record func(*attest.Harness) error) error {
-	rf, err := r.sessionFile(fp, seq == 1)
+func (r *Receipts) sessionAppend(fp, share string, seq uint64, digest string, record func(*attest.Harness) error) error {
+	rf, err := r.sessionFile(fp, share, seq == 1)
 	if err != nil {
 		return err
 	}
 	if seq != rf.calls+1 {
 		err := fmt.Errorf("session %s…'s receipts are incomplete: call %d follows call %d", prefix(fp), seq, rf.calls)
-		rf.fail(err.Error())
+		rf.fail("", err)
 		return err
 	}
 	line, sum, err := r.append(rf, record, false)
 	if err != nil {
-		rf.fail(fmt.Sprintf("call %d's receipt could not be stored: %v", seq, err))
+		rf.fail(fmt.Sprintf("call %d's receipt could not be stored", seq), err)
 		return err
 	}
 	rf.calls, rf.last = seq, digest
@@ -506,17 +601,17 @@ func (r *Receipts) sessionAppend(fp string, seq uint64, digest string, record fu
 // sessionFile returns fp's open file, creating it when allowed (a session's first call,
 // or a close of a session that ran none). A session whose file could not be created is
 // remembered as incomplete, so nothing later makes a file that skips its first calls.
-func (r *Receipts) sessionFile(fp string, mayCreate bool) (*receiptFile, error) {
+func (r *Receipts) sessionFile(fp, share string, mayCreate bool) (*receiptFile, error) {
 	rf := r.sessions[fp]
 	if rf == nil {
 		if !mayCreate {
 			err := fmt.Errorf("session %s…'s receipts are incomplete: its earlier calls are in no file", prefix(fp))
-			r.sessions[fp] = &receiptFile{state: "incomplete", reason: err.Error()}
+			r.sessions[fp] = &receiptFile{state: "incomplete", reason: reasonOf("", err)}
 			return nil, err
 		}
-		created, err := r.create(fmt.Sprintf("session-%s-%s.jsonl", prefix(fp), r.process), "open")
+		created, err := r.create(fmt.Sprintf("session-%s-%s.jsonl", prefix(fp), r.process), share, "open")
 		if err != nil {
-			r.sessions[fp] = &receiptFile{state: "incomplete", reason: fmt.Sprintf("the session's receipt file could not be created: %v", err)}
+			r.sessions[fp] = &receiptFile{state: "incomplete", reason: reasonOf("the session's receipt file could not be created", err)}
 			return nil, err
 		}
 		r.sessions[fp] = created
@@ -537,29 +632,37 @@ func prefix(s string) string {
 
 // RecordUnanswered signs the record of a session call that may have run.
 func (r *Receipts) RecordUnanswered(req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) error {
+	return r.recordUnanswered("", req, rec)
+}
+
+func (r *Receipts) recordUnanswered(share string, req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.ended {
 		return errEnded
 	}
-	return r.sessionAppend(rec.GetSession(), rec.GetSequence(), rec.GetRecordSha256(), func(h *attest.Harness) error { return h.RecordUnanswered(req, rec) })
+	return r.sessionAppend(rec.GetSession(), share, rec.GetSequence(), rec.GetRecordSha256(), func(h *attest.Harness) error { return h.RecordUnanswered(req, rec) })
 }
 
 // RecordClose signs a session's close and checkpoints its file, which is then whole,
 // but only when the close's count and last record are those of the calls stored.
 func (r *Receipts) RecordClose(session string, calls uint64, last string) error {
+	return r.recordClose("", session, calls, last)
+}
+
+func (r *Receipts) recordClose(share, session string, calls uint64, last string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.ended {
 		return errEnded
 	}
-	rf, err := r.sessionFile(session, calls == 0)
+	rf, err := r.sessionFile(session, share, calls == 0)
 	if err != nil {
 		return err
 	}
 	if calls != rf.calls || last != rf.last {
 		err := fmt.Errorf("session %s…'s close counts %d calls, its file holds %d: the receipts are incomplete", prefix(session), calls, rf.calls)
-		rf.fail(err.Error())
+		rf.fail("", err)
 		return err
 	}
 	if _, _, err := r.append(rf, func(h *attest.Harness) error {
@@ -568,7 +671,7 @@ func (r *Receipts) RecordClose(session string, calls uint64, last string) error 
 		}
 		return h.Checkpoint()
 	}, false); err != nil {
-		rf.fail(fmt.Sprintf("the session's signed close could not be stored: %v", err))
+		rf.fail("the session's signed close could not be stored", err)
 		return err
 	}
 	rf.end("closed") // kept until settle reports it
@@ -586,7 +689,7 @@ func (r *Receipts) unseen(fingerprint string) {
 	defer r.mu.Unlock()
 	reason := fmt.Sprintf("session %s…'s close counts calls this server never saw answered, so their records are in no file", prefix(fingerprint))
 	if rf := r.sessions[fingerprint]; rf != nil {
-		rf.fail(reason)
+		rf.fail(reason, nil)
 		return
 	}
 	r.sessions[fingerprint] = &receiptFile{state: "incomplete", reason: reason}
@@ -608,7 +711,7 @@ func (r *Receipts) settle(fingerprint string) (state, reason string) {
 		return "closed", ""
 	}
 	if rf.state == "open" {
-		rf.fail("the session ended without a signed close")
+		rf.fail("the session ended without a signed close", nil)
 	} else {
 		rf.end("")
 	}
@@ -625,13 +728,13 @@ func (r *Receipts) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ended = true
-	if r.runs != nil {
-		r.runs.end("")
-		r.runs = nil
+	for share, rf := range r.runs {
+		rf.end("")
+		delete(r.runs, share)
 	}
 	for fp, rf := range r.sessions {
 		if rf.state == "open" {
-			rf.fail("the server shut down before the session's close was signed")
+			rf.fail("the server shut down before the session's close was signed", nil)
 		} else {
 			rf.end("")
 		}
@@ -647,9 +750,37 @@ func (r *Receipts) receiptOf(recordSHA256 string, err error) *Receipt {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	k := r.index[recordSHA256]
+	return r.receiptLocked(r.index[recordSHA256])
+}
+
+// lineOf is the line the store holds for a record, or nil (none stored, or no receipts):
+// what get_record keeps beside the record (keptRecord).
+func (r *Receipts) lineOf(recordSHA256 string) *kept {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.index[recordSHA256]
+}
+
+// receiptAt is the receipt of a line get_record kept beside its record (lineOf), or, with
+// none kept, whatever the store knows of the record now.
+func (r *Receipts) receiptAt(recordSHA256 string, line *kept) *Receipt {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if line == nil {
+		line = r.index[recordSHA256]
+	}
+	return r.receiptLocked(line)
+}
+
+// receiptLocked is k's receipt, r.mu held. With no line it says only what is true: no
+// line is known here, which is a write that failed when its call answered (that answer
+// said so) or a line this server no longer indexes, never that a stored line failed.
+func (r *Receipts) receiptLocked(k *kept) *Receipt {
 	if k == nil {
-		return &Receipt{Status: "failed", Reason: "this server has no receipt for the record"}
+		return &Receipt{Status: "unknown", Reason: "this server knows no signed line for the record: keeping it failed when its call answered, which that answer said, or this server no longer indexes the line"}
 	}
 	// A session that ended incomplete says why here too: a model that never closed the
 	// sandbox (the host ended the server, the sandbox expired) has no other answer saying so.

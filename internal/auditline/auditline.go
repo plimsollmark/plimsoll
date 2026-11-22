@@ -40,6 +40,10 @@ type Run struct {
 	Profile   string    `json:"grant_profile"`
 	Sandbox   string    `json:"sandbox"`
 	Isolation string    `json:"isolation"`
+	// Policy is the policy the provider states the run ran under, as its record names it
+	// (docker: "seccomp:... guest-guard:sha256:...", the seccomp profile and the guest guard, each by
+	// digest); empty when the provider states none per run.
+	Policy string `json:"policy"`
 	// Outcome is a project's or module's (ProjectOutcome.String); empty for a snippet or
 	// a cell, whose line states its exit code and timeout alone.
 	Outcome string `json:"outcome"`

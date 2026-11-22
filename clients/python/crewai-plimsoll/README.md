@@ -19,7 +19,9 @@ pip install crewai-plimsoll
 
 It needs a running `plimsolld`, the plimsoll daemon, reachable from the crew
 ([getting started (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/blob/main/docs/getting-started.md)).
-CrewAI itself supports Python 3.10 to 3.13.
+The tool's default language is Python, which on docker needs a project image with `python3` in it
+(`SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`): on the default image every Python call comes back
+refused. CrewAI itself supports Python 3.10 to 3.13.
 
 ## Use
 
@@ -43,6 +45,14 @@ or timed out, the isolation tier the code ran behind, and the SHA-256 of the run
 ## What it does, and what it refuses to do
 
 - **Every call runs in a fresh sandbox.** Nothing a call writes or starts is there for the next one.
+- **One web API, if you grant one.** `CodeExecutor(client, grant_profile="lights", api_description=...)`, with a profile
+  the operator configured on the daemon and the description `plimsoll-specgen` wrote for it, lets the tool's code call
+  that profile's routes, and nothing else, through plimsoll's broker, which adds the API's key outside the sandbox.
+  JavaScript works on every provider that gives a project run a grant; Python too on docker and openshell, through
+  `import plimsoll_host`. The tool reads the daemon's answer when it is built, offers only the languages that can call
+  the API there, and tells the model the routes; the model never names a profile. The code can do whatever an allowed
+  route permits and read whatever it returns
+  ([capability grants (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md#from-an-agent-kits-code-tool)).
 - **No fallback.** `CodeExecutor` requires the `kernel` isolation tier by default (gVisor, a user-space kernel, or a
   virtual machine). Against a daemon that states less, it refuses before any code is sent, and the refusal says nothing
   ran. Lowering the floor is a choice you make in code: `CodeExecutor(client, minimum_isolation="container")`.
@@ -64,7 +74,9 @@ or timed out, the isolation tier the code ran behind, and the SHA-256 of the run
 
 This package's version moves with plimsoll's releases, and each version requires the `plimsoll-client` release of the same
 number, which holds the tool's code (`plimsoll_client.crewai`). `Client`, `CodeExecutor` and `PlimsollCodeTool` here are
-plimsoll-client's own classes, gathered so a crew imports from one place.
+plimsoll-client's own classes, gathered so a crew imports from one place. It is tested with, and installs with, exactly
+crewai 1.15.23: pip installs that version beside it and refuses another, and each new CrewAI release is tested before the
+pin moves.
 
 Licensed under the Apache License 2.0. Source:
 [plimsoll on GitHub (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/crewai-plimsoll).

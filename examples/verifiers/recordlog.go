@@ -49,7 +49,11 @@ type logRecord struct {
 	PreviousSHA256   string `json:"previous_sha256"`
 	Unanswered       string `json:"unanswered"`
 	Instance         string `json:"instance"`
-	SHA256           string `json:"sha256"`
+	// From record version 5; a log the Python client wrote before it has none of them.
+	IsolationQualification string `json:"isolation_qualification"`
+	Warm                   bool   `json:"warm"`
+	DaemonVersion          string `json:"daemon_version"`
+	SHA256                 string `json:"sha256"`
 }
 
 func (r logRecord) runRecord() sandbox.RunRecord {
@@ -59,7 +63,8 @@ func (r logRecord) runRecord() sandbox.RunRecord {
 		SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID, Policy: r.Policy,
 		Started: time.UnixMilli(r.StartedUnixMs).UTC(), Ended: time.UnixMilli(r.EndedUnixMs).UTC(),
 		Session: r.Session, Sequence: r.Sequence, PreviousSHA256: r.PreviousSHA256,
-		Unanswered: r.Unanswered, Instance: r.Instance, SHA256: r.SHA256,
+		Unanswered: r.Unanswered, Instance: r.Instance,
+		IsolationQualification: r.IsolationQualification, Warm: r.Warm, DaemonVersion: r.DaemonVersion, SHA256: r.SHA256,
 	}
 }
 

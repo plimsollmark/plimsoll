@@ -3,8 +3,21 @@
 `plimsoll-mcp serve-http` adds authenticated Streamable HTTP to the same five tools
 as the default stdio command. An authorization grant owns its sandbox handles and
 record lookups. Chats using that grant share its files and interpreter state.
-Separate grants cannot use one another's handles or records. Sandbox admission,
-receipts quota and the 256-record cache remain shared across the whole process.
+Separate grants cannot use one another's handles or records. Sandbox admission is
+shared across the whole process, and the records `get_record` returns and the receipts
+quota are shared with a share for each. Each grant keeps its own last 256 records (at
+most 16 MiB of their text), so one grant's calls never push out another's; the server
+keeps at most twice that in all, and past it, which takes three grants or more, the
+oldest record of the grant keeping the most goes. Each approved app, counting all its
+grants, may write at most half of the room the receipts directory had for this
+process's receipts (`PLIMSOLL_RECEIPTS_MAX_MB`, less what the directory holds that this
+process did not write): an app at its share is refused alone, and the others keep at
+least as much room. Receipts already on disk when the server starts cannot be told
+apart by app, so they count against the limit and against no app's share; a restart
+forgets each app's count, so an app may write half of the room left again after each
+restart. Moving receipts away gives every share more room once the directory is measured
+again. With
+three apps, two at their shares can still fill the directory between them.
 The grants of one approved app (its OAuth client, however many times it was approved)
 hold at most one sandbox fewer than `PLIMSOLL_MAX_SANDBOXES` between them (two of the
 default three), so one app alone never fills the server against another, which can
@@ -117,6 +130,23 @@ limit and 32 KiB response limit, with two slots and a one-hour cache. These limi
 bound slow discovery and storage while allowing normal small metadata documents.
 Actual hosted connections still require a live verification at deployment; local
 tests do not prove vendor interoperability.
+
+One live verification has been made: the hosted Claude web app on 2026-11-19, on port 443
+with dynamic client registration. It registered, signed in with the owner's passkey, was
+approved, and ran a session of two Python calls that shared interpreter state at the
+kernel tier; the session's signed receipt verifies with its chain closed. Its
+authorization request carries a parameter outside the eight this server reads; such a
+parameter is ignored, as OAuth 2.0 requires (RFC 6749, section 3.1), and before that
+fix the request was refused whole. ChatGPT has not been verified in a live connection.
+
+The hosted Claude apps reach a connector on port 443 only. Anthropic's connector backend
+opens no connection to another port, so a public origin that names one (`:8443`,
+`:10000`) loads in a browser and is never contacted by Claude, which then reports that it
+could not reach the server
+([EXTERNAL · Anthropic's connector issue tracker ↗](https://github.com/anthropics/claude-ai-mcp/issues/373),
+a collaborator's answer of 7 June 2026, read 19 November 2026). For Claude, give
+`PLIMSOLL_MCP_PUBLIC_URL` an origin without a port. Whether ChatGPT reaches other ports
+has not been checked.
 
 Sources checked 15 October 2026:
 [EXTERNAL · Claude authentication documentation ↗](https://claude.com/docs/connectors/building/authentication),
@@ -238,8 +268,14 @@ the enrolled ones, so an authenticator that already holds one refuses instead of
 replacing it. Unknown routes, encoded path variants,
 method overrides and daemon/admin paths cannot reach the tools.
 
-`audit.jsonl` and one preceding file are each capped at 1 MiB, keeping two bounded
-local files for recent metadata. They contain event categories, internal grant
+The audit is two streams, each a file and one preceding file, each rotated on its own,
+so tool traffic never pushes the security events out. `audit.jsonl` holds the security
+events (sign-in, consent, tokens, grants, enable and disable, refusals), 4 MiB a file:
+about 46 hours of a sustained anonymous flood at the refusal budget, about 4.8 days of a
+refresh credential used at its grant's refresh limit, and about four weeks of 16 grants
+refreshing once an access lifetime. `tools.jsonl` holds the tool traffic (each admitted
+tool call, each checked record, background warnings), 1 MiB a file: about 54 minutes at
+the shared limit of two calls a second. The files contain event categories, internal grant
 identifiers and checked record digests, never request URLs, credentials, source or
 output. An audit write failure blocks new execution. There is no HTTP access log
 in this process; configure the reverse proxy to omit credentials, queries and bodies.

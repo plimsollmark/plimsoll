@@ -5,7 +5,7 @@
 
 import { createTool, type ToolExecutionContext } from "@mastra/core/tools";
 
-import { CodeSandboxes, type CodeSandboxesOptions, type SandboxKey } from "./sandboxes.ts";
+import { CodeSandboxes, offeredForGrant, refuseGrant, type CodeSandboxesOptions, type SandboxKey, type ToolGrant } from "./sandboxes.ts";
 import { executeCodeDescription, executeCodeInput, executeCodeOutput } from "./tool.ts";
 
 export type PlimsollExecuteCodeOptions = CodeSandboxesOptions & {
@@ -33,7 +33,30 @@ const threadKey = (threadId: string | undefined, resourceId: string | undefined,
       ? { owner: resourceId, conversation: threadId }
       : { owner, conversation: JSON.stringify([resourceId, threadId]) };
 
+/**
+ * The executeCode tool with a grant: every call can reach the one web API the operator's
+ * profile allows (plimsollGrantedCodeTool's account, in the AI SDK add-on, holds here
+ * too). Built after the daemon's Describe, read once, here, which decides the languages it offers; every
+ * call runs in a sandbox of its own, whatever the thread, so kept state is not available
+ * to it. Its id is executeCode unless id names another, so an agent can hold it beside
+ * plimsollExecuteCode's tool.
+ */
+export async function plimsollGrantedExecuteCode(opts: CodeSandboxesOptions & { grant: ToolGrant; id?: string }) {
+  const sandboxes = new CodeSandboxes(opts);
+  const plan = await sandboxes.grantPlan();
+  const languages = offeredForGrant(sandboxes.languages, plan);
+  const executeCode = createTool({
+    id: opts.id ?? "executeCode",
+    description: executeCodeDescription(languages, "fresh", plan),
+    inputSchema: executeCodeInput(languages, true),
+    outputSchema: executeCodeOutput,
+    execute: async (input, ctx) => sandboxes.run(undefined, input, ctx?.abortSignal),
+  });
+  return { executeCode, sandboxes };
+}
+
 export function plimsollExecuteCode(opts: PlimsollExecuteCodeOptions) {
+  refuseGrant(opts, "plimsollGrantedExecuteCode");
   const sandboxes = new CodeSandboxes(opts);
 
   const executeCode = createTool({

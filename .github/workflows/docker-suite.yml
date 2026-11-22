@@ -1,0 +1,168 @@
+# The docker suite, as CI runs it: each part of `make docker-suite` as a job of its own, all
+# at once, under the runtime the calling workflow names. audit.yml calls this for runc, the
+# default runtime; gvisor.yml for runsc (gVisor, the kernel tier). The parts are the Makefile's
+# DOCKER_SUITE_PARTS, read here by `make docker-suite-parts`, so a part added there runs here
+# with no edit to this file.
+#
+# Each part is required mode: a missing daemon, image or framework environment, or any skipped
+# test, fails its job, so a green job means its tests ran. The parts run in separate jobs
+# because, in one job, the Go tests and then the Python checks on docker sessions ran one
+# after the other on the same four CPUs (232 s then 128 s under runc, 330 s then 243 s under
+# runsc); apart, they overlap. Each job builds the images itself, since a job starts on a
+# fresh machine.
+#
+# Same rules as the callers: no secrets, read-only permissions, actions pinned by commit SHA.
+# The gVisor release is pinned by SHA-512 in docker/gvisor.versions and verified by the
+# installer before anything is installed.
+name: docker-suite
+
+on:
+  workflow_call:
+    inputs:
+      runtime:
+        description: The docker runtime every part runs under, runc or runsc.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# go test's limit for each test binary, under the suite jobs' 30 minutes (the Makefile's
+# GO_TEST_TIMEOUT says why this number); a called workflow does not see its caller's env.
+env:
+  GO_TEST_TIMEOUT: 15m
+
+jobs:
+  parts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The parts, from the Makefile
+        id: parts
+        run: |
+          parts="$(make -s --no-print-directory docker-suite-parts)"
+          echo "$parts"
+          echo "parts=$parts" >> "$GITHUB_OUTPUT"
+
+  suite:
+    needs: parts
+    name: ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # Every part reports: one part's failure does not cancel the other's run.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.parts.outputs.parts) }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # setup-go saves its cache only when the key missed, and the first job to finish
+      # decides what every job with that key restores (audit.yml says more), so each part
+      # keys its cache on its own name beside go.mod: the parts build different things (the
+      # race build of ./sandbox, the plain build of the Python client's tests), and the two
+      # runtimes of one part build the same. setup-go documents this use of
+      # cache-dependency-path ("Multi-target builds").
+      - name: The part's name, for the Go cache key
+        env:
+          PART: ${{ matrix.part }}
+        run: mkdir -p tmp && printf '%s\n' "$PART" > tmp/go-cache-part
+
+      # go.mod's toolchain line names the canonical build; setup-go installs it and sets
+      # GOTOOLCHAIN=local, as in audit.yml.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.mod
+            tmp/go-cache-part
+
+      # The framework locks (clients/python/frameworks) are compiled for one Python, which
+      # make py-frameworks requires; the version comes from the Makefile with the part. A part
+      # that builds no framework environment skips it.
+      - name: Set up Python
+        if: matrix.frameworks != ''
+        id: python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      # The node a part's tests run, from the Makefile with the part (<part>_NODE): the Python
+      # part's example programs include the TypeScript client's granted example, which node
+      # runs from source, and that needs node 22.18 or later. A part that runs no node skips it.
+      - name: Set up Node
+        if: matrix.node != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The part's framework environments (tmp/py-frameworks), from GitHub's cache: about
+      # 2.1 GB that took about 105 s to install from the hash-pinned locks in every job.
+      # The key is what decides their content: the runner image, the exact Python (each
+      # environment links to it), and make py-frameworks-key (the names, their locks and
+      # the recipe). make py-frameworks then builds any environment whose stamp does not
+      # match its lock, so a stale or partial cache is rebuilt, never used. A cache is
+      # written only by a run on this repository's branches; a pull request's run reads
+      # main's and writes only its own (GitHub's cache scoping).
+      - name: The framework environments' cache key
+        if: matrix.frameworks != ''
+        id: frameworks
+        env:
+          FRAMEWORKS: ${{ matrix.frameworks }}
+          PYTHON: ${{ steps.python.outputs.python-version }}
+        run: echo "key=py-frameworks-$ImageOS-$PYTHON-$(make -s --no-print-directory py-frameworks-key PY_FRAMEWORKS="$FRAMEWORKS")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or save the framework environments
+        if: matrix.frameworks != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tmp/py-frameworks
+          key: ${{ steps.frameworks.outputs.key }}
+
+      # The committed installer: downloads the pinned release bundle, checks it against the
+      # SHA-512 in docker/gvisor.versions, verifies the executable set, installs, registers the
+      # runsc runtime with sidecar auto-download disabled, and restarts the daemon.
+      - name: Install the pinned gVisor release
+        if: inputs.runtime == 'runsc'
+        run: sudo ./docker/install-gvisor.sh
+
+      - name: Report the daemon and its runtimes
+        env:
+          RUNTIME: ${{ inputs.runtime }}
+        run: |
+          docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
+          if [ "$RUNTIME" = runsc ]; then runsc --version; fi
+
+      # The suite launches the images by Preflight-verified content ID, so they must exist
+      # on the daemon before the tests run; the test helpers fail (not skip) when they do not.
+      # DOCKER_HUB_MIRROR: Docker Hub refuses anonymous pulls past 100 per 6 hours per
+      # address, and hosted runners share addresses; the Makefile says how the mirror is used.
+      - name: Pull the snippet image and build the project images
+        env:
+          DOCKER_HUB_MIRROR: mirror.gcr.io
+        run: make docker-images
+
+      # SANDBOX_DOCKER_RUNTIME=runsc is the runtime the suite's test helpers give the docker
+      # provider, so its containers, the startup smoke probe's included, run under gVisor;
+      # the seccomp profile is skipped for that runtime by design, since gVisor filters
+      # syscalls in its own kernel. Under it docker-go-suite leaves out the tests whose
+      # containers never ran under the named runtime (the Makefile's DOCKER_RUNTIME_BLIND).
+      # Under runc it is left unset.
+      - name: make ${{ matrix.part }} under ${{ inputs.runtime }}
+        env:
+          PART: ${{ matrix.part }}
+          RUNTIME: ${{ inputs.runtime }}
+        run: |
+          case "$RUNTIME" in
+            runc) ;;
+            runsc) export SANDBOX_DOCKER_RUNTIME=runsc ;;
+            *) echo "::error::unknown runtime '$RUNTIME' (runc or runsc)"; exit 1 ;;
+          esac
+          make "$PART"

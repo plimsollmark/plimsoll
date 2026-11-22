@@ -15,6 +15,7 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result, error) {
@@ -89,7 +90,7 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	// kills the `docker run` *client*, but the container keeps running until its
 	// work finishes (an infinite loop would never stop). Force-removing by name
 	// guarantees the workload is torn down even when the client was killed.
-	name := "crsbx-" + randID()
+	name := "crsbx-" + providerkit.RandHex(8)
 
 	// The seccomp profile this run applies, selected from its grant (a run whose grant
 	// asks for the local address gets the sdk_env variant), and refused before anything
@@ -98,6 +99,7 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	if err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
+	policy = execState.withGuard(policy)
 	broker, mountArgs, grantEnv, err := d.brokerForRun(runCtx, req.Grant, timeout)
 	if err != nil {
 		return Result{Sandbox: d.Name()}, err
@@ -122,22 +124,30 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	if req.Grant.WantsLoopback() {
 		argv, err = dockerForwardingSnippetArgv(started, d.hostAPIListenAddr(), execState.guestEnv(execState.imageID, grantEnv...))
 	} else {
-		argv, err = guestArgv(started, execState.guestEnv(execState.imageID, grantEnv...), "node", "-")
+		argv, err = guestArgv(started, execState.guestEnv(execState.imageID, grantEnv...), sessionkit.GuestNodeArgv("-")...)
 	}
 	if err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
-	args = append(args, launch(execState.imageID, argv)...)
+	tail, err := launch(execState.guard, execState.imageID, argv)
+	if err != nil {
+		return Result{Sandbox: d.Name(), Isolation: isolation}, err
+	}
+	args = append(args, tail...)
 	args, err = dockerArgs(execState.host, args...)
 	if err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
 
 	cmd := dockerCommand(runCtx, args...)
+	if refused := refusedCommand(cmd); refused != nil {
+		// The refusing point refused the command: docker never started, so nothing ran.
+		return Result{Sandbox: d.Name(), Isolation: isolation}, NotDispatched(RefusalEnvironment, refused)
+	}
 	cmd.Stdin = bytes.NewReader([]byte(withHostSDK(req.Code, req.Grant)))
-	var stdout, stderr cappedBuffer
-	stdout.limit = d.maxOutput()
-	stderr.limit = d.maxOutput() + len(started) // the marker is not the guest's output
+	var stdout, stderr providerkit.Capture
+	stdout.Limit = d.maxOutput()
+	stderr.Limit = d.maxOutput() + len(started) // the marker is not the guest's output
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -196,11 +206,10 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	}
 
 	if !guestStarted {
-		// No start marker, whatever docker exited with: almost always docker failed before
-		// the container's command started (a bad image, a rejected flag, a daemon error),
-		// so it is an infrastructure error, not "your code exited non-zero". Unmarked: a
-		// broken attach stream could lose the marker of a run that ran.
-		return Result{Sandbox: d.Name(), CallTrace: trace}, fmt.Errorf("docker did not run the container's command (%v): %s", err, truncateForError(strings.TrimSpace(stderr.String())))
+		// No start marker, whatever docker exited with: an infrastructure error, not "your
+		// code exited non-zero", and never marked (unstartedRun), the guest guard's refusal
+		// included.
+		return Result{Sandbox: d.Name(), CallTrace: trace}, unstartedRun("container's command", err, stderr.String())
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -213,6 +222,36 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 		res.ExitCode = exitErr.ExitCode()
 	}
 	return res, nil
+}
+
+// unstartedRun is the error of a fresh run (a snippet, a project, a module run) whose
+// container's standard error does not hold the run's start marker: what names the command,
+// runErr is what the docker CLI returned, stderr is that standard error. It is never marked not
+// dispatched, because no mark means the run may have executed and that must stay true here.
+//
+// Almost always docker failed before the container's command started (a bad image, a rejected
+// flag, a daemon error), but a broken attach stream can lose the marker of a run that ran. The
+// guest guard's refusal is no exception, though nothing of the run started when it is real: what
+// shows it is the guard's line as the last line of this standard error and the exit code of the
+// step it names, with no marker before them. A snippet's node is the container's command, so the
+// run's own code writes this standard error and picks this exit code; and under runc it can open
+// the same stream again for reading through /proc/self/fd/2 (measured 2026-11-20: 40 of 40 fresh
+// snippets whose first statement did so got the descriptor and read nothing, docker having taken
+// the marker first). So the marker's absence would rest on docker reading it before the run's
+// code does, and a mark could tell a caller that a run that ran did not, inviting a retry that
+// runs it again. A project's steps hold no descriptor of this stream while the runner guard
+// holds, and cannot make the runner exit with a code of the guard's, but a project and a module
+// run are held to the same rule rather than to that chain of facts. It is the rule a held
+// session's call follows (dockerSession.callRefusal). An end in the guard's shape gets
+// plimsoll's own words for the step and errno it names, never the line itself, and says that
+// whether the run's code ran is not known. The only mark a fresh run takes at its launch is the
+// refusing point's (refusedCommand): there docker never started.
+func unstartedRun(what string, runErr error, stderr string) error {
+	code := exitCodeOf(runErr)
+	if step, errno, ok := guestGuardShape(code, stderr); ok {
+		return fmt.Errorf("the run's %s ended as the guest guard ends when it refuses (step %s, errno %d, exit %d) and its start marker was not read; code of the run can write that line and exit with that code, so whether the run's code ran is not known", what, step, errno, code)
+	}
+	return fmt.Errorf("docker did not run the %s (%v): %s", what, runErr, truncateForError(strings.TrimSpace(stderr)))
 }
 
 // runnerSteps and runnerArtifacts copy the runner's decoded report into this
@@ -254,6 +293,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
 	}
+	policy = execState.withGuard(policy)
 	// A grant mounts the same per-run broker socket the snippet path uses; the runner
 	// preloads hostSDKModule(grant) into every step so project files reach host.* over
 	// the shared brokerSession. Nil grant → nil broker, no socket, empty HostSDK.
@@ -271,7 +311,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		return ProjectResult{Sandbox: d.Name()}, err
 	}
 	// The steps start with the image's environment and the grant's socket; the runner
-	// itself starts with neither (dockerRunnerArgv).
+	// itself starts with neither (runnerArgv).
 	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
 		Env: execState.guestEnv(imageID, grantEnv...), ReportKey: reportKey}
 	for _, f := range req.Files {
@@ -288,15 +328,15 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	// the bare runner.
 	var runner []string
 	if req.Grant.WantsLoopback() {
-		runner, err = dockerForwardingRunnerArgv(started, d.hostAPIListenAddr())
+		runner, err = d.forwardingRunnerArgv(started, d.hostAPIListenAddr())
 	} else {
-		runner, err = dockerRunnerArgv(started)
+		runner, err = d.runnerArgv(started)
 	}
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name()}, err
 	}
 
-	name := "crsbx-" + randID()
+	name := "crsbx-" + providerkit.RandHex(8)
 
 	// The runner reads the plan from stdin. Launch the Preflight-verified content ID,
 	// not the mutable tag. mountArgs (the broker socket bind) are docker options, so
@@ -306,16 +346,24 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	if execState.platform != "" {
 		args = append(args, "--platform", execState.platform)
 	}
-	args = append(args, launch(imageID, runner)...)
+	tail, err := launch(execState.guard, imageID, runner)
+	if err != nil {
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
+	}
+	args = append(args, tail...)
 	args, err = dockerArgs(execState.host, args...)
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
 	}
 	cmd := dockerCommand(runCtx, args...)
+	if refused := refusedCommand(cmd); refused != nil {
+		// As in runSnippet: docker never started, so nothing ran.
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, NotDispatched(RefusalEnvironment, refused)
+	}
 	cmd.Stdin = bytes.NewReader(planJSON)
-	var stdout, stderr cappedBuffer
-	stdout.limit = runnerwire.StdoutCap
-	stderr.limit = d.maxOutput() + len(started)
+	var stdout, stderr providerkit.Capture
+	stdout.Limit = runnerwire.StdoutCap
+	stderr.Limit = d.maxOutput() + len(started)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -360,8 +408,9 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		//     execution state unknown → ProtocolError.
 		var exitErr *exec.ExitError
 		if _, ran := afterMarker(stderr.String(), started); !ran {
+			// As in runSnippet: never marked, the guest guard's refusal included.
 			return ProjectResult{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace},
-				fmt.Errorf("docker did not run the project container's command (%v): %s", runErr, truncateForError(strings.TrimSpace(stderr.String())))
+				unstartedRun("project container's command", runErr, stderr.String())
 		}
 		// Detail is plimsoll's own words: it reaches the audit line, and the
 		// container's stderr is writable by every process in the sandbox. The exit
@@ -505,10 +554,12 @@ const (
 )
 
 // removeContainer removes the container name and returns nil once it is confirmed gone:
-// `docker rm -f` up to removeAttempts times, each followed when it fails by an
-// exact-name listing (containerGone), all inside ctx. Killing `docker run` does not
-// guarantee its container stops, so a removal that cannot be confirmed is an error,
-// never a silent success.
+// `docker rm -f` up to removeAttempts times, each after unpauseForRemoval and followed when
+// it fails by an exact-name listing (containerGone), all inside ctx. Killing `docker run`
+// does not guarantee its container stops, so a removal that cannot be confirmed is an
+// error, never a silent success. It is the one way every container of the provider is
+// removed: a run's, a session's at its end (close, lifetime, drain), a failed open's, a
+// pool member's, and the orphan pass's.
 func removeContainer(ctx context.Context, host, name string) error {
 	args, err := dockerArgs(host, "rm", "-f", name)
 	if err != nil {
@@ -516,6 +567,7 @@ func removeContainer(ctx context.Context, host, name string) error {
 	}
 	for attempt := 1; ; attempt++ {
 		actx, cancel := context.WithTimeout(ctx, removeAttemptBudget)
+		unpauseForRemoval(actx, host, name)
 		_, err := dockerOutput(actx, args...)
 		gone := err == nil || containerGone(actx, host, name)
 		cancel()
@@ -528,6 +580,54 @@ func removeContainer(ctx context.Context, host, name string) error {
 		if attempt == removeAttempts || providerkit.Sleep(ctx, time.Duration(attempt)*time.Second) != nil {
 			return fmt.Errorf("container %s not confirmed gone after %d attempts: %w", name, attempt, err)
 		}
+	}
+}
+
+// unpauseForRemoval unpauses name when it is paused (a suspended session's container) and
+// its runtime is not runc, so the `docker rm -f` right after it kills a running sandbox
+// (hunt-quality-106). Measured 2026-11-20 on Docker Engine 29.1.3 and gVisor
+// release-20260907.0, cgroup v2, with a scratch script's containers (a relay-shaped
+// docker exec attached, then docker pause):
+//
+//   - gVisor: rm -f of the paused container took 10.2 s, and so did docker kill: docker's
+//     kill does not take ("container ... is zombie and can not be killed", seen when a kill
+//     ran beside an unpause), so docker waits its 10 s for the container to stop and then
+//     ends it directly. Each removal try has 10 s (removeAttemptBudget), so the first try
+//     was always killed and the second confirmed it, about 11 s after the end began. With
+//     unpause first, the rm -f took 147 ms (170 ms in all).
+//   - runc: rm -f of the paused container took 138 ms and docker kill 59 ms, and the
+//     guest's code ran not at all (a loop counting in a bind-mounted file did not move): the
+//     kill reaches the frozen processes. So runc is not unpaused.
+//
+// No way of removing a paused gVisor container fast without letting it run again was
+// found: rm -f and kill both wait the 10 s, and a kill sent before the unpause held the
+// rm -f after it too, while the unpaused guest ran for 6.6 s of it. So under gVisor the guest's code runs again
+// between the unpause and the kill of the rm -f after it: measured at about 22 ms of the
+// counting loop's run time (1,736 iterations at 77,000 a second). In that moment it can do
+// only what it could do while the session ran, and less: every way out of the container
+// was shut before the removal began (a session's teardown closes its relays, then its
+// broker's socket, then removes the container; a failed open and a pool member close the
+// broker first; a dead daemon's broker sockets and relays died with it), it has no
+// network (--network none), its root file system is read-only and its writable places are
+// tmpfs mounts the removal destroys, and the limits on memory, processes and CPU and the
+// seccomp profile still apply. It cannot keep the kill from ending it. A container that is
+// not paused, already gone, or whose state cannot be read is left to the rm -f as before:
+// one docker inspect more per try, about 10 ms.
+func unpauseForRemoval(ctx context.Context, host, name string) {
+	args, err := dockerArgs(host, "inspect", "--type", "container", "--format", "{{.State.Paused}} {{.HostConfig.Runtime}}", name)
+	if err != nil {
+		return
+	}
+	state, err := dockerOutput(ctx, args...)
+	if err != nil {
+		return
+	}
+	paused, rt, _ := strings.Cut(strings.TrimSpace(string(state)), " ")
+	if paused != "true" || rt == "runc" {
+		return
+	}
+	if args, err := dockerArgs(host, "unpause", name); err == nil {
+		_, _ = dockerOutput(ctx, args...)
 	}
 }
 

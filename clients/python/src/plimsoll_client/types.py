@@ -116,6 +116,16 @@ class RunRecord:
     """The sandbox instance that ran the call, as the response states it: a typed
     reference such as ``k8s-pod-uid:`` and a pod's UID, or "" when the provider names
     none (docs/run-records.md)."""
+    isolation_qualification: str = ""
+    """The sentence the provider states beside ``isolation``, as the response states it,
+    or "" (record version 5). On an unanswered call's record, the one the session stated
+    at open."""
+    warm: bool = False
+    """Whether a waiting pool sandbox ran the call (a cell run with ``prefer_warm``), as
+    the response states it (record version 5)."""
+    daemon_version: str = ""
+    """The answering daemon's plimsoll module version, as the response states it: a
+    release such as ``v0.28.0``, a Go pseudo-version, or ``(devel)`` (record version 5)."""
 
 
 @dataclass(frozen=True)
@@ -145,6 +155,11 @@ class RunEvidence:
     """The provider that ran it (the wire's ``sandbox``)."""
     isolation: str
     """The tier the run executed behind, as the daemon states it."""
+    isolation_qualification: str = ""
+    """The sentence the provider's vendor or design requires beside ``isolation``, as the
+    daemon states it (only the WSL containers provider states one so far: Microsoft's
+    statement that WSL is not a security sandbox for running untrusted code), or "" when it
+    states none. Show it wherever you show the tier. The record repeats it, signed."""
     environment: str
     """The exact outer image or interpreter selected, when stated."""
     software_identity: str

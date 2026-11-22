@@ -16,9 +16,10 @@
 # (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE or _STORE_IMAGE, and unless
 # SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL) and/or OPENSHELL=1 (an OpenShell gateway and the
 # SANDBOX_OPENSHELL_* files) and/or AGENTSANDBOX=1 (an agent-sandbox cluster and the
-# SANDBOX_AGENTSANDBOX_* settings) to include them. DOCKER=1, DOCKERCLOUD=1, OPENSHELL=1 and AGENTSANDBOX=1
-# are requests for proof: those suites run in required mode, where missing
-# infrastructure or configuration fails the target instead of passing quietly. E2B and
+# SANDBOX_AGENTSANDBOX_* settings) to include them. Each is a request for proof: those
+# suites run in required mode (SUITE_BEGIN and SUITE_END below), where missing
+# infrastructure or configuration, or any skipped test, fails the target instead of
+# passing quietly. E2B and
 # dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway, nor
 # agentsandbox, which needs a cluster.
 SECCOMP := $(CURDIR)/docker/seccomp.json
@@ -28,12 +29,30 @@ SECCOMP := $(CURDIR)/docker/seccomp.json
 # the docker test helpers (requireDocker, sessionDocker) read as "skip", so a box with
 # docker and the images no longer runs the docker tests a second time, outside required
 # mode, in every plain `make audit` (418 s of a 7-minute gate on 2026-10-04). Tests in
-# this selection that need no docker run in both passes.
-DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
+# this selection that need no docker run in both passes. TestSessionInit is the session
+# init's tests (sandbox/docker_session_helpers_test.go), whose names hold none of the
+# other words.
+DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer|TestSessionInit
+
+# The Python client's checks on real docker sessions, in ./clients/python, by top-level
+# name, and the framework environments (make py-frameworks) they run in. docker-suite runs
+# them in required mode; clients-suite excludes them by these names, since CI's clients
+# job builds no images and a check there would skip, which fails that suite. One list for
+# both targets, so each of these checks runs in exactly one of them.
+DOCKER_PY_TESTS := TestPythonWorkspaceDocker|TestPythonReattachDocker|TestVerifiersRuntimeDocker|TestDeepAgentsDocker|TestAgentFrameworkDocker|TestSmolagentsDocker|TestPydanticAIDocker|TestPydanticAICrashDocker|TestADKEnvironmentDocker|TestPythonExamplesDocker
+# The ADK environment's check runs in the adk environment; the example programs run in the agno,
+# crewai, adk, openai_agents, agent_framework, smolagents and pydantic_ai environments, and the
+# LangChain one in deepagents (clients/python/examples_docker_test.go).
+DOCKER_PY_FRAMEWORKS := verifiers deepagents agent_framework smolagents pydantic_ai agno crewai adk openai_agents
+
+# The tests in dockercloud-suite's selection, by top-level name, that skip on purpose there
+# for want of settings of their own and belong to another target: the guarded-egress test,
+# dockercloud-guard-live's. That suite leaves them out, so any skip it does see fails it.
+DOCKERCLOUD_SUITE_SKIP := TestDockerCloudGuardLive
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-guard-live dockercloud-suite openshell-suite agentsandbox-suite wslc-suite wslc-gvisor-suite wslc-docker-check modproxy tools tools-check help
+.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite docker-go-suite docker-py-suite docker-faults docker-suite-parts py-frameworks py-frameworks-key py-frameworks-python py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-guard-live dockercloud-suite openshell-suite agentsandbox-suite wslc-suite wslc-gvisor-suite wslc-docker-check tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -101,19 +120,45 @@ modules:
 # dockercloud-suite, the deliberate paid runs, see one, and each sees only its own.
 NO_PAID_KEYS := env -u E2B_API_KEY -u DOCKER_SBX_TOKEN
 
+# GO_TEST_TIMEOUT is each test binary's limit in test, race, the docker suite's parts and
+# clients-suite: 30 minutes by default, since on a loaded machine the clients/python package
+# (the Python client's suite and the framework suites) took 562 to 589 s under make audit on
+# 2026-11-17, at the edge of go test's default 10-minute package timeout, and went past it twice
+# that day. Nearly all of that was a working copy's own test modules, which TestPython has run
+# apart since 2026-11-18 (PLIMSOLL_PY_ELSEWHERE, clients/python/client_test.go); its own tests
+# took 13 s. CI sets 15 minutes, under its jobs' 30-minute limits: there a test that hangs hits
+# go test's limit first, which prints every goroutine's stack, instead of the job's, which kills
+# the runner with no trace, and a package three times slower than its slowest CI run (./sandbox
+# under runsc, 330 s on 2026-11-17) fails instead of passing.
+GO_TEST_TIMEOUT ?= 30m
+
 ## test: unit tests (includes fuzz corpora as regressions); -short skips every docker test; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 test:
-	$(NO_PAID_KEYS) go test -short ./... -count=1
+	$(NO_PAID_KEYS) go test -short ./... -count=1 -timeout $(GO_TEST_TIMEOUT)
 
-## race: unit tests under the race detector; -short skips every docker test (docker-suite runs them); never sees E2B_API_KEY or DOCKER_SBX_TOKEN
+# A test that skips in the short pass runs only where a suite selects it, and the docker
+# suite selects by name and by package (DOCKER_TESTS, in the packages its line names). So
+# the pass ends with a check of its own structured results: every test that skipped must be
+# selected by the go test of some target that runs through SUITE_BEGIN, read from make's own
+# dry run of each (internal/suiterun's unselected). A test that needs docker under a name
+# or in a package no suite reaches then fails this pass, in every gate, without docker:
+# nine such tests had run in no target and no CI job until 2026-11-20. A test that is run by
+# hand on purpose (it needs a flag of its own and something no suite sets up) is listed in
+# BY_HAND_TESTS with the reason, one line each; a listed test that did not skip fails the
+# pass too, so the list cannot outlive what it describes. (+=: local.mk, read above, may have
+# named a list of its own already.)
+BY_HAND_TESTS += internal/suiterun/by-hand-tests.txt
+## race: unit tests under the race detector; -short skips every docker test (docker-suite runs them), and a test that skips here and that no suite selects fails the pass; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 race:
-	$(NO_PAID_KEYS) go test -race -short ./... -count=1
+	@mkdir -p tmp; rm -f tmp/race$(SUITE_TAG).results; go build -o tmp/race$(SUITE_TAG).reader ./internal/suiterun
+	SUITE_RESULTS=$(CURDIR)/tmp/race$(SUITE_TAG).results $(NO_PAID_KEYS) tmp/race$(SUITE_TAG).reader test -quiet -race -short ./... -count=1 -timeout $(GO_TEST_TIMEOUT)
+	tmp/race$(SUITE_TAG).reader unselected tmp/race$(SUITE_TAG).results $(BY_HAND_TESTS)
 
 ## lint: golangci-lint (must be on PATH)
 lint:
 	golangci-lint run ./...
 
-## generate: regenerate gen/ from proto/ and from every vendored third_party/*/buf.gen.yaml, then the Python and TypeScript client tables (internal/wiretables)
+## generate: regenerate gen/ from proto/ and from every vendored third_party/*/buf.gen.yaml, then the Python and TypeScript client tables (internal/wiretables) and the guest guard's filter (sandbox/internal/guestguard/gen)
 # The root template runs first: its `clean: true` empties gen/go, and each vendored
 # template then writes its own subdirectory. Vendored protos are a separate buf
 # workspace, so the root `buf lint` never lints upstream files we do not own.
@@ -125,15 +170,21 @@ generate:
 		buf generate "$$(dirname "$$t")" --template "$$t" || exit 1; \
 	done
 	go run ./internal/wiretables
+	go run ./sandbox/internal/guestguard/gen
 
 ## buf: proto lint + verify generated code is in sync, the client tables included (fails if `make generate` would change or add anything)
 buf: generate
 	buf lint
 	@git diff --exit-code --stat -- gen/ $(WIRE_TABLES) && [ -z "$$(git ls-files --others --exclude-standard -- gen/ $(WIRE_TABLES))" ] || { git ls-files --others --exclude-standard -- gen/ $(WIRE_TABLES) >&2; echo "generated code is stale or untracked: run 'make generate' and commit (or stage) gen/ and the client tables" >&2; exit 1; }
 
-# The Python and TypeScript clients' copies of the protocol's enums, the isolation tiers
-# and the cell languages, written by internal/wiretables in make generate.
-WIRE_TABLES := clients/python/src/plimsoll_client/_tables.py clients/typescript/src/tables.gen.ts
+# The Python and TypeScript clients' and the receipt checker's copies of the protocol's enums and
+# the wire rules (limits, grammars, record layouts), written by internal/wiretables in make generate.
+WIRE_TABLES := clients/python/src/plimsoll_client/_tables.py clients/typescript/src/tables.gen.ts examples/sbom/tables.gen.js clients/python/src/plimsoll_client/_granted.py clients/typescript/src/granted.gen.ts
+
+## publish-workflows: write the Python packages' publish workflows (.github/workflows/publish-<name>.yml) from internal/publishflows' table, one row per PyPI project; its test fails when a file is not what this writes
+.PHONY: publish-workflows
+publish-workflows:
+	go run ./internal/publishflows
 
 ## vuln: govulncheck against the pinned toolchain
 vuln:
@@ -148,9 +199,9 @@ docker-images:
 	  docker pull "$$img"; \
 	fi
 	@h="$$($(DOCKER_INPUTS_HASH))"; set -ex; \
-	docker build $(DOCKER_BASE_ARGS) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
+	docker build $(DOCKER_BASE_ARGS) $(NATIVE_HELPER_CONTEXT) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/; \
-	docker build $(DOCKER_BASE_ARGS) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
+	docker build $(DOCKER_BASE_ARGS) $(NATIVE_HELPER_CONTEXT) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
 
 # DOCKER_HUB_MIRROR, unset by default, names a registry serving Docker Hub's official
@@ -165,51 +216,179 @@ DOCKER_BASE_ARGS = $(if $(DOCKER_HUB_MIRROR),$(shell sed -n 's|^ARG \(BASE_[A-Z_
 
 # The images the suite builds from docker/, and the label each carries: a hash of the
 # build context (every file under docker/ by path and content, minus the literal paths
-# in docker/.dockerignore). docker-suite refuses an image whose label is not the current
+# in docker/.dockerignore, then the native helper's two files, below). docker-suite refuses an image whose label is not the current
 # hash, so a change under docker/ cannot pass the suite on images built before it. The
 # base images the Dockerfiles name (node:22-alpine and the others) are outside it.
+# The project runner in those images, the native helper, is not under docker/: the images
+# that carry it (docker/Dockerfile, docker/sim.Dockerfile) take it from the named build
+# context nativehelper, its committed build at its pin (NATIVE_HELPER_DIR), and the hash
+# covers the two files they read from there, named nativehelper/<file>, after docker/'s.
 DOCKER_BUILT_IMAGES = plimsoll/sandbox:latest plimsoll/sandbox-python:latest plimsoll/sandbox-sim:latest plimsoll/sandbox-wasm-cc:latest
 DOCKER_INPUTS_LABEL = io.plimsoll.inputs
-DOCKER_INPUTS_HASH = cd docker && find . -type f | sed 's|^\./||' | LC_ALL=C sort | grep -vxF -f .dockerignore \
-	| while IFS= read -r f; do printf '%s\0' "$$f"; cat -- "$$f"; done | sha256sum | cut -c1-64
+NATIVE_HELPER_DIR = sandbox/internal/nativehelper/program
+NATIVE_HELPER_FILES = plimsoll-helper.sha256 plimsoll-helper_amd64
+NATIVE_HELPER_CONTEXT = --build-context nativehelper=$(NATIVE_HELPER_DIR)
+DOCKER_INPUTS_HASH = { (cd docker && find . -type f | sed 's|^\./||' | LC_ALL=C sort | grep -vxF -f .dockerignore \
+	| while IFS= read -r f; do printf '%s\0' "$$f"; cat -- "$$f"; done) && \
+	(cd $(NATIVE_HELPER_DIR) && for f in $(NATIVE_HELPER_FILES); do printf 'nativehelper/%s\0' "$$f"; cat -- "$$f" || exit 1; done); } \
+	| sha256sum | cut -c1-64
 
-# Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
-# fail instead of skip when the daemon or an image is missing; the scan afterwards
-# fails the target on ANY skipped test in the selection, so a future bare t.Skip
-# cannot turn requested coverage into a quiet pass either. -skip 'Live$' excludes the
+# Required mode, written once. A suite that is a request for proof (its help line says a
+# skipped test FAILS it) wraps its commands, on one recipe line, as
+#
+#	@$(SUITE_BEGIN) <commands>; $(SUITE_END)
+#
+# SUITE_BEGIN makes tmp/ and fails when it is not writable; the commands' output goes to
+# the terminal and to tmp/<target>.log; SUITE_END fails the target on ANY skipped Go test
+# in the suite's structured results, listing each, so a future bare t.Skip cannot turn
+# requested coverage into a quiet pass, and otherwise exits with the commands' own status. A status file, rather
+# than the pipe, carries that status past tee under POSIX sh, and a command that ends the
+# shell before it is written fails the target. A suite that builds something with $(MAKE)
+# does it on a line of its own first: make runs a line holding $(MAKE) even under -n. Until
+# 2026-11-18 each suite carried its own copy of this, and the copies had drifted: one
+# listed no skipped test, one did not tee, and two had no scan at all
+# (internal/maketest holds every FAILS target to it now).
+# Whether a test skipped is read from go test's structured results (go test -json), never
+# from the words it prints: every go test of a suite runs as $(SUITE_TEST), which is
+# internal/suiterun's reader, built by SUITE_BEGIN into tmp/<target>.reader. It runs go test
+# -json with the same arguments, prints what -v would, and appends each test's result to
+# tmp/<target>.results; SUITE_END's check reads that file and fails the target on a skipped
+# test, naming each, and on no result at all, so a go test written here without the reader
+# fails its suite. Until 2026-11-20 SUITE_END searched the log for go test's "--- SKIP",
+# which go test prints only under -v, a flag nothing required.
+# SUITE_TAG (empty unless set) is added to each of a suite's file names in tmp/, so two runs of
+# one suite at the same moment in one checkout (the docker Go suite under runc and under
+# gVisor, side by side) each write files of their own: make docker-go-suite SUITE_TAG=.runsc
+# writes tmp/docker-go-suite.runsc.log, .status, .results and .reader.
+MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+SUITE_TAG ?=
+SUITE_FILE = tmp/$@$(SUITE_TAG)
+SUITE_READER = $(CURDIR)/$(SUITE_FILE).reader
+SUITE_TEST = $(SUITE_READER) test
+SUITE_BEGIN = mkdir -p tmp; [ -w tmp ] || { echo "$@: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }; rm -f $(SUITE_FILE).status $(SUITE_FILE).results; \
+	go build -C $(MAKEFILE_DIR) -o $(SUITE_READER) ./internal/suiterun || exit 1; export SUITE_RESULTS=$(CURDIR)/$(SUITE_FILE).results; \
+	$(if $(SUITE_DOCKER_RUN),suite_run="$$(mktemp -d -t pXXX)" || exit 1; export TMPDIR="$$suite_run";) {
+SUITE_END = echo $$? > $(SUITE_FILE).status; } 2>&1 | tee $(SUITE_FILE).log; \
+	$(if $(SUITE_DOCKER_RUN),$(SUITE_READER) leftovers "$$suite_run"; left=$$?; rm -rf "$$suite_run"; [ "$$left" = 0 ] || exit 1;) \
+	$(SUITE_READER) check $(SUITE_FILE).results || { echo "$@: its results did not pass the reader's check (above)" >&2; exit 1; }; \
+	s="$$(cat $(SUITE_FILE).status 2>/dev/null)"; [ "$$s" = 0 ] || exit "$${s:-1}"; echo "$@: OK"
+# A docker suite (SUITE_DOCKER_RUN set for its target, below) runs its tests with TMPDIR a
+# directory made for the run, where the docker provider keeps the files it bind-mounts into
+# every container it starts, and ends by failing on any container still on the docker host
+# with a mount from there, which it names and removes (suiterun leftovers): a container this
+# run started that no test closed, told apart by its mounts from another suite's on the same
+# host at the same moment. The docker Python suite left a paused session container and the
+# docker exec attached to it on every run until 2026-11-20, and the exec kept the gate's
+# scope alive after the gate ended. The directory's name is short (/tmp/pXXX, 5 characters
+# more than /tmp itself) because a unix socket's path holds at most 107 bytes and the
+# longest a docker test makes under TMPDIR is 100 under /tmp (the E2B stand-in's envd.sock
+# under t.TempDir); with /tmp/plimsoll-suite.XXXXXXXX ten of them could not listen.
+
+# The docker suite is in parts, each a required suite of its own: docker-go-suite, the Go
+# tests in ./sandbox, ./sandbox/openshell, ./sandbox/agentsandbox and ./docker, and
+# docker-py-suite, the Python client's checks on real docker sessions. make docker-suite runs
+# them in turn; CI runs each as a job of its own at the same time, under runc (audit.yml) and
+# under runsc (gvisor.yml), through .github/workflows/docker-suite.yml, which reads this list
+# from make docker-suite-parts. In one job the two took 232 s and then 128 s under runc, and
+# 330 s and then 243 s under runsc (CI 2026-11-17 and the rehearsal of 2026-11-18), on the
+# same four CPUs; as two jobs they overlap. A new part is a new target here, named in this
+# list with the framework environments it builds (<part>_FRAMEWORKS, empty for none).
+DOCKER_SUITE_PARTS := docker-go-suite docker-py-suite
+$(DOCKER_SUITE_PARTS): SUITE_DOCKER_RUN = 1
+docker-py-suite_FRAMEWORKS = $(DOCKER_PY_FRAMEWORKS)
+# A part whose tests run node names the node CI installs for it (<part>_NODE, empty for none):
+# docker-py-suite's example programs include the TypeScript client's granted example
+# (clients/typescript/examples/granted.ts), which node runs from source, and TypeScript without a
+# build needs node 22.18 or later. NODE_VERSION is that node, the one the clients job pins too
+# (internal/maketest's TestDockerSuiteParts holds the two equal); here a part runs the node on PATH.
+NODE_VERSION := 22.18.0
+docker-py-suite_NODE = $(NODE_VERSION)
+
+## docker-suite: both parts of the docker suite in turn (docker-go-suite, then docker-py-suite, each in required mode); it fails when either part does, after running both
+# make runs a line holding $(MAKE) even under -n, and passes -n on, so make -n docker-suite
+# prints each part's commands and runs none.
+docker-suite:
+	@status=0; for part in $(DOCKER_SUITE_PARTS); do $(MAKE) --no-print-directory $$part || status=1; done; exit $$status
+
+comma := ,
+## docker-suite-parts: print the docker suite's parts as JSON, for CI's matrix: each part's target, the framework environments it builds, the Python they are locked for, and the node its tests run (empty for none)
+docker-suite-parts:
+	@echo '[$(subst } {,}$(comma){,$(foreach p,$(DOCKER_SUITE_PARTS),{"part":"$(p)"$(comma)"frameworks":"$(strip $($(p)_FRAMEWORKS))"$(comma)"python":"$(PY_FRAMEWORKS_PYTHON)"$(comma)"node":"$(strip $($(p)_NODE))"}))]'
+
+# Each part first refuses an image whose inputs label is not the current hash of docker/.
+DOCKER_IMAGES_CURRENT = h="$$($(DOCKER_INPUTS_HASH))"; for img in $(DOCKER_BUILT_IMAGES); do \
+	   got="$$(docker image inspect -f '{{index .Config.Labels "$(DOCKER_INPUTS_LABEL)"}}' $$img 2>/dev/null)"; \
+	   [ "$$got" = "$$h" ] || { echo "$@: $$img was not built from the current docker/ (label '$$got', inputs now $$h); run make docker-images" >&2; exit 1; }; \
+	 done
+
+# The parts are required mode twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test
+# helpers fail instead of skip when the daemon or an image is missing, and the runner fails
+# the target on any skipped test in the selection. -skip 'Live$' excludes the
 # live E2B and dockercloud tests, which can match the selection by name and skip
 # without a key; they belong to their own suites, and here a skip must mean docker.
 # Anchored, because an unanchored Live also matched TestDockerSessionGrantLivesForItsCall,
 # which no required run covered until 2026-10-03.
 # The dockercloud unit tests (a fake Connect server, and the exec wrapper under the
-# toolchain image's busybox) match 'Docker' and run here. The status file, rather
-# than a pipe, keeps the go test exit code under POSIX sh. OracleAttack is the oracle's
+# toolchain image's busybox) match 'Docker' and run here. OracleAttack is the oracle's
 # anti-forgery set, which needs the sim image and matches none of the other names; the
 # ./docker package holds the gVisor installer's offline-bundle check, which skips
 # without zstd and so ran in no required suite before.
-## docker-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check, under the race detector; a missing daemon, image, tool or skipped test FAILS
-# DOCKER_PARALLEL caps how many docker-suite tests run at once. Only the tests that
-# call t.Parallel take part; the rest (those that change the environment, list every
-# session container on the host, or retag a shared image) run first, alone.
+# docker-py-suite is the Python client's checks on real docker sessions (DOCKER_PY_TESTS),
+# without the race detector, the framework ones each in its framework environment
+# (DOCKER_PY_FRAMEWORKS, built first, on a line of its own). Under
+# SANDBOX_DOCKER_RUNTIME=runsc, as the gvisor workflow runs both parts, their sessions run
+# on gVisor, and the verifiers, framework and example checks set the kernel tier as their
+# isolation floor.
+# make runs a recipe line that holds $(MAKE) even under -n (GNU make's rule for recursive
+# make), so each suite builds its framework environments on a line of its own and no line that
+# runs a test holds $(MAKE): make -n docker-py-suite and make -n clients-suite run no test
+# (review finding release-36; internal/maketest's TestSuiteDryRunsRunNoTest holds it).
+# DOCKER_PARALLEL caps how many docker tests run at once. Only the tests that
+# call t.Parallel take part; the rest (those that change the environment or retag a
+# shared image) run first, alone.
 DOCKER_PARALLEL ?= 4
-docker-suite:
-	@h="$$($(DOCKER_INPUTS_HASH))"; for img in $(DOCKER_BUILT_IMAGES); do \
-	   got="$$(docker image inspect -f '{{index .Config.Labels "$(DOCKER_INPUTS_LABEL)"}}' $$img 2>/dev/null)"; \
-	   [ "$$got" = "$$h" ] || { echo "docker-suite: $$img was not built from the current docker/ (label '$$got', inputs now $$h); run make docker-images" >&2; exit 1; }; \
-	 done
-	@mkdir -p tmp
-	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
-	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test -race ./sandbox ./sandbox/openshell ./sandbox/agentsandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -timeout 30m -v; \
-	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
-	@{ $(MAKE) --no-print-directory py-frameworks PY_FRAMEWORKS=verifiers && \
-	   SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test ./clients/python -run '^(TestPythonWorkspaceDocker|TestVerifiersRuntimeDocker)$$' -count=1 -v; \
-	   echo $$? > tmp/docker-suite-python.status; } 2>&1 | tee -a tmp/docker-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
-	   echo "docker-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/docker-suite.log >&2; exit 1; fi
-	@s="$$(cat tmp/docker-suite.status)"; [ "$$s" = 0 ] || exit "$$s"; exit "$$(cat tmp/docker-suite-python.status)"
+# DOCKER_RUNTIME_BLIND names the tests of docker-go-suite's selection whose containers never
+# run under SANDBOX_DOCKER_RUNTIME: the stand-in for E2B's service starts its own with a
+# docker run that names no runtime (sandbox/e2b_session_docker_test.go), and the E2B
+# provider they test never names one. Under another runtime they repeat the default
+# runtime's run word for word (198 to 300 s of test time in the gVisor pass, 2026-11-20), so
+# a pass under a named runtime other than runc leaves them out, and the default pass, which
+# make audit DOCKER=1 and CI's runc job run, is where they are proven. Run with
+# SANDBOX_DOCKER_RUNTIME naming a runtime docker does not have, all of them pass: none asks
+# docker for it. internal/maketest's TestRuntimeBlindTests holds the pattern to the code:
+# every test it selects is in a file that never reads the runtime, and it selects nothing
+# outside the stand-in's two files.
+DOCKER_RUNTIME_BLIND := ^TestE2B(Session)?Docker
+DOCKER_GO_SKIP = Live$$$(if $(filter-out runc,$(SANDBOX_DOCKER_RUNTIME)),|$(DOCKER_RUNTIME_BLIND))
+## docker-go-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check, under the race detector; a missing daemon, image, tool or skipped test FAILS; under a SANDBOX_DOCKER_RUNTIME other than runc, without the tests whose containers never run under it (DOCKER_RUNTIME_BLIND)
+docker-go-suite:
+	@$(DOCKER_IMAGES_CURRENT)
+	@$(SUITE_BEGIN) SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
+	     $(NO_PAID_KEYS) $(SUITE_TEST) -race ./sandbox ./sandbox/openshell ./sandbox/agentsandbox ./docker -run '$(DOCKER_TESTS)' -skip '$(DOCKER_GO_SKIP)' -count=1 -parallel $(DOCKER_PARALLEL) -timeout $(GO_TEST_TIMEOUT); $(SUITE_END)
+## docker-py-suite: the Python client's checks on real docker sessions (the agent workspace, the verifiers runtime, the Deep Agents, Agent Framework, smolagents, PydanticAI and Google ADK environment adapters, and the example programs), each in the framework environment its lock pins; a missing daemon, image, framework environment or skipped test FAILS
+docker-py-suite:
+	@$(DOCKER_IMAGES_CURRENT)
+	@$(MAKE) --no-print-directory py-frameworks PY_FRAMEWORKS="$(DOCKER_PY_FRAMEWORKS)"
+	@$(SUITE_BEGIN) SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
+	     $(NO_PAID_KEYS) $(SUITE_TEST) ./clients/python -run '^($(DOCKER_PY_TESTS))$$' -count=1 -parallel $(DOCKER_PARALLEL) -timeout $(GO_TEST_TIMEOUT); $(SUITE_END)
+
+# docker-faults runs the docker provider against a docker CLI that fails on purpose
+# (sandbox/faultrounds_test.go): ROUNDS rounds, each one scenario (a snippet, a session's
+# open, cells, suspend, resume, close or lifetime end, a pool claim, the orphan pass) with
+# one docker command refused, hung, slowed, or run and then reported failed or hung, and
+# after each the checks of what it left behind. The rounds that once found a defect run
+# first. SEED=<seed>[,<seed>...] replays those rounds alone; START=<seed> repeats a whole
+# run. Under SANDBOX_DOCKER_RUNTIME=runsc the rounds run on gVisor. It is not part of
+# make audit: 150 rounds take tens of minutes.
+ROUNDS ?= 150
+SEED ?=
+START ?=
+docker-faults: SUITE_DOCKER_RUN = 1
+## docker-faults: the docker provider's cleanup under docker commands that fail, hang or lie on purpose (ROUNDS=150, SEED= to replay, START= to repeat a run); a missing daemon, image or skipped test FAILS
+docker-faults:
+	@$(DOCKER_IMAGES_CURRENT)
+	@$(SUITE_BEGIN) SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" PLIMSOLL_FAULT_ROUNDS="$(ROUNDS)" PLIMSOLL_FAULT_SEED="$(SEED)" PLIMSOLL_FAULT_START="$(START)" \
+	     $(NO_PAID_KEYS) $(SUITE_TEST) -race ./sandbox -run '^TestFaultRounds$$' -count=1 -timeout 4h; $(SUITE_END)
 
 # One virtual environment per Python framework adapter, installed from its directory's lock:
 # requirements.in names the framework version, requirements.txt is every package it pulls in,
@@ -220,7 +399,7 @@ docker-suite:
 # current; any change rebuilds it from scratch.
 PY_FRAMEWORKS_PYTHON := 3.12
 # PY_FRAMEWORKS names the environments to build, every lock by default; docker-suite builds
-# only verifiers, the one its Python checks need.
+# only DOCKER_PY_FRAMEWORKS, the ones its Python checks need.
 PY_FRAMEWORKS ?= $(patsubst clients/python/frameworks/%/requirements.txt,%,$(wildcard clients/python/frameworks/*/requirements.txt))
 ## py-frameworks: build tmp/py-frameworks/<name> from each clients/python/frameworks/<name>/requirements.txt lock, or only those PY_FRAMEWORKS names (needs the network the first time)
 py-frameworks:
@@ -238,6 +417,21 @@ py-frameworks:
 	   fi; \
 	 done
 
+## py-frameworks-python: print the Python the framework locks are compiled for (PY_FRAMEWORKS_PYTHON), which CI's jobs install; internal/maketest checks every lock's header names it
+py-frameworks-python:
+	@echo "$(PY_FRAMEWORKS_PYTHON)"
+
+## py-frameworks-key: print a digest of what decides the content of the PY_FRAMEWORKS environments (each name and its lock, the Python the locks are for, and the py-frameworks recipe), the key CI caches tmp/py-frameworks under
+# CI restores the environments from GitHub's cache under this key and the runner's exact
+# Python, so a change to a lock, the list, the Python or the way an environment is built makes
+# a new key, and make py-frameworks then builds what the restored stamps do not match.
+py-frameworks-key:
+	@for name in $(PY_FRAMEWORKS); do [ -f clients/python/frameworks/$$name/requirements.txt ] || { echo "$@: no lock for $$name" >&2; exit 1; }; done; \
+	 recipe="$$(sed -n '/^py-frameworks:$$/,/^$$/p' $(firstword $(MAKEFILE_LIST)))"; \
+	 [ -n "$$recipe" ] || { echo "$@: no py-frameworks recipe in $(firstword $(MAKEFILE_LIST))" >&2; exit 1; }; \
+	 { printf '%s\n' "$$recipe" "$(PY_FRAMEWORKS_PYTHON)"; \
+	   for name in $(PY_FRAMEWORKS); do printf '%s\0' "$$name"; cat clients/python/frameworks/$$name/requirements.txt; done; } | sha256sum | cut -c1-64
+
 ## py-frameworks-lock: recompile each framework's requirements.txt from its requirements.in, every package pinned with hashes (pip-tools in tmp/piptools; needs the network)
 py-frameworks-lock:
 	@[ -x tmp/piptools/bin/pip-compile ] || { python3 -m venv tmp/piptools && tmp/piptools/bin/pip install --quiet --disable-pip-version-check pip-tools; }
@@ -248,8 +442,8 @@ py-frameworks-lock:
 
 # Install both lockfiles and the Python framework environments, then require the
 # Python, Python framework adapter, TypeScript client, add-on and Trigger.dev suites.
-# Keep the go test exit status despite tee, and fail on any Go test skip in case a
-# future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
+# The runner fails on any Go test skip in case a future test bypasses
+# PLIMSOLL_REQUIRE_CLIENTS.
 # npm ci runs with --ignore-scripts: the trigger example's lockfile holds three packages
 # with install scripts (@depot/cli's downloads a binary at install), and its tests need
 # none of them (esbuild's binary comes as an optional dependency). Checked 2026-10-24.
@@ -257,20 +451,18 @@ py-frameworks-lock:
 # (gitignored), and the Trigger.dev example imports the client through dist, so the
 # client is built here, from the source under test: a fresh checkout has no dist, and a
 # stale one would test old code (found in review, 2026-10-28).
-## clients-suite: install both npm dependency sets, build the TypeScript client's dist, install the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (TestPythonWorkspaceDocker and TestVerifiersRuntimeDocker need the docker images and are docker-suite's, so they are excluded here rather than skipped)
+# The Python package took 9 to 11 minutes (TestPython about 500 s and TestDeepAgentsDocker about
+# 130 s on 2026-11-17), past go test's default 10-minute package timeout, so the suite sets
+# GO_TEST_TIMEOUT (see above). The checks on real docker sessions (the framework ones, the example
+# programs) have since moved to docker-suite, and TestPython's growth was a working copy's own
+# test modules, which it has run apart since 2026-11-18.
+## clients-suite: install both npm dependency sets, build the TypeScript client's dist, install the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (the Python client's checks on real docker sessions, DOCKER_PY_TESTS, are docker-suite's, so they are excluded here rather than skipped)
 clients-suite:
-	@mkdir -p tmp
-	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
-	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null && \
+	@$(MAKE) --no-print-directory py-frameworks
+	@$(SUITE_BEGIN) (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null && \
 	    rm -rf dist && $(NO_PAID_KEYS) npm run build --userconfig=/dev/null) && \
 	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
-	   $(MAKE) --no-print-directory py-frameworks && \
-	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -skip '^(TestPythonWorkspaceDocker|TestVerifiersRuntimeDocker)$$' -count=1 -v; \
-	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/clients-suite.log; then \
-	   echo "clients-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/clients-suite.log >&2; exit 1; fi
-	@exit "$$(cat tmp/clients-suite.status)"
+	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./clients/python/ ./clients/typescript/ -skip '^($(DOCKER_PY_TESTS))$$' -count=1 -timeout $(GO_TEST_TIMEOUT); $(SUITE_END)
 
 # The capsule example is its own Go module (Go 1.27 and the capsule emitter's COSE
 # and CBOR dependencies), outside `go build ./...` at the root, so nothing else
@@ -283,7 +475,6 @@ clients-suite:
 ## capsule-suite: vet and race-test examples/capsule (its own Go module) with the Python reference verifier installed from its hash-pinned lockfile; a missing verifier or a skipped test FAILS
 capsule-suite:
 	@mkdir -p tmp
-	@[ -w tmp ] || { echo "capsule-suite: tmp/ is not writable" >&2; exit 1; }
 	@req=examples/capsule/requirements.txt; venv=tmp/capsule-verifier; stamp=$$(sha256sum $$req | cut -d' ' -f1); \
 	 if [ "$$(cat $$venv/.requirements 2>/dev/null)" != "$$stamp" ]; then \
 	   echo "capsule-suite: building $$venv"; \
@@ -291,13 +482,8 @@ capsule-suite:
 	   $(NO_PAID_KEYS) $$venv/bin/pip install --quiet --disable-pip-version-check --require-hashes --no-deps -r $$req && \
 	   echo $$stamp > $$venv/.requirements || exit 1; \
 	 fi
-	@{ (cd examples/capsule && $(NO_PAID_KEYS) go vet ./... && \
-	   AAC_VERIFIER="$(CURDIR)/tmp/capsule-verifier/bin/agent-action-capsule" $(NO_PAID_KEYS) go test -race -count=1 -v ./...); \
-	   echo $$? > tmp/capsule-suite.status; } 2>&1 | tee tmp/capsule-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/capsule-suite.log; then \
-	   echo "capsule-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/capsule-suite.log >&2; exit 1; fi
-	@exit "$$(cat tmp/capsule-suite.status)"
+	@$(SUITE_BEGIN) (cd examples/capsule && $(NO_PAID_KEYS) go vet ./... && \
+	   AAC_VERIFIER="$(CURDIR)/tmp/capsule-verifier/bin/agent-action-capsule" $(NO_PAID_KEYS) $(SUITE_TEST) -race -count=1 ./...); $(SUITE_END)
 
 ## capsule-lock: recompile examples/capsule/requirements.txt from its requirements.in, every package pinned with hashes (pip-tools in tmp/piptools; needs the network)
 capsule-lock:
@@ -307,58 +493,44 @@ capsule-lock:
 .PHONY: receipt-suite
 ## receipt-suite: run examples/pr-receipt/receipt.sh end to end (docker, runsc, the containerd image store); a skipped test FAILS
 receipt-suite:
-	@mkdir -p tmp
-	@{ RECEIPT_SUITE=1 $(NO_PAID_KEYS) go test ./examples/pr-receipt -run TestReceiptScriptEndToEnd -count=1 -v; \
-	   echo $$? > tmp/receipt-suite.status; } 2>&1 | tee tmp/receipt-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/receipt-suite.log; then \
-	   echo "receipt-suite: required coverage was skipped" >&2; exit 1; fi
-	@status="$$(cat tmp/receipt-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "receipt-suite: OK"
+	@$(SUITE_BEGIN) RECEIPT_SUITE=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./examples/pr-receipt -run TestReceiptScriptEndToEnd -count=1; $(SUITE_END)
 
 .PHONY: policy-suite
 ## policy-suite: the receipt verifier's policy gate on the Open Policy Agent release pinned in examples/pr-receipt/policy/opa.version (downloaded into tmp/tools once, its SHA-256 checked before it runs): the example policy's own tests and every refusal; a skipped test FAILS
 policy-suite:
-	@mkdir -p tmp
-	@opa="$$(sh examples/pr-receipt/policy/opa.sh "$$PWD/tmp/tools")" || exit 1; \
-	  PLIMSOLL_OPA="$$opa" go test ./examples/pr-receipt -run ReceiptPolicyGate -count=1 -v > tmp/policy-suite.log 2>&1; status=$$?; \
-	  cat tmp/policy-suite.log; \
-	  if grep -qE '^ *--- SKIP' tmp/policy-suite.log; then echo "policy-suite: required coverage was skipped" >&2; exit 1; fi; \
-	  [ "$$status" = 0 ] || exit "$$status"; echo "policy-suite: OK"
+	@$(SUITE_BEGIN) opa="$$(sh examples/pr-receipt/policy/opa.sh "$$PWD/tmp/tools")" && \
+	  PLIMSOLL_OPA="$$opa" $(SUITE_TEST) ./examples/pr-receipt -run ReceiptPolicyGate -count=1; $(SUITE_END)
 
 # This nested module uses its embedded schemas and published signed bundle only.
 # No sandbox is created and no hosted service or credential is used.
 .PHONY: sbom-suite
 ## sbom-suite: vet and race-test examples/sbom offline; a skipped test FAILS
 sbom-suite:
-	@mkdir -p tmp
-	@[ -w tmp ] || { echo "sbom-suite: tmp/ is not writable" >&2; exit 1; }
-	@{ (cd examples/sbom && $(NO_PAID_KEYS) go vet ./... && \
-	   $(NO_PAID_KEYS) go test -race -count=1 -v ./...); \
-	   echo $$? > tmp/sbom-suite.status; } 2>&1 | tee tmp/sbom-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/sbom-suite.log; then \
-	   echo "sbom-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/sbom-suite.log >&2; exit 1; fi
-	@status="$$(cat tmp/sbom-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "sbom-suite: OK"
+	@$(SUITE_BEGIN) (cd examples/sbom && $(NO_PAID_KEYS) go vet ./... && \
+	   $(NO_PAID_KEYS) $(SUITE_TEST) -race -count=1 ./...); $(SUITE_END)
 
 ## mcp-suite: the MCP server's own module (clients/mcp): vet, lint, race tests (the real RPC handler over fake providers, the built binary over stdio) and govulncheck, since it ships as a binary; any skipped test FAILS
 mcp-suite:
-	@mkdir -p tmp
-	@[ -w tmp ] || { echo "mcp-suite: tmp/ is not writable" >&2; exit 1; }
-	@{ (cd clients/mcp && $(NO_PAID_KEYS) go vet ./... && golangci-lint run ./... && \
-	   $(NO_PAID_KEYS) go test -race -count=1 -v ./... && govulncheck ./...); \
-	   echo $$? > tmp/mcp-suite.status; } 2>&1 | tee tmp/mcp-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/mcp-suite.log; then \
-	   echo "mcp-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/mcp-suite.log >&2; exit 1; fi
-	@status="$$(cat tmp/mcp-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "mcp-suite: OK"
+	@$(SUITE_BEGIN) (cd clients/mcp && $(NO_PAID_KEYS) go vet ./... && golangci-lint run ./... && \
+	   $(NO_PAID_KEYS) $(SUITE_TEST) -race -count=1 ./... && govulncheck ./...); $(SUITE_END)
 
-## e2b-suite: the live E2B tests (needs E2B_API_KEY)
+# The live E2B suite. E2B_LIVE_REQUIRED=1 is the opt-in to spend, which only this target
+# sets, and under it a missing E2B_API_KEY fails instead of skipping, so a green run means
+# the live service was exercised, as dockercloud-suite's DOCKERCLOUD_LIVE_REQUIRED does.
+# The two guarded-egress tests match the selection by name and skip on purpose without
+# their deployment's settings; they are e2b-guard-live's, so they are left out here by
+# name, and any skip left is missing coverage, which fails the target.
+## e2b-suite: the live E2B tests, the guarded-egress ones aside (e2b-guard-live runs those); a missing E2B_API_KEY or a skipped test FAILS (spends)
 e2b-suite:
-	E2B_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'E2B.*Live' -count=1 -v
+	@$(SUITE_BEGIN) E2B_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN $(SUITE_TEST) ./sandbox -run 'E2B.*Live' -skip '^TestE2B(Session)?GuardLive$$' -count=1; $(SUITE_END)
 
 # The live Docker Cloud Sandboxes suite. DOCKERCLOUD_LIVE_REQUIRED=1 makes missing
 # configuration fail instead of skip, so a green run means the live service was
 # exercised. The provider is written against Docker's published contract; this
-# target is how it gets verified against the real service.
+# target is how it gets verified against the real service. The tests in its selection
+# that skip on purpose without settings of their own are left out by name
+# (DOCKERCLOUD_SUITE_SKIP, above), so any skip left is missing coverage, which fails the
+# target.
 #
 #   DOCKER_SBX_TOKEN              a Docker personal access token for automation
 #   DOCKER_SBX_USERNAME           the account it belongs to
@@ -367,9 +539,9 @@ e2b-suite:
 #   SANDBOX_DOCKERCLOUD_IMAGE     the toolchain image, pullable by the service, or
 #   SANDBOX_DOCKERCLOUD_STORE_IMAGE  one in the account's image store (<id>@sha256:<digest>; connect)
 #
-## dockercloud-suite: the live Docker Cloud Sandboxes tests (FAILS if not configured; spends)
+## dockercloud-suite: the live Docker Cloud Sandboxes tests, the guarded-egress one aside (dockercloud-guard-live runs it); missing configuration or a skipped test FAILS (spends)
 dockercloud-suite:
-	DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY go test ./sandbox -run 'DockerCloud.*Live' -count=1 -v
+	@$(SUITE_BEGIN) DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY $(SUITE_TEST) ./sandbox -run 'DockerCloud.*Live' -skip '^($(DOCKERCLOUD_SUITE_SKIP))$$' -count=1; $(SUITE_END)
 
 # The live OpenShell suite: the provider's tests and a daemon test against a real
 # gateway (sandbox/openshell/live_test.go, cmd/plimsolld/openshell_live_test.go). It
@@ -390,14 +562,8 @@ dockercloud-suite:
 #
 ## openshell-suite: the live OpenShell provider and daemon tests; a missing gateway or a skipped test FAILS
 openshell-suite:
-	@mkdir -p tmp
-	@{ OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/openshell -run 'Live' -count=1 -v && \
-	   OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test ./cmd/plimsolld -run 'OpenShell.*Live' -count=1 -v; \
-	   echo $$? > tmp/openshell-suite.status; } 2>&1 | tee tmp/openshell-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/openshell-suite.log; then \
-	   echo "openshell-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/openshell-suite.log >&2; exit 1; fi
-	@exit "$$(cat tmp/openshell-suite.status)"
+	@$(SUITE_BEGIN) OPENSHELL_LIVE=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./sandbox/openshell -run 'Live' -count=1 && \
+	   OPENSHELL_LIVE=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./cmd/plimsolld -run 'OpenShell.*Live' -count=1; $(SUITE_END)
 
 # The live agent-sandbox suite: the provider's tests and a daemon test against a cluster
 # (sandbox/agentsandbox/live_test.go, cmd/plimsolld/agentsandbox_live_test.go), the
@@ -420,26 +586,26 @@ AGENTSANDBOX_SETTINGS := AGENTSANDBOX_TIER SANDBOX_AGENTSANDBOX_API_SERVER SANDB
 	SANDBOX_MEMORY_MB SANDBOX_CPUS SANDBOX_DISK_MB SANDBOX_REQUIRE_PINNED_IMAGES
 AGENTSANDBOX_FILES := SANDBOX_AGENTSANDBOX_CA_FILE SANDBOX_AGENTSANDBOX_TOKEN_FILE SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE \
 	SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE
+# This suite runs its two compiled test programs itself, inside the cluster's network where one
+# is given, so their output (-test.v=test2json) goes to the reader's stream mode, whose arguments
+# repeat what each program was asked to run. A program that fails leaves a failed test in the
+# results, and one that never started leaves none; either fails the suite.
 ## agentsandbox-suite: the live agent-sandbox provider and daemon tests; a missing cluster or a skipped test FAILS
 agentsandbox-suite:
 	@mkdir -p tmp/agentsandbox-suite
 	@CGO_ENABLED=0 go test -c -o tmp/agentsandbox-suite/provider.test ./sandbox/agentsandbox
 	@CGO_ENABLED=0 go test -c -o tmp/agentsandbox-suite/daemon.test ./cmd/plimsolld
-	@{ if [ -n "$(AGENTSANDBOX_NETWORK)" ]; then \
+	@$(SUITE_BEGIN) if [ -n "$(AGENTSANDBOX_NETWORK)" ]; then \
 	     set --; \
 	     for v in $(AGENTSANDBOX_SETTINGS); do [ -n "$$(printenv $$v)" ] && set -- "$$@" -e "$$v"; done; \
 	     for v in $(AGENTSANDBOX_FILES); do f="$$(printenv $$v)"; [ -n "$$f" ] && set -- "$$@" -v "$$f:$$f:ro"; done; \
 	     docker run --rm --network "$(AGENTSANDBOX_NETWORK)" --cap-add NET_ADMIN -e AGENTSANDBOX_LIVE=1 "$$@" \
 	       -v "$(CURDIR)/tmp/agentsandbox-suite:/suite:ro" alpine:3 sh -c \
-	       "ip route add $(AGENTSANDBOX_POD_ROUTE) && /suite/provider.test -test.run Live -test.count=1 -test.v && /suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v"; \
+	       "ip route add $(AGENTSANDBOX_POD_ROUTE) && /suite/provider.test -test.run Live -test.count=1 -test.v=test2json && /suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v=test2json"; \
 	   else \
-	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/provider.test -test.run Live -test.count=1 -test.v && \
-	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v; \
-	   fi; echo $$? > tmp/agentsandbox-suite.status; } 2>&1 | tee tmp/agentsandbox-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/agentsandbox-suite.log; then \
-	   echo "agentsandbox-suite: required coverage was skipped:" >&2; \
-	   grep -E '^ *--- SKIP' tmp/agentsandbox-suite.log >&2; exit 1; fi
-	@exit "$$(cat tmp/agentsandbox-suite.status)"
+	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/provider.test -test.run Live -test.count=1 -test.v=test2json && \
+	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v=test2json; \
+	   fi | $(SUITE_READER) stream ./sandbox/agentsandbox -run Live + ./cmd/plimsolld -run 'AgentSandbox.*Live'; $(SUITE_END)
 
 # The WSL containers provider's live suites run on a Windows machine with WSL 3.0.5 or later,
 # from a WSL distribution, by hand: CI's hosted Linux runners have no WSL, so no CI job runs
@@ -459,45 +625,45 @@ agentsandbox-suite:
 #
 ## wslc-suite: the live WSL containers provider suite, by hand on a Windows machine from a WSL distribution; a missing configuration or a skipped test FAILS
 wslc-suite:
-	@mkdir -p tmp
-	@{ WSLC_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestLive' -count=1 -v; echo $$? > tmp/wslc-suite.status; } 2>&1 | tee tmp/wslc-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/wslc-suite.log; then echo "wslc-suite: required coverage was skipped:" >&2; grep -E '^ *--- SKIP' tmp/wslc-suite.log >&2; exit 1; fi
-	@exit $$(cat tmp/wslc-suite.status)
+	@$(SUITE_BEGIN) WSLC_LIVE=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./sandbox/wslc -run '^TestLive' -count=1; $(SUITE_END)
 ## wslc-gvisor-suite: the live tests of gVisor inside each per-run WSL containers VM, by hand on a Windows machine from a WSL distribution; a missing configuration or a skipped test FAILS
 wslc-gvisor-suite:
-	@mkdir -p tmp
-	@{ WSLC_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestGVisorLive' -count=1 -v -timeout 30m; echo $$? > tmp/wslc-gvisor-suite.status; } 2>&1 | tee tmp/wslc-gvisor-suite.log
-	@if grep -qE '^ *--- SKIP' tmp/wslc-gvisor-suite.log; then echo "wslc-gvisor-suite: required coverage was skipped:" >&2; grep -E '^ *--- SKIP' tmp/wslc-gvisor-suite.log >&2; exit 1; fi
-	@exit $$(cat tmp/wslc-gvisor-suite.status)
-## wslc-docker-check: with DOCKER=1, the wslc provider's shared-mode run path and boundary test against the local docker through a stand-in for wslc.exe; never evidence about WSL containers
+	@$(SUITE_BEGIN) WSLC_LIVE=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./sandbox/wslc -run '^TestGVisorLive' -count=1 -timeout 30m; $(SUITE_END)
+## wslc-docker-check: with DOCKER=1, the wslc provider's shared-mode run path and boundary test against the local docker through a stand-in for wslc.exe; a skipped test FAILS; never evidence about WSL containers
 wslc-docker-check:
-	@if [ "$(DOCKER)" = "1" ]; then WSLC_LIVE=1 SANDBOX_WSLC_PATH=$(CURDIR)/sandbox/wslc/testdata/docker-standin.sh SANDBOX_WSLC_IMAGE=plimsoll/sandbox:latest $(NO_PAID_KEYS) go test ./sandbox/wslc -run '^TestLive' -skip '^(TestLivePerRun|TestLiveEnvironmentCanary)' -count=1; else echo "skip wslc-docker-check (set DOCKER=1)"; fi
+	@if [ "$(DOCKER)" = "1" ]; then $(SUITE_BEGIN) WSLC_LIVE=1 SANDBOX_WSLC_PATH=$(CURDIR)/sandbox/wslc/testdata/docker-standin.sh SANDBOX_WSLC_IMAGE=plimsoll/sandbox:latest $(NO_PAID_KEYS) $(SUITE_TEST) ./sandbox/wslc -run '^TestLive' -skip '^(TestLivePerRun|TestLiveEnvironmentCanary)' -count=1; $(SUITE_END); else echo "skip wslc-docker-check (set DOCKER=1)"; fi
 
 # The guarded-egress path is the one claim `make audit E2B=1` cannot make: its live
-# test skips unless three deployment-specific variables are set, and a skip inside a
-# green suite reads exactly like a pass. This target is the deliberate run, and it
-# fails rather than skips when its configuration is missing.
+# tests need three deployment-specific variables, so e2b-suite leaves them out by name.
+# This target is the deliberate run, and it fails rather than skips when its
+# configuration is missing.
 #
 #   E2B_API_KEY                 the account key
 #   E2B_GUARD_URL               the externally reachable HTTPS guard route
 #   E2B_LIVE_GRANT_BASE_URL     origin of a real HTTPS API to prove against
 #   E2B_LIVE_GUARD_LISTEN       optional: local addr that self-serves the handler
 #
-## e2b-guard-live: prove the guarded E2B egress path (FAILS if it is not configured)
+## e2b-guard-live: prove the guarded E2B egress path; missing configuration or a skipped test FAILS (spends)
 e2b-guard-live:
-	E2B_GUARD_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestE2BGuardLive|TestE2BSessionGuardLive' -count=1 -v
+	@$(SUITE_BEGIN) E2B_GUARD_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN $(SUITE_TEST) ./sandbox -run 'TestE2BGuardLive|TestE2BSessionGuardLive' -count=1; $(SUITE_END)
 
 # The live E2B session suite: the startup and session smoke tests, the session
 # conformance suite and the guest's privileges, against the real service. It spends
 # (a microVM per case, about 2 cents a pass at the template's size), so it runs only
 # here, never in e2b-suite or the gate. E2B_TEMPLATE picks the template (default base).
-## e2b-session-live: prove E2B sessions against the live service, the daemon's unclaimed close included (paid; needs E2B_API_KEY)
-e2b-session-live:
-	E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestLiveE2BSessions|TestLiveE2BDaemonClosesAnUnclaimedSession' -count=1 -v -timeout 40m
+## e2b-template-recipe: build plimsoll's E2B template recipe locally (e2b/e2b.Dockerfile; nothing reaches E2B, nothing is billed) and run the startup check and a session on it; a missing daemon or a skipped test FAILS
+.PHONY: e2b-template-recipe
+e2b-template-recipe:
+	docker build -f e2b/e2b.Dockerfile -t plimsoll-local/e2b-template:dev e2b
+	@$(SUITE_BEGIN) SANDBOX_TEST_REQUIRE_DOCKER=1 PLIMSOLL_E2B_TEMPLATE_IMAGE=plimsoll-local/e2b-template:dev $(NO_PAID_KEYS) $(SUITE_TEST) ./sandbox -run 'TestE2BTemplateRecipeOnALocalImage' -count=1 -timeout 10m; $(SUITE_END)
 
-## dockercloud-guard-live: prove a Docker Cloud host-API grant end to end on the Connect API (paid, well under a cent; needs a public guard route to this process, see TestDockerCloudGuardLive)
+## e2b-session-live: prove E2B sessions against the live service, the daemon's unclaimed close included; a missing E2B_API_KEY or a skipped test FAILS (paid)
+e2b-session-live:
+	@$(SUITE_BEGIN) E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN $(SUITE_TEST) ./sandbox -run 'TestLiveE2BSessions|TestLiveE2BSessionRoads|TestLiveE2BDaemonClosesAnUnclaimedSession' -count=1 -timeout 40m; $(SUITE_END)
+
+## dockercloud-guard-live: prove a Docker Cloud host-API grant end to end on the Connect API (paid, well under a cent; needs a public guard route to this process, see TestDockerCloudGuardLive); missing configuration or a skipped test FAILS
 dockercloud-guard-live:
-	DOCKERCLOUD_GUARD_LIVE_REQUIRED=1 DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY go test ./sandbox -run 'TestDockerCloudGuardLive' -count=1 -v -timeout 10m
+	@$(SUITE_BEGIN) DOCKERCLOUD_GUARD_LIVE_REQUIRED=1 DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY $(SUITE_TEST) ./sandbox -run 'TestDockerCloudGuardLive' -count=1 -timeout 10m; $(SUITE_END)
 
 
 # The website targets that used to sit here drove the commercial site's local stack
@@ -505,26 +671,6 @@ dockercloud-guard-live:
 # advertised by `make help` and failed with "No such file or directory". The scripts
 # are documented directly in the private docs/website-runbook.md; a Makefile is the
 # wrong place for a target only half the tree can run.
-
-# Before public tags exist, consumers can resolve tagged versions from a local
-# file-based GOPROXY that this target publishes from the tag itself, not the
-# working tree. Siblings use go.work for day-to-day development; the proxy also
-# supports `go mod tidy`, `go mod vendor`, and Docker builds without a sibling
-# checkout or public repository.
-MODPATH := github.com/plimsollmark/plimsoll
-GOPROXY_DIR ?= $(HOME)/projects/.goproxy
-MODVERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null)
-
-## modproxy: publish the latest tag into the local file-based Go module proxy
-modproxy:
-	@test -n "$(MODVERSION)" || { echo "modproxy: no tag found (tag first, e.g. git tag v0.1.0)" >&2; exit 1; }
-	@mkdir -p "$(GOPROXY_DIR)/$(MODPATH)/@v"
-	git archive --format=zip --prefix="$(MODPATH)@$(MODVERSION)/" "$(MODVERSION)" \
-		-o "$(GOPROXY_DIR)/$(MODPATH)/@v/$(MODVERSION).zip"
-	git show "$(MODVERSION):go.mod" > "$(GOPROXY_DIR)/$(MODPATH)/@v/$(MODVERSION).mod"
-	printf '{"Version":"%s"}\n' "$(MODVERSION)" > "$(GOPROXY_DIR)/$(MODPATH)/@v/$(MODVERSION).info"
-	@cd "$(GOPROXY_DIR)/$(MODPATH)/@v" && ls *.info | sed 's/\.info$$//' > list
-	@echo "modproxy: published $(MODPATH)@$(MODVERSION) to $(GOPROXY_DIR)"
 
 ## tools: install the exact out-of-module gate tools named in gate-tools.versions
 tools:

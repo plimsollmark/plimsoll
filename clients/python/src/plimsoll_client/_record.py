@@ -11,15 +11,16 @@ from __future__ import annotations
 import hashlib
 import re
 import struct
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Tuple
 
+# The record's version, layouts and bounds, generated from the Go record and sandbox
+# packages by internal/wiretables. VERSION is the encoding version this client computes and
+# checks: every field, every time, for an answered call and an unanswered session call alike.
+from ._tables import DAEMON_VERSION_PATTERN, INSTANCE_PATTERN, LAST_WALL_CLOCK_END_VERSION, MAX_DAEMON_VERSION_BYTES, MAX_QUALIFICATION_BYTES, QUALIFICATION_FORBIDDEN, RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT, TIERS, UNANSWERED_CODES
+from ._tables import RECORD_VERSION as VERSION
 from ._wire import INT32, INT64, OUTCOMES, UINT32, UINT64, Msg
 from .errors import IsolationEvidenceMismatchError, MalformedResponseError, NoRecordError, RecordMismatchError, RecordVersionError, ResultKindMismatchError
 from .types import RunRecord, SoftwareRule, meets
-
-VERSION = 4
-"""The record encoding version this client computes and checks (record.Version): every
-field, every time, for an answered call and an unanswered session call alike."""
 
 
 def _version_problem(version: int) -> str:
@@ -33,7 +34,47 @@ def _version_problem(version: int) -> str:
             f"this client requires version {VERSION} of a live answer")
 
 
-_INSTANCE_FORM = re.compile(r"[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}")
+_INSTANCE_FORM = re.compile(INSTANCE_PATTERN)
+
+# A control character, or a format character that breaks a line or shows text in another
+# order than it is stored (record.ValidText), from the generated ranges: the one set every
+# field a reader is shown is held to (the table's name is the qualification's, the first
+# field it was written for).
+_FORBIDDEN_IN_TEXT = re.compile("[" + "".join("\\U%08x-\\U%08x" % r for r in QUALIFICATION_FORBIDDEN) + "]")
+
+
+def valid_text(s: str) -> bool:
+    """Text a record may state where a reader is shown it as it is: UTF-8 with no control
+    character and none of the format characters that break a line or reorder displayed
+    text, as record.ValidText. The provider's name, the tier and the isolation qualification
+    are held to it (shown_fields)."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate
+        return False
+    return _FORBIDDEN_IN_TEXT.search(s) is None
+
+
+def shown_fields(r: RunRecord) -> Tuple[Tuple[str, str], ...]:
+    """A record's fields a reader is shown as the run's evidence, each with the name a
+    refusal gives it, as record.ShownFields."""
+    return (("provider", r.provider), ("isolation", r.isolation), ("isolation qualification", r.isolation_qualification))
+
+
+def valid_qualification(s: str) -> bool:
+    """A record's isolation qualification: "" (the provider states none), or at most
+    MAX_QUALIFICATION_BYTES of UTF-8 that valid_text accepts, as record.ValidQualification."""
+    return valid_text(s) and len(s.encode("utf-8")) <= MAX_QUALIFICATION_BYTES
+
+
+_DAEMON_VERSION_FORM = re.compile(DAEMON_VERSION_PATTERN)
+
+
+def valid_daemon_version(s: str) -> bool:
+    """A record's daemon version: "", "(devel)", or a module version such as "v0.28.0"
+    or a pseudo-version, at most MAX_DAEMON_VERSION_BYTES (the grammar is ASCII, so
+    characters are bytes), as record.ValidDaemonVersion."""
+    return s == "" or (len(s) <= MAX_DAEMON_VERSION_BYTES and _DAEMON_VERSION_FORM.fullmatch(s) is not None)
 
 
 def valid_instance(s: str) -> bool:
@@ -41,11 +82,7 @@ def valid_instance(s: str) -> bool:
     ``k8s-pod-uid:`` and a pod's UID (sandbox.ValidInstance)."""
     return s == "" or _INSTANCE_FORM.fullmatch(s) is not None
 
-_UNANSWERED_CODES = frozenset((
-    "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists",
-    "permission_denied", "resource_exhausted", "failed_precondition", "aborted", "out_of_range",
-    "unimplemented", "internal", "unavailable", "data_loss", "unauthenticated",
-))
+_UNANSWERED_CODES = frozenset(UNANSWERED_CODES)
 
 
 class _Encoder:
@@ -200,22 +237,48 @@ def result_digest(resp: Msg) -> str:
     return e.sum()
 
 
-# The fields of each published record version's digest, in order (record.published): a
-# version leaves this table only by a dated, announced decision.
-RECORD_FIELDS = {
-    1: ("request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
-        "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"),
-    2: ("request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
-        "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
-        "previous_sha256"),
-    3: ("request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
-        "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
-        "previous_sha256"),
-    4: ("request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
-        "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
-        "sequence", "previous_sha256"),
-}
 _RECORD_INTS = frozenset({"started_unix_ms", "ended_unix_ms", "sequence"})
+_RECORD_BOOLS = frozenset({"warm"})
+# What a record field holds when it states nothing, so a record of a version that does
+# not cover a field can be told to state none (record.statesOnly).
+_RECORD_UNSET = {"warm": False, "started_unix_ms": 0, "ended_unix_ms": 0, "sequence": 0}
+
+
+def _states_only(r: RunRecord) -> None:
+    """The fields a record's version does not cover are unset, it states a result digest
+    or, for an unanswered call, an error code, exactly one, and the code is one of the
+    closed set, its tier is one of TIERS (never "unknown" or empty, whatever floor the
+    request named), it does not end before it starts, answered or not, its qualification
+    and daemon version are in their bounds, and its instance is a typed reference
+    (record.statesOnly); the digest is checked after. The record of a call lost across a
+    takeover is checked by this alone, and an adapter tells a model whether that call
+    finished from which of the two it states."""
+    for name, text in shown_fields(r):
+        if not isinstance(text, str) or not valid_text(text):
+            raise RecordMismatchError(f"plimsoll: the record's {name} is not UTF-8 or holds a control or bidirectional format character")
+    covered = RECORD_FIELDS.get(r.version, ())
+    for name in RECORD_FIELDS[VERSION]:
+        if name not in covered and getattr(r, name) != _RECORD_UNSET.get(name, ""):
+            raise RecordMismatchError(f"plimsoll: a version {r.version} record does not cover {name}, so it cannot state one")
+    unanswered = r.unanswered != ""
+    if unanswered == (r.result_sha256 != ""):
+        raise RecordMismatchError("plimsoll: a record states a result or, for an unanswered call, an error code, exactly one")
+    if unanswered and r.unanswered not in _UNANSWERED_CODES:
+        raise RecordMismatchError(f"plimsoll: an unanswered call's record names {r.unanswered!r}, not a Connect code")
+    if r.isolation not in TIERS:
+        raise RecordMismatchError(f"plimsoll: the record's isolation {r.isolation!r} is not a tier ({', '.join(TIERS)})")
+    # A version 1 or 2 record that ends before it starts is refused as a retired reading, not
+    # as a forgery (record.LastWallClockEndVersion, retired 2026-11-21).
+    if r.ended_unix_ms < r.started_unix_ms and r.version <= LAST_WALL_CLOCK_END_VERSION:
+        raise RecordMismatchError("plimsoll: " + RETIRED_END_BEFORE_START_TEXT)
+    if r.ended_unix_ms < r.started_unix_ms:
+        raise RecordMismatchError("plimsoll: the record ends before it starts")
+    if not valid_instance(r.instance):
+        raise RecordMismatchError(f"plimsoll: the record's instance {r.instance!r} is not a typed reference")
+    if not valid_qualification(r.isolation_qualification):
+        raise RecordMismatchError(f"plimsoll: the record's isolation qualification is over {MAX_QUALIFICATION_BYTES} bytes")
+    if not valid_daemon_version(r.daemon_version):
+        raise RecordMismatchError(f"plimsoll: the record's daemon version {r.daemon_version!r} is not a module version or (devel)")
 
 
 def record_digest(r: RunRecord) -> str:
@@ -226,6 +289,8 @@ def record_digest(r: RunRecord) -> str:
     for name in RECORD_FIELDS.get(r.version, RECORD_FIELDS[VERSION]):
         if name in _RECORD_INTS:
             e.int(name, getattr(r, name))
+        elif name in _RECORD_BOOLS:
+            e.bool(name, getattr(r, name))
         else:
             e.str(name, getattr(r, name))
     return e.sum()
@@ -256,6 +321,9 @@ def record_from_wire(m: Msg) -> RunRecord:
         sha256=m.get_str("recordSha256"),
         unanswered=m.get_str("unanswered"),
         instance=m.get_str("instance"),
+        isolation_qualification=m.get_str("isolationQualification"),
+        warm=m.get_bool("warm"),
+        daemon_version=m.get_str("daemonVersion"),
     )
 
 
@@ -281,8 +349,6 @@ def check(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -
         raise MalformedResponseError(f"plimsoll: the answer holds {len(kinds)} results; a run has one")
     if kinds != (kind,):
         raise ResultKindMismatchError(f"plimsoll: the daemon answered a {kind} request with {kinds[0] if kinds else 'no'} result")
-    if r.ended_unix_ms < r.started_unix_ms:
-        raise RecordMismatchError("plimsoll: the record ends before it starts")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
     if r.result_sha256 != result:
@@ -295,6 +361,13 @@ def check(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -
         raise RecordMismatchError("plimsoll: the record's environment differs from the response's")
     if r.instance != resp.get_str("instance") or not valid_instance(r.instance):
         raise RecordMismatchError(f"plimsoll: the record's instance {r.instance!r} is not the response's, or not a typed reference")
+    if r.isolation_qualification != resp.get_str("isolationQualification"):
+        raise RecordMismatchError("plimsoll: the record's isolation qualification is not the response's")
+    if r.warm != resp.get_bool("warm"):
+        raise RecordMismatchError(f"plimsoll: the record states warm {r.warm}, the response {resp.get_bool('warm')}")
+    if r.daemon_version != resp.get_str("daemonVersion"):
+        raise RecordMismatchError(f"plimsoll: the record's daemon version {r.daemon_version!r} is not the response's")
+    _states_only(r)
     rule_id = rule.rule_id() if rule is not None else ""
     allowed = rule.allows(r.software_identity) if rule is not None else True
     if r.software_identity != resp.get_str("softwareIdentity") or r.software_rule_id != rule_id or not allowed:
@@ -313,8 +386,7 @@ def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], 
     r = record_from_wire(m)
     if r.version != VERSION:
         raise RecordVersionError(_version_problem(r.version))
-    if not valid_instance(r.instance):
-        raise RecordMismatchError(f"plimsoll: the record's instance {r.instance!r} is not a typed reference")
+    _states_only(r)
     if r.result_sha256 or r.unanswered not in _UNANSWERED_CODES:
         raise RecordMismatchError("plimsoll: an unanswered call's record states a result or no error code")
     if r.request_sha256 != req_digest:

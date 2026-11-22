@@ -229,6 +229,7 @@ func (f *fakeGateway) CreateSandbox(_ context.Context, req *connect.Request[open
 	f.mu.Lock()
 	delay := f.createDelay
 	f.mu.Unlock()
+	// fixed-wait: the fake gateway's own create time, set by each test
 	time.Sleep(delay)
 	if len(req.Msg.GetName()) > 19 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("name exceeds maximum length"))

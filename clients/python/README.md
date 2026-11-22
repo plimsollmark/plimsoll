@@ -27,6 +27,10 @@ The distribution is `plimsoll-client`; the import package is `plimsoll_client`.
 
 ## Use
 
+The session part of this example needs a daemon started with sessions on (`SANDBOX_MAX_SESSIONS`, for example
+`SANDBOX_MAX_SESSIONS=4`; they are off by default), and its Python cells need `python3` in the project image (on
+docker, `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`).
+
 ```python
 from plimsoll_client import Client
 
@@ -160,12 +164,104 @@ replaced. A non-zero `exit_code` is a normal result (the guest's code failed), n
 error. Durations that come back are whole milliseconds (`duration_ms`); durations you
 pass in (`timeout`, `request_timeout`, a session's `lifetime`) are seconds.
 
-## Google ADK executor
+## Carrying a session on from another process
 
-`plimsoll_client.adk.PlimsollCodeExecutor` implements Google ADK's Python code-block
-interface over the shared fresh-execution helper. Install it with its extra,
-`pip install 'plimsoll-client[adk]'` (0.20.0 and later; 0.19.0 has no extras), or from a
+A session can be taken over by another process of your application, a workflow step
+retried on another machine, say, with the same token. Give the client a short name for
+the daemon (`daemon_name`, never a URL) and a *checkpoint store*: an object with
+`load(key)` and an atomic `compare_and_set(key, expected, replacement)`, kept where only
+your application can write. Every call of a session opened with a store passes through
+it: before the call its record is marked pending, after a checked answer it is ready at the
+new head.
+
+```python
+from plimsoll_client import Client, MemoryCheckpointStore
+
+store = MemoryCheckpointStore()  # for tests only: use storage only your app can write
+key = f"{user_id}/{thread_id}"   # from identities your app verified, never model or user text
+c = Client(url, token, daemon_name="prod")
+s = c.open_session(checkpoint_store=store, checkpoint_key=key)
+s.run_cell("x = 1")
+# In another process, with the same token, store and daemon name:
+t = Client(url, token, daemon_name="prod").attach_session(key, store=store)
+t.run_cell("x")  # the same interpreter
+```
+
+What a takeover guarantees, and what it raises:
+
+- The daemon raises the session's ownership generation by one; every later call or close
+  of the first process is refused before it runs (`StaleOwnerError`, marked not
+  dispatched). If it shares the store, it is stopped there first
+  (`CheckpointConflictError`, nothing sent).
+- A process that died mid-call leaves its record pending, with the call's request digest.
+  The next `attach_session` sends that checkpoint and names the call. If the daemon never
+  dispatched the call, the heads match and the takeover is plain. If it dispatched it and
+  its answer was lost, the daemon takes the session over across that one call (the
+  *explained gap*) and returns its record, which the client checks; `session.lost_call`
+  holds it, and its output is lost. The record says whether the daemon answered it: a
+  result digest when the daemon answered, which does not show that the call ran to its end
+  (a step stopped at its time limit and a setup that failed are answers too), an
+  `unanswered` code when it ended without an answer, so that it may have done none, part or
+  all of its work. The new session's first call is then refused, with nothing
+  sent, if it repeats that call, which was already sent once (`CallAlreadySentError`): only
+  the first call is checked, so a different first call spends the check and the lost call
+  can then run again. Any other gap is `CheckpointMismatchError`, and nothing moves.
+- A missing record is `LookupError`, never a fresh session. With `fingerprint=`, the
+  session you mean, a record naming another session is `LookupError` too, with nothing
+  sent: the check is made on the record the attach sends, so a store that changed since
+  you read it never moves another session to this process. An attach answer that does not
+  repeat the checkpoint is `ChainError`, and the session is not closed. A failed or
+  canceled attach is never retried.
+- `CheckpointStoreError` (its subclass `CheckpointConflictError` when the compare-and-set
+  refused) says whether the call was sent (`sent`) and carries its result or error when it
+  ran; the session then sends nothing more. No timeout ever clears a pending record.
+- `session.checkpoint()` returns the checkpoint for an application that keeps it itself;
+  `SessionCheckpoint.to_json` and `from_json` are the form the Go and TypeScript clients read
+  too. It holds no secret: not the session ID, not the token.
+
+Anyone who holds the token and a session's run records can take the session over: key the
+store by identities your application verified. Open development mode refuses every
+takeover. The rules in full:
+[carrying a session on from another worker](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#carrying-a-session-on-from-another-worker).
+
+## Google ADK executor and environment
+
+`plimsoll_client.adk` gives Google ADK two ways in: `PlimsollCodeExecutor`, ADK's code
+executor, which runs each Python block the model writes in a new sandbox; and
+`PlimsollEnvironment`, ADK's environment, a kept sandbox with a shell and files. Install
+them with the extra, `pip install 'plimsoll-client[adk]'` (0.20.0 and later; 0.19.0 has no
+extras; the environment from 0.28.0, whose extra installs exactly ADK 2.14.1, the
+version it is tested with), or from a
 checkout with `pip install './clients/python[adk]'`.
+
+The environment is one plimsoll session behind ADK's own `EnvironmentToolset`, so the agent
+gets ADK's `Execute`, `ReadFile`, `EditFile` and `WriteFile` tools, and every command and
+every file read or write is one call of that session:
+
+```python
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.tools.environment import EnvironmentToolset
+from plimsoll_client import Client
+from plimsoll_client.adk import PlimsollEnvironment, PlimsollEnvironmentGuard
+
+environment = PlimsollEnvironment(Client(PLIMSOLL_URL, token=TOKEN))  # kernel floor by default
+agent = Agent(name="worker", model=your_model, tools=[EnvironmentToolset(environment=environment)])
+runner = Runner(agent=agent, app_name="app", session_service=your_session_service,
+                plugins=[PlimsollEnvironmentGuard()])  # first; runner.close() closes the session
+```
+
+Files stay from one command to the next; each command starts a new shell in the work
+directory (`/work` on docker), as in ADK's own environments, so a `cd` or an `export` does
+not carry over. What plimsoll stated about each call (whether it was dispatched, the
+outcome, the tier with its sentence, the checked run record) is in `environment.calls`.
+The guard ties each call to its ADK tool call, puts those labels on ADK's trace, stops the
+agent after a call that may have run without an answer (ADK hands such an error to the
+model, which would run the command again), and keeps one sandbox to one ADK user. What it
+cannot do (a process kept between commands, parallel commands at once, network, bash) is
+in [the Google ADK guide (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/blob/main/docs/google-adk.md#a-kept-sandbox-with-a-shell-and-files).
+
+The code executor:
 
 ```python
 from plimsoll_client import Client
@@ -251,7 +347,7 @@ What the operator sets, and what the tools do not do:
 
 - **The daemon.** It must run projects, with `python3` (and `node`, to offer JavaScript)
   in its project image, such as `plimsoll/sandbox-python` from `make docker-images`. Offer
-  only the languages the image runs (`languages=("python",)`). The sandbox has no network
+  only the languages the image runs (`languages=("python",)`). The sandbox has no network (but a grant, below)
   and nothing is installed at run time: the libraries a model may import are the ones
   built into the image ([docs/guest-dependencies.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/guest-dependencies.md)).
 - **Isolation.** `CodeExecutor`'s floor defaults to `kernel`: a daemon on docker under
@@ -279,6 +375,315 @@ What the operator sets, and what the tools do not do:
   `allow_code_execution` only warns and points to hosted sandboxes (checked in CrewAI 1.15.23);
   this tool is the self-hosted option.
 
+### A grant: the tool's code calls one web API
+
+Every tool over `CodeExecutor` (Agno's, CrewAI's, LangChain's, Agent Framework's and
+PydanticAI's `plimsoll_code_tool`) can carry a grant, so one program the model writes can call
+an API's routes many times from inside the sandbox. Your application chooses it, never the
+model: the name of a grant profile the operator configured on the daemon, and the description
+`plimsoll-specgen -only allow.json -emit description api.json` wrote for that profile
+([capability-grants.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md#from-an-agent-kits-code-tool)).
+
+```python
+executor = CodeExecutor(client, grant_profile="lights", api_description=open("description.txt").read())
+tool = PlimsollCodeTool(executor)   # CrewAI; every other tool over CodeExecutor takes it the same way
+```
+
+- **When it is built**, the executor reads the daemon's Describe and states in
+  `executor.grant.languages` which languages can call the API there: JavaScript on every
+  provider that gives a project run a grant (docker, openshell, e2b with a guard URL,
+  dockercloud), Python too on docker and openshell, through `plimsoll_host`, a
+  standard-library module the executor writes into the run (`plimsoll_host.get(path)`,
+  `post(path, body)`, `put`, `patch`, `delete`, `call(method, path, body)`; `HostAPIError`
+  has `.status` and `.body`). A daemon that cannot carry a grant raises `UnsupportedError`,
+  marked not dispatched, here.
+- **The tool offers only those languages**, and its description tells the model the API's
+  routes and how to call them in each, so the model learns it from the description, not by
+  failing. A tool left with no language raises `ValueError` when it is built; a call in
+  another language is refused, `unsupported`, with what to write instead. With a grant,
+  CrewAI's and LangChain's tools take no `description` of yours.
+- **Every run carries the profile**; the tool's arguments never name one. An unknown profile,
+  or one this caller is not on, is refused `permission` and logged as the operator's to fix.
+  A call that may have run says the API may have been called too.
+- **What it does not protect.** The broker, outside the sandbox, holds the key and adds it;
+  the code can still do whatever an allowed route permits and read whatever it returns.
+  The run record does not list the calls.
+
+Runnable examples, one per tool, each against a stand-in lights API whose profile is `lights`:
+`examples/crewai_grant.py` (CrewAI) and `examples/agno_grant.py` (Agno) here,
+`examples/langchain_grant.py`, `examples/agent_framework_grant.py` and
+`examples/pydantic_ai_grant.py` in their kits' sections below, and `examples/mcp_grant.py`,
+plimsoll's MCP server installed with the grant and called over stdio by the MCP Python SDK. The
+kits' examples each run one JavaScript program and one Python program the model might write (the
+programs are in `examples/_granted.py`; the MCP one runs the JavaScript program and a one-line Python call,
+then one call in a sandbox from `open_sandbox`, which never carries the grant): a GET and a POST through the grant, a second POST past the route's cap of
+one call a run, and a route the profile does not list, refused before it leaves. Run one with
+`PLIMSOLL_URL`, `PLIMSOLL_TOKEN` and `PLIMSOLL_GRANT_DESCRIPTION_FILE` (the description
+`plimsoll-specgen` wrote for the profile) set, against a daemon whose `PLIMSOLL_GRANTS_FILE` names
+the profile; each file's header has the command.
+
+## LangChain tool and Deep Agents backend
+
+`plimsoll_client.langchain.PlimsollCodeTool` is the same tool as a LangChain tool (a grant included:
+[a grant](#a-grant-the-tools-code-calls-one-web-api)), so LangGraph's
+`ToolNode`, `create_agent` and any graph call it; `plimsoll_client.deepagents.PlimsollSandbox` is a
+Deep Agents sandbox backend over one session, which gives a Deep Agents agent its `execute` and file
+tools in a sandbox kept for its whole run
+([Deep Agents sandboxes (EXTERNAL · official docs ↗)](https://docs.langchain.com/oss/python/deepagents/sandboxes)).
+Both are also in a package of their own, `langchain-plimsoll`, named as LangChain's integration guide
+asks
+([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/langchain-plimsoll)).
+
+```sh
+pip install 'plimsoll-client[langchain]'    # the tool: langchain-core
+pip install 'plimsoll-client[deepagents]'   # the backend: deepagents
+```
+
+```python
+from langchain.agents import create_agent
+from plimsoll_client.langchain import PlimsollCodeTool
+
+agent = create_agent(model, tools=[PlimsollCodeTool(executor)])
+
+from deepagents import create_deep_agent
+from plimsoll_client import Client
+from plimsoll_client.deepagents import PlimsollSandbox
+
+with PlimsollSandbox.open(Client(URL, token=TOKEN)) as backend:   # the kernel floor by default
+    agent = create_deep_agent(model=model, backend=backend, system_prompt=f"Work in {backend.root}.")
+```
+
+Recorded calls through the tool, from a CSV sum to an answer lost after the code may have run,
+replay on its integration page:
+[LangChain: see a run, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/integrations/langchain/index.html).
+
+What the backend needs and does: the sandbox must have `python3`, which Deep Agents' file tools run
+(`open` refuses a daemon whose session environment does not state Python; on docker that is the
+`plimsoll/sandbox-python` image); a refusal, or a call that may have run without an answer, raises
+rather than reaching the model as command output, since Deep Agents reads that output as data; on a
+sandbox whose `grep` is BusyBox's (plimsoll's Alpine images) every search goes through Deep Agents'
+own `python3` search, because its grep route would read BusyBox's refusal of GNU options as no
+matches; a file past one call's 8 MiB artifact budget is downloaded in pieces and checked against its
+size, and a file past 64 MiB is that path's error (see `read_whole` below); the session lives in the process that opened it, and when it ends every later call raises.
+
+**Retries.** LangGraph and LangChain retry nothing unless you ask: retries are off by default in both.
+Once you add a `RetryPolicy` to a node or `ToolRetryMiddleware` to an agent, both frameworks' default
+rules retry a `PlimsollError`, including an unmarked one, after which the code may already have run.
+`plimsoll_client.retry_on` is the rule to give them instead: it is true only for an error whose
+`not_dispatched` is `capacity` or `environment` (nothing ran, and another try may pass) and false for
+everything else, every exception that is not a `PlimsollError` included (`RETRY_REASONS` holds the two
+reasons, and its docstring says why each other reason is out).
+
+```python
+from langgraph.types import RetryPolicy
+from langchain.agents.middleware import ToolRetryMiddleware
+from plimsoll_client import retry_on
+
+builder.add_node("run", node, retry_policy=RetryPolicy(retry_on=retry_on))
+agent = create_deep_agent(model=model, backend=backend, middleware=[ToolRetryMiddleware(retry_on=retry_on)])
+```
+
+The rule matters where plimsoll raises: the Deep Agents backend, and `Client` or `CodeExecutor` called
+from a node of your own. The code tool never raises for a refusal or a lost answer (it answers with
+them), so no retry sees one. A node with several policies gets the first whose rule says yes, so a
+second policy with LangGraph's default rule would still retry plimsoll's errors: decide both in one
+rule, `retry_on(e) if isinstance(e, PlimsollError) else your_rule(e)`.
+
+**Tracing.** Each call of the code tool sends the LangChain run ID of the tool call as the run's
+`trace_id` (a UUID; an ID of your own outside the daemon's 1 to 64 characters of `[A-Za-z0-9._:-]`
+is not sent at all), so the daemon's audit line joins to the trace. When the call is traced in
+LangSmith, the tool adds metadata to the tool call's own run: `plimsoll_record_sha256`,
+`plimsoll_isolation`, `plimsoll_isolation_qualification` (when the provider states one),
+`plimsoll_dispatched` (`yes`, `no` or `unknown`), `plimsoll_refused` (the reason, when it was not
+dispatched) and `plimsoll_outcome`. Each is checked against the values plimsoll can state, so nothing
+the guest printed reaches them. With tracing off nothing is added, and the tool imports no part of
+LangSmith that is not already loaded.
+LangChain's own tracing still sends the tool's inputs and outputs, the code and what it printed;
+LangSmith's `hide_inputs` and `hide_outputs` settings turn that off
+([LangSmith tracing (EXTERNAL · official docs ↗)](https://docs.langchain.com/langsmith/mask-inputs-outputs)).
+
+**Examples.** `examples/langchain_tool.py` hands the tool to a `create_agent` agent driven by a
+scripted stand-in for the model and runs one piece of code. `examples/langchain_grant.py` calls the
+granted tool through LangChain's own tool-call path (a `ToolCall` answered with a `ToolMessage`),
+once with a JavaScript program and once with a Python one, each calling a stand-in API through the
+grant ([a grant](#a-grant-the-tools-code-calls-one-web-api) says how to run it).
+`examples/langchain_retry_guard.py` shows both rules above with nothing but the local daemon: a
+LangGraph node under `RetryPolicy(retry_on=retry_on)` is retried after a capacity refusal and runs
+on its second try, is not retried after an answer lost once the request was sent (LangGraph's
+default rule would retry it) or after the daemon's isolation refusal; then a tool call traced by
+LangChain's LangSmith tracer, its uploads kept in memory so nothing reaches LangSmith, prints the
+labels on its run. The capacity refusal and the lost answer are raised by the node itself, as the
+client would raise them, since a real one needs a daemon at its limit or a broken connection. Run
+it as `langchain_tool.py` runs: `PLIMSOLL_URL=http://127.0.0.1:8746 python langchain_retry_guard.py`
+with the daemon's `PLIMSOLL_TOKEN` exported (it needs `langgraph` installed too).
+
+## Microsoft Agent Framework shell tool and code tool
+
+`plimsoll_client.agent_framework.PlimsollShellTool` is Microsoft Agent Framework's shell executor
+over one plimsoll session, so `create_harness_agent(client, shell_executor=shell)` gives the model
+its `run_shell` tool, and the files, directory and exported variables persist from one command to
+the next. `plimsoll_code_tool(executor)` is the stateless code tool as an Agent Framework tool, and takes a
+grant through its executor ([a grant](#a-grant-the-tools-code-calls-one-web-api)); the shell's session takes none. Both
+are in the package `agent-framework-plimsoll`, which pins the framework's shell tools
+(`agent-framework-tools`, a beta released about weekly) exactly; `pip install agent-framework-plimsoll`, from 0.28.0
+([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/agent-framework-plimsoll)).
+
+```python
+from agent_framework import create_harness_agent
+from plimsoll_client import Client
+from plimsoll_client.agent_framework import PlimsollShellTool
+
+async with PlimsollShellTool(Client(URL, token=TOKEN), minimum_isolation="kernel") as shell:
+    agent = create_harness_agent(chat_client, shell_executor=shell)
+    print(await agent.run("Count the lines in every .py file here.", session=agent.create_session()))
+```
+
+What the shell tool needs and does: `minimum_isolation` has no default, and the session's tier is
+checked against it before any command; the shell is BusyBox `sh` on plimsoll's docker images; a
+refusal and a command on an ended session raise (the model is shown the framework's error result),
+a command that may have run without an answer ends the agent's run (Agent Framework's
+`MiddlewareFailure`, with plimsoll's error as its cause), and an ended session is never replaced; a
+process left in the background is stopped when its command ends; approval is off by default
+(`approval_mode="never_require"`, where Microsoft's own shell tools default to `always_require`;
+pass `approval_mode="always_require"` to keep a person in the loop). The framework's
+`ShellEnvironmentProvider` describes the agent's own machine to the model (Python's
+`platform.platform()` in the agent's process), not the sandbox; its `instructions_formatter`
+replaces that text.
+
+**What reaches the application.** `await shell.run(command)` returns a `PlimsollShellResult`, the
+framework's `ShellResult` with `isolation`, `isolation_qualification`, `outcome`, `record_sha256` and
+the checked `result`. Through an agent, each command's function result keeps the model's text, and
+its text item's `additional_properties` carry Microsoft's five shell fields and plimsoll's labels
+(`plimsoll_dispatched`, `plimsoll_refused`, `plimsoll_outcome`, `plimsoll_isolation`,
+`plimsoll_isolation_qualification`, `plimsoll_record_sha256`), each checked against the values
+plimsoll can state; the code tool's result carries the same labels. A raised refusal reaches a
+function middleware as the exception, and `call_labels(exception)` gives its labels. When the
+framework's OpenTelemetry tool span is recording, both tools add the labels to it as
+`plimsoll.<label>` attributes, never the command or its output.
+
+**Retries.** Agent Framework does not run a failed tool call again by itself (a tool's exception is
+one error result, and three in a row end the request); after a refusal the model may ask again, and
+after a command that may have run the run has stopped. A retry of your own should ask
+`plimsoll_client.retry_on` first. Not supported: an interactive terminal, reattaching a
+session from another process, and a CodeAct provider.
+
+**Examples.** `examples/agent_framework_shell.py` runs two shell commands through an agent, the
+second reading the file the first wrote. `examples/agent_framework_grant.py` invokes the granted
+code tool as the framework does (`FunctionTool.invoke`), with a JavaScript program and a Python one
+that call a stand-in API, and prints the labels each result carries beside the model's text; run it
+as [a grant](#a-grant-the-tools-code-calls-one-web-api) says.
+
+## smolagents executor
+
+A smolagents `CodeAgent` acts by writing Python. `plimsoll_client.smolagents.PlimsollExecutor`
+is its Python executor over one plimsoll session: each step of the agent is one cell in the
+session's Python interpreter, so what one step defines is there in the next, and
+`code_agent(executor, tools=..., model=...)` builds the `CodeAgent` around it. Both are in the
+package `smolagents-plimsoll` (tested with, and installs with, exactly smolagents 1.26.0); `pip install smolagents-plimsoll`, from
+0.28.0 ([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/smolagents-plimsoll)).
+The daemon's project image needs Python, as `plimsoll/sandbox-python` has.
+
+```python
+from smolagents import AgentLogger, LogLevel
+from plimsoll_client import Client
+from plimsoll_client.smolagents import PlimsollExecutor, code_agent
+
+executor = PlimsollExecutor([], AgentLogger(LogLevel.INFO), client=Client(URL, token=TOKEN), minimum_isolation="kernel")
+with code_agent(executor, tools=[], model=model) as agent:   # closes the session after
+    print(agent.run("What is the 20th Fibonacci number?"))
+```
+
+What the executor needs and does: `minimum_isolation` has no default, and the session's tier is
+checked against it before any of the agent's code is sent. smolagents shows the model every error
+an executor raises and goes on, so the executor keeps the first error after which the run cannot
+go on (a refusal, a cell that may have run without an answer, an ended session, a restarted
+interpreter) as `executor.fatal_error` and sends nothing more, and the agent `code_agent` builds
+stops at that step and raises it from `run`; a plain `CodeAgent` would go on asking its model and
+return the model's own answer. The code's own exceptions reach the model as smolagents'
+`AgentError`. Each step has a 120-second budget unless you set `timeout`; a step past it ends the
+interpreter, and the next step ends the run.
+
+**What reaches the application.** `executor.records` holds a `PlimsollCellRecord` for each cell
+the client checked, in order (the executor's setup cell first, then one per call smolagents made):
+`isolation`, `isolation_qualification`, `outcome` (`completed` or `timed_out`), `record_sha256`,
+the `record` and the checked `result`. They are the session's chain, so the last one's
+`record_sha256` is `executor.session.last_record_sha256`; a call that raised adds none.
+
+**Limits.** No pickle: `allow_pickle=True` raises, since unpickling a final answer from the sandbox
+runs code the sandbox chose in your process. A final answer that is an image, a NumPy array or a
+NumPy number is refused (the model is told, and can answer with a plain value). Nothing is
+installed: smolagents asks the executor to install each package a tool's code imports from outside
+the standard library, and the executor refuses, so such a tool fails when the run starts even when
+the image has the package; the agent's own steps import what the image has. Tools run in the
+sandbox, and a cell carries no grant, so no tool reaches the network. The agent's own code runs in
+the same interpreter as the executor's helper and can forge what the executor reads back as its
+step's result, which forges only its own answer; each cell's run record is plimsoll's, checked,
+chained and in `executor.records`. Text from the sandbox that smolagents prints on the terminal (a step's output, its error,
+a text value, the final answer) arrives with each control character but tab, newline and carriage
+return written as a visible escape, so the sandbox cannot send the terminal escape sequences. The
+package README lists every limit.
+
+## PydanticAI workspace
+
+`plimsoll_client.pydantic_ai.PlimsollWorkspace` is a PydanticAI capability that supplies one
+plimsoll session as an agent run's workspace, so PydanticAI's own `FileSystem` tools read, write,
+edit, list and search in the sandbox, and it adds `plimsoll_shell`, a shell tool over the same
+session. `plimsoll_code_tool(executor)` is the stateless code tool as a PydanticAI tool, and takes a
+grant through its executor ([a grant](#a-grant-the-tools-code-calls-one-web-api)); the workspace takes none. All are in
+the package `pydantic-ai-plimsoll`, which pins `pydantic-ai-slim` exactly (PydanticAI adds rules for
+workspace backends in minor releases); it ships with plimsoll's next release
+([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/pydantic-ai-plimsoll)).
+Until the next release, from a checkout: `pip install ./clients/python ./clients/python/pydantic-ai-plimsoll`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import FileSystem
+from plimsoll_client import Client
+from plimsoll_client.pydantic_ai import PlimsollWorkspace
+
+workspace = PlimsollWorkspace(client=Client(URL, token=TOKEN), minimum_isolation="kernel")
+agent = Agent(model, capabilities=[workspace, FileSystem()])
+print((await agent.run("Write a script that counts the words in notes.txt, then run it.")).output)
+```
+
+**PydanticAI's `Coder` and `Shell` add no shell tool here, and say nothing about it:** an agent
+given either has no `shell` or `run_command` tool, with no error to tell you or the model why. Use
+`plimsoll_shell`, which the capability adds, for commands instead.
+
+What it needs and does: `minimum_isolation` has no default, and the session's tier is checked
+against it before anything runs. **Files only:** the backend implements PydanticAI's
+`SupportsFilesystem` and `SupportsRealpath` and not `SupportsCommands`, because PydanticAI's command
+contract says a backend must never stop a process a command detached into its own session, and a
+plimsoll session kills every process a call leaves behind. So PydanticAI's `Coder` and `Shell`
+capabilities do not work on it (with no command support their shell tools are left out of the
+model's tools), and commands go through `plimsoll_shell`, whose description tells the model that a
+process left in the background stops when its command returns. A later run of the same
+conversation reaches the same session by the `WorkspaceRef` in its message history, in the process
+that opened it only; anywhere else the ref raises `PlimsollWorkspaceGoneError`, and a fresh sandbox
+is never opened in its place. The ref is `<daemon>/<fingerprint>`, never the session ID. Durable
+execution (Temporal, DBOS, Prefect) is refused with a `UserError` that says why. A run never closes
+the session: its lifetime ends it, or `workspace.destroy(ref)`.
+
+**Errors.** A call that may have run raises `PlimsollOutcomeUnknownError`, a
+`WorkspaceUnavailableError`, which no durable engine retries; a session that ended, or that this
+process cannot reach, raises `PlimsollWorkspaceGoneError`; a refusal another try may pass (capacity,
+after the backend's own retries of up to about 30 seconds, or an unreachable daemon) raises
+`PlimsollRetryableError`, a `ConnectionError`; path failures are the builtin file errors.
+`plimsoll_client.pydantic_ai.map_error` is the one mapping.
+
+**What reaches the application.** Every record the client checked goes to `record_sink=` (by
+default `backend.records`; `JsonLinesRecordSink(path)` writes one JSON line each). `plimsoll_shell`'s
+and the code tool's answers carry plimsoll's labels in the `ToolReturn`'s `metadata`, which
+PydanticAI keeps for the application and does not send to the model.
+
+**Examples.** `examples/pydantic_ai_workspace.py` writes a script with PydanticAI's file tool and
+runs it with `plimsoll_shell` in the same session. `examples/pydantic_ai_grant.py` runs a PydanticAI
+agent whose model is a scripted `FunctionModel`: it asks the granted code tool for a JavaScript
+program and a Python one that call a stand-in API, and the program prints each tool return and the
+labels in its `metadata`; run it as [a grant](#a-grant-the-tools-code-calls-one-web-api) says.
+`examples/pydantic_ai_crash.py` kills the worker mid-command and a second one takes the session
+over ([Tests](#tests) says what it checks).
+
 ## Agent workspace
 
 `Workspace` (`plimsoll_client.workspace`) is a shell, files and search over one session, for an
@@ -295,8 +700,26 @@ files there (`cwd`, `env`); files persist as in any session. What does not persi
 command leaves running (the session's sweep ends it with the call), and `exit` in a command ends
 the step before its state is saved. Output limits are the daemon's, reported by the truncation
 flags on the outcome; `read` returns at most `max_bytes` (8 MiB at most, the artifact budget), and
-`persist` fails past that budget. Paths are resolved against the work directory, not the shell's
-current directory; an absolute path inside the work directory is accepted.
+`persist` fails past that budget. `read_whole` returns a whole file, and `read_pieces`
+yields it 8 MiB a call: a file longer than one call is measured after its first piece, and when
+it changed size before the last one (another call of the session wrote it) they raise
+`WorkspaceChangedError` rather than return a cut or spliced copy; a change that keeps the size is
+not seen. Both take a `limit`, 64 MiB (`MAX_WHOLE_BYTES`) unless you pass another (`None` for
+none): a longer file raises `WorkspaceTooLargeError` once its first piece or its measured size
+shows it, before any other piece is read. A whole read ends in your process's memory, and code in
+the sandbox can make a file of any size for nothing (a sparse file takes no disk), so the limit is
+what keeps an agent's read from making your process hold all of it; 64 MiB is eight calls, far
+past what a model takes in one tool answer. `read_head(path, max_bytes)` reads the first
+`max_bytes` of a file of any length the same way. The ADK, OpenAI Agents, Deep Agents and PydanticAI
+adapters read whole files through `read_whole`, so each refuses a file past 64 MiB (PydanticAI's
+before it reads any of it, from the size it measures first). Paths are resolved against the work directory, not the shell's current directory; an
+absolute path inside the work directory is accepted.
+
+A call the daemon answered without a report of its step raises `WorkspaceCallError`, a
+`RuntimeError` whose `result` is the checked answer (its outcome, the tier, the sentence the
+provider states beside the tier, and the run record), so the record is not lost with the error.
+Outcome `setup_failed` means no step began: the command did not run. `protocol_error`,
+`runner_failed` or a result with no step mean it may have run.
 
 ```python
 from plimsoll_client import Client, Workspace
@@ -366,20 +789,32 @@ in-memory workspace and the in-memory session daemon, with no call to api.anthro
 is a sandbox provider for the Agents SDK's `SandboxAgent`: `PlimsollSandboxClient` creates,
 resumes and deletes sessions, `PlimsollSandboxSession` runs the agent's commands and files in
 one plimsoll session through the Agent workspace above. The SDK's maintainers keep
-third-party providers out of the SDK, so this one lives here.
+third-party providers out of the SDK, so this one lives here. Built and tested against
+`openai-agents` 0.25.0.
 
 ```python
 import os
+from agents import RunConfig, Runner
 from agents.sandbox import SandboxAgent, SandboxRunConfig
+from agents.sandbox.session import CallbackSink, Instrumentation
 from plimsoll_client import Client
 from plimsoll_client.openai_sandbox import PlimsollSandboxClient, PlimsollSandboxClientOptions
 
-provider = PlimsollSandboxClient(Client("https://plimsoll.internal", token=os.environ["PLIMSOLL_TOKEN"]))
+def on_event(event, _session):
+    # One finish event per command, with what plimsoll states about it.
+    if event.op == "exec" and event.phase == "finish":
+        print(event.data.get("plimsoll_dispatched"), event.data.get("plimsoll_record_sha256"))
+
+provider = PlimsollSandboxClient(
+    Client("https://plimsoll.internal", token=os.environ["PLIMSOLL_TOKEN"]),
+    instrumentation=Instrumentation(sinks=[CallbackSink(on_event)]),
+)
 agent = SandboxAgent(name="coder", instructions="Write and run the script.")
-run_config = SandboxRunConfig(
+sandbox = SandboxRunConfig(
     client=provider,
     options=PlimsollSandboxClientOptions(minimum_isolation="kernel", languages=("python",), timeout=120),
 )
+result = await Runner.run(agent, "Count the lines in data.csv", run_config=RunConfig(sandbox=sandbox))
 ```
 
 What it gives: every command and file operation is a plimsoll call with a run record; the
@@ -387,15 +822,79 @@ session is opened at the floor the options name (`kernel` by default); no creden
 network in the sandbox; the SDK's snapshots and `RunState` work as with any provider, since
 `persist_workspace` and `hydrate_workspace` are the workspace's tar.
 
+**What the app sees for each command.** Six labels, each checked against the values plimsoll
+can state, so nothing the guest printed or named can become one: `plimsoll_dispatched` (`yes`,
+`no` or `unknown`: whether the call was handed to the sandbox), `plimsoll_refused` (the reason,
+when nothing ran), `plimsoll_outcome`, `plimsoll_isolation` and `plimsoll_isolation_qualification`
+(the tier, and the sentence the provider states beside it when it states one), and
+`plimsoll_record_sha256` (the digest of the run record this client checked). They appear in the
+SDK's own two places for sandbox operations:
+
+- in `event.data` of the `exec` finish event every sink of the client's `Instrumentation`
+  receives (a `CallbackSink`, the SDK's JSONL file sink, its HTTP sink), for a command that ran
+  and for one that failed, with the checked run record itself beside them as `plimsoll_record`
+  (a dict of the `RunRecord` fields) whenever the daemon answered with one;
+- in the data of the SDK's `sandbox.exec` tracing span, so a tracing processor sees them: the
+  labels only, since the SDK sends its traces to OpenAI when `OPENAI_API_KEY` is set and
+  tracing is on.
+
+The labels and the record are the only fields plimsoll adds. The SDK's own fields beside them are the SDK's:
+its exec event carries the command text (and the output only when the sink's
+`EventPayloadPolicy` asks for it), and its function-tool span carries the tool's input and
+output unless `RunConfig(trace_include_sensitive_data=False)`. A command the app runs itself,
+`await session.exec(...)`, returns a `PlimsollExecResult`: the SDK's `ExecResult` with `record`
+(the checked `RunRecord`), `record_sha256`, `isolation`, `isolation_qualification`, `outcome`,
+the truncation flags and `labels`. File reads and writes carry no labels: their records are
+checked, and not passed on.
+
+**Errors.** A command plimsoll refused before anything ran, or whose call ended in an error
+after which it may have run, raises `PlimsollExecError`, the SDK's `ExecTransportError`:
+`not_dispatched` is the refusal's reason (None when the command may have run), `retryable` is
+`plimsoll_client.retry_on`'s answer (true only for `capacity` and `environment`), `context`
+holds the labels, and the plimsoll error is its cause. A refused file call raises the SDK's
+`WorkspaceArchiveReadError` or `WorkspaceArchiveWriteError` the same way. A command past its
+budget raises `PlimsollExecTimeoutError`, the SDK's `ExecTimeoutError`, with the call's result.
+The SDK does not answer the model with a failed command: the run ends with the SDK's
+`UserError` ("Error running tool exec_command: ..."), whose cause is the `PlimsollExecError`.
+
+**Retries.** The SDK never runs a failed command again by itself: its only automatic retry is
+for model calls, and only when `ModelSettings.retry` asks for it (checked in `openai-agents`
+0.25.0, and held by a test that counts the commands the sandbox receives). If your app retries
+a failed run, ask the cause first: `err.__cause__.retryable` is false for every command that
+may have run.
+
+**Timeouts and cancellation.** A command's budget is the timeout the SDK gives it: the shell
+tool gives 10 seconds unless the model asks for more (`yield_time_ms`), and a command given
+none gets the options' `timeout`. A budget of zero or less ends the command before anything is
+sent. When the SDK cancels a command (the run is cancelled, or a sibling tool call failed), the
+call is cancelled as everywhere in this client: a call not yet sent is never sent, and the
+connection of one in flight is cut. A command cut in flight may have run and has no answer this
+client could check, so the client sends nothing more on that session: `running()` turns false
+and each later command is refused before it is sent (`not_dispatched` `request`). A session open
+the SDK cancels is closed once the daemon has opened it.
+
 Limits, stated in the docstrings: the work directory is the daemon's (`/work` on docker),
 learned from the sandbox at create unless the manifest names it; `resume` opens a new
 session and the SDK restores the snapshot into it (this client cannot re-attach to a session
 another process opened, and the persisted state carries the session's public fingerprint,
-never its ID); no PTY, no exposed ports, no manifest users or groups; a background process
-does not survive a command. Tested in `frameworks/openai_agents/` with the SDK's base
-classes, state round trip and exec path against an in-memory workspace and the in-memory
-session daemon, with no model call; the sandbox-side behaviour of the SDK's own file helpers
-on a real session is not yet checked on docker.
+never its ID); no PTY, so no streamed output, no `write_stdin` and no interactive programs; no
+exposed ports; no manifest users or groups, and a command the SDK wraps in `sudo -u` for a
+`run_as` user is refused before it is sent; a background process does not survive a command;
+the whole workspace saved at `stop` must fit one call's 8 MiB artifact budget, so a larger one
+fails to save. A file past that budget is read in pieces and checked against its size. The SDK's
+workspace fingerprint (which lets a resume that reattaches skip the restore) is turned off: its
+helper runs from `/tmp`, which plimsoll's docker sandboxes mount without execute permission.
+
+Tested in `frameworks/openai_agents/`: the provider against the SDK's own base classes, wrapper,
+events and tracing over an in-memory workspace that counts every call and over the in-memory
+session daemon; and the check OpenAI's provider guide asks for, the SDK's `Runner` driven by its
+`ScriptedModel` (no model is called), through success, a tool error, a refusal, timeouts,
+cancellation and a start that fails. On a real docker session (`TestPythonExamplesDocker`, in
+`make docker-suite`): `examples/openai_agents_sandbox.py`, a `SandboxAgent` through `Runner.run`;
+and `frameworks/openai_agents/docker_openai_check.py`, the same `Runner` path with the SDK's shell,
+`apply_patch` and `view_image` tools, its file helpers, the isolation checks (no network, a
+read-only system, no background process outliving a command), a timeout, a cut command, and a
+stop and resume.
 
 ## verifiers runtime
 
@@ -522,6 +1021,10 @@ anything ran:
   `not_dispatched`; a success answer of that kind raises `AnswerNotBoundError`, a
   `DataLossError`.
 
+`retry_on(err)` puts that question to a framework's automatic retry: true only when
+`not_dispatched` is `capacity` or `environment`, the two reasons where another try of the same
+call may pass ([LangChain tool and Deep Agents backend](#langchain-tool-and-deep-agents-backend)).
+
 Refusals. The class comes from the status code and the reason; the daemon marks these
 refusals, but read `not_dispatched` rather than the class, since a daemon that predates
 a procedure (sessions, for one) answers it `unimplemented` without the mark:
@@ -537,6 +1040,9 @@ a procedure (sessions, for one) answers it `unimplemented` without the mark:
 | `ProtocolMismatchError` | The daemon serves another protocol number. |
 | `AtCapacityError` | Shed by the daemon's admission or rate limit; retry later or elsewhere. |
 | `SessionEndedError` | The session has ended; `reason` says why (`closed`, `expired`, `disk_exceeded`, `main_process_ended`, `boundary_failed`, `sandbox_changed`, `shutdown`; `replaced`: the daemon closed it to open a newer session for the same `owner`, at its `SANDBOX_MAX_SESSIONS_PER_OWNER`; `not_found`: the daemon has no such session, after a restart, say; `unclaimed`: no request named it before its first idle timeout, so the daemon closed it, as it does a session whose open answer was lost; or `unknown`: an end a newer daemon has). Nothing of the refused call ran: open a new session. |
+| `StaleOwnerError` | Another process took the session over; this one must not use it again. Nothing of the refused call ran; the session goes on for its new owner. |
+| `CheckpointMismatchError` | A takeover's checkpoint is not the session's head, and the gap is not one the takeover named. Nothing moved. |
+| `CallAlreadySentError` | The first call after a takeover across a lost call repeats that call, which was already sent once; `session.lost_call` says whether the daemon answered it. Refused here, with nothing sent; never a retry signal. |
 
 A plain `PlimsollError` carries any other Connect status in `code` (for example
 `unauthenticated`), marked or not as the daemon sent it.
@@ -554,10 +1060,13 @@ have executed, and `err.result` holds what came back):
 | `SoftwareEvidenceMismatchError` | A session opened on software outside the requested rule (the client closes it). |
 | `ResultKindMismatchError` | The answer holds a result of another kind than the request. |
 
-No usable answer (`TransportError`, never marked): the connection failed,
+No usable answer (`TransportError`): the connection failed,
 `RequestTimeoutError` (the exchange outlived `request_timeout`),
 `ResponseTooLargeError` (over 32 MiB), or `MalformedResponseError` (not a well-formed
-message of the expected type).
+message of the expected type). Marked not dispatched, reason `environment`, only when it
+failed before any byte of the request could leave (a refused or hanging connect, a failed
+TLS handshake); otherwise unmarked, since the daemon may have received the request and
+run it.
 
 Stopped by a `CancelHandle` (`RequestCanceledError`, code `canceled`; not asyncio's
 `CancelledError`): marked not dispatched, reason `request`, when no byte of the request
@@ -593,8 +1102,45 @@ The framework tools have a suite each in `frameworks/<name>/`, run by
 framework, at the version `frameworks/<name>/requirements.txt` pins: `make py-frameworks`
 builds them under `tmp/py-frameworks/` (the first build downloads the frameworks;
 nothing calls a model or a paid service). The suites call each tool through its
-framework's own tool-call path (Agno's `FunctionCall`, CrewAI's `run` and `arun`), with
-no model and no agent loop, against the real daemon handler; `make clients-suite` runs
-them with every other client suite. The cancellation cases hold the daemon's Describe
+framework's own tool-call path (Agno's `FunctionCall`, CrewAI's `run` and `arun`, LangChain's
+`invoke` and `ainvoke` with a tool call), with no model and no agent loop, against the real
+daemon handler; `make clients-suite` runs them with every other client suite. A suite whose
+directory has a `pytest.ini` runs under pytest: the LangChain one carries LangChain's standard
+tool tests. The Deep Agents suite drives Deep Agents' own agent graph with a scripted chat model
+over an in-memory workspace. `make docker-suite` runs the framework checks on real docker
+sessions, each in its framework's environment: LangChain's standard sandbox tests and a
+scripted Deep Agents agent (`TestDeepAgentsDocker`); the commands Agent Framework's shell
+environment provider runs to describe the shell (its version, working directory and tool
+versions) and a two-command conversation that shares a file, through the shell tool on both
+project images (`TestAgentFrameworkDocker`); a scripted smolagents `CodeAgent` whose three steps
+share one session's Python interpreter, and a step that prints past the output limit
+(`TestSmolagentsDocker`); PydanticAI's own conformance suite for workspace backends, every skipped
+rule compared with the list of rules the package does not promise, and agents of the real PydanticAI
+with `FileSystem`, `Coder` and `plimsoll_shell` (`TestPydanticAIDocker`); and Google ADK's own
+tools, toolset and Runner over `PlimsollEnvironment` (`TestADKEnvironmentDocker`). CI runs that
+suite under runc and, in the gvisor
+workflow, under runsc. The cancellation cases hold the daemon's Describe
 or a Run until released, cancel the await, and count the Run requests that reach the
 handler.
+
+`examples/` holds short programs, one per agent kit and one more for ADK's kept sandbox
+(`crewai_tool.py`, `agno_tool.py`, `langchain_tool.py`, `adk_executor.py`, `adk_environment.py`,
+`openai_agents_sandbox.py`, `agent_framework_shell.py`, `smolagents_executor.py`,
+`pydantic_ai_workspace.py`): each hands the kit plimsoll's tool or sandbox, drives it with a
+scripted stand-in for the model, and runs one piece of code (the Agent Framework one runs two shell
+commands, the second reading the file the first wrote, and prints the labels each function result
+carries; the smolagents one runs two steps, the second using a variable the first set; the
+PydanticAI one writes a script with PydanticAI's file tool and runs it with `plimsoll_shell` in the
+same session). `langchain_retry_guard.py` is LangGraph's retry policy under `retry_on` and the
+LangSmith labels of a traced call ([LangChain](#langchain-tool-and-deep-agents-backend)). Each file's
+header says what to install and which daemon to start. `TestPythonExamplesDocker` runs all ten, each
+in its framework's environment, against a real docker daemon with sessions on, and the six granted
+examples (`*_grant.py`) against a daemon of their own with a stand-in for the API; `make docker-suite`
+runs it. `pydantic_ai_crash.py` ("kill the worker, keep
+the sandbox", with the checkpoint store it uses in `_conversation_lease.py`) kills the process running
+a PydanticAI agent while its command runs, and a second process takes the session over across the
+lost call: its record says whether the daemon answered it, the repeat that PydanticAI's resume sends
+first is refused with nothing sent, and the model is told what the record says. With `--freeze`, a
+worker that returns after the takeover is refused by its own client. `TestPydanticAICrashDocker` runs
+it in both modes against a real docker daemon (`make docker-suite`), and
+`frameworks/pydantic_ai/test_crash_chain.py` holds its chain check to good and bad record logs.

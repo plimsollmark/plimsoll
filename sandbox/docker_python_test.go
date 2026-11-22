@@ -2,17 +2,21 @@ package sandbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"testing"
 )
 
-// pythonProjectImage is the tag `make docker-images` gives docker/python.Dockerfile.
-const pythonProjectImage = "plimsoll/sandbox-python:latest"
+// pythonProjectImage is the tag `make docker-images` gives docker/python.Dockerfile, or the
+// image SANDBOX_TEST_PYTHON_IMAGE names: like SANDBOX_TEST_PROJECT_IMAGE (testDocker), it lets a
+// branch that changes docker/ run these tests on an image built under a tag of its own.
+var pythonProjectImage = cmp.Or(os.Getenv("SANDBOX_TEST_PYTHON_IMAGE"), "plimsoll/sandbox-python:latest")
 
 // TestDockerProjectPython proves that a runtime is image content, not a provider
 // feature: the Python image built from docker/python.Dockerfile runs a NumPy/SciPy

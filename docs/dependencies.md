@@ -39,6 +39,20 @@ pins a specific <dfn>*gVisor*</dfn> release and checksum rather than tracking `l
 (gVisor is Google's stand-in kernel, which containers can run under for a stronger
 wall).
 
+The program plimsoll runs beside the code it is asked to run, in every project image, the project runner, is
+plimsoll's own **native helper**: one static x86-64 program written in Rust with **no
+outside package** (its `Cargo.lock` lists the crate alone). Its source and its built file live in
+[sandbox/internal/nativehelper/program](../sandbox/internal/nativehelper/program/), and the
+built file is pinned the same way: `plimsoll-helper.sha256` records the SHA-256 of every
+input of the build (the toolchain, pinned to one Rust release inside a build image named by
+a hash of its content, the flags, and every source file) and of the file itself, `build.sh` refuses unless
+two builds in different folders give the same bytes, and the package's tests fail when the
+committed file and the pin disagree. `make docker-images` copies that committed file into each
+project image, the images' inputs label covers it, and the startup test of every
+[provider](trainers/glossary.html#provider) that runs projects refuses an image whose file is
+not those bytes. Only the x86-64 build is committed: no image for 64-bit
+ARM is built yet.
+
 ### The gate pins the tools that run the gate
 
 `make audit` is the gate: the one local command that builds, lints, tests, checks the

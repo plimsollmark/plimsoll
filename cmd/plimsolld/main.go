@@ -4,13 +4,13 @@
 //
 // Authenticated callers need the code:run scope. A real provider refuses to start
 // without PLIMSOLL_TOKEN or PLIMSOLL_CLIENTS_FILE unless the operator explicitly
-// acknowledges open development mode with PLIMSOLL_INSECURE=1.
+// acknowledges open development mode with PLIMSOLL_INSECURE=1, and open mode serves
+// loopback only: it refuses to start unless the RPC listener bound a loopback address.
 //
 // The daemon takes no arguments; every setting is an environment variable.
-// `plimsolld -h` prints the full reference. That text is helpText (providers.go),
-// built from the usage constants in this file, and a test requires every variable
-// the package reads to appear in it, so the binary's own help cannot fall behind
-// the code.
+// `plimsolld -h` prints the full reference, rendered (helpText, providers.go) from the
+// table every reader reads through (internal/settings), so the binary's own help cannot
+// fall behind the code.
 package main
 
 import (
@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -36,271 +36,14 @@ import (
 
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/internal/printable"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/internal/settings/configfile"
 	"github.com/plimsollmark/plimsoll/internal/unreadbody"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
-
-// usageHead, usageProviders and usageLimits are what -h prints, around the two parts
-// helpText generates: the SANDBOX_PROVIDER line and the daemon-built providers'
-// sections. Together they are the daemon's configuration reference; keep every
-// variable the package reads listed (TestUsageNamesEveryVariable enforces it).
-const usageHead = `plimsolld serves the plimsoll SandboxService over Connect: cleartext
-HTTP/2 ("h2c") and HTTP/1.1, or HTTP/1.1 and HTTP/2 over TLS when PLIMSOLL_TLS_CERT
-is set.
-
-Usage: plimsolld [-h]
-
-The daemon takes no arguments. Configuration is by environment variable:
-
-  PLIMSOLL_ADDR              listen address (default :8746, every interface;
-                             set 127.0.0.1:8746 for a loopback-only daemon)
-  PLIMSOLL_METRICS_ADDR      listen address for GET /metrics, a listener of its
-                             own (default 127.0.0.1:9464, this host only; the
-                             host and port are OpenTelemetry's Prometheus exporter
-                             defaults); off disables it. It has no authentication
-                             and its labels name grant profiles and route
-                             templates, so bind an address other hosts can reach
-                             only behind a firewall rule that admits just the
-                             scraper. It serves TLS when the daemon does
-  PLIMSOLL_GUARD_ADDR        listen address for the egress guard, a listener of
-                             its own that serves the guard path and nothing else;
-                             required when E2B_GUARD_URL or
-                             SANDBOX_DOCKERCLOUD_GUARD_URL is set, refused
-                             otherwise. Point the public guard URL at it. A guest's
-                             one permitted destination is the guard, so it never
-                             shares PLIMSOLL_ADDR, where the guest would also reach
-                             the RPC procedures and the health endpoints. It
-                             serves TLS when the daemon does
-  PLIMSOLL_LOG_FORMAT       json (default) or text; the audit stream is a
-                             machine-read record and prospector-report consumes
-                             newline-delimited JSON. Use text only for eyeballing
-                             a local run.
-  PLIMSOLL_CLIENTS_FILE      JSON caller registry for multi-client auth (each
-                             caller its own principal; managed by plimsoll-clients);
-                             takes precedence over PLIMSOLL_TOKEN
-  PLIMSOLL_TOKEN             one shared bearer granting code:run to every caller
-                             (at least 32 characters)
-  PLIMSOLL_INSECURE          =1 explicitly permits a real provider with auth
-                             disabled (development only; never expose that listener).
-                             Open mode answers only requests addressed to
-                             localhost or a loopback address
-  PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY
-                             PEM certificate and key; when set the daemon serves
-                             TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
-  PLIMSOLL_HARDENED          =1 enforces the production policy at startup: vm or
-                             verified kernel isolation, multi-client auth, TLS on
-                             every non-loopback listener (RPC, metrics, guard),
-                             pinned images (docker; dockercloud, or a store image,
-                             with SANDBOX_DOCKERCLOUD_API=connect named) or an
-                             explicit E2B template, no unconfined seccomp, an
-                             explicit resource envelope plus (docker) the aggregate
-                             budget, per-caller rate limiting with a burst of at
-                             most one minute's rate, a per-caller concurrency cap
-                             below SANDBOX_MAX_CONCURRENT, a per-caller session cap
-                             with sessions on, and paid_seconds_per_day on every
-                             caller of e2b or dockercloud. Every rule but isolation
-                             is checked before the billed smoke test. Any violation
-                             refuses to serve. Isolation is also held on every run:
-                             kernel is a floor joined to each request's minimum, so
-                             a provider that finds a weaker boundary later refuses
-                             the run before code runs, and /readyz says not ready
-                             while the provider's tier is below it.
-  PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
-                             caller may select via grant_profile
-  PLIMSOLL_WITHHELD_FILE     JSON withheld set (built by plimsoll-withheld): digests
-                             of what must never enter a sandbox, such as a
-                             harness's source, hidden answers and held-out seeds.
-                             Every call's payload, and the archives in it, is
-                             scanned for it before admission; a find refuses the
-                             call (not dispatched) or is named on the audit line
-                             alone, by the entry's mode, and a set with a refuse
-                             entry refuses a call whose archives pass the scan's
-                             bounds. With the docker provider, each image it runs
-                             is scanned for the set at startup too (about 12 s for
-                             a 1 GB image), and a refuse-mode entry found in one
-                             refuses to start. A malformed set refuses to start.
-                             See docs/ship-scan.md
-
-`
-
-const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier,
-                             and refuse any run below it, not dispatched
-                             (vm | kernel | container | process); unset = no floor
-  SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
-  SANDBOX_DOCKER_PROJECT_IMAGE
-                             project toolchain image (default plimsoll/sandbox:latest)
-  SANDBOX_DOCKER_MODULE_IMAGE
-                             simulation worker image for module runs (built by
-                             make docker-images as plimsoll/sandbox-sim:latest);
-                             unset = module runs unsupported
-  SANDBOX_DOCKER_RUNTIME     runsc (gVisor) for the docker provider; "" = runc
-  SANDBOX_DOCKER_SECCOMP     seccomp profile path (or "unconfined") for docker; ""
-                             keeps docker's built-in default. Set it to the shipped
-                             audited profile (docker/seccomp.json) to also deny
-                             ptrace, io_uring, keyctl and similar; see docs/seccomp.md
-  SANDBOX_DOCKER_SECCOMP_SDK the profile a run gets instead of SANDBOX_DOCKER_SECCOMP
-                             when its grant profile sets sdk_env (the local address a
-                             standard client library reaches the broker through, which
-                             needs IPv4 TCP sockets the default denies). "derived" makes
-                             it from the default at startup (IPv4 TCP sockets and a few
-                             socket options added, nothing else); a path names your own.
-                             "" refuses such runs before dispatch when
-                             SANDBOX_DOCKER_SECCOMP is a file. It needs
-                             SANDBOX_DOCKER_SECCOMP, and never replaces it for any other
-                             run; see docs/seccomp.md
-  SANDBOX_GUEST_UID          the uid (and gid) docker runs every guest as, default
-                             61000, which no account uses; 1 to 65532, with
-                             neither it nor it + 1 in a band systemd assigns
-                             itself (60001-60513, 60578-60705, 61184-65519).
-                             Preflight refuses one this host's /etc/passwd or
-                             /etc/group has (it or one more, the session identity
-                             check's)
-  SANDBOX_REQUIRE_PINNED_IMAGES
-                             =1 to refuse mutable image tags (require @sha256:)
-  E2B_API_KEY / E2B_TEMPLATE E2B credentials and toolchain template
-  E2B_GUARD_URL              absolute HTTPS egress-guard URL on port 443 whose host
-                             is a name, never an IP address (E2B's network rule
-                             refuses one); enables E2B grants (allowlist plus beta
-                             header transform). It must reach this daemon's
-                             PLIMSOLL_GUARD_ADDR
-  E2B_SESSION_GRANTS         how a granted session call reaches the guard: unset
-                             refuses it; session = one credential for the
-                             session's life; call = a fresh one put on per call;
-                             both passed against the live service on 2026-10-08.
-                             Needs E2B_GUARD_URL
-  DOCKER_SBX_TOKEN           Docker Cloud Sandboxes personal access token for
-                             dockercloud (read from the environment only); it is
-                             exchanged for a short-lived bearer, never sent to
-                             the sandbox API itself
-  DOCKER_SBX_USERNAME        the Docker account the token belongs to
-  SANDBOX_DOCKERCLOUD_AUTH_URL
-                             token exchange endpoint; default
-                             https://hub.docker.com/v2/auth/token
-  SANDBOX_DOCKERCLOUD_GUARD_URL
-                             absolute HTTPS egress-guard endpoint on 443; enables
-                             dockercloud grants (connect only). A grant run's sandbox may reach
-                             only this host; the guest holds a per-run, guard-only
-                             credential (Docker's proxy cannot inject one); served
-                             on PLIMSOLL_GUARD_ADDR
-  SANDBOX_DOCKERCLOUD_POLICY_URL
-                             per-sandbox network-policy REST base; default
-                             https://api.sandboxes-cloud.docker.com/v1. Not in
-                             Docker's published contract (the sbx CLI's call);
-                             every grant run verifies the result through it
-  SANDBOX_DOCKERCLOUD_API    which Docker API dockercloud speaks: connect (the
-                             default; the pre-launch contract, the only one with
-                             grants and image identity) or rest (the API Docker
-                             documents, kept as a backup until it covers those);
-                             both passed the live suite on 2026-10-04. rest states no image
-                             identity (it reports no booted digest, so hardened
-                             mode needs connect), caps a run at 270 s (an exec
-                             ends with its 300 s endpoint credential) and cannot
-                             verify grants, so it fails startup when
-                             SANDBOX_DOCKERCLOUD_GUARD_URL is set
-  SANDBOX_DOCKERCLOUD_API_URL
-                             Docker Cloud Sandboxes management endpoint. connect:
-                             required, no default
-                             (https://sandboxes.connect.docker.com/sbx answered on
-                             2026-10-04); rest: default
-                             https://connect.docker.com/sandboxes, the documented
-                             base URL
-  SANDBOX_DOCKERCLOUD_IMAGE  raw OCI image each dockercloud sandbox boots (the
-                             toolchain image; must be @sha256: when
-                             SANDBOX_REQUIRE_PINNED_IMAGES=1, and then the
-                             linux/amd64 manifest digest). dockercloud honors
-                             SANDBOX_MEMORY_MB and whole SANDBOX_CPUS, and requests
-                             the Micro size (1 CPU, 2 GiB) when they are unset;
-                             SANDBOX_PIDS and SANDBOX_DISK_MB fail startup. The
-                             account's cloud network policy must default to
-                             deny-all (sbx --cloud policy init deny-all); every run
-                             verifies it. Verified live on 2026-09-24.
-  SANDBOX_DOCKERCLOUD_STORE_IMAGE
-                             instead of SANDBOX_DOCKERCLOUD_IMAGE: an image in the
-                             account's own Cloud Sandboxes image store, as
-                             <image id>@sha256:<digest>. Booted by ID with no
-                             registry pull, so it can stay private to the account;
-                             every sandbox's booted digest must equal the one given.
-                             Its size and start command are the image's own (create
-                             it with the start command tail -f /dev/null), so
-                             SANDBOX_CPUS and SANDBOX_MEMORY_MB only cap them.
-                             connect only. Verified live on 2026-10-05.
-`
-
-const usageLimits = `
-  SANDBOX_MAX_CONCURRENT     global max in-flight runs (default 8)
-  SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max/2)
-  SANDBOX_RATE_PER_MIN       per-caller runs per minute (default 30; 0 = disabled)
-  SANDBOX_RATE_BURST         per-caller token-bucket burst (default = rate)
-  SANDBOX_PAID_SECONDS_PER_DAY
-                             e2b and dockercloud, which bill by the second: the
-                             daemon's allowance of microVM wall time per UTC day
-                             (default 0: none); each caller's own is its
-                             paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE, both per
-                             daemon. A run reserves its timeout plus the provider's
-                             teardown bound (33 s) and is charged what it took. Kept
-                             in memory: a restart forgets the day's spend
-  SANDBOX_TOTAL_MEMORY_MB    aggregate host memory budget for runners; clamps
-                             max-concurrent to total/per-run, less one run for
-                             each SANDBOX_SESSION_POOL container, so concurrent
-                             runs cannot oversubscribe the host (ignored for e2b
-                             and dockercloud, whose runners live off-host)
-  SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
-                             per-run resource envelope applied to the provider
-  SANDBOX_MAX_SESSIONS       open sessions at once (default 0: sessions off). A
-                             session keeps one sandbox for many calls: files
-                             persist, processes do not, except the interpreters
-                             it keeps for cells. Needs a provider with
-                             sessions (docker with a project image, openshell
-                             or e2b); startup fails otherwise, and when one real
-                             session opened at startup does not keep what a
-                             session promises. A running session
-                             holds one concurrency slot; a suspended one holds
-                             none, except on docker, where a suspend is a pause
-                             that keeps the memory.
-  SANDBOX_MAX_SESSIONS_PER_CALLER
-                             open sessions one caller may hold, suspended ones
-                             included (default 0: no cap beyond
-                             SANDBOX_MAX_SESSIONS; required in hardened mode
-                             with sessions on)
-  SANDBOX_MAX_SESSIONS_PER_OWNER
-                             open sessions one owner of a caller may hold (the
-                             end user an OpenSession names; default 0: no
-                             cap). At the cap an open closes that owner's least
-                             recently used session with no call in progress;
-                             its later calls are refused as replaced. Refused,
-                             not dispatched, when every one is running a call.
-  SANDBOX_SESSION_POOL       sandboxes kept ready for sessions (default 0: none;
-                             at most SANDBOX_MAX_SESSIONS; docker and openshell;
-                             startup fails for another provider). Each is
-                             never used, has its interpreters already running,
-                             goes to one session (or to one Run cell that asks
-                             for one, prefer_warm) and is removed when it ends,
-                             never reused; an idle one is replaced after 30m.
-                             Each counts as one run against
-                             SANDBOX_TOTAL_MEMORY_MB.
-  SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
-                             12h); a request may ask for less
-  SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
-                             never, refused with a provider billed by the
-                             second; otherwise 1s to 12h); its files are kept and
-                             the next call resumes it; a request may ask for less,
-                             not under 1s. A session no request has named by its
-                             first idle timeout (5m if it never suspends) is
-                             closed instead (end unclaimed). On a provider billed by the second a
-                             session's running time, open to suspend and resume
-                             to suspend, draws on the paid allowances
-  SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
-                             (default 1024; 0 = no bound; at most 1048576);
-                             measured after each call, not enforced during it
-
-Endpoints outside auth: GET /healthz (liveness) and GET /readyz (provider
-readiness) on PLIMSOLL_ADDR, GET /metrics (Prometheus text: run, shed-load,
-host-call and advice counters) on PLIMSOLL_METRICS_ADDR only, and the egress
-guard (each call authenticated by its run's guard credential) on
-PLIMSOLL_GUARD_ADDR only.
-`
 
 // parseArgs accepts only a help request. Any other argument is refused rather
 // than ignored: a daemon that silently starts despite a misspelt flag leaves its
@@ -318,21 +61,21 @@ func parseArgs(args []string) (help bool, err error) {
 
 func main() {
 	if help, err := parseArgs(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "plimsolld: %v\n\n%s", err, helpText())
+		fmt.Fprintf(os.Stderr, "plimsolld: %s\n\n%s", printable.Text(err.Error()), helpText())
 		os.Exit(2)
 	} else if help {
 		fmt.Print(helpText())
 		return
 	}
 	configureLogging(os.Getenv)
-	for _, name := range unknownVariables(os.Environ(), helpText()) {
+	for _, name := range unknownVariables(os.Environ()) {
 		// A misspelling, or a setting a newer plimsolld has: either way this daemon runs
 		// without it, which an operator relying on it (a per-owner session cap, say)
 		// would otherwise learn only from its effects.
 		slog.Warn("unknown variable ignored: this plimsolld has no such setting", "name", name)
 	}
 
-	addr := getenv("PLIMSOLL_ADDR", ":8746")
+	addr := settings.Addr.Get(os.Getenv)
 
 	provider, err := buildProvider(os.Getenv)
 	if err != nil {
@@ -383,6 +126,12 @@ func main() {
 	if tierKnownBeforeChecks(sb) {
 		exitBelowFloor(sb, want, requireMinimum)
 	}
+	// Every answer and its record state the provider's qualification beside the tier, so
+	// a sentence no record can carry ends startup here, before any work.
+	if err := qualificationError(sb); err != nil {
+		slog.Error("provider's isolation qualification cannot be recorded", "provider", sb.Name(), "error", err)
+		os.Exit(1)
+	}
 
 	// Resolve the effective limiter envelope (env parsing + aggregate-memory clamp +
 	// validation) in one typed, unit-tested function so main() only wires the result.
@@ -426,11 +175,34 @@ func main() {
 		}
 	}
 
+	// Hardened mode is read before the files the settings name, because it decides what a
+	// file another user could change does to startup (fileModes).
+	hardened, err := settings.Hardened.Get(os.Getenv)
+	if err != nil {
+		slog.Error("invalid PLIMSOLL_HARDENED", "error", err)
+		os.Exit(1)
+	}
+	// looseFiles collects, per setting, what lets a user other than the daemon's own or
+	// root change the file it names: hardened mode refuses each in its early pass below,
+	// before anything spends; any other mode logs one warning line per file here.
+	var looseFiles []string
+	fileModes := func(setting string, found *configfile.Finding) {
+		if found == nil {
+			return
+		}
+		looseFiles = append(looseFiles, setting+": "+found.String())
+		if !hardened {
+			slog.Warn("a file a setting names can be changed by a user other than the daemon's own or root; hardened mode refuses to start on it",
+				"setting", setting, "problems", found.String())
+		}
+	}
+
 	gr, err := grants.LoadFromEnv()
 	if err != nil {
 		slog.Error("failed to load host-API grant profiles", "error", err)
 		os.Exit(1)
 	}
+	fileModes(settings.NameOf(settings.GrantsFile), gr.FileModes())
 	if gr.Len() > 0 {
 		gc, ok := sb.(sandbox.GrantCapable)
 		if !ok || (!gc.SupportsJavaScriptGrants() && !gc.SupportsProjectGrants()) {
@@ -446,9 +218,12 @@ func main() {
 
 	var verifier rpc.TokenVerifier
 	multiClientAuth := false
+	// openMode: a real provider served with no credential (PLIMSOLL_INSECURE=1). Its
+	// one boundary is the loopback bind, checked on the bound listener below.
+	openMode := false
 	var uncapped []string // callers without a daily allowance on a metered provider
 	switch {
-	case strings.TrimSpace(os.Getenv("PLIMSOLL_CLIENTS_FILE")) != "":
+	case settings.ClientsFile.Get(os.Getenv) != "":
 		// Multi-client: each caller authenticates as its own principal, so the
 		// per-session token's `sub` is actually per client.
 		fv, err := rpc.LoadClientsFromEnv()
@@ -460,28 +235,38 @@ func main() {
 			slog.Error("PLIMSOLL_CLIENTS_FILE was set but no verifier was loaded")
 			os.Exit(1)
 		}
+		fileModes(settings.NameOf(settings.ClientsFile), fv.FileModes())
 		verifier = fv
 		multiClientAuth = true
 		uncapped = fv.Uncapped()
 		slog.Info("multi-client auth enabled", "clients", fv.Len())
-	case os.Getenv("PLIMSOLL_TOKEN") != "":
-		if err := clientconfig.CheckToken(os.Getenv("PLIMSOLL_TOKEN")); err != nil {
+	case settings.Token.Get(os.Getenv) != "":
+		if err := clientconfig.CheckToken(settings.Token.Get(os.Getenv)); err != nil {
 			slog.Error("PLIMSOLL_TOKEN is too short; refusing to serve", "error", err)
 			os.Exit(1)
 		}
-		verifier = staticVerifier{token: os.Getenv("PLIMSOLL_TOKEN"), scopes: []string{rpc.ScopeCodeRun}}
+		verifier = staticVerifier{token: settings.Token.Get(os.Getenv), scopes: []string{rpc.ScopeCodeRun}}
 	default:
 		// Open dev mode. Harmless when the provider is Disabled (no code runs), but
 		// serving a REAL provider with no auth means any unauthenticated caller can
 		// run hostile code — the worst fail-open for this service. Refuse to start in
 		// that combination unless the operator explicitly opts in, so a lost/forgotten
 		// token can't silently become an open code-execution endpoint.
-		if sb.Name() != "disabled" && os.Getenv("PLIMSOLL_INSECURE") != "1" {
-			slog.Error("refusing to start: a real sandbox provider is enabled but PLIMSOLL_TOKEN is unset (auth DISABLED). Set PLIMSOLL_TOKEN (or PLIMSOLL_CLIENTS_FILE) to require auth, or set PLIMSOLL_INSECURE=1 to acknowledge open code execution",
+		insecure, err := settings.Insecure.Get(os.Getenv)
+		if err != nil {
+			slog.Error("invalid PLIMSOLL_INSECURE", "error", err)
+			os.Exit(1)
+		}
+		if sb.Name() != "disabled" && !insecure {
+			slog.Error("refusing to start: a real sandbox provider is enabled but PLIMSOLL_TOKEN is unset (auth DISABLED). Set PLIMSOLL_TOKEN (or PLIMSOLL_CLIENTS_FILE) to require auth, or, for development on this host only, set PLIMSOLL_INSECURE=1 and keep PLIMSOLL_ADDR on loopback (unset, it is 127.0.0.1:8746): open mode serves loopback only and refuses to start on an address other hosts can reach",
 				"provider", sb.Name())
 			os.Exit(1)
 		}
-		slog.Warn("PLIMSOLL_TOKEN unset: auth DISABLED (open dev mode) — every caller may run code", "provider", sb.Name())
+		// The disabled provider runs no code whatever the caller sends, so open mode
+		// over it keeps any address the operator sets. A real provider is held to a
+		// loopback bind below, which the unset address (127.0.0.1:8746) already is.
+		openMode = sb.Name() != "disabled"
+		slog.Warn("PLIMSOLL_TOKEN unset: auth DISABLED (open dev mode); every caller on this host may run code", "provider", sb.Name())
 	}
 
 	// TLS is resolved before the hardened policy so the policy can check the
@@ -500,14 +285,24 @@ func main() {
 
 	// Hardened mode: the deploy-time policy for serving hostile code in
 	// production. Everything it checks is resolved evidence (the loaded verifier,
-	// the effective limiter, the actual transport, and, after the smoke test, the
-	// provider's proven isolation), so a pass means the properties are in force, not
-	// merely configured. It runs twice: every rule but isolation now, before anything
-	// spends, and all of them once the smoke test has proven the tier.
-	hardened, err := sandbox.BoolFromEnv(os.Getenv, "PLIMSOLL_HARDENED")
-	if err != nil {
-		slog.Error("invalid PLIMSOLL_HARDENED", "error", err)
-		os.Exit(1)
+	// the effective limiter, the actual transport, the addresses the listeners bound,
+	// and, after the smoke test, the provider's proven isolation), so a pass means the
+	// properties are in force, not merely configured. It runs twice: every rule but
+	// isolation once the listeners are bound, before anything spends, and all of them
+	// once the smoke test has proven the tier. (hardened itself was read before the
+	// files the settings name.)
+	//
+	// The withheld set is read here, before anything spends, so a set that does not
+	// load, or one another user could change, ends startup before the smoke test; its
+	// image scan needs the provider ready and waits for it below.
+	var withheldSet *withheld.Set
+	if path := settings.WithheldFile.Get(os.Getenv); path != "" {
+		withheldSet, err = withheld.Load(path)
+		if err != nil {
+			slog.Error("failed to load the withheld set", "error", err)
+			os.Exit(1)
+		}
+		fileModes(settings.NameOf(settings.WithheldFile), withheldSet.FileModes())
 	}
 	facts := hardenedFacts{
 		Provider:        sb.Name(),
@@ -524,17 +319,8 @@ func main() {
 		Sessions:        sc,
 		Metered:         metered,
 		Uncapped:        uncapped,
+		LooseFiles:      looseFiles,
 	}
-	// The isolation rule waits for the smoke test's evidence; every other rule is
-	// checked now, so a violation costs nothing.
-	facts.IsolationPending = true
-	if hardened {
-		if err := enforceHardenedPolicy(os.Getenv, facts); err != nil {
-			slog.Error("hardened-mode policy violation; refusing to serve before the smoke test", "error", err)
-			os.Exit(1)
-		}
-	}
-
 	// Bind every listener now: an address that cannot be bound (taken, out of range,
 	// the same as another listener's) fails before anything spends, and the log can
 	// name the bound address (":0", an ephemeral port, is how the tests run the
@@ -544,6 +330,14 @@ func main() {
 	if err != nil {
 		slog.Error("cannot listen", "addr", addr, "error", err)
 		os.Exit(1)
+	}
+	// Open mode serves loopback only, judged from what the kernel bound: nothing has
+	// been served yet, and nothing is until startup has finished.
+	if openMode {
+		if err := openModeBindError(ln.Addr()); err != nil {
+			slog.Error("refusing to start: open mode is not bound to loopback", "provider", sb.Name(), "addr", addr, "bound", ln.Addr().String(), "error", err)
+			os.Exit(1)
+		}
 	}
 	rpcConns, guardConns := connectionCaps(guardAddr != "")
 	ln = limitConnections(ln, rpcConns)
@@ -571,6 +365,25 @@ func main() {
 		if !loopbackAddr(boundMetrics) {
 			slog.Warn("the metrics listener is reachable from other hosts and has no authentication; its labels name grant profiles and route templates, so admit only the scraper",
 				"metrics_addr", boundMetrics)
+		}
+	}
+
+	// The hardened transport rules judge the addresses the listeners bound, never the
+	// configured names, so a name that resolves off this host is not taken for loopback.
+	facts.Addr = ln.Addr().String()
+	if guardLn != nil {
+		facts.GuardAddr = boundGuard
+	}
+	if metricsLn != nil {
+		facts.MetricsAddr = boundMetrics
+	}
+	// The isolation rule waits for the smoke test's evidence; every other rule is
+	// checked now, before anything spends.
+	facts.IsolationPending = true
+	if hardened {
+		if err := enforceHardenedPolicy(os.Getenv, facts); err != nil {
+			slog.Error("hardened-mode policy violation; refusing to serve before the smoke test", "error", err)
+			os.Exit(1)
 		}
 	}
 
@@ -655,12 +468,7 @@ func main() {
 	}
 	svc.Sessions = sc
 	svc.Grants = gr
-	if path := strings.TrimSpace(os.Getenv("PLIMSOLL_WITHHELD_FILE")); path != "" {
-		set, err := withheld.Load(path)
-		if err != nil {
-			slog.Error("failed to load the withheld set", "error", err)
-			os.Exit(1)
-		}
+	if set := withheldSet; set != nil { // loaded before the smoke test
 		svc.Withheld = set
 		slog.Info("withheld set loaded: every call's payload is scanned for it", "set", set.Digest(), "entries", set.Len(),
 			"exempt_callers", set.ExemptCount())
@@ -679,11 +487,14 @@ func main() {
 
 	if hardened {
 		facts.Isolation, facts.IsolationPending = sb.IsolationClass(), false
+		if g, ok := sb.(sandbox.GuestGuarded); ok {
+			facts.GuestGuard, facts.GuestGuardProven = g.GuestGuard()
+		}
 		if err := enforceHardenedPolicy(os.Getenv, facts); err != nil {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
 			os.Exit(1)
 		}
-		slog.Info("hardened mode: production policy verified and enforced", "isolation_floor", svc.Floor.String())
+		slog.Info("hardened mode: production policy verified and enforced", "isolation_floor", svc.Floor.String(), "guest_guard", facts.GuestGuard)
 	}
 
 	srv := newHTTPServer(addr, rpcMux(svc, verifier, maxConcurrent, sb), tlsConf)
@@ -726,7 +537,7 @@ func main() {
 					return
 				case <-ticker.C:
 					if c := sb.IsolationClass(); preflights && (c == sandbox.IsolationUnknown || c < proven) {
-						pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						pctx, cancel := context.WithTimeout(context.Background(), readyBudget)
 						if err := pf.Preflight(pctx); err != nil {
 							slog.Warn("isolation evidence is below what startup proved; requests whose minimum isolation is above it are refused",
 								"provider", sb.Name(), "isolation", sb.IsolationClass().String(), "proven", proven.String(), "error", err)
@@ -896,9 +707,10 @@ func exitBelowFloor(sb sandbox.Sandbox, want sandbox.IsolationClass, required bo
 	}
 }
 
-// readyzHandler re-runs the provider's bounded Preflight, and with a daemon floor
-// (hardened mode) also says not ready while the provider's tier is below it, since every
-// run would then be refused. Anyone can poll it, so it answers with a fixed body: a
+// readyzHandler re-runs the provider's bounded Preflight through the daemon's readiness
+// cache (readiness.go: one check in flight, its answer reused for readyWindow), and with a
+// daemon floor (hardened mode) also says not ready while the provider's tier is below it,
+// since every run would then be refused. Anyone can poll it, so it answers with a fixed body: a
 // Preflight error can name DOCKER_HOST, image references or a gateway's own error text.
 // The detail goes to the log, at most once per readyzLogEvery, so a poller cannot flood
 // the log either.
@@ -914,9 +726,13 @@ func readyzHandler(sb sandbox.Sandbox, floor sandbox.IsolationClass) http.Handle
 		mu.Unlock()
 		http.Error(w, "not ready", http.StatusServiceUnavailable)
 	}
+	var cache *readyCache
+	if pf, ok := sb.(sandbox.Preflighter); ok {
+		cache = newReadyCache(pf)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if pf, ok := sb.(sandbox.Preflighter); ok {
-			if err := pf.Preflight(r.Context()); err != nil {
+		if cache != nil {
+			if err := cache.check(r.Context()); err != nil {
 				notReady(w, err)
 				return
 			}
@@ -989,11 +805,12 @@ func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent i
 	// authenticated requests during decode before the run limiter is reachable.
 	// LimitBody independently caps raw HTTP bytes; Connect's limit is per
 	// decompressed message, so neither one substitutes for the other.
-	mux.Handle(path, guardRPC(verifier, maxConcurrent, handler))
+	mux.Handle(path, guardRPC(verifier, svc, maxConcurrent, handler))
 	// The egress guard is not here: it has a listener of its own (guardHandler).
 	// Operational endpoints, registered OUTSIDE the auth interceptor so probes need
 	// no token. Liveness is unconditional; readiness re-runs the provider's bounded
-	// Preflight. Docker probes its pinned daemon/runtime; E2B's current Preflight
+	// Preflight, at most one at a time and at most once per readyWindow (readiness.go).
+	// Docker checks its pinned daemon/runtime; E2B's current Preflight
 	// validates configuration only and does not prove API reachability. /metrics is
 	// not here: it has a listener of its own (metricsHandler).
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -1034,8 +851,8 @@ func guardHandler(guard sandbox.EgressGuardCapable, path string, maxConcurrent i
 // guardRPC wraps the Connect handler in the checks that run before Connect reads the
 // body: credentials first, then the declared body size against the cap on raw request
 // bytes, then a decode slot for the authenticated caller.
-func guardRPC(verifier rpc.TokenVerifier, maxConcurrent int, handler http.Handler) http.Handler {
-	return rpc.AuthenticateHTTP(verifier, rpc.LimitBody(maxRequestBytes, rpc.LimitHTTPConcurrency(maxConcurrent*2, handler)))
+func guardRPC(verifier rpc.TokenVerifier, refusals rpc.RefusalNoter, maxConcurrent int, handler http.Handler) http.Handler {
+	return rpc.AuthenticateHTTP(verifier, rpc.LimitBody(maxRequestBytes, rpc.LimitHTTPConcurrency(maxConcurrent*2, handler)), refusals)
 }
 
 // writeMetrics renders a minimal Prometheus text exposition. It covers the biggest
@@ -1066,6 +883,13 @@ func writeMetrics(w http.ResponseWriter, svc *rpc.SandboxService) {
 	paidCaller, paidDaemon := svc.Spend.Refused()
 	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"paid_caller\"} %d\n", paidCaller)
 	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"paid_daemon\"} %d\n", paidDaemon)
+	closeFailed, closeGaveUp := svc.SessionCloseCounts()
+	fmt.Fprintf(w, "# HELP plimsoll_session_close_failures_total Tries of a close the daemon made by itself (an idle session it could not pause or pay for, an unclaimed session, an open it could not hand over, a pool member) that failed with the session still open; each is tried again.\n")
+	fmt.Fprintf(w, "# TYPE plimsoll_session_close_failures_total counter\n")
+	fmt.Fprintf(w, "plimsoll_session_close_failures_total %d\n", closeFailed)
+	fmt.Fprintf(w, "# HELP plimsoll_session_close_gave_up_total Closes the daemon made by itself that failed every try; the provider's lifetime for the session ends it.\n")
+	fmt.Fprintf(w, "# TYPE plimsoll_session_close_gave_up_total counter\n")
+	fmt.Fprintf(w, "plimsoll_session_close_gave_up_total %d\n", closeGaveUp)
 	writeHostCallMetrics(w, svc.HostCallStats())
 	writeAdviceMetrics(w, svc.AdviceStats())
 }
@@ -1180,20 +1004,6 @@ func (v staticVerifier) VerifyToken(_ context.Context, token string) (rpc.Princi
 	return rpc.Principal{UserID: "static", Scopes: v.scopes}, true, nil
 }
 
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func atLeast1(n int) int {
-	if n < 1 {
-		return 1
-	}
-	return n
-}
-
 func validateLimiterConfig(maxConcurrent, perKey, ratePerMin, burst int) error {
 	if maxConcurrent < 1 || maxConcurrent > 1024 {
 		return fmt.Errorf("max_concurrent=%d is outside [1,1024]", maxConcurrent)
@@ -1207,20 +1017,27 @@ func validateLimiterConfig(maxConcurrent, perKey, ratePerMin, burst int) error {
 	return nil
 }
 
-// unknownVariables lists the PLIMSOLL_ and SANDBOX_ variables in environ that the help
-// text does not name. The help text names every variable the daemon reads
-// (TestUsageNamesEveryVariable), so a name it lacks is one the daemon ignores.
-func unknownVariables(environ []string, help string) []string {
+// unknownVariables lists the variables in environ with one of plimsolld's prefixes that
+// no setting of this build declares (internal/settings, and a daemon-built provider's
+// section only when the build has that provider): a misspelling, or a setting a newer
+// plimsolld has. The AWS names lambdamicrovm reads keep AWS's spelling and are outside
+// these prefixes.
+func unknownVariables(environ []string) []string {
 	var out []string
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if !strings.HasPrefix(name, "PLIMSOLL_") && !strings.HasPrefix(name, "SANDBOX_") {
+		if !slices.ContainsFunc(settingPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
 			continue
 		}
-		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(help) {
+		if provider, ok := settings.Lookup(name); !ok || (provider != "" && !hasProvider(provider)) {
 			out = append(out, name)
 		}
 	}
 	sort.Strings(out)
 	return out
 }
+
+// settingPrefixes are the prefixes unknownVariables reads as plimsolld's. E2B_ and
+// DOCKER_SBX_ were added on 2026-11-18: a misspelled E2B_TEMPLATE was silent, and the
+// daemon ran E2B's default template outside hardened mode.
+var settingPrefixes = []string{"PLIMSOLL_", "SANDBOX_", "E2B_", "DOCKER_SBX_"}

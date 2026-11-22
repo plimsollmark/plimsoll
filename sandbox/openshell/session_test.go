@@ -52,16 +52,28 @@ type sessionScript struct {
 	sweeps  [][]string
 }
 
+// ownProgram reports whether cmd is plimsoll's own node program running script
+// (sessionkit.NodeArgv), with the arguments after the script.
+func ownProgram(cmd []string, script string) ([]string, bool) {
+	head := sessionkit.NodeArgv("-e", script)
+	if len(cmd) < len(head) || !slices.Equal(cmd[:len(head)], head) {
+		return nil, false
+	}
+	return cmd[len(head):], true
+}
+
 func (s *sessionScript) run(e *fakeExec) error {
 	e.readAll()
 	cmd, clean := controlled(e.start.GetCommand())
-	script := len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && (cmd[2] == sessionkit.ListScript || cmd[2] == sessionkit.SweepScript)
+	_, list := ownProgram(cmd, sessionkit.ListScript)
+	sweepArgs, sweep := ownProgram(cmd, sessionkit.SweepScript)
+	script := list || sweep
 	if script && (!clean || len(e.start.GetEnvironment()) > 0) {
 		return fmt.Errorf("plimsoll's own program started with the exec's environment: %q, %v", e.start.GetCommand(), e.start.GetEnvironment())
 	}
 	s.mu.Lock()
 	switch {
-	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sessionkit.ListScript:
+	case list:
 		s.kinds = append(s.kinds, "list")
 		l := freshListing
 		if s.listing != nil {
@@ -72,9 +84,9 @@ func (s *sessionScript) run(e *fakeExec) error {
 			return err
 		}
 		return e.exit(0)
-	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sessionkit.SweepScript:
+	case sweep:
 		s.kinds = append(s.kinds, "sweep")
-		s.sweeps = append(s.sweeps, cmd[3:])
+		s.sweeps = append(s.sweeps, sweepArgs)
 		code := int32(sessionkit.SweepClean)
 		if s.sweep != nil {
 			code = s.sweep()
@@ -451,6 +463,7 @@ func TestCallsInOneSessionAreSerialized(t *testing.T) {
 		running++
 		most = max(most, running)
 		mu.Unlock()
+		// fixed-wait: the fake call's own duration, so two calls that overlapped would be counted
 		time.Sleep(30 * time.Millisecond)
 		mu.Lock()
 		running--
@@ -758,6 +771,7 @@ func TestDrainWaitsForACreateInFlight(t *testing.T) {
 	select {
 	case err := <-drained:
 		t.Fatalf("Drain returned (%v) while a create was in flight", err)
+	// fixed-wait: 100 ms without Drain returning stands for "it waits for the create"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(100 * time.Millisecond):
 	}
 	leave()

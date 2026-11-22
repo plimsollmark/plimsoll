@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# A PydanticAI package: one plimsoll session as an agent run's workspace (files only), plimsoll's shell tool over it,
+# and plimsoll's code tool. The code is plimsoll_client.pydantic_ai (PlimsollWorkspace, PlimsollWorkspaceBackend,
+# plimsoll_code_tool and the errors); this package depends on that exact plimsoll-client release, and its version
+# moves with plimsoll's releases (TestClientVersionsAgree in clients/typescript checks both). pydantic-ai-slim is
+# pinned exactly: upstream adds conformance rules for workspace backends in minor releases. The suite in
+# clients/python/frameworks/pydantic_ai runs against the version below.
+[project]
+name = "pydantic-ai-plimsoll"
+version = "0.28.0"
+description = "A PydanticAI workspace backed by one plimsoll session: a self-hosted sandbox that refuses to run below the isolation you require and keeps a checked record of every call"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai-slim==2.70.0",
+    "plimsoll-client==0.28.0",
+]
+keywords = ["pydantic-ai", "pydanticai", "workspace", "sandbox", "code execution", "agents", "gvisor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/pydantic-ai-plimsoll"
+Source = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/pydantic-ai-plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pydantic_ai_plimsoll = ["py.typed"]

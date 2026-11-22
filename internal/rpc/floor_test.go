@@ -224,7 +224,7 @@ func TestTheDaemonFloorHoldsOnSessions(t *testing.T) {
 			r.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: "x = 1"}}
 		}},
 	} {
-		req := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id}
+		req := &plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id}
 		c.payload(req)
 		_, err := svc.SessionRun(ctx, connect.NewRequest(req))
 		if connect.CodeOf(err) != connect.CodeFailedPrecondition {

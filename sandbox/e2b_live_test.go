@@ -2,11 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // paidOptIn skips a test that spends money unless flag is "1", which only its make
@@ -20,13 +23,16 @@ func paidOptIn(t *testing.T, flag string) {
 	}
 }
 
-// These tests hit the real E2B API: make e2b-suite (E2B_LIVE=1 and E2B_API_KEY).
+// These tests hit the real E2B API: make e2b-suite, which alone sets E2B_LIVE_REQUIRED=1,
+// the opt-in to spend. Under it a missing E2B_API_KEY fails instead of skipping, as
+// DOCKERCLOUD_LIVE_REQUIRED does for dockercloud-suite, so a green suite means the live
+// service was exercised.
 func e2bClient(t *testing.T) *E2B {
 	t.Helper()
-	paidOptIn(t, "E2B_LIVE")
+	paidOptIn(t, "E2B_LIVE_REQUIRED")
 	key := os.Getenv("E2B_API_KEY")
 	if key == "" {
-		t.Skip("E2B_API_KEY not set")
+		t.Fatal("E2B_LIVE_REQUIRED=1 but E2B_API_KEY is not set: this run proves nothing about E2B")
 	}
 	return &E2B{APIKey: key, DefaultTimeout: 60 * time.Second, MaxTimeout: 90 * time.Second}
 }
@@ -196,6 +202,55 @@ func TestE2BSmokeLive(t *testing.T) {
 	t.Log("template smoke passed: toolchain present, step cwd honored, egress denied")
 }
 
+// TestE2BSessionOnBaseIsRefusedInWordsLive is the live proof of what plimsoll says about
+// sessions on E2B's own base template, which this suite always runs on: base keeps node
+// only under /usr/local, which plimsoll's own programs never take node from (E2B's
+// template build leaves it writable by every user; rust-native-helper-40, eb02a491e), so
+// the open is refused with ErrE2BNoControlNode before anything of the caller's runs and
+// before a sandbox is made for it, marked not dispatched, in words that say where the
+// template that serves sessions comes from. If it fails because the session opened, or
+// because base's refusal became the node-version one, E2B has put a node outside
+// /usr/local in base, and the pages that say base cannot hold a session for want of one
+// (e2b/README.md, docs/sessions.md, docs/limitations.md) are out of date. One microVM,
+// the smoke test's, for a few seconds.
+func TestE2BSessionOnBaseIsRefusedInWordsLive(t *testing.T) {
+	e := e2bClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := e.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest: %v", err)
+	}
+	s, err := e.OpenSession(ctx, SessionOptions{Lifetime: time.Minute, DiskBytes: 64 << 20})
+	if err == nil {
+		_ = s.Close(context.Background())
+		select {
+		case <-s.Done():
+		case <-time.After(time.Minute):
+			t.Error("the session that opened was not gone a minute after its close")
+		}
+		t.Fatal("a session opened on base: base now has a node outside /usr/local that accepts the signal flag, so the pages that say base cannot hold a session are out of date")
+	}
+	if errors.Is(err, sessionkit.ErrNodeFlagRefused) {
+		t.Errorf("base's refusal is the node-version one (%q): base now has a node outside /usr/local, and the pages that say it has none are out of date", err)
+	}
+	if !errors.Is(err, ErrE2BNoControlNode) || !errors.Is(err, ErrUnsupported) {
+		t.Errorf("the refusal %q does not wrap both ErrE2BNoControlNode and ErrUnsupported", err)
+	}
+	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalUnsupported {
+		t.Errorf("the refusal is marked %v, %v; want not dispatched, unsupported", reason, ok)
+	}
+	for _, want := range []string{"/usr/local", "e2b/README.md", "E2B_TEMPLATE", "Single runs work"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	}
+	t.Logf("base refused the session in these words: %v", err)
+	left, lerr := E2BOwnSandboxes(ctx, e)
+	if lerr != nil || len(left) != 0 {
+		t.Errorf("after the refusal the listing shows %v (error %v); want no sandbox of this instance left", left, lerr)
+	}
+}
+
 // TestE2BOrphanListingLive verifies the reconciliation contract against the real
 // control plane: a created sandbox is discoverable by this instance's metadata
 // stamp via GET /sandboxes with its lease key intact, a sandbox whose lease is
@@ -212,25 +267,37 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	}
 	defer e.kill(ctx, vm)
 
-	listed, err := e.listSandboxes(ctx, url.Values{"instance": {e.instance()}})
-	if err != nil {
-		t.Fatalf("list by instance stamp: %v", err)
-	}
+	// E2B's listing is not read-after-write: in two of the first three runs on 2026-11-21 a
+	// sandbox 0.44 s old was not in it yet, and it was a second later (finding release-101).
+	// A late listing only delays a reap, which the sandbox's own timeout bounds, so the
+	// test waits for it, up to 15 s, and says how long it took.
+	start := time.Now()
+	var listed []e2bListedSandbox
 	found := false
-	for _, sb := range listed {
-		if sb.id == vm.id {
-			found = true
-			if sb.metadata["lease"] != vm.lease {
-				t.Fatalf("live listing carries lease %q, want %q: the control plane does not return the lease key, so reconciliation would never reap", sb.metadata["lease"], vm.lease)
-			}
-			if sb.state != "running" {
-				t.Fatalf("live listing says state %q for a running sandbox", sb.state)
+	for !found {
+		listed, err = e.listSandboxes(ctx, url.Values{"instance": {e.instance()}})
+		if err != nil {
+			t.Fatalf("list by instance stamp: %v", err)
+		}
+		for _, sb := range listed {
+			if sb.id == vm.id {
+				found = true
+				if sb.metadata["lease"] != vm.lease {
+					t.Fatalf("live listing carries lease %q, want %q: the control plane does not return the lease key, so reconciliation would never reap", sb.metadata["lease"], vm.lease)
+				}
+				if sb.state != "running" {
+					t.Fatalf("live listing says state %q for a running sandbox", sb.state)
+				}
 			}
 		}
+		if !found && time.Since(start) > 15*time.Second {
+			t.Fatalf("created sandbox %s not returned by the instance-stamped listing within 15 s: %+v", vm.id, listed)
+		}
+		if !found {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
-	if !found {
-		t.Fatalf("created sandbox %s not returned by the instance-stamped listing: %+v", vm.id, listed)
-	}
+	t.Logf("the instance-stamped listing returned the sandbox %v after its create", time.Since(start).Round(10*time.Millisecond))
 
 	// Tracked: reconciliation must not touch it.
 	if n, err := e.ReconcileOrphans(ctx); err != nil || n != 0 {

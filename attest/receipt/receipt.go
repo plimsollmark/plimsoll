@@ -21,8 +21,13 @@ import (
 	"github.com/plimsollmark/plimsoll/attest/tsa"
 )
 
-// MaxBytes bounds each receipt or policy before JSON decoding. One MiB accommodates
-// up to eight ordinary signed assertions and certificate chains without unbounded input.
+// MaxBytes bounds each receipt or policy before JSON decoding. It is a round 1 MiB, not
+// derived from the parts a receipt holds. A receipt of maxRoles (8) endorsements whose
+// time-stamp responses are each at tsa.MaxResponse (64 KiB, 87,384 bytes in base64) spends
+// 699,072 bytes on them, which leaves room for envelope files of up to 32,000 bytes each
+// (about 42,700 in base64), a DSSE envelope around a statement of about 23,800 bytes;
+// fewer roles, or smaller responses (an ordinary one is a few KiB), leave more.
+// TestMaxBytesHoldsEightFullEndorsements holds that statement to the three numbers.
 const MaxBytes = 1 << 20
 
 const maxRoles = 8

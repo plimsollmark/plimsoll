@@ -6,47 +6,6 @@ import (
 	"testing"
 )
 
-// TestCappedBufferReportsTruncationOutOfBand verifies the output cap drops bytes
-// silently and reports it ONLY via Truncated(): consumers get exactly the bytes
-// the guest wrote (no in-band marker) plus a machine-readable flag.
-func TestCappedBufferReportsTruncationOutOfBand(t *testing.T) {
-	var b cappedBuffer
-	b.limit = 8
-	_, _ = b.Write([]byte("0123456789"))
-	if b.String() != "01234567" {
-		t.Fatalf("retained %q, want the exact 8-byte prefix", b.String())
-	}
-	if strings.Contains(b.String(), "truncated") {
-		t.Fatal("in-band truncation marker leaked into output")
-	}
-	if !b.Truncated() {
-		t.Fatal("dropped bytes not reported")
-	}
-
-	var exact cappedBuffer
-	exact.limit = 4
-	_, _ = exact.Write([]byte("abcd"))
-	if exact.Truncated() {
-		t.Fatal("write exactly at the cap flagged as truncated")
-	}
-}
-
-// TestCappedStreamReportsTruncation is the e2b-side equivalent of the
-// cappedBuffer test: byte-exact prefix, out-of-band flag.
-func TestCappedStreamReportsTruncation(t *testing.T) {
-	c := &cappedStream{max: 4}
-	c.append([]byte("abc"))
-	c.append([]byte("defg"))
-	if c.b.String() != "abcd" || !c.dropped {
-		t.Fatalf("got %q dropped=%v, want exact 4-byte prefix with dropped=true", c.b.String(), c.dropped)
-	}
-	within := &cappedStream{max: 4}
-	within.append([]byte("abcd"))
-	if within.dropped {
-		t.Fatal("append exactly at the cap flagged as truncated")
-	}
-}
-
 // TestWasmMarksOutputTruncation runs the in-process provider with a tiny output
 // cap and verifies the result carries the truncation flag with unmarked output.
 func TestWasmMarksOutputTruncation(t *testing.T) {

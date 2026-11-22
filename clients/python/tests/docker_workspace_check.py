@@ -13,6 +13,7 @@ import tarfile
 import unittest
 
 from plimsoll_client import Client, Workspace, WorkspacePathError
+from plimsoll_client import workspace as ws
 
 
 def _url() -> str:
@@ -71,6 +72,14 @@ class WorkspaceOnDocker(unittest.TestCase):
             self.assertEqual(w.glob("src/**/*.py"), ["src/app.py", "src/lib/util.py"])
             self.assertEqual(w.glob("**/util.py"), ["src/lib/util.py"])
             self.assertEqual(w.glob("*.nothing"), [])
+            # A pattern with a space is one pattern on BusyBox sh too (finding release-41).
+            w.write("my", "m")
+            w.write("my file1.txt", "f")
+            self.assertEqual(w.glob("my file*.txt"), ["my file1.txt"])
+            # A dash-led name past one piece is measured with `wc -c --` (finding release-42).
+            dashed = bytes(range(256)) * ((ws.MAX_READ_BYTES + 3000) // 256)
+            w.write("-big", dashed)
+            self.assertEqual(w.read_whole("-big"), dashed)
             self.assertEqual(w.grep("^import", "src"), "src/app.py:1:import os\nsrc/lib/util.py:1:import sys")
             self.assertEqual(w.grep("print", "src/app.py"), "src/app.py:2:print('one')")
             self.assertEqual(w.grep("absent"), "")

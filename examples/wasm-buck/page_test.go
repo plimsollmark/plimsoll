@@ -6,22 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/internal/pagetest"
 )
 
-// The page is written from page.html by a run that needs docker, but the artifact
-// people read is the committed docs/examples/wasm-buck/index.html. Every literal run
-// of the template must appear in the committed page, in the template's order, so
-// prose edited in one and not the other fails here.
+// The committed docs/examples/wasm-buck/index.html carries every literal run of page.html, the
+// template a run writes it from, in the template's order (internal/pagetest says why).
 func TestCommittedPageCarriesEveryLineOfItsTemplate(t *testing.T) {
-	page, at := committedPage(t), 0
-	for _, run := range templateLiterals(pageTemplate) {
-		i := strings.Index(page[at:], run)
-		if i < 0 {
-			t.Fatalf("the committed page does not carry this template text "+
-				"(edit both, or regenerate with `go run ./examples/wasm-buck`):\n%s", firstMissingLine(run, page))
-		}
-		at += i + len(run)
-	}
+	pagetest.CarriesTemplate(t, pageTemplate, filepath.Join("..", "..", "docs", "examples", "wasm-buck", "index.html"),
+		"go run ./examples/wasm-buck")
 }
 
 func committedPage(t *testing.T) string {
@@ -31,36 +24,6 @@ func committedPage(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(raw)
-}
-
-// templateLiterals returns the text between {{actions}}, which Execute copies
-// through untouched.
-func templateLiterals(tmpl string) []string {
-	var literals []string
-	for i, part := range strings.Split(tmpl, "{{") {
-		if i > 0 {
-			end := strings.Index(part, "}}")
-			if end < 0 {
-				continue
-			}
-			part = part[end+2:]
-		}
-		if strings.TrimSpace(part) != "" {
-			literals = append(literals, part)
-		}
-	}
-	return literals
-}
-
-// firstMissingLine names the first line of a missing run that the page lacks
-// anywhere, or the whole run when only the order changed.
-func firstMissingLine(run, page string) string {
-	for _, line := range strings.Split(run, "\n") {
-		if strings.TrimSpace(line) != "" && !strings.Contains(page, line) {
-			return line
-		}
-	}
-	return run
 }
 
 // The numbers on the committed page come from a run; this test checks that its

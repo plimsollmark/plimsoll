@@ -48,7 +48,7 @@ func launched(_ context.Context, _ []string, env map[string]string, _ []byte, _,
 	return ExecResult{Stdout: launchedID(strings.TrimPrefix(env["PLIMSOLL_INTERP_DIR"], interpRoot)), Exited: true}, nil
 }
 
-func launchedID(lang string) string { return "7:1:" + argvHex(interpArgv(lang)) }
+func launchedID(lang string) string { return "7:1:" + argvHex(mustInterpArgv(lang)) }
 
 // readyFrame is the line a relay started as argv prints first.
 func readyFrame(argv []string) string { return `{"ready":"8:1:` + argvHex(argv) + `"}` }
@@ -260,6 +260,7 @@ func TestRelayedCellIgnoresAFrameLeftBetweenCalls(t *testing.T) {
 	if out, err := in.RunRelayed(context.Background(), launched, attach, Cell{Language: "python", Code: "1", Work: "/work", OutCap: 1 << 10, ErrCap: 1 << 10}); err != nil || out.Stdout != "1\n" {
 		t.Fatalf("first cell: %+v, %v", out, err)
 	}
+	// fixed-wait: 50 ms stands for "the stale frames have reached the reader"; not shown safe: if they have not, the next call does not meet them
 	time.Sleep(50 * time.Millisecond) // the stale frames reach the reader
 	out, err := in.RunRelayed(context.Background(), launched, attach, plainCell)
 	if err != nil || out.Stdout != "2\n" || out.Raised || out.ExitCode != 0 {
@@ -283,6 +284,49 @@ func TestRelayedCellPrepareFailuresSendNoCode(t *testing.T) {
 		}
 		if runs.Load() != 0 {
 			t.Fatalf("%s: the code was sent", name)
+		}
+	}
+}
+
+// A cell in a language its environment does not state is ErrNoInterpreter before
+// anything starts; one in a stated language whose launch fails, as a refused docker
+// exec reports (exit 1) or an identity check that cannot run, is ErrLaunch and never
+// ErrNoInterpreter: only the environment's statement says the image cannot run it.
+func TestRelayedCellUnstatedLanguageIsNoInterpreterAndAFailedLaunchIsNot(t *testing.T) {
+	var launches atomic.Int64
+	counted := func(ctx context.Context, argv []string, env map[string]string, stdin []byte, outCap, errCap int) (ExecResult, error) {
+		launches.Add(1)
+		return launched(ctx, argv, env, stdin, outCap, errCap)
+	}
+	unstated := plainCell
+	unstated.Stated = []string{"javascript"}
+	var in Interpreters
+	_, err := in.RunRelayed(context.Background(), counted, scriptedRelay(nil, honest), unstated)
+	if !errors.Is(err, ErrNoInterpreter) || errors.Is(err, ErrLaunch) || launches.Load() != 0 {
+		t.Fatalf("an unstated language: err %v after %d launches; want ErrNoInterpreter before any", err, launches.Load())
+	}
+
+	stated := plainCell
+	stated.Stated = []string{"javascript", "python"}
+	refusedExec := func(context.Context, []string, map[string]string, []byte, int, int) (ExecResult, error) {
+		return ExecResult{Exited: true, ExitCode: 1, Stderr: "Error response from daemon"}, nil
+	}
+	checkCannotRun := Interpreters{Checker: func(context.Context, []string, map[string]string, []byte, int, int) (ExecResult, error) {
+		return ExecResult{}, errors.New("docker exec could not start")
+	}}
+	for name, run := range map[string]func() error{
+		"a refused launch": func() error {
+			var in Interpreters
+			_, err := in.RunRelayed(context.Background(), refusedExec, scriptedRelay(nil, honest), stated)
+			return err
+		},
+		"an identity check that cannot run": func() error {
+			_, err := checkCannotRun.RunRelayed(context.Background(), launched, scriptedRelay(nil, honest), stated)
+			return err
+		},
+	} {
+		if err := run(); !errors.Is(err, ErrLaunch) || errors.Is(err, ErrNoInterpreter) {
+			t.Fatalf("%s in a stated language: err %v; want ErrLaunch, not ErrNoInterpreter", name, err)
 		}
 	}
 }

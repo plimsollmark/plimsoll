@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
 	"log/slog"
 	"maps"
 	"net"
@@ -15,14 +14,21 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
+	"github.com/plimsollmark/plimsoll/internal/boundary"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/egress"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 const (
-	// smokeTimeout bounds the whole smoke test: two claims, each a cold start at worst.
+	// smokeTimeout bounds the whole smoke test: three claims, each a cold start at worst
+	// (from a warm pool of two, the third always waits for the pool to refill), inside
+	// plimsolld's own two-minute bound on startup.
 	smokeTimeout = 120 * time.Second
 	// minSwept is the fewest paths the write sweep must have tried; a sweep that tried
 	// nothing would report an empty writable set and prove nothing.
@@ -63,7 +69,7 @@ type smokeEvidence struct {
 // much each volume took before it refused, each connection attempt's outcome, what kernel
 // answers it, whether it can open the TLS key (never its content), and what sandboxd and
 // the terminator answer it on loopback.
-const boundaryScript = `const fs = require("fs"), net = require("net"), cp = require("child_process"), http2 = require("http2");
+const boundaryScript = `const fs = require("fs"), net = require("net"), cp = require("child_process"), http2 = require("http2"), cr = require("crypto");
 const extra = %s, fills = %s, sandboxdPort = %d, frontPort = %d, startPath = %q, tlsKey = %q;
 const read = f => { try { return fs.readFileSync(f, "utf8"); } catch (e) { return "unreadable: " + e.code; } };
 const status = read("/proc/self/status");
@@ -105,6 +111,7 @@ while (queue.length && swept < 50000) {
 }
 Object.assign(report, { swept, writable, files, created });
 try { fs.closeSync(fs.openSync(tlsKey, "r")); report.tlsKey = "open"; } catch (e) { report.tlsKey = e.code || String(e); }
+report.helper = ` + nativehelper.CheckExpr + `;
 report.msgqueue = (read("/proc/self/limits").match(/^Max msgqueue size\s+(\S+)/m) || [])[1] || "";
 report.fill = {};
 for (const [dir, size] of fills) {
@@ -166,7 +173,7 @@ const ppid = pid => { const s = fs.readFileSync("/proc/" + pid + "/stat", "utf8"
 const argv = pid => fs.readFileSync("/proc/" + pid + "/cmdline", "utf8").split("\0");
 let pid = process.ppid, runner = 0, sandboxd = 0;
 for (let i = 0; i < 8 && pid > 0; i++, pid = ppid(pid)) {
-  if (!runner && argv(pid).includes("` + runnerPath + `")) runner = pid;
+  if (!runner && argv(pid)[0] === "` + nativehelper.InContainer + `") runner = pid;
   else if (runner && argv(pid)[0] === "` + sandboxdPath + `") { sandboxd = pid; break; }
 }
 if (!runner) { console.log("no runner among this step's ancestors"); process.exit(9); }
@@ -191,9 +198,11 @@ if (Object.values(out).some(v => v !== "EACCES" && v !== "EPERM")) process.exit(
 //     template's emptyDir mounts and /dev/shm, nowhere else can it even create a file
 //     (message queues in /dev/mqueue excepted, while the guest's allowance is bounded), and
 //     nowhere is a file outside them open for append;
-//   - no connection leaves the pod: the internet, cloud metadata, the API server and the
-//     node's kubelet all time out or are unreachable, never open or refused (a refusal is
-//     an answer, so the packet left);
+//   - no connection leaves the pod: the internet, cloud metadata, the API server, the
+//     node's kubelet and another sandbox pod's TLS terminator all time out or are
+//     unreachable, never open or refused (a refusal is an answer, so the packet left); the
+//     other pod is claimed for the test, and plimsolld reaches its terminator over TLS
+//     after the attempt, so the port the guest could not reach was listening;
 //   - the kernel tier's handler really is gVisor: the guest's kernel log is gVisor's;
 //   - the vm tier's handler really is a VM: the guest's kernel log begins with a Linux boot
 //     and its boot ID is not its node's, and every writable root is a tmpfs of that kernel,
@@ -207,9 +216,13 @@ if (Object.values(out).some(v => v !== "EACCES" && v !== "EPERM")) process.exit(
 // the proof.
 //
 // Each check is its own claim, as each run is: one command per pod, every request that
-// carries sandboxd's token sent before guest code starts. It claims two sandboxes and
-// deletes them, so plimsolld runs it once at startup, never on a poll path.
+// carries sandboxd's token sent before guest code starts. It claims three sandboxes (the
+// boundary test's, the runner test's, and the peer the boundary test dials) and deletes
+// them, so plimsolld runs it once at startup, never on a poll path. Each boundary claim
+// is recorded as its check passes, and the record must match claims (claims.go) before
+// the template counts as proven.
 func (p *Provider) SmokeTest(ctx context.Context) error {
+	proof := claims.Start()
 	if err := p.Preflight(ctx); err != nil {
 		return fmt.Errorf("agentsandbox smoke: %w", err)
 	}
@@ -231,11 +244,31 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	p.mu.Lock()
 	proving := p.templateSum
 	p.mu.Unlock()
-	ev, err := p.smokeBoundary(ctx, tier)
+	// The peer is another sandbox of the pool, read back as every run's pod is, whose TLS
+	// terminator port the boundary test's guest dials. It runs no code; it is deleted
+	// once plimsolld has reached it after the attempt.
+	peer, err := p.claimSandbox(ctx, smokeTimeout)
+	release := sync.OnceFunc(func() {
+		if peer.claim != "" {
+			p.deleteLater(ctx, peer)
+		}
+	})
+	defer release()
+	if err != nil {
+		return fmt.Errorf("agentsandbox smoke: the sandbox the boundary test dials: %w", err)
+	}
+	ev, err := p.smokeBoundary(ctx, tier, proof, peer)
 	if err != nil {
 		return fmt.Errorf("agentsandbox smoke: %w", err)
 	}
-	if err := p.smokeRunner(ctx); err != nil {
+	// The positive control: plimsolld reaches the peer's terminator over the pinned channel
+	// after the guest's attempt went unanswered, so that silence was the network policy's,
+	// not a port that was not listening.
+	if err := p.proveTier(ctx, peer); err != nil {
+		return fmt.Errorf("agentsandbox smoke: after the boundary test's guest got no answer from another sandbox's TLS terminator, plimsolld could not reach it either, so the silence proves nothing: %w", err)
+	}
+	release()
+	if err := p.smokeRunner(ctx, proof); err != nil {
 		return fmt.Errorf("agentsandbox smoke: runner: %w", err)
 	}
 	if err := p.bindPolicies(ctx); err != nil {
@@ -252,6 +285,12 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 		// edited during the smoke would otherwise be bound to the digest read before them
 		// (review, 2026-10-26).
 		return errors.New("agentsandbox smoke: the template changed while the smoke test ran; restart plimsolld to prove the current one")
+	}
+	// The pool, template, policies and runtime class, read and bound before the tests and
+	// read again, unchanged, after them.
+	proof.Proved(boundary.SetupReadBack, "SmokeTest")
+	if err := proof.Done(); err != nil {
+		return err
 	}
 	p.mu.Lock()
 	p.smoke, p.proven = &ev, proving
@@ -288,38 +327,42 @@ func (p *Provider) apiTargets(ctx context.Context) []string {
 }
 
 type boundaryReport struct {
-	Sandboxd   map[string]string `json:"sandboxd"` // what sandboxd answered the guest's token-less ("none") and wrong-token ("wrong") process starts on its loopback port, and what the TLS terminator answered a cleartext one ("front")
-	Node       string            `json:"node"`
-	UID        string            `json:"uid"`
-	GID        string            `json:"gid"`
-	Groups     string            `json:"groups"`
-	CapEff     string            `json:"capEff"`
-	CapPrm     string            `json:"capPrm"`
-	NoNewPrivs string            `json:"noNewPrivs"`
-	Seccomp    string            `json:"seccomp"`
-	Env        []string          `json:"env"`
-	Resolv     string            `json:"resolv"`
-	Version    string            `json:"version"`
-	Dmesg      string            `json:"dmesg"`
-	Mounts     []string          `json:"mounts"`
-	Swept      int               `json:"swept"`
-	Writable   []string          `json:"writable"`
-	Files      []string          `json:"files"`
-	Created    []string          `json:"created"`
-	Msgqueue   string            `json:"msgqueue"`
-	Interfaces []string          `json:"interfaces"`
-	Gateway    string            `json:"gateway"`
-	Egress     map[string]string `json:"egress"`
-	TLSKey     string            `json:"tlsKey"` // "open", or the error code the guest's open of the TLS key got
+	Helper     nativehelper.FileReport `json:"helper"`   // the project runner's file, as the guest reads it
+	Sandboxd   map[string]string       `json:"sandboxd"` // what sandboxd answered the guest's token-less ("none") and wrong-token ("wrong") process starts on its loopback port, and what the TLS terminator answered a cleartext one ("front")
+	Node       string                  `json:"node"`
+	UID        string                  `json:"uid"`
+	GID        string                  `json:"gid"`
+	Groups     string                  `json:"groups"`
+	CapEff     string                  `json:"capEff"`
+	CapPrm     string                  `json:"capPrm"`
+	NoNewPrivs string                  `json:"noNewPrivs"`
+	Seccomp    string                  `json:"seccomp"`
+	Env        []string                `json:"env"`
+	Resolv     string                  `json:"resolv"`
+	Version    string                  `json:"version"`
+	Dmesg      string                  `json:"dmesg"`
+	Mounts     []string                `json:"mounts"`
+	Swept      int                     `json:"swept"`
+	Writable   []string                `json:"writable"`
+	Files      []string                `json:"files"`
+	Created    []string                `json:"created"`
+	Msgqueue   string                  `json:"msgqueue"`
+	Interfaces []string                `json:"interfaces"`
+	Gateway    string                  `json:"gateway"`
+	Egress     map[string]string       `json:"egress"`
+	TLSKey     string                  `json:"tlsKey"` // "open", or the error code the guest's open of the TLS key got
 	Fill       map[string]struct {
 		Wrote int64  `json:"wrote"`
 		Code  string `json:"code"`
 	} `json:"fill"`
 }
 
-// smokeBoundary runs the boundary script as a snippet, through the run path itself.
-func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClass) (smokeEvidence, error) {
-	targets, err := json.Marshal(p.apiTargets(ctx))
+// smokeBoundary runs the boundary script as a snippet, through the run path itself. Among
+// its connection attempts is peer's TLS terminator port: peer is another sandbox of the
+// pool, claimed for the test, which the network policies must keep the guest from.
+func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClass, proof *boundary.Proof, peer box) (smokeEvidence, error) {
+	peerTarget := net.JoinHostPort(peer.ip, strconv.Itoa(frontPort))
+	targets, err := json.Marshal(append(p.apiTargets(ctx), peerTarget))
 	if err != nil {
 		return smokeEvidence{}, err
 	}
@@ -345,6 +388,13 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 	if err := json.Unmarshal([]byte(res.Stdout), &r); err != nil {
 		return smokeEvidence{}, fmt.Errorf("unparseable boundary report %q: %w", truncate(res.Stdout, 200), err)
 	}
+	proof.Proved(boundary.RunPath, "smokeBoundary")
+	// The project runner is the native helper this plimsolld carries, or the image is
+	// refused here, before any project runs through it. The pod runs on a cluster node,
+	// not plimsolld's machine, so the check is against the one helper built (x86-64).
+	if err := r.Helper.CheckBuilt(); err != nil {
+		return smokeEvidence{}, fmt.Errorf("image %q: %w; plimsoll starts that file as the project runner of every project, so the image must be built FROM a plimsoll/sandbox built from this plimsolld's source (make docker-images, then docker/agentsandbox.Dockerfile)", p.cfg.Image, err)
+	}
 	ev := smokeEvidence{Node: r.Node, Swept: r.Swept, Writable: r.Writable, Files: r.Files, Egress: r.Egress,
 		Interfaces: r.Interfaces, Gateway: r.Gateway, Kernel: r.Dmesg, Seccomp: r.Seccomp, Mounts: map[string]string{},
 		SandboxdAuth: r.Sandboxd["none"] + "," + r.Sandboxd["wrong"], FrontPlaintext: r.Sandboxd["front"], TLSKey: r.TLSKey}
@@ -369,8 +419,28 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 	if tier == sandbox.IsolationVM {
 		fill = checkRootMountKinds(r.Mounts, roots, []string{"tmpfs"})
 	}
-	return ev, errors.Join(checkIdentity(r), qerr, checkWritable(r.Swept, slices.Concat(r.Writable, created), r.Files, roots), checkNestedMounts(r.Mounts, roots), fill,
-		checkEgress(r.Egress, r.Gateway), checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp), checkSandboxdAuth(r), checkChannelFromInside(r))
+	// The kernel's log is held to the tier only at the kernel and vm tiers, and the seccomp
+	// mode only at the container tier (checkKernel, checkSeccompMode).
+	kernelErr, seccompErr := checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp)
+	if tier == sandbox.IsolationKernel || tier == sandbox.IsolationVM {
+		kernelErr = proof.Check(boundary.TierInside, "smokeBoundary", kernelErr)
+	} else {
+		proof.Skipped(boundary.TierInside)
+	}
+	if tier == sandbox.IsolationContainer {
+		seccompErr = proof.Check(boundary.SeccompFilter, "smokeBoundary", seccompErr)
+	} else {
+		proof.Skipped(boundary.SeccompFilter)
+	}
+	return ev, errors.Join(
+		proof.Check(boundary.GuestUser, "smokeBoundary", checkGuestIDs(r)),
+		proof.Check(boundary.NoCapabilities, "smokeBoundary", checkNoPrivileges(r)),
+		proof.Check(boundary.ClosedEnvironment, "smokeBoundary", checkGuestEnv(r)),
+		proof.Check(boundary.FixedResolver, "smokeBoundary", checkResolver(r)),
+		proof.Check(boundary.WritablePlaces, "smokeBoundary", errors.Join(qerr, checkWritable(r.Swept, slices.Concat(r.Writable, created), r.Files, roots))),
+		proof.Check(boundary.WritableBounds, "smokeBoundary", errors.Join(checkNestedMounts(r.Mounts, roots), fill)),
+		proof.Check(boundary.NoEgress, "smokeBoundary", errors.Join(checkEgress(r.Egress, r.Gateway), checkCrossPod(r.Egress, peerTarget, res.Instance, peer.instance))), kernelErr, seccompErr,
+		proof.Check(boundary.ControlChannel, "smokeBoundary", errors.Join(checkSandboxdAuth(r), checkChannelFromInside(r))))
 }
 
 // checkSandboxdAuth requires sandboxd to have refused the guest's token-less and wrong-token
@@ -474,9 +544,9 @@ func checkFill(r boundaryReport, sizes map[string]int64) error {
 
 // smokeRunner runs a project whose one step tries the runner's and sandboxd's
 // descriptors and memory, through the project path itself.
-func (p *Provider) smokeRunner(ctx context.Context) error {
+func (p *Provider) smokeRunner(ctx context.Context, proof *boundary.Proof) error {
 	res, err := p.RunProject(ctx, sandbox.ProjectRequest{
-		Files: []sandbox.File{{Path: "runner-probe.js", Content: runnerScript}}, Steps: []string{"node runner-probe.js"}, Timeout: 30 * time.Second,
+		Files: []sandbox.File{{Path: "runner-probe.js", Content: runnerScript}}, Steps: []string{sessionkit.GuestNode + " runner-probe.js"}, Timeout: 30 * time.Second,
 	})
 	if err != nil {
 		return err
@@ -494,6 +564,8 @@ func (p *Provider) smokeRunner(ctx context.Context) error {
 	if m == nil || m[1] == "1" {
 		return fmt.Errorf("the step did not find sandboxd below pid 1 among its ancestors (it said %q), so the probe of sandboxd's memory did not run", truncate(res.Steps[0].Stderr, 120))
 	}
+	proof.Proved(boundary.RunPath, "smokeRunner")
+	proof.Proved(boundary.ControlChannel, "smokeRunner")
 	return nil
 }
 
@@ -517,19 +589,35 @@ func writableRoots(mounts map[string]int64) ([]string, error) {
 	return roots, nil
 }
 
-func checkIdentity(r boundaryReport) error {
+// checkGuestIDs holds the guest to the guest uid alone: every uid and gid, and no group.
+func checkGuestIDs(r boundaryReport) error {
 	uid := fmt.Sprint(guestUID)
 	ids := strings.Join([]string{uid, uid, uid, uid}, "\t")
-	var errs []error
 	if r.UID != ids || r.GID != ids || r.Groups != "" {
-		errs = append(errs, fmt.Errorf("the guest runs as uid %q gid %q groups %q, not %d alone", r.UID, r.GID, r.Groups, guestUID))
+		return fmt.Errorf("the guest runs as uid %q gid %q groups %q, not %d alone", r.UID, r.GID, r.Groups, guestUID)
 	}
+	return nil
+}
+
+// checkNoPrivileges holds the guest to no effective or permitted capability, and
+// no_new_privs.
+func checkNoPrivileges(r boundaryReport) error {
 	if r.CapEff != "0000000000000000" || r.CapPrm != "0000000000000000" || r.NoNewPrivs != "1" {
-		errs = append(errs, fmt.Errorf("the guest holds capabilities %s/%s or lacks no_new_privs (%q)", r.CapEff, r.CapPrm, r.NoNewPrivs))
+		return fmt.Errorf("the guest holds capabilities %s/%s or lacks no_new_privs (%q)", r.CapEff, r.CapPrm, r.NoNewPrivs)
 	}
+	return nil
+}
+
+// checkGuestEnv holds the guest's environment to PATH and HOME alone.
+func checkGuestEnv(r boundaryReport) error {
 	if !slices.Equal(r.Env, []string{"HOME", "PATH"}) {
-		errs = append(errs, fmt.Errorf("the guest's environment holds %q, not PATH and HOME alone", r.Env))
+		return fmt.Errorf("the guest's environment holds %q, not PATH and HOME alone", r.Env)
 	}
+	return nil
+}
+
+// checkResolver holds the guest's resolver to the one loopback nameserver.
+func checkResolver(r boundaryReport) error {
 	var lines []string
 	for _, l := range strings.Split(r.Resolv, "\n") {
 		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
@@ -537,9 +625,9 @@ func checkIdentity(r boundaryReport) error {
 		}
 	}
 	if !slices.Equal(lines, []string{"nameserver " + fixedNameserver}) {
-		errs = append(errs, fmt.Errorf("the guest's resolver is %q, not the one loopback nameserver", lines))
+		return fmt.Errorf("the guest's resolver is %q, not the one loopback nameserver", lines)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // mqueueDir is the POSIX message queue filesystem runc mounts in every container. A
@@ -619,6 +707,27 @@ func checkEgress(outcomes map[string]string, gateway string) error {
 	}
 	if reached := egress.Left(outcomes); len(reached) > 0 {
 		return fmt.Errorf("connections left the pod: %v; no network policy in force denies the pod's egress", reached)
+	}
+	return nil
+}
+
+// checkCrossPod requires the boundary test to have tried target, another sandbox pod's TLS
+// terminator port, from a pod other than that sandbox's (ranIn and peer are the two pods'
+// instances, from the API server's read of each), and the attempt to have gone unanswered
+// as every other connection must (egress.Closed). The external addresses above say nothing
+// of the pod network between sandboxes, which a network plugin can treat apart, and an
+// open terminator port is where a guest that had the token would reach another pod's
+// sandboxd (review of the TLS channel, 2026-11-05).
+func checkCrossPod(outcomes map[string]string, target, ranIn, peer string) error {
+	if ranIn == "" || peer == "" || ranIn == peer {
+		return fmt.Errorf("the boundary test ran in pod %q and dialed the terminator of pod %q; the cross-pod attempt needs two pods", ranIn, peer)
+	}
+	outcome, tried := outcomes["tcp "+target]
+	switch {
+	case !tried:
+		return fmt.Errorf("the boundary test did not try another sandbox's TLS terminator at %s", target)
+	case !egress.Closed(outcome):
+		return fmt.Errorf("the guest reached another sandbox's TLS terminator at %s (%q); no network policy in force keeps one sandbox pod from another", target, outcome)
 	}
 	return nil
 }

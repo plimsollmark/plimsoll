@@ -16,9 +16,19 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/auditline"
 	"github.com/plimsollmark/plimsoll/record"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 var recordCheck = record.Check
+
+// singleRun refuses a record that states session fields: the clean call is a single run, which record.Check refuses
+// for a live answer and record.CheckExchange, reading stored evidence of either kind, leaves to its caller.
+func singleRun(r *sandbox.RunRecord) error {
+	if r.Session != "" || r.Sequence != 0 || r.PreviousSHA256 != "" {
+		return fmt.Errorf("%w: a single run's record carries session fields", record.ErrMismatch)
+	}
+	return nil
+}
 
 // The labels the build gives: a file is labeled by its path from the named directory's
 // parent, a value by its file's name and line. The agent's snippet carries the second
@@ -173,9 +183,12 @@ func checkCleanRecord(ev *Evidence, ex *exchange) error {
 	if err := protojson.Unmarshal(ex.response, &resp); err != nil {
 		return fmt.Errorf("%s: %w", fileCleanResponse, err)
 	}
-	rec, err := recordCheck(&req, &resp)
+	rec, err := record.CheckExchange(&req, &resp) // stored evidence: any published record version
 	if err != nil {
 		return fmt.Errorf("the clean call's record does not check: %w", err)
+	}
+	if err := singleRun(rec); err != nil {
+		return fmt.Errorf("the clean call's record: %w", err)
 	}
 	if rec.Version != clean.Record.Version || rec.RequestSHA256 != clean.Record.RequestSHA256 || rec.ResultSHA256 != clean.Record.ResultSHA256 {
 		return fmt.Errorf("the clean call's exchange gives record v%d %s %s, the evidence says v%d %s %s",

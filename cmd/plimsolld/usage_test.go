@@ -1,12 +1,14 @@
 package main
 
 import (
+	"io"
 	"os"
-	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/settings"
 )
 
 func TestParseArgsAcceptsOnlyHelp(t *testing.T) {
@@ -26,63 +28,74 @@ func TestParseArgsAcceptsOnlyHelp(t *testing.T) {
 	}
 }
 
-// TestUsageNamesEveryVariable is the drift guard for -h: every PLIMSOLL_, SANDBOX_,
-// E2B_ or DOCKER_SBX_ variable a non-test file in this package reads must be documented in
-// helpText, so the help text cannot fall behind the code. A daemon-built provider's file
-// is in this package, so its variables are checked against the section it registers. The provider factory in
-// the sandbox package reads the provider variables on the daemon's
-// behalf, so its file is scanned too; without it a provider variable added there
-// would be undocumented and this test would not notice.
-func TestUsageNamesEveryVariable(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
+// TestEveryReadVariableIsASetting: every variable the daemon's loaders read, under a
+// deployment of each provider this build has, is one internal/settings declares, so -h
+// documents it and a misspelling of it is named at startup. The reads are recorded from
+// the loaders themselves, so a name built at run time is caught as well as a literal one
+// (internal/settings' TestNoVariableIsReadOutsideTheTable catches a literal one in any
+// file).
+func TestEveryReadVariableIsASetting(t *testing.T) {
+	seen := map[string]bool{}
+	for name := range providers {
+		env := map[string]string{"SANDBOX_PROVIDER": name, "SANDBOX_MAX_SESSIONS": "2", "SANDBOX_DOCKERCLOUD_STORE_IMAGE": "x", "SANDBOX_WSLC_MODE": "shared"}
+		rec := func(k string) string { seen[k] = true; return env[k] }
+		_, _ = buildProvider(rec)
+		_ = enforceHardenedPolicy(rec, hardenedFacts{Provider: name})
+		sc, _ := loadSessionConfig(rec)
+		_, _ = loadSessionPool(rec, sc)
+		_, _ = loadLimiterConfig(rec, name, 256, 0)
+		_, _, _ = minimumIsolationWith(rec)
+		_, _ = metricsAddrWith(rec)
+		_, _ = guardAddrWith(rec, true)
+		_, _ = tlsConfigFromEnv(rec)
+		_, _ = loadPaidConfig(rec, true)
+		_ = newLogHandler(rec, io.Discard)
 	}
-	var files []string
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
-			files = append(files, entry.Name())
+	if len(seen) < 40 {
+		t.Fatalf("recorded only %d reads; the guard checked too little", len(seen))
+	}
+	for name := range seen {
+		if _, ok := settings.Lookup(name); !ok {
+			t.Errorf("the daemon reads %s, which internal/settings does not declare", name)
 		}
-	}
-	// The constructors the daemon builds providers with: sandbox.Build, and each
-	// daemon-built provider's environment reader (every sandbox/<provider>/env.go, so a
-	// new one is checked without being listed here).
-	readers, err := filepath.Glob("../../sandbox/*/env.go")
-	if err != nil || len(readers) < len(daemonProviderNames()) {
-		t.Fatalf("found %d provider environment readers for %d daemon-built providers (%v)", len(readers), len(daemonProviderNames()), err)
-	}
-	files = append(append(files, "../../sandbox/factory.go"), readers...)
-	name := regexp.MustCompile(`"((?:PLIMSOLL|SANDBOX|E2B|DOCKER_SBX)_[A-Z0-9_]+)"`)
-	seen := 0
-	for _, file := range files {
-		src, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, match := range name.FindAllStringSubmatch(string(src), -1) {
-			seen++
-			// A whole name: SANDBOX_DOCKERCLOUD_API_URL in the text must not count as
-			// documenting SANDBOX_DOCKERCLOUD_API ("_" is a word character, so \b does
-			// not match between "API" and "_URL").
-			if !regexp.MustCompile(`\b` + match[1] + `\b`).MatchString(helpText()) {
-				t.Errorf("%s reads %s but usage (-h) does not document it", file, match[1])
-			}
-		}
-	}
-	if seen == 0 {
-		t.Fatal("found no environment variable reads to check; the guard is broken")
 	}
 }
 
 // A variable the daemon does not read is named at startup: a misspelled setting, or one
-// a newer plimsolld has, would otherwise be ignored without a word.
+// a newer plimsolld has, would otherwise be ignored without a word. E2B_ and DOCKER_SBX_
+// names are checked too since 2026-11-18 (a misspelled E2B_TEMPLATE was silent).
 func TestUnknownVariablesAreNamed(t *testing.T) {
 	got := unknownVariables([]string{
 		"SANDBOX_MAX_SESSIONS=4", "SANDBOX_MAX_SESION_PER_OWNER=3", "PLIMSOLL_ADDR=:1",
-		"PLIMSOLL_TOKN=x", "HOME=/root", "SANDBOX_DOCKERCLOUD_API_URLX=y",
-	}, helpText())
-	want := []string{"PLIMSOLL_TOKN", "SANDBOX_DOCKERCLOUD_API_URLX", "SANDBOX_MAX_SESION_PER_OWNER"}
+		"PLIMSOLL_TOKN=x", "HOME=/root", "SANDBOX_DOCKERCLOUD_API_URLX=y", "E2B_TEMPLAT=t", "E2B_TEMPLATE=t",
+		"DOCKER_SBX_TOKN=x", "AWS_REGION=x",
+	})
+	want := []string{"DOCKER_SBX_TOKN", "E2B_TEMPLAT", "PLIMSOLL_TOKN", "SANDBOX_DOCKERCLOUD_API_URLX", "SANDBOX_MAX_SESION_PER_OWNER"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("unknown variables: %v; want %v", got, want)
+	}
+}
+
+// PLIMSOLL_INSECURE is a Bool setting like every opt-in (internal/settings): until
+// 2026-11-18 only exactly "1" acknowledged open mode, " 1" and "true" were read as not
+// acknowledging, and a typo such as "yes" was a refusal to start that did not name it.
+// Now 1 or true in any case acknowledge, and any other value fails startup naming it.
+func TestInsecureIsReadAsABool(t *testing.T) {
+	base := []string{"PATH=" + os.Getenv("PATH"), "SANDBOX_PROVIDER=wasm", "PLIMSOLL_ADDR=127.0.0.1:0", "PLIMSOLL_METRICS_ADDR=off"}
+	for _, typo := range []string{"yes", "2"} {
+		code, log := exitDaemon(t, append(slices.Clone(base), "PLIMSOLL_INSECURE="+typo), 30*time.Second)
+		if code == 0 || !strings.Contains(log, "invalid PLIMSOLL_INSECURE") {
+			t.Fatalf("PLIMSOLL_INSECURE=%q: exit %d, want a failure naming the setting; log:\n%s", typo, code, log)
+		}
+	}
+	for _, off := range []string{"0", "false"} {
+		code, log := exitDaemon(t, append(slices.Clone(base), "PLIMSOLL_INSECURE="+off), 30*time.Second)
+		if code == 0 || !strings.Contains(log, "refusing to start") {
+			t.Fatalf("PLIMSOLL_INSECURE=%q: exit %d, want open mode refused; log:\n%s", off, code, log)
+		}
+	}
+	for _, on := range []string{"1", " true ", "TRUE"} {
+		d := startDaemon(t, append(slices.Clone(base), "PLIMSOLL_INSECURE="+on), 30*time.Second)
+		_ = d.cmd.Process.Kill()
 	}
 }

@@ -40,7 +40,6 @@ package agentsandbox
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -59,8 +58,10 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // Name is the provider id.
@@ -89,17 +90,19 @@ const (
 	defaultCPUs     = 1.0
 )
 
+// A check's budget is held under sandbox.PreflightBound, which the daemon's readiness
+// budget is derived from: a larger number here does not compile.
+const _ = uint64(sandbox.PreflightBound - checkBudget)
+
 // In the pod: the guest's uid (the docker provider's default, a uid no account uses), the
-// work directory (sandboxd's --root-dir, an emptyDir), and the image's runner, guard and
-// setpriv.
+// work directory (sandboxd's --root-dir, an emptyDir), and the image's setpriv and sandboxd
+// (the project runner is nativehelper.InContainer).
 const (
-	guestUID        = 61000
-	workDir         = "/work"
-	guestPath       = "/usr/local/bin:/usr/bin:/bin"
-	runnerPath      = "/runner.mjs"
-	runnerGuardPath = "/usr/local/lib/plimsoll-runner-guard.so"
-	setprivPath     = "/bin/setpriv" // util-linux's, from Alpine's setpriv package
-	sandboxdPath    = "/usr/local/bin/sandboxd"
+	guestUID     = 61000
+	workDir      = "/work"
+	guestPath    = "/usr/local/bin:/usr/bin:/bin"
+	setprivPath  = "/bin/setpriv" // util-linux's, from Alpine's setpriv package
+	sandboxdPath = "/usr/local/bin/sandboxd"
 )
 
 // Config is the provider's configuration. New reads nothing from the environment.
@@ -198,8 +201,8 @@ func (c Config) validate() error {
 	case c.Image == "":
 		return errors.New("agentsandbox: the image is required")
 	case c.RequirePinnedImage:
-		if _, ok := pinnedDigest(c.Image); !ok {
-			return fmt.Errorf("agentsandbox: image %q is not pinned by an @sha256: digest", c.Image)
+		if _, ok := providerkit.PinnedDigest(c.Image); !ok {
+			return fmt.Errorf("agentsandbox: image %q is not pinned by a digest, %s", c.Image, providerkit.PinForm)
 		}
 	}
 	switch {
@@ -237,17 +240,6 @@ func checkRunscHandlers(names []string) error {
 		seen[name] = true
 	}
 	return nil
-}
-
-var pinnedRE = regexp.MustCompile(`@(sha256:[0-9a-f]{64})$`)
-
-// pinnedDigest returns the digest an image reference is pinned by.
-func pinnedDigest(image string) (string, bool) {
-	m := pinnedRE.FindStringSubmatch(image)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
 }
 
 // Provider runs payloads on agent-sandbox.
@@ -326,15 +318,9 @@ func New(cfg Config) (*Provider, error) {
 	}
 	return &Provider{
 		cfg: cfg, handlers: handlers, kube: k, sandboxd: channelClient(pool, cfg.serverName()), tokenDigest: hex.EncodeToString(sum[:]),
-		instance: randHex(8), pf: providerkit.Check{TTL: preflightTTL, Err: errors.New("agentsandbox: no check has completed yet")},
+		instance: providerkit.RandHex(8), pf: providerkit.Check{TTL: preflightTTL, Err: errors.New("agentsandbox: no check has completed yet")},
 		deleteTimeout: deleteBudget,
 	}, nil
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b) // crypto/rand does not fail on supported platforms
-	return hex.EncodeToString(b)
 }
 
 func (*Provider) Name() string { return Name }
@@ -370,7 +356,7 @@ func imageIdentity(digest string) string {
 	return "agentsandbox-image:" + digest
 }
 
-// SupportsProjects is true: projects run through the image's /runner.mjs.
+// SupportsProjects is true: projects run through the image's project runner (the native helper).
 func (*Provider) SupportsProjects() bool { return true }
 
 // SupportsModules is false: the module worker image is a docker provider recipe.
@@ -384,7 +370,7 @@ func (*Provider) SupportsProjectGrants() bool    { return false }
 // run's read-back compares with the pod's image ID; a tag is not an identity.
 func (p *Provider) Environments() sandbox.Environments {
 	identity := ""
-	if d, ok := pinnedDigest(p.cfg.Image); ok {
+	if d, ok := providerkit.PinnedDigest(p.cfg.Image); ok {
 		identity = imageIdentity(d)
 	}
 	return sandbox.Environments{
@@ -560,7 +546,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 		return fail, err
 	}
 	start := time.Now()
-	out, err := p.exec(runCtx, b.ip, guestArgv(nil, "node", "-"), []byte(req.Code), maxOutputBytes, maxOutputBytes)
+	out, err := p.exec(runCtx, b.ip, guestArgv(nil, sessionkit.GuestNodeArgv("-")...), []byte(req.Code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
 		Stdout: string(out.stdout), Stderr: string(out.stderr),
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
@@ -580,11 +566,12 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	return fail, err
 }
 
-// runnerCommand creates the work directory, then preloads the guard into Node before the
-// runner can read its plan; the runner clears LD_PRELOAD before steps.
-var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && export LD_PRELOAD=` + runnerGuardPath + ` && exec node ` + runnerPath}
+// runnerCommand creates the work directory, then starts the project runner, the native
+// helper, which makes itself non-dumpable before it reads its plan (no guard library: it is
+// a static program); the smoke test held the image's file to the helper plimsolld carries.
+var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && exec ` + nativehelper.RunProjectShell}
 
-// RunProject writes the files and runs the steps through /runner.mjs in a freshly claimed
+// RunProject writes the files and runs the steps through the project runner in a freshly claimed
 // sandbox, with the plan on stdin as the docker provider sends it.
 func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	fail := sandbox.ProjectResult{Sandbox: Name, Isolation: p.IsolationClass()}

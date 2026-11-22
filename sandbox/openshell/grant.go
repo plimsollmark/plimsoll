@@ -21,6 +21,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -117,10 +118,10 @@ func (p *Provider) startGrant(ctx context.Context, b box, grant *sandbox.HostAPI
 			break
 		}
 	}
-	sock := "/tmp/.plimsoll-host-" + randHex(6) + ".sock"
+	sock := "/tmp/.plimsoll-host-" + providerkit.RandHex(6) + ".sock"
 	// The relay is one of plimsoll's own programs, carrying the run's brokered calls:
 	// it starts under sessionkit.ControlArgv, so no variable an exec is handed reaches it.
-	argv, err := sessionkit.ControlArgv(nil, "node", "-e", relayScript, strconv.FormatUint(uint64(port), 10), sock)
+	argv, err := sessionkit.ControlArgv(nil, sessionkit.NodeArgv("-e", relayScript, strconv.FormatUint(uint64(port), 10), sock)...)
 	if err != nil {
 		broker.Close()
 		return nil, err

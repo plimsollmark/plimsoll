@@ -30,6 +30,47 @@ Part of the [plimsoll README](../README.md).
   user. The VM is the boundary: root inside it reaches nothing outside, and the VM is
   deleted after the run. In a <dfn>*session*</dfn> (one sandbox kept for many calls),
   the code runs as a user that cannot become root ([sessions](sessions.md)).
+- **An E2B session needs a template with node v22.14.0 or later; a single run does not.**
+  A template is the machine image E2B starts each virtual machine from. A
+  single run (one snippet, or one project's files and steps) works on E2B's own `base`
+  template, because it starts none of plimsoll's own programs inside the machine, only the
+  run's `node` and `sh`. A session starts several (the open, the stager, the process lister,
+  the sweep, the relays), each with node's `--disable-sigusr1` option, so that the session's
+  code cannot open their debugger (the part of node that runs whatever code it is
+  sent to it) by sending them a signal. Node accepts that option from v22.14.0
+  (v23.7.0 in the 23 line, every release from 24). `base` carried node v20.9.0 when a live
+  check read it on 2026-11-20, and E2B no longer publishes its recipe (removed on
+  2026-10-13); on a template whose node is that old a session is refused at its open,
+  marked as never run, with the node version needed; a daemon with sessions on stops at
+  startup instead of serving them. A session also needs a node outside `/usr/local`: E2B's
+  template build leaves that folder writable by every user in the machine, `base` and
+  node's own images keep node there, and plimsoll's own programs never take one from it, so
+  on `base` a session is refused at its open, marked as never run, in words that say so. In a session, the session's code cannot
+  write `/usr/local` either: the open takes that write permission back before any of the
+  session's code runs, because E2B's own programs that run as root live there, and a
+  template where it cannot is refused at the open ([sessions](sessions.md#e2b)). So a
+  session's code cannot install into `/usr/local` (`npm install -g`, for one) on E2B. A
+  single run's code still can: it runs as E2B's default user, and plimsoll leaves its
+  machine as E2B builds it. The template plimsoll's recipe builds
+  ([e2b/README.md](../e2b/README.md)) has node 24, with a copy in `/usr/bin`.
+  Building it is one command on E2B's side; E2B's pages do not say whether a build is
+  billed.
+- **An E2B template's system files are the operator's to
+  trust.** A template is the machine image an operator chooses for E2B's virtual
+  machines, and plimsoll does not read its files. In a session, plimsoll's own programs
+  run as root beside `/work`, and plimsoll closes from its side the routes by which they
+  could load a file the session wrote: each starts in `/`, with an empty environment and
+  an empty OpenSSL settings file, by the full path the session's open found for it
+  ([sessions](sessions.md#e2b)). It does not check a template that replaces a system
+  file those programs load so that it points into `/work`: a library, the loader's own
+  settings (the loader is the part of the system that loads the libraries a program
+  needs; `/etc/ld.so.preload`, for one, names libraries it loads into every program), or
+  the settings file of a library other than OpenSSL. Nor does it check a template that
+  sets an environment variable which loads code into the first two programs of every
+  command, E2B's `/bin/sh` and plimsoll's `/usr/bin/env`, which start before the
+  environment is cleared. Such a template would let a session's code run inside
+  plimsoll's programs as root, so use E2B's base template or one built from a base you
+  trust.
 - **A hosted provider can read what it stores and runs.** Docker Cloud keeps an image in
   its store and runs it on its machines; E2B its templates; an
   [OpenShell (INTERNAL · glossary →)](trainers/glossary.html#openshell) gateway or a
@@ -38,10 +79,22 @@ Part of the [plimsoll README](../README.md).
   what must stay from the provider out of the image: `plimsoll-withheld scan-image` checks
   an image against a withheld set before a push
   ([INTERNAL · the ship scan →](ship-scan.md)).
+- **On Docker Cloud the no-network statement rests on a check of ordinary connections;**
+  one other route has not been measured.
 - **An upload has 30 seconds to arrive.** The daemon's read timeout covers the request
   body, up to its 8 MiB limit, so a client slower than about 280 KB/s on a full-size
   project is cut off (8 MiB in 30 seconds); a faster link or a smaller project is the
   remedy.
+- **Form and upload bodies are forwarded unread.** Some web frameworks run a POST as the
+  method a `_method` field of its body names (this is called method override). The
+  <dfn>*broker*</dfn>, the part of plimsoll outside the sandbox that makes each API call for
+  the code, refuses the override headers and a JSON body whose top level names `_method`, but
+  forwards a form body or a multipart (file upload) body unread on a route the profile opened
+  for that type. On an API that honors method override, such a body can make a granted method
+  run as another method on the same path. To close it, turn method override off at the API,
+  grant JSON routes only (the standard setting), or give the per-run credential (the key the
+  broker adds to a run's calls) only the permissions the grant means
+  ([INTERNAL · capability grants →](capability-grants.md#method-and-path-override)).
 - **The [agent-sandbox (INTERNAL · glossary →)](trainers/glossary.html#agent-sandbox)
   provider's pods all share one TLS key.** plimsolld reaches each Kubernetes pod over TLS
   that it checks against the deployment's own certificate authority, but every pod serves
@@ -92,6 +145,48 @@ Part of the [plimsoll README](../README.md).
   <dfn>*hypervisor*</dfn> (the program that runs virtual machines) or checks a kernel wall
   cryptographically. If your <dfn>*threat model*</dfn> (the attacks
   you must hold out against) needs attestation, no tier here supplies it.
+- **The no-execute mark is a second layer, not a wall.** In a `docker` run or session, the
+  writable folders `/tmp`, `/dev/shm` and `/work` are mounted <dfn>*noexec*</dfn> (a file
+  stored there cannot be started as a program), a second layer behind the sandbox itself.
+  The code cannot add a folder without the mark: that needs a user <dfn>*namespace*</dfn> of
+  its own (a private view of the system in which it acts as administrator) and a mount in it,
+  and the <dfn>*guest guard*</dfn>, plimsoll's own <dfn>*seccomp*</dfn> filter (the kernel's
+  filter on which requests a process may make) in front of every program the docker provider
+  starts, refuses both under `runc` and gVisor alike
+  ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
+  What the mark never stopped still works: code that can run Python or Node can put a
+  program in memory (an in-memory file, `memfd_create`) and start it from there. What a
+  user meets because of it: a program built or written in the run or session cannot be
+  started there. Measured 2026-11-19 in a docker session: `cargo test` on a Rust crate (a
+  Rust package) with a build script or a derive macro (small programs Cargo compiles and
+  then starts during the build), a C build that runs what it compiled, and `./script.sh`
+  are refused; Go tests work when built to WebAssembly (a portable program format a runner
+  reads as data, so the kernel is never asked to start it). An E2B session is different:
+  its work folder is on the machine's own disk, with no such mark, and a copied program
+  and a shell script written there ran (measured 2026-11-20 on a template built from
+  plimsoll's recipe). That recipe has no Rust or C toolchain, so such builds on E2B need a
+  template of the operator's own with one; plimsoll has not measured one.
+- **The guest guard costs debuggers, and it covers the docker provider only.** It refuses
+  tracing, so `gdb`, `strace` and other debuggers do not work in a docker sandbox (under
+  docker's built-in profile and under gVisor they worked before it), and it refuses the
+  `unshare` command and every program that builds a sandbox of its own from namespaces. It is
+  built for x86-64 only; on
+  another machine type the docker provider does not start, and it refuses a docker daemon,
+  `DOCKER_DEFAULT_PLATFORM` or image for another machine than plimsolld's own, emulated ones
+  included. The Kubernetes, WSL containers
+  and OpenShell providers do not start their commands behind it yet, and E2B and Docker Cloud,
+  whose wall is a virtual machine, do not apply it.
+- **Code of a docker session can end or stall its own session through process 1.** In a
+  session the guest guard is the container's first process (process 1), which collects every
+  process that ends and passes no signal on. Code of the session could always end its own
+  session by ending the main process, and it can do so through process 1 too, by causing a
+  signal that reads as one from outside the container. Under gVisor it can also stop process 1
+  (which then collects no ended process for the rest of the session) or end it, since gVisor
+  does not give a container's process 1 the protection from its own container's signals that
+  Linux gives it. And while it keeps sending process 1 a stop signal, an outside `docker stop`
+  waits its whole timeout before docker kills the container; plimsoll's own close removes the
+  container without waiting. None of this reaches past the session itself
+  ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
 - **The `wslc` provider is not a security sandbox by its own vendor's account.** Microsoft
   states that WSL, the Windows Subsystem for Linux that the provider's WSL containers run
   in, is "not a security sandbox for running untrusted code". The per-run mode gives each
@@ -99,9 +194,9 @@ Part of the [plimsoll README](../README.md).
   WSL is not a security sandbox for running untrusted code; an operator who accepts that
   statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then reports `vm` with that
   statement attached. Inside each of its virtual machines a container gets no read-only
-  root filesystem, no <dfn>*seccomp*</dfn> profile (the kernel's filter on which requests a
+  root filesystem, no seccomp profile (the kernel's filter on which requests a
   process may make) beyond docker's default, no no-new-privileges, no per-run process limit
-  and no user <dfn>*namespaces*</dfn> (which map a container's root user to a powerless one
+  and no user namespaces (which map a container's root user to a powerless one
   outside it): five controls the docker provider applies. Its process count, `--ulimit
   nproc`, counts every process of the code's user in the virtual machine, so the shared
   mode, whose runs share one, runs one run at a time. The per-run mode relies on `wslc

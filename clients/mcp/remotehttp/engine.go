@@ -87,7 +87,7 @@ type Engine struct {
 	lanesInUse    map[string]int   // and per lane
 	closed        bool
 	bodyBudget    *semaphore.Weighted
-	requests      chan struct{} // tool calls
+	requests      chan struct{} // tool calls in progress, at most toolSlots
 	public        chan struct{} // unauthenticated OAuth and owner routes
 	control       net.Listener
 	closeOnce     sync.Once
@@ -143,7 +143,7 @@ func New(cfg Config) (*Engine, error) {
 }
 
 func newEngine(cfg Config, s *store) *Engine {
-	return &Engine{cfg: cfg, state: s, seals: newSealer(), marks: marks{entries: map[string]time.Time{}}, grantLimits: map[string]*grantRate{}, appCalls: map[string]int{}, appBody: map[string]int64{}, visitors: map[string]int{}, lanesInUse: map[string]int{}, bodyBudget: semaphore.NewWeighted(mcpBodyBudget), requests: make(chan struct{}, 16), public: make(chan struct{}, 8), closeDone: make(chan struct{})}
+	return &Engine{cfg: cfg, state: s, seals: newSealer(), marks: marks{entries: map[string]time.Time{}}, grantLimits: map[string]*grantRate{}, appCalls: map[string]int{}, appBody: map[string]int64{}, visitors: map[string]int{}, lanesInUse: map[string]int{}, bodyBudget: semaphore.NewWeighted(mcpBodyBudget), requests: make(chan struct{}, toolSlots), public: make(chan struct{}, 8), closeDone: make(chan struct{})}
 }
 
 func (e *Engine) checkDaemon(ctx context.Context) error {
@@ -303,13 +303,32 @@ func (e *Engine) grantRateLocked(grant string) *grantRate {
 // takeCall charges a tool call to the shared meter and the grant's together, or to
 // neither: a request refused by its own grant's meter must not drain the allowance every
 // other connector shares. refund gives both back, for a call a later admission refuses.
+//
+// The sizes. A grant's burst is the server's whole set of tool-call slots (toolSlots), so
+// a burst one connection could use at once is never refused by its own meter; its
+// sustained rate, one a second, is above what one conversation makes, since a host calls
+// a tool and waits for its answer, which takes the daemon's round trip at least. The
+// shared burst is four grants' bursts, and its rate two a second, so that remote
+// connections together send the daemon at most twice what one may. These are judgments
+// sized against one conversation per grant, not measured loads: a server that serves many
+// connections at once may need them larger, which would make them settings.
+const (
+	// toolSlots is how many tool requests the remote transport serves at once: the calls
+	// that run code the tool server itself holds at once, by the server's own constant
+	// (it was a second 16 here until 2026-11-20, hunt-quality-58).
+	toolSlots = server.MaxOutstanding
+
+	grantBurst, grantPerSecond   = toolSlots, 1
+	sharedBurst, sharedPerSecond = 4 * toolSlots, 2
+)
+
 func (e *Engine) takeCall(grant string) (refund func(), ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := time.Now()
 	shared, own := &e.authenticated, &e.grantRateLocked(grant).calls
-	shared.refill(now, 64, 2)
-	own.refill(now, 16, 1)
+	shared.refill(now, sharedBurst, sharedPerSecond)
+	own.refill(now, grantBurst, grantPerSecond)
 	if shared.tokens < 1 || own.tokens < 1 {
 		return nil, false
 	}
@@ -318,9 +337,9 @@ func (e *Engine) takeCall(grant string) (refund func(), ok bool) {
 	return func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		shared.tokens = min(shared.tokens+1, 64)
+		shared.tokens = min(shared.tokens+1, sharedBurst)
 		if g := e.grantLimits[grant]; g != nil {
-			g.calls.tokens = min(g.calls.tokens+1, 16)
+			g.calls.tokens = min(g.calls.tokens+1, grantBurst)
 		}
 	}, true
 }
@@ -541,9 +560,19 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		reject(w, 429)
 		return
 	}
+	// The charge is for a call, and a request refused on its way here made none: every
+	// return before the MCP handler gives it back, through this one refund. It used to be
+	// given back by four of the refusals and not five others (a batch, a body over the
+	// budget, ...), so a client told to retry after 1 s lost a token each time
+	// (hunt-quality-46, 2026-11-20).
+	served := false
+	defer func() {
+		if !served {
+			refund()
+		}
+	}()
 	release, ok := e.takeAppSlot(digest(g.Client))
 	if !ok {
-		refund()
 		w.Header().Set("Retry-After", "1")
 		reject(w, 429)
 		return
@@ -553,12 +582,10 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 	case e.requests <- struct{}{}:
 		defer func() { <-e.requests }()
 	default:
-		refund()
 		reject(w, 429)
 		return
 	}
 	if err = e.tools.RegisterGrant(g.ID, digest(g.Client)); err != nil {
-		refund() // no call was made (review, 2026-10-26)
 		reject(w, 403)
 		return
 	}
@@ -575,7 +602,6 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		return
 	}
 	if r.ContentLength > mcpBodyLimit {
-		refund() // no call was made
 		reject(w, 413)
 		return
 	}
@@ -603,6 +629,7 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		reject(w, 503)
 		return
 	}
+	served = true
 	e.mcp.ServeHTTP(w, r.WithContext(ctx))
 }
 

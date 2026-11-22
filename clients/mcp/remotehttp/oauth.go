@@ -170,8 +170,25 @@ func (e *Engine) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keys := []string{"client_id", "redirect_uri", "response_type", "resource", "scope", "state", "code_challenge", "code_challenge_method"}
-	for k, v := range q {
-		if len(v) != 1 || !slices.Contains(keys, k) || len(v[0]) > 2048 {
+	// A parameter this server does not know is ignored, as OAuth 2.0 requires of an
+	// authorization server (RFC 6749, section 3.1); only the names above are ever read.
+	// A hosted client's first real sign-in carried one and was refused whole. A known
+	// parameter sent twice, or longer than a browser address needs, is still refused,
+	// and the whole query is bounded so that an ignored parameter cannot carry a load.
+	if len(r.URL.RawQuery) > 16<<10 {
+		e.refused("authorize_refused_long_parameter")
+		reject(w, 400)
+		return
+	}
+	for _, k := range keys {
+		v := q[k]
+		if len(v) > 1 {
+			e.refused("authorize_refused_repeated_parameter")
+			reject(w, 400)
+			return
+		}
+		if len(v) == 1 && len(v[0]) > 2048 {
+			e.refused("authorize_refused_long_parameter")
 			reject(w, 400)
 			return
 		}
@@ -179,6 +196,17 @@ func (e *Engine) authorize(w http.ResponseWriter, r *http.Request) {
 	c, err := e.resolveClient(r, q.Get("client_id"))
 	redirect := q.Get("redirect_uri")
 	if err != nil || !approvedRedirect(redirect) || !slices.Contains(c.Redirects, redirect) {
+		// The audit line says which of the three it was, as a fixed word: the
+		// caller's own strings are never written. Without it a hosted client's
+		// refused sign-in shows the owner one answer for three causes.
+		switch {
+		case err != nil:
+			e.refused("authorize_refused_unknown_client")
+		case !approvedRedirect(redirect):
+			e.refused("authorize_refused_redirect_not_approved")
+		default:
+			e.refused("authorize_refused_redirect_not_registered")
+		}
 		oauthError(w, 400, "invalid_client")
 		return
 	}
@@ -370,8 +398,16 @@ func (e *Engine) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = e.tools.RegisterGrant(id, digest(f.Get("client_id"))); err != nil {
-		_, _ = e.state.revokeToken(pair.AccessToken, f.Get("client_id"))
-		oauthError(w, 503, "temporarily_unavailable")
+		// The tool server refused the grant's workspace (it is stopping, or full). A grant
+		// this request created, by exchanging a code, is revoked: nothing else holds it. A
+		// refresh's grant was the client's before this request and is left as it was: the
+		// client retries with the refresh credential it sent, which the retry window answers
+		// (store.refresh). Revoking it here cost the owner a passkey approval of the app
+		// for a refresh that met a restart (hunt-security-28, 2026-11-20).
+		if f.Get("grant_type") == "authorization_code" {
+			_, _ = e.state.revokeToken(pair.AccessToken, f.Get("client_id"))
+		}
+		unavailable(w)
 		return
 	}
 	e.audit.event("token_issued", id, digest(f.Get("client_id")))

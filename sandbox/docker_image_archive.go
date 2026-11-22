@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // ImageArchives hands fn each image the provider runs, as `docker save` writes it, by
@@ -41,8 +43,8 @@ func saveImage(ctx context.Context, host, ref, id string, fn func(ref, id string
 		return err
 	}
 	cmd := dockerCommand(ctx, args...)
-	var stderr cappedBuffer
-	stderr.limit = dockerErrorCap
+	var stderr providerkit.Capture
+	stderr.Limit = dockerErrorCap
 	cmd.Stderr = &stderr
 	// Stdout is streamed, not buffered: an image is as large as it is, and fn holds at
 	// most one of its files at a time (withheld.MaxImageFileBytes).

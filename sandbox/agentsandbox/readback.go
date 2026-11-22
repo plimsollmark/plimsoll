@@ -502,9 +502,6 @@ func (p *Provider) checkSandboxdArgs(argv []string) error {
 	return nil
 }
 
-// imageDigest is the sha256 digest a container status's imageID names.
-var imageDigestRE = regexp.MustCompile(`@(sha256:[0-9a-f]{64})$`)
-
 // checkNetworkPolicies checks every network policy in the pod's namespace that selects
 // it. Policies are additive, so it is not enough that the template's own policy denies
 // egress: none of them may allow any, at least one must deny it, and ingress must be

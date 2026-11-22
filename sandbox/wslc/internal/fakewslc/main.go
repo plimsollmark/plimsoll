@@ -30,6 +30,8 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/plimsollmark/plimsoll/internal/outsidefacts"
+
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -147,7 +149,15 @@ type State struct {
 	RunRuntimes map[string][]string `json:"runRuntimes"`
 }
 
-const msDaemonJSON = `{"features":{"cdi":true}}`
+// What this stand-in models of the real programs comes from the table of outside facts
+// (internal/outsidefacts), not from copies here: the file WSL writes at boot and ls's words for
+// a missing file. A fact that changes there changes this stand-in, and the provider's test
+// (TestTheProviderAgreesWithTheFactsItsStandInIsBuiltFrom) then fails until the provider is
+// read against it again.
+var (
+	msDaemonJSON  = outsidefacts.Value("wslc-daemon-json-exact")
+	lsAbsentWords = outsidefacts.Value("wslc-ls-no-such-file-words")
+)
 
 var dir string
 
@@ -335,7 +345,7 @@ func sessionRun(setup Setup, session string, argv []string, stdin string, tarred
 		fmt.Println("1.42 20.10")
 	case "ls -l /dev/dxg":
 		if setup.GPU == "" {
-			fmt.Fprintln(os.Stderr, "ls: /dev/dxg: No such file or directory")
+			fmt.Fprintln(os.Stderr, "ls: /dev/dxg: "+lsAbsentWords+" or directory")
 			return 1
 		}
 		fmt.Println(setup.GPU)
@@ -699,7 +709,7 @@ func record(call Call) {
 }
 
 // container plays the runner for one plan: each step's result is canned (the probe step
-// gets ProbeStdout), and the report is framed and signed as docker/runner.mjs frames it.
+// gets ProbeStdout), and the report is framed and signed as the project runner frames it.
 func container(setup Setup, stdin, boot string) int {
 	switch setup.Mode {
 	case "silent":

@@ -18,14 +18,26 @@
 // for a waiting pool member (RunRequest.prefer_warm) and an open for one
 // (OpenSessionRequest.warm_only); a daemon that predated them would ignore either and
 // make a sandbox, billed by the second on e2b and dockercloud, so it refuses them
-// instead, before reading the request.
+// instead, before reading the request. 6: clients accept only record version 5, which
+// states the sentence the provider requires beside its tier
+// (RunResponse.isolation_qualification), whether a waiting pool sandbox ran the call and
+// the daemon's version; an older daemon would run the code (billed by the second on e2b
+// and dockercloud) and give an answer the client must then reject, so it refuses the
+// request instead, before anything runs. Also 6, in the same release: every session run
+// and close carries a positive ownership generation, so an older worker cannot execute or
+// close after another worker attached; a daemon that predated it would ignore the field
+// and run a stale worker's call. 7: clients refuse a record whose provider name is not
+// UTF-8 or holds a control or bidirectional format character (record.ValidText, the rule
+// the tier and the qualification were already held to), since a reader is shown the name
+// beside the tier; an older client accepted such a record, so a daemon of this number
+// refuses it before anything runs, and an older daemon refuses this client the same way.
 package protocol
 
 import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
-const Number uint32 = 5
+const Number uint32 = 7
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
 // another number. A client recognises the refusal by its NotDispatched detail
@@ -46,3 +58,23 @@ const RequestIDHeader = "Plimsoll-Request-Id"
 // was reached, so nothing can have run; its value is a refusal reason's name
 // (sandbox.Refusal's String). A NotDispatched detail in the body takes precedence.
 const NotDispatchedHeader = "Plimsoll-Not-Dispatched"
+
+// The texts of a session's two ownership refusals, both FailedPrecondition and marked not
+// dispatched: StaleOwnerText (reason permission) on a run, close or attach that carries
+// a generation older than the session's, because another worker attached; and
+// CheckpointMismatchText (reason request) on an attach whose checkpoint is not the
+// session's head, because a call ran after the checkpoint was saved. Each is a constant,
+// so no refusal states a number of the session's: a stale worker learns that it is
+// stale, never what the current owner holds. The clients tell a mismatch from any other
+// refusal by code, reason and this text; internal/wiretables writes both into the Python
+// and TypeScript clients.
+const (
+	StaleOwnerText         = "session ownership generation is stale"
+	CheckpointMismatchText = "session checkpoint does not match"
+)
+
+// TraceIDPattern is the whole grammar of a request's correlation id (trace_id): 1 to 64
+// characters of [A-Za-z0-9._:-]. The daemon drops an id outside it whole (internal/rpc),
+// so the clients and the MCP server refuse one before sending; internal/wiretables
+// writes it into the Python and TypeScript clients.
+const TraceIDPattern = `^[A-Za-z0-9._:-]{1,64}$`

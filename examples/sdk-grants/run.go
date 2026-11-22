@@ -390,9 +390,10 @@ func readPins(path string) ([]pin, error) {
 	return pins, nil
 }
 
-// splitPolicy reads Describe's policy, "seccomp:sha256:<default> sdk_env:seccomp:sha256:<variant>".
+// splitPolicy reads Describe's policy, "seccomp:sha256:<default> sdk_env:seccomp:sha256:<variant>",
+// then the guest guard's word, which it does not read (seccompPolicy).
 func splitPolicy(policy string) (defaultID, variantID string, err error) {
-	parts := strings.Fields(policy)
+	parts := strings.Fields(seccompPolicy(policy))
 	if len(parts) != 2 || !strings.HasPrefix(parts[0], "seccomp:sha256:") || !strings.HasPrefix(parts[1], "sdk_env:seccomp:sha256:") {
 		return "", "", fmt.Errorf("the daemon's policy %q names no default profile and sdk_env variant by digest", policy)
 	}

@@ -327,6 +327,34 @@ class LifecycleTests(Reset):
                     pass
             self.assertTrue(FakeClient.opened[-1][0].closed)
 
+    async def test_a_cleanup_that_races_a_start_leaves_no_live_session(self) -> None:
+        # The shape of the ADK environment's release-94: cleanup() while start() is opening must
+        # not return with the open still on its way to publishing a live session. The open is
+        # held mid-way; cleanup must wait for it and close what it opened.
+        import threading
+
+        entered, release = threading.Event(), threading.Event()
+
+        class Held(FakeBackend):
+            def _open_session(self) -> Any:
+                entered.set()
+                release.wait(10)
+                return super()._open_session()
+
+        backend = Held(plugin())
+        starting = asyncio.ensure_future(backend.start())
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        cleaning = asyncio.ensure_future(asyncio.to_thread(backend.cleanup))
+        done, _ = await asyncio.wait({cleaning}, timeout=0.2)
+        self.assertEqual(done, set(), "cleanup() returned while the open was still on its way")
+        release.set()
+        await starting
+        await cleaning
+        self.assertEqual(len(FakeClient.opened), 1)
+        self.assertTrue(FakeClient.opened[0][0].closed)
+        self.assertIsNone(backend._workspace)
+
     async def test_a_daemon_without_sessions_is_refused(self) -> None:
         FakeClient.sessions = False
         with self.assertRaisesRegex(SandboxError, "offers no sessions"):
@@ -542,6 +570,20 @@ class DaemonTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SandboxError, "runs only the daemon's image"):
             async with provision_runtime(self.config(minimum_isolation="container", image="python:3.12-alpine")):
                 pass
+
+
+class FrameworkShapeTests(unittest.TestCase):
+    """Each member the adapter defines over the framework's own (inherited, or declared by a protocol it is used
+    as) against the framework at the version this suite installs: kind, coroutine, the calls it takes
+    (tests/_framework_shapes.py)."""
+
+    def test_the_adapter_takes_the_calls_the_framework_makes(self) -> None:
+        import importlib
+
+        from tests._framework_shapes import problems
+
+        self.assertEqual(problems(importlib.import_module('plimsoll_client.verifiers_runtime')), [])
+        self.assertEqual(problems(importlib.import_module('plimsoll_client.verifiers_harness')), [])
 
 
 if __name__ == "__main__":

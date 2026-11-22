@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"slices"
 	"strings"
@@ -48,7 +49,7 @@ func TestExchangeFieldsAreTheFormatsOrLater(t *testing.T) {
 	format := strings.Fields(string(raw))
 	later := make([]string, len(laterFields))
 	for i, p := range laterFields {
-		later[i] = strings.Join(p, ".")
+		later[i] = strings.Join(p.path, ".")
 	}
 	have := exchangeFields()
 	for _, f := range have {
@@ -89,6 +90,43 @@ func TestLaterFieldsAreWrittenOnlyWhenSet(t *testing.T) {
 		}
 		if !strings.Contains(string(x), `"trace_id":""`) {
 			t.Error("a format field holding its zero value was left out")
+		}
+	}
+}
+
+// A later field is left out only at its own kind's unset value. A sentence or a daemon version of exactly "0", the
+// value a 64-bit integer field holds unset as protojson writes it, is a value and is kept; the empty text is left out.
+func TestALaterTextFieldOfZeroIsKept(t *testing.T) {
+	req := &plimsollv1.RunRequest{Protocol: 6, Payload: &plimsollv1.RunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: "1"}}}
+	type texts struct {
+		Qualification *string `json:"isolation_qualification"`
+		DaemonVersion *string `json:"daemon_version"`
+	}
+	for _, value := range []string{"0", ""} {
+		resp := &plimsollv1.RunResponse{IsolationQualification: value, DaemonVersion: value,
+			Record: &plimsollv1.RunRecord{IsolationQualification: value, DaemonVersion: value}}
+		x, err := exchangeBytes(source{Request: req, Response: resp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Response struct {
+				texts
+				Record texts `json:"record"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal(x, &got); err != nil {
+			t.Fatal(err)
+		}
+		for where, f := range map[string]texts{"response": got.Response.texts, "record": got.Response.Record} {
+			for name, v := range map[string]*string{"isolation_qualification": f.Qualification, "daemon_version": f.DaemonVersion} {
+				switch {
+				case value != "" && (v == nil || *v != value):
+					t.Errorf("%s.%s %q was not written as %q", where, name, value, value)
+				case value == "" && v != nil:
+					t.Errorf("%s.%s unset was written as %q", where, name, *v)
+				}
+			}
 		}
 	}
 }

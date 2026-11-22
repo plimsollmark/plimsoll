@@ -93,7 +93,9 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
   setting.
 - **plimsolld running in the cluster.** It reaches each pod's sandboxd at the pod's address,
   which only the cluster network routes; Kubernetes' port-forward does not reach a pod under
-  gVisor. With no settings for them, the API server, its certificate authority and the token
+  gVisor. Its own callers reach it at `PLIMSOLL_ADDR`, which its pod sets to an address the
+  cluster can route to, such as `0.0.0.0:8746`: unset, the daemon listens on its pod's
+  loopback address only (`127.0.0.1:8746`), which no other pod and no Service reaches. With no settings for them, the API server, its certificate authority and the token
   are the pod's own service account (`https://kubernetes.default.svc` and the files under
   `/var/run/secrets/kubernetes.io/serviceaccount`); the token file is read at every request,
   since Kubernetes rotates it in place. The service account needs, in the namespace: create,
@@ -111,7 +113,16 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
   util-linux's `setpriv` at `/bin/setpriv`, which drops every command to the guest user.
   `SANDBOX_AGENTSANDBOX_IMAGE` names it exactly as the template writes it; with
   `SANDBOX_REQUIRE_PINNED_IMAGES=1` it must be pinned by `@sha256:`, and that digest is
-  checked against each pod's image on every run.
+  checked against each pod's image on every run. plimsoll's runner is the native helper it
+  inherits from `plimsoll/sandbox`, `/usr/local/libexec/plimsoll-helper` (root's, mode 0755,
+  [docs/guest-dependencies.md](guest-dependencies.md)): the startup test reads it from inside a
+  pod and refuses the image unless it is a regular file, root's, writable by no one else, with
+  no setuid or setgid bit, and byte for byte the helper this plimsolld was built with. So an
+  image built on a `plimsoll/sandbox` from before v0.28.0 (whose runner was the Node program
+  `/runner.mjs`) or from another release is refused; rebuild it from the same release as
+  plimsolld (`make docker-images`, then this Dockerfile). Only an x86-64 build exists, so the
+  pods must run on x86-64 nodes, and the startup test refuses any other machine by name;
+  plimsolld's own machine does not matter.
 - **A token for sandboxd.** A random string of 32 to 512 characters in a file named by
   `SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE`, never in the environment. The template starts
   sandboxd with `--auth-token-sha256=` and the token's SHA-256 in hex: sandboxd runs as root,
@@ -283,8 +294,9 @@ The whole namespace set is pinned, including policies that select other pods, be
 policy's selector can change which pods it affects. A recreated deny policy cannot borrow
 its predecessor's proof while the network plugin is still applying it. Cluster-scoped
 policies, network-plugin state and changes after the read-back remain outside this pin.
-A per-run connection test could check enforcement again, at the cost of waiting for blocked
-connections to time out; it is not implemented.
+The smoke test checks that the policies are enforced, once, from inside a pod
+([below](#startup-smoke-test)). A per-run connection test could check enforcement again, at
+the cost of waiting for blocked connections to time out; it is not implemented.
 
 **The proven runtime class.** The smoke test also records the runtime class it runs on:
 its UID, its handler, and its `overhead` and `scheduling` settings, which decide where its
@@ -340,7 +352,7 @@ so an operator who changes the class restarts the daemon, as for a changed templ
 
 ## Startup smoke test
 
-Before the provider serves, it claims two sandboxes as runs do and proves from inside what
+Before the provider serves, it claims three sandboxes as runs do and proves from inside what
 the read-back cannot see:
 
 - the guest runs as uid 61000 alone, with no capability, `no_new_privs`, only `PATH` and
@@ -353,12 +365,18 @@ the read-back cannot see:
 - no connection leaves the pod: to the internet, the cloud metadata address, the API
   server's address and the node's kubelet, every attempt times out or is refused inside the
   pod;
+- nor does one to another sandbox pod's TLS terminator port, 9090: the test claims a second
+  sandbox, which runs no code, and the guest of the first dials it. The addresses above are
+  outside the cluster, and a network plugin can treat traffic between pods apart, so this is
+  the check that the network policy keeps one sandbox from another's sandboxd. After the
+  attempt plimsolld reaches that port itself over TLS, so the port the guest could not reach
+  was listening;
 - under the kernel tier, the guest's kernel log begins with gVisor's boot line (a handler
   named `runsc` is only a name in the node's configuration, and a host's own log can name
   gVisor too); under Kata, the log begins with a Linux kernel's boot and the boot ID is not
   the node's; under runc, a seccomp filter is in force on the guest. Every run repeats this
-  check in its own pod (step 4 above), since the smoke test sees only the nodes its two pods
-  landed on;
+  check in its own pod (step 4 above), since the smoke test sees only the nodes its three
+  pods landed on;
 - sandboxd refuses the guest's process starts on its loopback port without the token and
   with a wrong one;
 - the guest's open of the TLS key fails for lack of permission, and a cleartext process start
@@ -367,7 +385,9 @@ the read-back cannot see:
   sandboxd's memory, environment or input, nor those of the terminator (process 1, which
   holds the TLS key).
 
-A failure refuses startup.
+A failure refuses startup. The test takes three sandboxes from the warm pool, so from a pool
+of fewer than three warm pods it waits for the pool to start one, and it must finish within
+two minutes, plimsolld's bound on startup.
 
 ## Claims a crashed daemon leaves behind
 

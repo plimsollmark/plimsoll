@@ -178,7 +178,8 @@ type File struct {
 
 // ProjectStepOutputCap is the output a project step keeps per stream on every
 // provider: the bytes past it are dropped and the stream marked cut. It is the runner's
-// MAX_STEP_OUTPUT (docker/runner.mjs; a test holds the two equal), and the exec-based
+// MAX_STEP_OUTPUT (sandbox/internal/nativehelper/program/src/runner.rs; a test holds the
+// two equal), and the exec-based
 // providers keep the same (projecttest).
 const ProjectStepOutputCap = 1 << 20
 
@@ -386,7 +387,7 @@ type Result struct {
 // length-prefixed encoding in docs/run-records.md. In a session the last three
 // fields chain the calls; for a single run they are empty or zero.
 type RunRecord struct {
-	Version          int    // encoding version, 4
+	Version          int    // encoding version, 5
 	RequestSHA256    string // protocol number, floor, timeout, software rule and payload; never the trace id
 	ResultSHA256     string // the result as sent, without durations or advice
 	Provider         string // the provider that ran it, as the daemon reported
@@ -406,7 +407,16 @@ type RunRecord struct {
 	// Instance is the sandbox instance that ran the call, as the response states it
 	// (sandbox.ValidInstance), or "".
 	Instance string
-	SHA256   string // over every field above
+	// IsolationQualification is the sentence the provider states beside the tier
+	// (Qualifier), as the response states it, or "" (record version 5).
+	IsolationQualification string
+	// Warm states that a waiting pool sandbox ran the call (a Run cell with
+	// prefer_warm), as the response states it (record version 5).
+	Warm bool
+	// DaemonVersion is the answering daemon's plimsoll module version from its build
+	// information, as the response states it, or "" (record version 5).
+	DaemonVersion string
+	SHA256        string // over every field above
 }
 
 // Sandbox is an isolated code runner.
@@ -538,6 +548,15 @@ type StreamSink interface {
 type Preflighter interface {
 	Preflight(ctx context.Context) error
 }
+
+// PreflightBound is the most one Preflight takes by its own bound. A provider bounds its
+// check by this or less: each in-tree provider holds its own number under it where that
+// number is declared, so a larger one does not compile. A caller that gives a Preflight a
+// budget derives it from this (plimsolld's readiness cache and maintenance loop add a
+// margin), so a slow check stays the provider's to report, in its own words. Until
+// 2026-11-20 the daemon's budget was a number of its own beside a comment naming one
+// provider's bound (hunt-quality-58).
+const PreflightBound = 30 * time.Second
 
 // OrphanReconciler is an optional interface a provider implements when its
 // execution resources live off-process (remote microVMs) and can therefore leak

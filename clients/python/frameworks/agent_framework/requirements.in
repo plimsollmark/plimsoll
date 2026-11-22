@@ -1,0 +1,7 @@
+# The Agent Framework versions this adapter's tests run against: agent-framework-core and its
+# shell tools, agent-framework-tools. The tools package is a beta released about weekly, pinned
+# exactly on purpose, here and in agent-framework-plimsoll (a test checks the two agree). Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+agent-framework-core==1.26.0
+agent-framework-tools==1.0.0b261112

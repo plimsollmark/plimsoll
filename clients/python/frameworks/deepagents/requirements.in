@@ -1,0 +1,11 @@
+# The Deep Agents version this backend's tests run against, with langchain-tests for
+# LangChain's standard sandbox suite (SandboxIntegrationTests, run on a real docker
+# session by make docker-suite). LangGraph and LangChain come with Deep Agents; they are
+# named here because test_retry.py runs retry_on through their own retry paths
+# (LangGraph's RetryPolicy, LangChain's ToolRetryMiddleware). Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+deepagents==0.7.38
+langchain==1.5.0
+langgraph==1.2.22
+langchain-tests==1.1.9

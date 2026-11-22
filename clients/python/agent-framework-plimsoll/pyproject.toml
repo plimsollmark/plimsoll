@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# A Microsoft Agent Framework package: a shell tool over one plimsoll session and plimsoll's
+# code tool. The code is plimsoll_client.agent_framework (PlimsollShellTool and
+# plimsoll_code_tool); this package depends on that exact plimsoll-client release, and its
+# version moves with plimsoll's releases (TestClientVersionsAgree in clients/typescript checks
+# both). agent-framework-core and agent-framework-tools need Python 3.11 or later; the suite in
+# clients/python/frameworks/agent_framework runs against the versions below.
+[project]
+name = "agent-framework-plimsoll"
+version = "0.28.0"
+description = "A Microsoft Agent Framework shell tool and code tool that run agent-written commands and code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "agent-framework-core==1.26.0",
+    # agent-framework-tools, the framework's shell tools, is a beta released about weekly, so
+    # it is pinned exactly on purpose: a new beta is tested before the pin moves.
+    "agent-framework-tools==1.0.0b261112",
+    "plimsoll-client==0.28.0",
+]
+keywords = ["agent-framework", "microsoft agent framework", "shell", "sandbox", "code execution", "agents", "gvisor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/agent-framework-plimsoll"
+Source = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/agent-framework-plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_framework_plimsoll = ["py.typed"]

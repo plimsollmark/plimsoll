@@ -50,9 +50,20 @@ type Pool struct {
 	backends []Backend
 	ttl      time.Duration
 
-	mu    sync.Mutex
-	seen  map[string]seen
-	order []string
+	mu       sync.Mutex
+	seen     map[string]seen
+	inflight map[string]*flight // the describe in progress for each backend, at most one
+	order    []string
+}
+
+// flight is one describe in progress. done is closed once s holds its answer. waiters
+// is how many callers hold it, the one that started it included (under Pool.mu): the
+// pool's own account of who shares the describe, which a test reads to know that every
+// caller has arrived before it lets the daemon answer.
+type flight struct {
+	done    chan struct{}
+	s       seen
+	waiters int
 }
 
 type seen struct {
@@ -84,6 +95,12 @@ var ErrNoBackend = errors.New("placement: no backend can take this request")
 // like the client's isolation evidence check; the result comes back with it.
 var ErrEnvironmentMismatch = errors.New("placement: the run's record states another environment than the requirement")
 
+// ErrProviderMismatch is ErrEnvironmentMismatch's twin for Requirement.Provider: a backend
+// ran the request and its run record names another provider (a daemon restarted with
+// another SANDBOX_PROVIDER since it was described). Unmarked and never retried; the result
+// comes back with it.
+var ErrProviderMismatch = errors.New("placement: the run's record states another provider than the requirement")
+
 // New returns a pool over backends. descriptionTTL is how long a daemon's
 // Describe answer is reused; 0 means a minute. A backend whose description is
 // missing or stale is described again when the next request needs it, so a daemon
@@ -108,7 +125,7 @@ func New(backends []Backend, descriptionTTL time.Duration) (*Pool, error) {
 		}
 		names[b.Name] = struct{}{}
 	}
-	p := &Pool{backends: slices.Clone(backends), ttl: descriptionTTL, seen: map[string]seen{}}
+	p := &Pool{backends: slices.Clone(backends), ttl: descriptionTTL, seen: map[string]seen{}, inflight: map[string]*flight{}}
 	for _, b := range backends {
 		p.order = append(p.order, b.Name)
 	}
@@ -130,20 +147,41 @@ type Requirement struct {
 	// the client checks the returned evidence against it.
 	MinimumIsolation sandbox.IsolationClass
 	// Environment filters by the exact outer image or interpreter identity. Placement
-	// selects from Describe, then checks the returned record after dispatch; use Software
-	// when code must be refused before dispatch unless its selected image is approved.
+	// selects from Describe; for a single run it then checks the returned record after
+	// dispatch. A session is filtered only: OpenSession picks the daemon by it, and the
+	// session's calls are not checked against it afterwards (hunt-quality-42). Use
+	// Software when code must be refused before dispatch unless its selected image is
+	// approved; a session's open sends that rule, and every call's record is held to it.
 	Environment string
 	// Software selects the platform image by an exact identity or an approved
 	// set. The rule is also sent to the daemon for a pre-dispatch check and is
 	// bound to the signed run record. Empty means no software restriction.
 	Software sandbox.SoftwareRule
-	// GrantProfile says the request carries a grant, so a backend must support
+	// GrantProfile says a single run carries a grant, so a backend must support
 	// grants for the payload kind. The profile itself lives on each daemon, and the
 	// client was configured with its name; this is only the capability check.
+	// OpenSession refuses it: a session's calls may be of either kind, so a session
+	// names its kinds in SessionGrants.
 	GrantProfile bool
+	// SessionGrants, for OpenSession only, says which kinds of call in the session
+	// carry a grant, so a backend must support grants for each of them. A single run
+	// refuses it, since its kind is its method's.
+	SessionGrants SessionGrants
 	// Prefer ranks the backends that pass the filter; the first is tried first. With
 	// no Prefer the pool's own order is used.
 	Prefer func(a, b client.Info) int
+}
+
+// SessionGrants names the kinds of call in a placed session that carry a grant. A
+// daemon states grant support for snippets and for projects separately, and a session
+// opened where only the other kind is granted would refuse its granted calls.
+type SessionGrants struct {
+	// Snippets: the session's RunJavaScript calls carry a grant (the client was made
+	// with client.WithJavaScriptGrantProfile).
+	Snippets bool
+	// Projects: the session's RunProject calls carry a grant (the client was made with
+	// client.WithProjectGrantProfile).
+	Projects bool
 }
 
 // Choice is where a request ran, and what was tried before it.
@@ -165,31 +203,31 @@ func (r Refusal) String() string { return r.Backend + ": " + r.Reason.String() }
 
 // Refresh describes every backend, in parallel, and records what each said. A
 // caller may run it at startup and on a timer; the pool also describes a backend
-// on demand when its description is missing or stale. It returns the first error,
-// after recording every answer, so a caller can log a backend that is down without
-// the pool refusing to work.
+// on demand when its description is missing or stale. Each daemon's describe is
+// bounded by describeBudget, as an on-demand one is, so one hung daemon holds Refresh
+// for at most that long, and a describe already in progress for a backend is waited
+// on rather than repeated. It returns the first error, after every answer is recorded,
+// so a caller can log a backend that is down without the pool refusing to work. A
+// caller whose context ends first gets its own context error, and the describes go on
+// and are recorded without it.
 func (p *Pool) Refresh(ctx context.Context) error {
-	var wg sync.WaitGroup
-	results := make([]seen, len(p.backends))
-	for i, b := range p.backends {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			asked := time.Now()
-			info, err := b.Client.Describe(ctx)
-			results[i] = seen{info: info, at: asked, err: err, failed: time.Now()}
-		}()
-	}
-	wg.Wait()
-	var first error
+	flights := make([]*flight, len(p.backends))
 	p.mu.Lock()
 	for i, b := range p.backends {
-		p.store(b.Name, results[i])
-		if results[i].err != nil && first == nil {
-			first = fmt.Errorf("placement: describing %s: %w", b.Name, results[i].err)
-		}
+		flights[i] = p.lookup(ctx, b)
 	}
 	p.mu.Unlock()
+	var first error
+	for i, b := range p.backends {
+		select {
+		case <-flights[i].done:
+		case <-ctx.Done():
+			return fmt.Errorf("placement: refreshing the descriptions: %w", ctx.Err())
+		}
+		if err := flights[i].s.err; err != nil && first == nil {
+			first = fmt.Errorf("placement: describing %s: %w", b.Name, err)
+		}
+	}
 	return first
 }
 
@@ -207,7 +245,8 @@ const (
 )
 
 // Describe returns what a backend last said, describing it when that is missing or
-// stale. A failure is returned again, without asking, for failedTTL.
+// stale. A failure is returned again, without asking, for failedTTL. A caller whose
+// context ends first gets its own context error; the description goes on without it.
 func (p *Pool) Describe(ctx context.Context, name string) (client.Info, error) {
 	for _, b := range p.backends {
 		if b.Name != name {
@@ -215,23 +254,58 @@ func (p *Pool) Describe(ctx context.Context, name string) (client.Info, error) {
 		}
 		p.mu.Lock()
 		s, ok := p.seen[name]
-		p.mu.Unlock()
 		switch {
 		case ok && s.err == nil && time.Since(s.at) < p.ttl:
+			p.mu.Unlock()
 			return s.info, nil
 		case ok && s.err != nil && time.Since(s.failed) < failedTTL:
+			p.mu.Unlock()
 			return client.Info{}, s.err
 		}
-		asked := time.Now()
-		dctx, cancel := context.WithTimeout(ctx, describeBudget)
-		info, err := b.Client.Describe(dctx)
-		cancel()
-		p.mu.Lock()
-		p.store(name, seen{info: info, at: asked, err: err, failed: time.Now()})
+		f := p.lookup(ctx, b)
 		p.mu.Unlock()
-		return info, err
+		select {
+		case <-f.done:
+			return f.s.info, f.s.err
+		case <-ctx.Done():
+			return client.Info{}, ctx.Err()
+		}
 	}
 	return client.Info{}, fmt.Errorf("placement: no backend named %q", name)
+}
+
+// lookup returns the describe of b in progress, starting one when there is none, so
+// requests that find one backend stale wait on one answer instead of each asking the
+// daemon (hunt-quality-49, 2026-11-20). The caller holds p.mu.
+//
+// What a describe stores is the daemon's state, read by every caller for failedTTL or
+// the time-to-live, so it runs detached from the requesting caller's cancellation and
+// is bounded by describeBudget alone: a caller whose deadline passed or whose client
+// hung up during a describe used to leave its own "deadline exceeded" stored as the
+// daemon's failure, and every caller was refused for failedTTL without the daemon
+// being asked (hunt-quality-41, 2026-11-20). Its answer is stored, and the flight
+// removed, under one hold of p.mu, so a later describe of the same backend was asked
+// after this one answered.
+func (p *Pool) lookup(ctx context.Context, b Backend) *flight {
+	if f, ok := p.inflight[b.Name]; ok {
+		f.waiters++
+		return f
+	}
+	f := &flight{done: make(chan struct{}), waiters: 1}
+	p.inflight[b.Name] = f
+	go func() {
+		asked := time.Now()
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), describeBudget)
+		info, err := b.Client.Describe(dctx)
+		cancel()
+		f.s = seen{info: info, at: asked, err: err, failed: time.Now()}
+		p.mu.Lock()
+		p.store(b.Name, f.s)
+		delete(p.inflight, b.Name)
+		p.mu.Unlock()
+		close(f.done)
+	}()
+	return f
 }
 
 // kind is the payload kind a request needs, as the filter reads it.
@@ -246,6 +320,19 @@ const (
 
 // candidates are the backends that can take a request, in the order to try them.
 func (p *Pool) candidates(ctx context.Context, k kind, req Requirement) ([]Backend, error) {
+	switch {
+	case k == kindSession && req.GrantProfile:
+		return nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: a session's calls may be snippets or projects, "+
+			"so OpenSession takes the kinds that carry a grant in SessionGrants, not GrantProfile", sandbox.ErrInvalidRequest))
+	case k != kindSession && req.SessionGrants != (SessionGrants{}):
+		return nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: SessionGrants is for OpenSession; "+
+			"a single run says it carries a grant with GrantProfile", sandbox.ErrInvalidRequest))
+	}
+	if req.Backend != "" {
+		if !slices.ContainsFunc(p.backends, func(b Backend) bool { return b.Name == req.Backend }) {
+			return nil, notDispatched(fmt.Errorf("%w: %w (no backend in the pool is named %q)", ErrNoBackend, sandbox.ErrUnsupported, req.Backend))
+		}
+	}
 	// Every candidate is described at once, so the slowest backend bounds the wait, not
 	// the sum of them.
 	described := make([]struct {
@@ -264,6 +351,13 @@ func (p *Pool) candidates(ctx context.Context, k kind, req Requirement) ([]Backe
 		}()
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		// The caller gave up while the backends were described: that is its own context
+		// error, not a refusal by any backend. Nothing was sent, so it is marked, reason
+		// capacity, as sandbox.RefuseGaveUp marks a session call that gave up waiting.
+		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity,
+			fmt.Errorf("placement: the caller gave up while the backends were described: %w", err))
+	}
 	var kept []Backend
 	var infos []client.Info
 	var why []string
@@ -321,8 +415,13 @@ func unfit(info client.Info, k kind, req Requirement) string {
 		// A session runs every call in its one sandbox, which is not where a single
 		// snippet runs on docker: filter on what the daemon states for sessions.
 		env = info.SessionEnvironment
-		if req.GrantProfile && !info.SupportsJavaScriptGrants && !info.SupportsProjectGrants {
-			return "no grants"
+		// Each kind the session's calls carry a grant on needs that kind's grants here:
+		// either kind alone let a session open where its other kind's calls are refused.
+		if req.SessionGrants.Snippets && !info.SupportsJavaScriptGrants {
+			return "no snippet grants"
+		}
+		if req.SessionGrants.Projects && !info.SupportsProjectGrants {
+			return "no project grants"
 		}
 	case kindProject:
 		if !info.SupportsProject {
@@ -404,31 +503,54 @@ func retryable(err error) (sandbox.Refusal, bool) {
 	}
 }
 
-// ranIn checks what a run's record states against the requirement's environment.
-// The filter chose the backend from a Describe answer up to descriptionTTL old; the
-// record is the daemon's statement about this run.
-func ranIn(rec *sandbox.RunRecord, want string) error {
-	if want == "" {
-		return nil
-	}
-	if rec == nil || rec.Environment != want {
-		got := "none stated"
-		if rec != nil && rec.Environment != "" {
-			got = rec.Environment
+// recorded is every requirement the filter chooses a backend by that a run record also
+// states, with the record's field and the error a difference is: ranIn checks a run
+// against each, so a requirement added to the filter and stated by the record is checked
+// after the run by adding a row here. The Provider row was missing, and a daemon
+// restarted on another provider inside descriptionTTL ran a request filtered for one
+// provider on another (hunt-security-27, 2026-11-20).
+var recorded = []struct {
+	name string
+	want func(Requirement) string
+	got  func(*sandbox.RunRecord) string
+	err  error
+}{
+	{"environment", func(r Requirement) string { return r.Environment }, func(r *sandbox.RunRecord) string { return r.Environment }, ErrEnvironmentMismatch},
+	{"provider", func(r Requirement) string { return r.Provider }, func(r *sandbox.RunRecord) string { return r.Provider }, ErrProviderMismatch},
+}
+
+// ranIn checks what a run's record states against the requirement (recorded). The
+// filter chose the backend from a Describe answer up to descriptionTTL old; the record
+// is the daemon's statement about this run.
+func ranIn(rec *sandbox.RunRecord, req Requirement) error {
+	var errs []error
+	for _, c := range recorded {
+		want := c.want(req)
+		if want == "" {
+			continue
 		}
-		return fmt.Errorf("%w: it ran in %s, not %s; execution has occurred", ErrEnvironmentMismatch, got, want)
+		got := ""
+		if rec != nil {
+			got = c.got(rec)
+		}
+		if got != want {
+			if got == "" {
+				got = "none stated"
+			}
+			errs = append(errs, fmt.Errorf("%w: its %s is %s, not %s; execution has occurred", c.err, c.name, got, want))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ranAs adds ranIn's verdict to a run's error. It applies to a run that succeeded and
 // to one that executed but whose Recorder failed (client.ErrNotRecorded), which still
 // carries its checked record: a failing recorder must not hide where the run went.
-func ranAs(rec *sandbox.RunRecord, want string, err error) error {
+func ranAs(rec *sandbox.RunRecord, req Requirement, err error) error {
 	if err != nil && !errors.Is(err, client.ErrNotRecorded) {
 		return err
 	}
-	if e := ranIn(rec, want); e != nil {
+	if e := ranIn(rec, req); e != nil {
 		return errors.Join(e, err)
 	}
 	return err
@@ -476,7 +598,7 @@ func (p *Pool) RunJavaScript(ctx context.Context, in sandbox.Request, req Requir
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.Result, error) {
 		res, err := b.Client.RunJavaScript(ctx, in)
-		return res, ranAs(res.Record, req.Environment, err)
+		return res, ranAs(res.Record, req, err)
 	})
 }
 
@@ -497,7 +619,7 @@ func (p *Pool) RunProject(ctx context.Context, in sandbox.ProjectRequest, req Re
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ProjectResult, error) {
 		res, err := b.Client.RunProject(ctx, in)
-		return res, ranAs(res.Record, req.Environment, err)
+		return res, ranAs(res.Record, req, err)
 	})
 }
 
@@ -518,7 +640,7 @@ func (p *Pool) RunModule(ctx context.Context, in sandbox.ModuleRequest, req Requ
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ModuleResult, error) {
 		res, err := b.Client.RunModule(ctx, in)
-		return res, ranAs(res.Record, req.Environment, err)
+		return res, ranAs(res.Record, req, err)
 	})
 }
 

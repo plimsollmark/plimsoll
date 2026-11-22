@@ -44,8 +44,16 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 				Artifacts: []*plimsollv1.Artifact{{Path: "z", Content: []byte{128, 0}}},
 			}},
 		}
+		if protocol == 4 {
+			// A version 5 record with a sentence beside its tier, bytes past ASCII in it,
+			// and a daemon version: check.js must digest each as the Go record package does.
+			a.IsolationQualification, a.DaemonVersion = "Microsoft states that WSL is not a security sandbox (caf\u00e9).", "v0.28.0"
+		}
 		r := sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(q), Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000123)}
 		a.Record = record.Stamp(r, a)
+		if a.Record.GetVersion() != 5 {
+			t.Fatalf("the stamped vector is version %d, want 5", a.Record.GetVersion())
+		}
 		s := source{Request: q, Response: a, Record: record.FromWire(a.Record)}
 		x, err := exchangeBytes(s)
 		if err != nil {

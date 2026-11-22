@@ -59,7 +59,11 @@
     for (const a of p.artifacts) e.field('artifact_path', a);
     return e.sum();
   }
-  const outcomes = ['unspecified', 'completed', 'setup_failed', 'timed_out', 'protocol_error', 'runner_failed'];
+  // The wire rules, generated from the Go packages that enforce them (tables.gen.js, which
+  // the page and the tests load first).
+  const tables = root.PlimsollWireTables;
+  if (!tables) throw new Error('tables.gen.js must be loaded before check.js');
+  const outcomes = tables.OUTCOME_NAMES;
   function outcomeNumber(p) {
     if (typeof p.outcome === 'number' && Number.isInteger(p.outcome) && p.outcome >= 0 && p.outcome < outcomes.length) return p.outcome;
     const i = outcomes.indexOf(p.outcome.replace('PROJECT_OUTCOME_', '').toLowerCase());
@@ -80,15 +84,40 @@
     for (const a of p.artifacts) e.field('artifact_path', a.path).field('artifact_content', from64(a.content));
     return e.sum();
   }
-  const recordFields = ['request_sha256', 'result_sha256', 'unanswered', 'provider', 'isolation', 'environment', 'policy',
-    'software_identity', 'software_rule_id', 'instance', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence', 'previous_sha256'];
-  const instanceForm = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$/;
+  // The fields each record version this checker reads covers, in order (record.published):
+  // every published version from 4, the first a bill of materials holds.
+  const FIRST_RECEIPT_VERSION = 4;
+  const layoutOf = r => {
+    const fields = Number(r.version) >= FIRST_RECEIPT_VERSION ? tables.RECORD_FIELDS[r.version] : undefined;
+    if (!fields) throw new Error('Only receipts of record version ' + FIRST_RECEIPT_VERSION + ' to ' + tables.RECORD_VERSION + ' are supported');
+    return fields;
+  };
+  const instanceForm = new RegExp(tables.INSTANCE_PATTERN);
+  // record.ValidText: UTF-8 (no lone surrogate) with no control character and no format character
+  // that breaks a line or reorders displayed text, the rule of every field a reader is shown (the
+  // provider, the tier, the qualification), in every record version. record.ValidQualification is
+  // that text, at most MAX_QUALIFICATION_BYTES of it.
+  const codePoint = c => '\\u{' + c.toString(16) + '}';
+  const textForbidden = new RegExp('[' + tables.QUALIFICATION_FORBIDDEN.map(([lo, hi]) => codePoint(lo) + '-' + codePoint(hi)).join('') + ']|\\p{Cs}', 'u');
+  const validText = s => typeof s === 'string' && !textForbidden.test(s);
+  const validQualification = q => validText(q) && utf8(q).length <= tables.MAX_QUALIFICATION_BYTES;
+  const daemonVersionForm = new RegExp(tables.DAEMON_VERSION_PATTERN);
+  const validDaemonVersion = v => v === '' || (v.length <= tables.MAX_DAEMON_VERSION_BYTES && daemonVersionForm.test(v));
+  // Each version 5 field has its protobuf JSON type or is absent: a string sentence and version, a boolean warm.
+  const recordShapeOK = r => ['isolation_qualification', 'daemon_version'].every(k => r[k] === undefined || typeof r[k] === 'string')
+    && (r.warm === undefined || typeof r.warm === 'boolean');
   function recordDigest(r) {
-    if (r.version !== 4) throw new Error('Only version 4 receipts are supported');
-    const e = new Encoder('plimsoll.run-record.v4');
-    for (const field of recordFields) e.field(field, r[field] ?? '');
+    const e = new Encoder('plimsoll.run-record.v' + r.version);
+    for (const field of layoutOf(r)) e.field(field, field === 'warm' ? String(Boolean(r.warm)) : r[field] ?? '');
     return e.sum();
   }
+  // A version may state only what its digest covers: a version 4 record stating the
+  // sentence, warm or a daemon version would carry evidence nothing signed. The live
+  // version's layout names every field a record can state.
+  const statesOnlyCovered = r => tables.RECORD_FIELDS[tables.RECORD_VERSION].every(f => layoutOf(r).includes(f) || !r[f]);
+  // No record ends before it starts, whatever its version (record.statesOnly; the reading of version 1 and 2 records
+  // that do was retired on 2026-11-21, and this checker reads no version below 4 anyway).
+  const timesOK = r => BigInt(r.ended_unix_ms ?? 0) >= BigInt(r.started_unix_ms ?? 0);
   const timestamp = ms => new Date(Number(ms)).toISOString();
   function attachments(bom) {
     const result = {};
@@ -176,16 +205,20 @@
       const subject = statement.subject;
       add('record', 'Record fingerprint and statement subject', recHash === r.record_sha256 && recHash === p.record_sha256
         && subject.length === 1 && subject[0].name === 'run-record' && subject[0].digest.sha256 === recHash);
-      const fields = ['version', ...recordFields, 'record_sha256'];
+      const fields = ['version', ...layoutOf(r), 'record_sha256'];
       const rule = x.request.software_rule;
       let ruleID = '';
       if (rule?.mode) ruleID = rule.identities.length === 1 ? 'exact:' + rule.identities[0]
         : 'approved:sha256:' + await hash(utf8([...rule.identities].sort().join('\x00')));
       const tiers = ['', 'process', 'container', 'kernel', 'vm'];
-      add('fields', 'Signed fields match the attached exchange', fields.every(k => String(p[k] ?? '') === String(r[k] ?? ''))
-        && r.provider === x.response.sandbox && r.isolation === x.response.isolation && r.environment === x.response.environment
+      add('fields', 'Signed fields match the attached exchange', fields.every(k => (k === 'warm' ? String(Boolean(p[k])) === String(Boolean(r[k])) : String(p[k] ?? '') === String(r[k] ?? '')))
+        && r.provider === x.response.sandbox && validText(r.provider) && r.isolation === x.response.isolation && r.environment === x.response.environment
         && r.software_identity === x.response.software_identity && r.software_rule_id === ruleID
         && (r.instance ?? '') === (x.response.instance ?? '') && (!r.instance || instanceForm.test(r.instance))
+        && recordShapeOK(r) && statesOnlyCovered(r) && timesOK(r)
+        && (r.version < 5 || ((r.isolation_qualification ?? '') === (x.response.isolation_qualification ?? '')
+          && Boolean(r.warm) === Boolean(x.response.warm) && (r.daemon_version ?? '') === (x.response.daemon_version ?? '')
+          && validQualification(r.isolation_qualification ?? '') && validDaemonVersion(r.daemon_version ?? '')))
         && (!rule?.mode || rule.identities.includes(r.software_identity))
         && tiers.indexOf(r.isolation) >= Math.max(1, tiers.indexOf(x.request.minimum_isolation))
         && (!x.request.minimum_isolation || tiers.includes(x.request.minimum_isolation))
@@ -207,7 +240,17 @@
       add('file-set', 'Program file-set fingerprint', equalHash(program.hashes, fileHash) && program.version === fileHash.slice(0, 12));
       const selected = /^oci-manifest:[a-z0-9._/-]+@sha256:([a-f0-9]{64})$/.exec(r.software_identity);
       const booted = !r.software_identity && /^dockercloud-image:sha256:([a-f0-9]{64})$/.exec(r.environment);
-      const imageHash = selected ? selected[1] : booted ? booted[1] : '';
+      // A WSL containers run names its image by its image ID, never as a registry pin.
+      const wslImage = !r.software_identity && /^wslc-image:sha256:([a-f0-9]{64})$/.exec(r.environment);
+      const imageHash = selected ? selected[1] : booted ? booted[1] : wslImage ? wslImage[1] : '';
+      // A WSL run's tier always comes with Microsoft's statement: a record without the
+      // sentence (any version 4 record, or a daemon that dropped it) is refused, and the
+      // workflow names the sentence exactly when the record states one.
+      const qualification = r.isolation_qualification ?? '';
+      const stated = properties(bom.formulation[0].workflows[0].properties);
+      add('qualification', "A WSL run's tier comes with its provider's sentence, and the workflow states the record's sentence exactly when it has one",
+        (r.provider !== 'wslc' || qualification !== '')
+        && (qualification ? stated['plimsoll:isolation_qualification'] === qualification : !('plimsoll:isolation_qualification' in stated)));
       const image = bom.components[0];
       const w = bom.formulation[0].workflows[0];
       const grant = x.request.project.grant_profile;
@@ -222,7 +265,9 @@
       add('properties', 'BOM fingerprints and run properties', ps);
       const imageClaim = selected
         ? `The daemon states that the run executed in the image whose OCI manifest digest is sha256:${imageHash} (environment ${r.environment}), verified before launch.`
-        : `The daemon states that the run executed in a Docker Cloud microVM booted from the image whose linux/amd64 manifest digest is sha256:${imageHash} (environment ${r.environment}), the provider's pin, which it compares with the digest the cloud reports each sandbox booted and refuses to run on a difference.`;
+        : wslImage
+          ? `The daemon states that the run executed in a WSL containers run started by the image whose image ID is sha256:${imageHash} (environment ${r.environment}): the SHA-256 of the image's configuration, which the provider read with wslc image inspect at startup and starts every run by. It is not a registry manifest digest, and no registry pin is stated.`
+          : `The daemon states that the run executed in a Docker Cloud microVM booted from the image whose linux/amd64 manifest digest is sha256:${imageHash} (environment ${r.environment}), the provider's pin, which it compares with the digest the cloud reports each sandbox booted and refuses to run on a difference.`;
       const tierTail = grant
         ? `the stored request names host-API grant profile ${grant}, the run's only route out, served by the daemon's broker, and the result digest is ${resultHash}. Network beyond the grant is provider configuration; this record is not a network measurement.`
         : `the stored request names no host-API grant and the result digest is ${resultHash}. The provider's no-grant configuration supplies network isolation; this record is not a network measurement.`;
@@ -230,6 +275,7 @@
         `The program's ${files.length} files, file-set digest ${fileHash}, are the files in the stored request whose signed digest ${reqHash} covers them with the isolation floor and timeout.`,
         imageClaim,
         `The daemon states provider ${r.provider} and isolation tier ${r.isolation}, at or above requested floor ${x.request.minimum_isolation}, from ${timestamp(r.started_unix_ms)} to ${timestamp(r.ended_unix_ms)} UTC; ` + tierTail
+          + (qualification ? ' Beside that tier the daemon states, signed in the record: ' + qualification : '')
       ];
       const qualified = Boolean(attached['statement.json']);
       add('claims', 'Every claim fingerprint matches the receipt', bom.declarations.claims.length === (qualified ? 4 : 3)
@@ -310,5 +356,6 @@
     a.content = to64(utf8(JSON.stringify(env)));
     return {bom: changed, offset: at, before, after: String.fromCharCode(bytes[at])};
   }
-  root.PlimsollReceipt = {check, changeOneCharacter, importPublicKey, requestDigest, resultDigest, recordDigest, fileSetDigest};
+  root.PlimsollReceipt = {check, changeOneCharacter, importPublicKey, requestDigest, resultDigest, recordDigest, fileSetDigest,
+    recordShapeOK, validText, validQualification, timesOK};
 })(globalThis);

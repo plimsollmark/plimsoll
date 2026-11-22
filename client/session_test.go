@@ -190,7 +190,7 @@ func TestSessionClientCatchesACallItDidNotMake(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The other holder's call executes; it sees a chain it did not start, too.
-	other := &Session{r: r, id: s.id, fingerprint: s.fingerprint}
+	other := &Session{r: r, id: s.id, generation: s.generation, fingerprint: s.fingerprint}
 	if _, err := other.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); !errors.Is(err, record.ErrChain) {
 		t.Fatalf("the other holder's call: %v", err)
 	}
@@ -344,7 +344,7 @@ func (h *recordingHTTP) Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		m := &plimsollv1.SessionRunRequest{}
+		m := &plimsollv1.SessionRunRequest{Generation: 1}
 		if err := proto.Unmarshal(body, m); err != nil {
 			return nil, err
 		}
@@ -382,7 +382,7 @@ type fingerprintLiar struct {
 }
 
 func (*fingerprintLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: "00112233445566778899aabbccddeeff", Session: "not-its-fingerprint", Isolation: "container"}), nil
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{Generation: 1, SessionId: "00112233445566778899aabbccddeeff", Session: "not-its-fingerprint", Isolation: "container"}), nil
 }
 
 func (l *fingerprintLiar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
@@ -435,6 +435,41 @@ func TestSessionFingerprintMismatchClosesTheSession(t *testing.T) {
 	}
 	if n := liar.closes.Load(); n != 1 {
 		t.Fatalf("the session was closed %d times; want 1", n)
+	}
+}
+
+// generationLiar opens a session whose answer states no ownership generation, and
+// keeps the generation each close it receives carries.
+type generationLiar struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+	closes []uint64
+}
+
+func (*generationLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
+	id := "00112233445566778899aabbccddeeff"
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: id, Session: record.SessionFingerprint(id), Isolation: "container"}), nil
+}
+
+func (l *generationLiar) CloseSession(_ context.Context, req *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
+	l.closes = append(l.closes, req.Msg.GetGeneration())
+	return connect.NewResponse(&plimsollv1.CloseSessionResponse{}), nil
+}
+
+// An open answer whose generation is 0 is refused as a broken chain, and the session it
+// names is closed first, with generation 1, the one every daemon opens a session at.
+func TestOpenAnswerWithoutGenerationClosesTheSession(t *testing.T) {
+	liar := &generationLiar{}
+	mux := http.NewServeMux()
+	path, h := rpc.NewHandler(liar)
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	_, err := newRemote(t, srv.URL).OpenSession(context.Background(), SessionOptions{})
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrChain) {
+		t.Fatalf("an open answer with generation 0: %v; want DataLoss wrapping record.ErrChain", err)
+	}
+	if len(liar.closes) != 1 || liar.closes[0] != 1 {
+		t.Fatalf("closes carried generations %v; want one close with generation 1", liar.closes)
 	}
 }
 
@@ -542,9 +577,11 @@ type sessionLiar struct {
 
 const liarID = "00112233445566778899aabbccddeeff"
 
-func (l *sessionLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: liarID, Session: record.SessionFingerprint(liarID),
-		Sandbox: "fake", Isolation: "vm", ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli()}), nil
+// OpenSession echoes the floor and rule it was sent, as the daemon does.
+func (l *sessionLiar) OpenSession(_ context.Context, req *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{Generation: 1, SessionId: liarID, Session: record.SessionFingerprint(liarID),
+		Sandbox: "fake", Isolation: "vm", ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli(),
+		MinimumIsolation: req.Msg.GetMinimumIsolation(), SoftwareRule: req.Msg.GetSoftwareRule()}), nil
 }
 
 func (l *sessionLiar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {

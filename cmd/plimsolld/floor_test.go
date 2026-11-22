@@ -19,6 +19,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/agentsandbox"
@@ -118,8 +119,7 @@ func registerFloorTestProviders() {
 				res, err := sandbox.ResourcesFromEnv(getenv)
 				return sandbox.Provider{Sandbox: build(getenv), Resources: res}, err
 			},
-			usage:            "\n  SANDBOX_PROVIDER=" + name + " a provider the floor tests register in their child daemon\n",
-			hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"},
+			hardenedEnvelope: []settings.Size{settings.MemoryMB},
 			hardened:         func(func(string) string, func(string, ...any), func(error)) {},
 			tierFromChecks:   fromChecks,
 		}

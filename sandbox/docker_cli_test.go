@@ -11,14 +11,49 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
+
+// throwawayTag names an image a test builds and removes: a name of its own on every run, so
+// two docker suites at once (one per runtime, side by side in a gate) never build, retag or
+// remove each other's image. Before 2026-11-20 each such tag was a constant.
+func throwawayTag(name string) string {
+	return "crsbx-test-" + name + "-" + providerkit.RandHex(6) + ":local"
+}
+
+// TestThrowawayImageTagsAreUniquePerRun: no test of this package names a throwaway image
+// with a fixed tag. A literal like "crsbx-test-x:local" would be shared by every docker
+// suite running at the same moment, and one suite's cleanup would remove the other's image.
+func TestThrowawayImageTagsAreUniquePerRun(t *testing.T) {
+	t.Parallel()
+	fixed := regexp.MustCompile(`^"(crsbx|plsm)-[A-Za-z0-9._-]*:[A-Za-z0-9._-]+"$`)
+	files, err := filepath.Glob("*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no test files here: %v", err)
+	}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && fixed.MatchString(lit.Value) {
+				t.Errorf("%s: %s is a fixed image tag; name it with throwawayTag", fset.Position(lit.Pos()), lit.Value)
+			}
+			return true
+		})
+	}
+}
 
 // The docker CLI gets PATH and nothing else, and an empty client config this process
 // owns: no variable of the daemon (a caller token, a provider key) reaches it, so
@@ -42,20 +77,21 @@ func TestDockerCommandGetsNoDaemonEnvironment(t *testing.T) {
 		t.Fatalf("the client config directory %s: %v, %v; want it empty", cmd.Args[2], entries, err)
 	}
 	// Beside it in the private directory, the liveness socket the reaper checks
-	// (docker_hostdirs.go), the resolv.conf containers mount, and the directory
-	// Preflight pins the seccomp profiles into (docker_seccomp.go), nothing else.
+	// (docker_hostdirs.go), the resolv.conf containers mount, the directory
+	// Preflight pins the seccomp profiles into (docker_seccomp.go), and the one it
+	// writes the guest guard into (docker_guestguard.go), nothing else.
 	files, err := dockerProcessFiles()
 	if err != nil || filepath.Dir(cmd.Args[2]) != files.dir || files.config != cmd.Args[2] {
 		t.Fatalf("the client config %s is not in the private directory %+v (%v)", cmd.Args[2], files, err)
 	}
 	entries, err := os.ReadDir(files.dir)
-	if err != nil || len(entries) != 4 {
-		t.Fatalf("the private directory %s: %v, %v; want the config directory, the liveness socket, resolv.conf and the seccomp directory", files.dir, entries, err)
+	if err != nil || len(entries) != 5 {
+		t.Fatalf("the private directory %s: %v, %v; want the config directory, the liveness socket, resolv.conf, the seccomp directory and the guest guard's", files.dir, entries, err)
 	}
 	for _, e := range entries {
 		var want fs.FileMode
 		switch e.Name() {
-		case "config", "seccomp":
+		case "config", "seccomp", "guest-guard":
 			want = fs.ModeDir
 		case dockerAliveSocket:
 			want = fs.ModeSocket
@@ -314,7 +350,7 @@ func TestDockerCLIIsStartedOnlyThroughDockerCommand(t *testing.T) {
 
 // Every command's answer is read through a bound (review F13): no Output or
 // CombinedOutput, which buffer without limit, and a command's Stdout and Stderr are
-// only ever a cappedBuffer. A command here is a variable or parameter declared as one
+// only ever a providerkit.Capture. A command here is a variable or parameter declared as one
 // (dockerCommand, dockerResolveCommand, exec.Command, exec.CommandContext, *exec.Cmd);
 // a pipe (StdoutPipe) is a stream its reader bounds and is not checked.
 func TestDockerCLIOutputIsAlwaysCapped(t *testing.T) {
@@ -346,7 +382,7 @@ func TestDockerCLIOutputIsAlwaysCapped(t *testing.T) {
 						continue
 					}
 					if i >= len(n.Rhs) || !addressOfCappedBuffer(n.Rhs[i]) {
-						t.Errorf("%s: a command's %s is not a cappedBuffer", fset.Position(lhs.Pos()), sel.Sel.Name)
+						t.Errorf("%s: a command's %s is not a providerkit.Capture", fset.Position(lhs.Pos()), sel.Sel.Name)
 					}
 				}
 			}
@@ -398,7 +434,7 @@ func declaredCommand(e ast.Expr) bool {
 }
 
 // addressOfCappedBuffer reports whether e is &x for a variable x declared as a
-// cappedBuffer.
+// providerkit.Capture.
 func addressOfCappedBuffer(e ast.Expr) bool {
 	u, ok := e.(*ast.UnaryExpr)
 	if !ok || u.Op != token.AND {
@@ -412,8 +448,12 @@ func addressOfCappedBuffer(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	typ, ok := spec.Type.(*ast.Ident)
-	return ok && typ.Name == "cappedBuffer"
+	typ, ok := spec.Type.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := typ.X.(*ast.Ident)
+	return ok && pkg.Name == "providerkit" && typ.Sel.Name == "Capture"
 }
 
 // cappedOutput refuses an answer past its cap instead of returning part of one, and a
@@ -475,7 +515,7 @@ func TestDockerHostSettingsNeverReachGuestCode(t *testing.T) {
 func TestDockerImageEnvReachesOnlyGuestProcesses(t *testing.T) {
 	t.Parallel()
 	requireDocker(t)
-	const img = "crsbx-test-env-hook-image:local"
+	img := throwawayTag("env-hook-image")
 	// Every node started with the image's environment logs its argv, then loads
 	// /work/hook.js when guest code has written one.
 	loader := `const fs=require("fs");try{fs.appendFileSync("/tmp/loaded.log",JSON.stringify(process.argv)+"\n")}catch{}if(fs.existsSync("/work/hook.js"))require("/work/hook.js");`
@@ -512,7 +552,7 @@ console.log(JSON.stringify([process.env.PLIMSOLL_TEST_CANARY, process.env.HOME, 
 	if got := strings.TrimSpace(pres.Steps[0].Stdout); got != "image /" {
 		t.Fatalf("a step saw %q, want the image's variable and HOME", got)
 	}
-	if lines := logLines(pres.Steps[1].Stdout); len(lines) != 1 || strings.Contains(pres.Steps[1].Stdout, "runner.mjs") {
+	if lines := logLines(pres.Steps[1].Stdout); len(lines) != 1 || strings.Contains(pres.Steps[1].Stdout, nativehelper.InContainer) {
 		t.Fatalf("processes that loaded the image's hook: %q; want the step's node alone, never the runner", lines)
 	}
 
@@ -533,7 +573,7 @@ console.log(JSON.stringify([process.env.PLIMSOLL_TEST_CANARY, process.env.HOME, 
 	if err != nil || r3.Outcome != ProjectOutcomeCompleted || len(r3.Steps) != 1 || r3.Steps[0].ExitCode != 0 {
 		t.Fatalf("a project call with the hook in place: %+v, %v; the runner would have exited 125 had it loaded the hook", r3, err)
 	}
-	if lines := logLines(r3.Steps[0].Stdout); len(lines) != 2 || strings.Contains(r3.Steps[0].Stdout, "runner.mjs") {
+	if lines := logLines(r3.Steps[0].Stdout); len(lines) != 2 || strings.Contains(r3.Steps[0].Stdout, nativehelper.InContainer) {
 		t.Fatalf("processes that loaded the image's hook in the session: %q; want the two snippets' nodes alone", lines)
 	}
 	// A cell's interpreter is guest-facing too: it starts with the image's environment,
@@ -559,7 +599,7 @@ func TestDockerPreflightRefusesLoaderEnv(t *testing.T) {
 		{"node:22-alpine", "LD_DEBUG=all", "LD_DEBUG"},
 		{"plimsoll/sandbox-sim:latest", "LD_PRELOAD=/plimsoll/missing.so", "LD_PRELOAD"},
 	} {
-		img := "crsbx-test-loader-env-" + strings.ToLower(c.name) + ":local"
+		img := throwawayTag("loader-env-" + strings.ToLower(c.name))
 		build := exec.Command("docker", "build", "-q", "-t", img, "-")
 		build.Stdin = strings.NewReader("FROM " + c.base + "\nENV " + c.env + "\n")
 		if out, err := build.CombinedOutput(); err != nil {
@@ -580,7 +620,7 @@ func TestDockerPreflightRefusesLoaderEnv(t *testing.T) {
 func TestDockerImageHealthcheckNeverRuns(t *testing.T) {
 	t.Parallel()
 	requireDocker(t)
-	const img = "crsbx-test-healthcheck-image:local"
+	img := throwawayTag("healthcheck-image")
 	build := exec.Command("docker", "build", "-q", "-t", img, "-")
 	build.Stdin = strings.NewReader("FROM plimsoll/sandbox:latest\nHEALTHCHECK --interval=1s --start-period=0s CMD [\"sh\",\"-c\",\"echo ran > /tmp/hc; echo ran > /work/hc\"]\n")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -596,6 +636,7 @@ func TestDockerImageHealthcheckNeverRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(ctx)
+	// fixed-wait: 3 s for an image HEALTHCHECK to have run if docker ran it; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	time.Sleep(3 * time.Second)
 	res, err := s.RunJavaScript(ctx, Request{Code: `const fs = require("fs"); console.log(fs.existsSync("/tmp/hc") || fs.existsSync("/work/hc"))`, Timeout: 10 * time.Second})
 	if err != nil || strings.TrimSpace(res.Stdout) != "false" {

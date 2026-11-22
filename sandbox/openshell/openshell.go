@@ -31,10 +31,8 @@ package openshell
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -56,6 +54,7 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
@@ -112,9 +111,10 @@ type Config struct {
 	CAFile   string
 	CertFile string
 	KeyFile  string
-	// Image is the OCI image every sandbox boots. It must carry node, sh, /usr/bin/env,
-	// /runner.mjs and the runner guard library (/usr/local/lib/plimsoll-runner-guard.so),
-	// as plimsoll/sandbox does; docs/openshell.md lists them.
+	// Image is the OCI image every sandbox boots. It must carry node, sh, /usr/bin/env and
+	// the project runner, plimsoll's native helper, at /usr/local/libexec/plimsoll-helper
+	// (root's, the bytes this plimsolld carries: the smoke test refuses any other), as
+	// plimsoll/sandbox does; docs/openshell.md lists them.
 	Image string
 	// RequirePinnedImage refuses an Image that is not pinned by an @sha256: digest.
 	RequirePinnedImage bool
@@ -161,13 +161,13 @@ func (c Config) validate() error {
 	}
 	image := c.Image
 	if image == "" {
-		return errors.New("openshell: an image is required (it must carry node, sh and /runner.mjs)")
+		return errors.New("openshell: an image is required (it must carry node, sh and the project runner at " + nativehelper.InContainer + ")")
 	}
 	if strings.IndexFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return fmt.Errorf("openshell: image %q contains whitespace or control characters", image)
 	}
-	if c.RequirePinnedImage && !isDigestPinned(image) {
-		return fmt.Errorf("openshell: image %q is not pinned to an immutable @sha256: digest, and a pinned image is required", image)
+	if _, pinned := providerkit.PinnedDigest(image); c.RequirePinnedImage && !pinned {
+		return fmt.Errorf("openshell: image %q is not pinned to an immutable digest, %s, and a pinned image is required", image, providerkit.PinForm)
 	}
 	if c.MemoryMB < 0 || (c.MemoryMB > 0 && c.MemoryMB < minMemoryMB) {
 		return fmt.Errorf("openshell: memory limit %d MiB must be 0 (the 256 MiB default) or at least %d MiB", c.MemoryMB, minMemoryMB)
@@ -190,26 +190,6 @@ func parseGatewayURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("openshell: gateway URL %q must be an absolute https URL with a host and no path, credentials, query or fragment", raw)
 	}
 	return u, nil
-}
-
-// isDigestPinned reports whether an image reference is pinned to an immutable
-// content digest (…@sha256:<hex>) rather than a mutable tag.
-func isDigestPinned(image string) bool {
-	const marker = "@sha256:"
-	i := strings.LastIndex(image, marker)
-	if i <= 0 {
-		return false
-	}
-	digest := image[i+len(marker):]
-	if len(digest) != 64 {
-		return false
-	}
-	for _, c := range digest {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 // httpClient builds the mutual-TLS HTTP/2 client. It never uses an environment
@@ -336,17 +316,11 @@ func newProvider(cfg Config, client openshellv1connect.OpenShellClient) (*Provid
 		policyHash: hash,
 		resources:  resources,
 		runDisk:    runDisk,
-		instance:   randHex(8),
+		instance:   providerkit.RandHex(8),
 		killWait:   15 * time.Second,
 		staleAfter: staleMargin,
 		pf:         providerkit.Check{TTL: preflightTTL, Err: errors.New("openshell: no gateway check has completed yet")},
 	}, nil
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 // Name is "openshell".
@@ -363,7 +337,7 @@ func (p *Provider) IsolationClass() sandbox.IsolationClass {
 	return p.tier
 }
 
-// SupportsProjects is true: projects run through the image's /runner.mjs.
+// SupportsProjects is true: projects run through the image's project runner (the native helper).
 func (*Provider) SupportsProjects() bool { return true }
 
 // SupportsModules is false: the module worker image is a docker provider recipe.
@@ -379,10 +353,11 @@ func (*Provider) SupportsProjectGrants() bool    { return true }
 // identity). Results used to leave it empty, so the signed record's environment was
 // empty on this provider (review, 2026-10-26).
 func (p *Provider) imageIdentity() string {
-	if !isDigestPinned(p.cfg.Image) {
+	digest, pinned := providerkit.PinnedDigest(p.cfg.Image)
+	if !pinned {
 		return ""
 	}
-	return "openshell-image:" + strings.ToLower(p.cfg.Image[strings.LastIndex(p.cfg.Image, "@")+1:])
+	return "openshell-image:" + digest
 }
 
 // Environments states the image digest when the image is pinned by one (a digest
@@ -427,6 +402,10 @@ func (p *Provider) Preflight(ctx context.Context) error {
 // it: the evidence it sets is every caller's, so a poll or a request that hangs up must
 // not be able to turn it to unknown.
 const driverCheckBudget = 10 * time.Second
+
+// Held under sandbox.PreflightBound, which the daemon's readiness budget is derived from: a
+// larger number here does not compile.
+const _ = uint64(sandbox.PreflightBound - driverCheckBudget)
 
 // ready runs the checks every dispatch shares after request validation: the grant's
 // own validity, the request's floor against the best tier this provider can report
@@ -494,7 +473,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	}
 
 	start := time.Now()
-	out, err := p.exec(runCtx, b, []string{"node", "-"}, env, []byte(code), maxOutputBytes, maxOutputBytes)
+	out, err := p.exec(runCtx, b, sessionkit.GuestNodeArgv("-"), env, []byte(code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
 		Stdout:              string(out.stdout),
 		Stderr:              string(out.stderr),
@@ -527,14 +506,15 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	return fail, err
 }
 
-// runnerCommand creates the work directory, then preloads the guard into Node
-// before the runner can read its plan. The runner clears LD_PRELOAD before steps.
-// the runner writes files under it but only creates the directories files need, and
-// a project with no files would otherwise start its steps in a directory that does
-// not exist. The gateway runs the command through a shell with each argument quoted.
-var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && export LD_PRELOAD=` + runnerGuardPath + ` && exec node ` + runnerPath}
+// runnerCommand creates the work directory, then starts the project runner, the native
+// helper, which makes itself non-dumpable before it reads its plan (no guard library: it is
+// a static program). The runner writes files under the work directory but only creates the
+// directories files need, and a project with no files would otherwise start its steps in a
+// directory that does not exist. The gateway runs the command through a shell with each
+// argument quoted.
+var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && exec ` + nativehelper.RunProjectShell}
 
-// RunProject writes the files and runs the steps through /runner.mjs in a fresh
+// RunProject writes the files and runs the steps through the project runner in a fresh
 // sandbox, with the plan on stdin as the docker provider sends it.
 func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	fail := sandbox.ProjectResult{Sandbox: Name, Isolation: p.IsolationClass()}

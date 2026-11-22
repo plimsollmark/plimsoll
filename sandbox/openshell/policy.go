@@ -14,9 +14,6 @@ import (
 )
 
 const (
-	// The image must carry both the project runner and its preloaded guard.
-	runnerPath      = "/runner.mjs"
-	runnerGuardPath = "/usr/local/lib/plimsoll-runner-guard.so"
 	// workDir is where a project run's files are written and its steps run. It lives
 	// under /tmp because /tmp is the only writable directory the policy grants.
 	// OpenShell v0.1.2 does not create a read_write path the image lacks (its
@@ -33,7 +30,8 @@ const (
 //     name is resolved upstream only once a rule makes it eligible, so no rule means no
 //     egress and no upstream DNS.
 //   - Filesystem: the system paths node and sh need, /sys/fs/cgroup (so the smoke test
-//     can read the sandbox's own memory and CPU limits) and the runner, read-only; /tmp
+//     can read the sandbox's own memory and CPU limits), read-only, the project runner
+//     among them (nativehelper.InContainer is under /usr); /tmp
 //     and /dev/null read-write; nothing else. The workdir (/sandbox) is not included,
 //     so the sandbox user's home is neither readable nor writable.
 //   - Landlock hard_requirement: a kernel or runtime without Landlock fails the exec
@@ -42,7 +40,7 @@ func runPolicy() *sandboxv1.SandboxPolicy {
 	return &sandboxv1.SandboxPolicy{
 		Version: 1,
 		Filesystem: &sandboxv1.FilesystemPolicy{
-			ReadOnly:  []string{"/bin", "/usr", "/lib", "/etc", "/proc", "/dev/urandom", "/sys/fs/cgroup", runnerPath},
+			ReadOnly:  []string{"/bin", "/usr", "/lib", "/etc", "/proc", "/dev/urandom", "/sys/fs/cgroup"},
 			ReadWrite: []string{"/tmp", "/dev/null"},
 		},
 		Landlock: &sandboxv1.LandlockPolicy{Compatibility: "hard_requirement"},

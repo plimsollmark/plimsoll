@@ -140,7 +140,7 @@ class TLS(unittest.TestCase):
 class Auth(unittest.TestCase):
     def test_the_token_is_sent(self) -> None:
         url = setting("PLIMSOLL_AUTH_URL")
-        self.assertEqual(Client(url, token="py-token").run_javascript("console.log('ok')").stdout, b"ok\n")
+        self.assertEqual(Client(url, token=setting("PLIMSOLL_AUTH_TOKEN")).run_javascript("console.log('ok')").stdout, b"ok\n")
         for token in (None, "wrong"):
             with self.subTest(token=token), self.assertRaises(PlimsollError) as cm:
                 Client(url, token=token).run_javascript("console.log(1)")
@@ -330,14 +330,15 @@ class Sessions(unittest.TestCase):
         self.assertEqual(cm.exception.not_dispatched, "request")
 
     def test_a_warm_only_open_takes_a_waiting_sandbox_or_none(self) -> None:
-        # The pooled daemon states a pool of 2 and has one member waiting.
+        # The pooled daemon states a pool of 2 and always has a member waiting; the
+        # drained one states the same pool with none.
         c = Client(setting("PLIMSOLL_POOLED_URL"))
         self.assertEqual(c.describe().session_pool, 2)
         self.assertEqual(self.c.describe().session_pool, 0)
         with c.open_session(warm_only=True) as s:
             self.assertEqual(s.run_cell("1").stdout, b"python 1: 1")
         with self.assertRaises(AtCapacityError) as cm:
-            c.open_session(warm_only=True)
+            Client(setting("PLIMSOLL_DRAINED_URL")).open_session(warm_only=True)
         self.assertEqual(cm.exception.not_dispatched, "capacity")
         with self.assertRaises(TypeError):
             c.open_session(warm_only="yes")  # type: ignore[arg-type]
@@ -433,21 +434,22 @@ class Sessions(unittest.TestCase):
             s.close()  # the same verdict again, not a quiet summary
 
     def test_an_owner_at_its_cap_replaces_its_least_recently_used_session(self) -> None:
-        # The session daemon caps each owner at one session, and says so.
-        info = self.c.describe()
+        # The owner-cap daemon caps each owner at one session, and says so.
+        c = Client(setting("PLIMSOLL_OWNER_CAP_URL"))
+        info = c.describe()
         self.assertEqual((info.max_sessions_per_owner, info.max_sessions_per_caller), (1, 0))
-        first = self.c.open_session(owner="alice@example.com")
-        with self.c.open_session(owner="alice@example.com") as second:
+        first = c.open_session(owner="alice@example.com")
+        with c.open_session(owner="alice@example.com") as second:
             with self.assertRaises(SessionEndedError) as cm:
                 first.run_javascript("1")
             self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("replaced", "request"))
             self.assertEqual(first.close().end, "replaced")
-            with self.c.open_session(owner="bob@example.com"):
+            with c.open_session(owner="bob@example.com"):
                 self.assertEqual(second.run_javascript("2").stdout, b"x")
         with self.assertRaises(TypeError):
-            self.c.open_session(owner=7)  # type: ignore[arg-type]
+            c.open_session(owner=7)  # type: ignore[arg-type]
         with self.assertRaises(InvalidRequestError) as cm:
-            self.c.open_session(owner="")
+            c.open_session(owner="")
         self.assertEqual(cm.exception.not_dispatched, "request")
 
     def test_a_session_the_daemon_forgot_is_ended(self) -> None:

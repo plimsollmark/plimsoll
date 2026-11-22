@@ -48,18 +48,16 @@ package wslc
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // Name is the SANDBOX_PROVIDER value.
@@ -107,7 +105,8 @@ type Config struct {
 	// Path is wslc.exe as this distribution sees it (DefaultPath when empty).
 	Path string
 	// Image is the image every run starts: plimsoll's sandbox image or one built FROM it
-	// (node, /runner.mjs and the runner guard at their usual paths).
+	// (node for snippets, and the project runner, the native helper, at its usual path,
+	// root's and the bytes this plimsolld carries: the smoke test refuses any other).
 	Image string
 	// RequirePinnedImage refuses an Image that is not name@sha256:digest, and an image
 	// whose inspected RepoDigests do not include that digest.
@@ -227,8 +226,6 @@ func (c Config) workMB() int {
 // FromEnv's for any value of the variable there, validate's for AcceptVMTier.
 const acceptVMTierPerRunOnly = "SANDBOX_WSLC_ACCEPT_VM_TIER applies to SANDBOX_WSLC_MODE=per-run only: the shared mode has no VM of its own to accept"
 
-var pinnedRE = regexp.MustCompile(`@(sha256:[0-9a-f]{64})$`)
-
 func (c Config) validate() error {
 	var problems []string
 	add := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
@@ -267,8 +264,8 @@ func (c Config) validate() error {
 		add("SANDBOX_WSLC_IMAGE is required: the image every run starts (plimsoll's sandbox image, or one built FROM it)")
 	case !safeArg.MatchString(c.Image) || strings.HasPrefix(c.Image, "-"):
 		add("SANDBOX_WSLC_IMAGE %q is not a plain image reference (letters, digits and . _ : / @ - only, not starting with -)", c.Image)
-	case c.RequirePinnedImage && !pinnedRE.MatchString(c.Image):
-		add("SANDBOX_REQUIRE_PINNED_IMAGES=1 needs SANDBOX_WSLC_IMAGE as name@sha256:<64 hex>")
+	case c.RequirePinnedImage && !pinned(c.Image):
+		add("SANDBOX_REQUIRE_PINNED_IMAGES=1 needs SANDBOX_WSLC_IMAGE as %s", providerkit.PinForm)
 	}
 	if c.MemoryMB < 64 {
 		add("SANDBOX_MEMORY_MB must be at least 64 for wslc (got %d)", c.MemoryMB)
@@ -433,20 +430,14 @@ func (p *Provider) admit(floor sandbox.IsolationClass, rule sandbox.SoftwareRule
 }
 
 func (p *Provider) clamp(req time.Duration) time.Duration {
-	if req <= 0 {
-		req = p.cfg.DefaultTimeout
-	}
-	return min(req, p.cfg.MaxTimeout)
-}
-
-// randHex is n random bytes in hex.
-func randHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err) // crypto/rand does not fail on supported platforms
-	}
-	return hex.EncodeToString(b)
+	return providerkit.ClampTimeout(req, p.cfg.DefaultTimeout, p.cfg.MaxTimeout)
 }
 
 // cpusArg is --cpus's value: the shortest decimal that reads back as CPUs.
 func cpusArg(cpus float64) string { return strconv.FormatFloat(cpus, 'f', -1, 64) }
+
+// pinned reports whether an image reference is pinned by a digest (providerkit.PinnedDigest).
+func pinned(image string) bool {
+	_, ok := providerkit.PinnedDigest(image)
+	return ok
+}

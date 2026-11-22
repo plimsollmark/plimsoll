@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,10 +22,11 @@ import (
 )
 
 // sessionDocker is the docker provider the session tests use, under the runtime and
-// seccomp profile the docker suite selects (dockertest.Sandbox).
+// seccomp profile the docker suite selects (dockertest.Sandbox), drained after every test
+// has run (sandbox.DrainAtExit).
 func sessionDocker(t *testing.T) *sandbox.DockerSandbox {
 	t.Helper()
-	return dockertest.Sandbox(t)
+	return sandbox.DrainAtExit(dockertest.Sandbox(t))
 }
 
 // pythonSessionDocker is sessionDocker with the Python image (the base image plus
@@ -49,7 +51,7 @@ func pythonSessionDocker(t *testing.T) *sandbox.DockerSandbox {
 // each.
 func TestDockerSessionConformance(t *testing.T) {
 	t.Parallel()
-	sandbox.HeavyDockerTest(t)
+	smoked := sandbox.HeavyDockerPlace(t)
 	d := pythonSessionDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -60,6 +62,10 @@ func TestDockerSessionConformance(t *testing.T) {
 	if !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}) {
 		t.Fatalf("the language probe found %v in %s", langs, d.ProjectImage)
 	}
+	// The heavy place was for the smoke test. From here each case takes an ordinary
+	// parallel slot and one session of its own, and this test holds no slot while they
+	// run, so holding the place too only kept another heavy test waiting (in a slot).
+	smoked()
 	// A docker session opens in about a second, so the lifetime case waits 8 s, not 20,
 	// and the cases run side by side.
 	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 8 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget, Parallel: true})
@@ -285,7 +291,9 @@ func TestDockerSessionReconcileOrphans(t *testing.T) {
 	d := sessionDocker(t)
 	live := openDockerSession(t, d)
 	sessionContainer(t, live, "live-marker")
-	name := "plsm-orphan-test-" + strings.ReplaceAll(t.Name(), "/", "-")
+	// The process id makes the name this suite's own: two docker suites at once each start
+	// and remove their own orphan.
+	name := "plsm-orphan-test-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + strconv.Itoa(os.Getpid())
 	_ = exec.Command("docker", "rm", "-f", name).Run()
 	if out, err := exec.Command("docker", "run", "-d", "--name", name, "--network", "none",
 		"--label", "io.plimsoll.session=1", "--label", "io.plimsoll.expires=1",
@@ -424,10 +432,11 @@ func TestDockerSessionRelayKilledKeepsTheInterpreter(t *testing.T) {
 		t.Fatalf("define: %+v, %v", res, err)
 	}
 	// The relay's command line names the interpreter's directory as its first
-	// argument after the script; the interpreter's names it last. Kill the relay only.
+	// argument after the script (node --disable-sigusr1 -e SCRIPT DIR WORK); the
+	// interpreter's names it last. Kill the relay only.
 	res, err := sessionJS(t, s, `const fs=require("fs");let n=0;for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d))continue;
 let a=[];try{a=fs.readFileSync("/proc/"+d+"/cmdline","latin1").split("\0")}catch{continue}
-if(a[0]==="node"&&a[1]==="-e"&&a[3]==="/tmp/.plimsoll-interp/javascript"&&a[4]==="/work"){try{process.kill(+d,"SIGKILL");n++}catch{}}}
+if(a[0]==="node"&&a[1]==="--disable-sigusr1"&&a[2]==="-e"&&a[4]==="/tmp/.plimsoll-interp/javascript"&&a[5]==="/work"){try{process.kill(+d,"SIGKILL");n++}catch{}}}
 console.log(n)`)
 	if err != nil || strings.TrimSpace(res.Stdout) != "1" {
 		t.Fatalf("killing the relay: %+v, %v", res, err)
@@ -458,7 +467,11 @@ func TestDockerSessionInterpreterCannotWatchACallStart(t *testing.T) {
 	// The watcher lives in the interpreter itself, which the sweep keeps, not in a
 	// child, which it kills. It scans as fast as it can for plimsoll's runner and
 	// tries to read its plan from its stdin.
+	// It knows the runner by its whole command line, the one this provider starts, so a
+	// runner of another name is still the one it looks for.
+	runner := strings.Join(sandbox.DockerProjectRunner(d), "\x00") + "\x00"
 	watch := `globalThis.seen = {scans: 0, runners: 0, stolen: ""};
+const runner = ` + strconv.Quote(runner) + `;
 globalThis.timer = setInterval(() => {
   const fs = require("fs");
   seen.scans++;
@@ -466,7 +479,7 @@ globalThis.timer = setInterval(() => {
     if (!/^[0-9]+$/.test(dir)) continue;
     let argv = "";
     try { argv = fs.readFileSync("/proc/" + dir + "/cmdline", "latin1") } catch { continue }
-    if (!argv.includes("/runner.mjs")) continue;
+    if (argv !== runner) continue;
     seen.runners++;
     for (const path of ["/proc/" + dir + "/fd/0", "/proc/" + dir + "/mem"]) {
       try { seen.stolen += fs.readFileSync(path, "latin1").slice(0, 64) } catch {}
@@ -526,9 +539,23 @@ func TestDockerSessionCellOutOfMemoryEndsTheCall(t *testing.T) {
 	if !errors.Is(err, sandbox.ErrSessionEnded) {
 		t.Fatalf("the cell over the limit answered %+v, %v; want the session's end on this call", res, err)
 	}
-	if !strings.Contains(err.Error(), "ran out of memory") || !strings.Contains(err.Error(), d.Memory) {
+	if !endNamesMemoryLimit(d, err) {
 		t.Fatalf("the end does not name the memory limit %s: %v", d.Memory, err)
 	}
+}
+
+// endNamesMemoryLimit says whether a session's end names d's memory limit: as the recorded
+// kill on any runtime, or, under gVisor alone, as the probable cause of an exit 137 docker
+// recorded no kill for (it can miss one there: the outside fact docker-oomkilled-under-runsc).
+func endNamesMemoryLimit(d *sandbox.DockerSandbox, end error) bool {
+	msg := end.Error()
+	if !strings.Contains(msg, d.Memory) {
+		return false
+	}
+	if strings.Contains(msg, sandbox.DockerOOMRecorded) {
+		return true
+	}
+	return d.Runtime == "runsc" && strings.Contains(msg, "status 137") && strings.Contains(msg, sandbox.DockerOOMLikely)
 }
 
 func TestDockerSessionOutOfMemoryIsNamed(t *testing.T) {
@@ -551,7 +578,7 @@ func TestDockerSessionOutOfMemoryIsNamed(t *testing.T) {
 			t.Fatalf("a call after the sandbox ran out of memory: %v, want the session's end", nerr)
 		}
 	}
-	if got := sandbox.SessionEndReason(s.Err()); got != sandbox.SessionMainProcessEnded || !strings.Contains(s.Err().Error(), "ran out of memory") {
+	if got := sandbox.SessionEndReason(s.Err()); got != sandbox.SessionMainProcessEnded || !endNamesMemoryLimit(d, s.Err()) {
 		t.Fatalf("the session ended with %v: %v; want main_process_ended naming the memory limit", got, s.Err())
 	}
 }

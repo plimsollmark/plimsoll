@@ -1,6 +1,9 @@
-// Package providerkit holds what the providers that run each payload in a sandbox reached over
-// an API (openshell, agentsandbox) share: output capping, timeout clamping, deadline-aware
-// errors, a cancellable sleep, a cached readiness check and a retried delete.
+// Package providerkit holds the small rules every provider shares, so each has one home:
+// output capping (Capture), timeout clamping (ClampTimeout), random names (RandHex) and
+// what makes an image reference pinned (PinnedDigest, digest.go); and what the providers
+// that run each payload in a sandbox reached over an API (openshell, agentsandbox) share:
+// deadline-aware errors, a cancellable sleep, a cached readiness check and a retried
+// delete. A provider keeps its own defaults and ceilings and passes them in.
 package providerkit
 
 import (
@@ -12,35 +15,6 @@ import (
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 )
-
-// Capture keeps the first Limit bytes written to it and records whether it dropped any.
-// The retained prefix is never annotated in-band.
-type Capture struct {
-	Buf     []byte
-	Limit   int
-	Dropped bool
-}
-
-func (c *Capture) Write(p []byte) {
-	if room := c.Limit - len(c.Buf); room > 0 {
-		if len(p) > room {
-			c.Buf = append(c.Buf, p[:room]...)
-			c.Dropped = true
-		} else {
-			c.Buf = append(c.Buf, p...)
-		}
-	} else if len(p) > 0 {
-		c.Dropped = true
-	}
-}
-
-// ClampTimeout is the request's timeout, def when it asks for none, and never past max.
-func ClampTimeout(req, def, max time.Duration) time.Duration {
-	if req <= 0 {
-		req = def
-	}
-	return min(req, max)
-}
 
 // DeadlineAware keeps the caller's deadline recognizable: work that ran out of time is
 // reported as context.DeadlineExceeded rather than as whatever transport error the

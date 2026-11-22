@@ -3,7 +3,7 @@
 # so the two providers offer the SAME toolchain and cannot drift.
 #
 # Both Dockerfiles hardcode these versions (so `docker build` and `e2b template
-# build` need no special flags); the internal/toolchain test fails if either
+# create` need no special flags); the internal/toolchain test fails if either
 # Dockerfile no longer matches this file. To bump a version: edit it here AND in both
 # Dockerfiles — the test will tell you if you miss one.
 #

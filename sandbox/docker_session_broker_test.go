@@ -54,6 +54,7 @@ func TestSessionBrokerRefusesARequestThatOutlivesItsCall(t *testing.T) {
 	if _, err := io.WriteString(conn, "POST /v1/items HTTP/1.1\r\nHost: broker\r\nContent-Length: 10\r\n\r\n12345"); err != nil {
 		t.Fatal(err)
 	}
+	// fixed-wait: 300 ms stands for "the handler holds the call's grant and waits for the body"; not shown safe on a slow machine
 	time.Sleep(300 * time.Millisecond) // the handler holds the call's grant and waits for the body
 	release()                          // the call ends
 	if _, err := io.WriteString(conn, "67890"); err != nil {

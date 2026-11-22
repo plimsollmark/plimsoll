@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -27,24 +28,35 @@ type SoftwareRule struct {
 
 var ErrSoftwareMismatch = errors.New("selected software does not meet the request's rule")
 
+// The bounds of a software rule, which the Python and TypeScript clients check against
+// too (internal/wiretables writes them there): an approved rule names at most
+// MaxSoftwareIdentities, each at most MaxSoftwareIdentityBytes of the characters
+// SoftwareIdentityPattern allows (no zero byte, so the approved-set rule ID's joins are
+// unambiguous).
+const (
+	MaxSoftwareIdentities    = 32
+	MaxSoftwareIdentityBytes = 256
+	SoftwareIdentityPattern  = `^[A-Za-z0-9._:/@+-]+$`
+)
+
+var softwareIdentityForm = regexp.MustCompile(SoftwareIdentityPattern)
+
 // Validate refuses malformed rules before any code is dispatched.
 func (r SoftwareRule) Validate() error {
 	if r.Mode == "" && len(r.Identities) == 0 {
 		return nil
 	}
-	if (r.Mode != SoftwareExact && r.Mode != SoftwareApproved) || len(r.Identities) == 0 || len(r.Identities) > 32 ||
+	if (r.Mode != SoftwareExact && r.Mode != SoftwareApproved) || len(r.Identities) == 0 || len(r.Identities) > MaxSoftwareIdentities ||
 		(r.Mode == SoftwareExact && len(r.Identities) != 1) {
-		return NotDispatched(RefusalRequest, fmt.Errorf("%w: software rule needs exact with one identity or approved with 1 to 32 identities", ErrInvalidRequest))
+		return NotDispatched(RefusalRequest, fmt.Errorf("%w: software rule needs exact with one identity or approved with 1 to %d identities", ErrInvalidRequest, MaxSoftwareIdentities))
 	}
 	seen := make(map[string]bool, len(r.Identities))
 	for _, id := range r.Identities {
-		if len(id) == 0 || len(id) > 256 || seen[id] {
+		if len(id) == 0 || len(id) > MaxSoftwareIdentityBytes || seen[id] {
 			return NotDispatched(RefusalRequest, fmt.Errorf("%w: software identity is empty, too long or duplicated", ErrInvalidRequest))
 		}
-		for _, c := range id {
-			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._:/@+-", c)) {
-				return NotDispatched(RefusalRequest, fmt.Errorf("%w: software identity contains an invalid character", ErrInvalidRequest))
-			}
+		if !softwareIdentityForm.MatchString(id) {
+			return NotDispatched(RefusalRequest, fmt.Errorf("%w: software identity contains an invalid character", ErrInvalidRequest))
 		}
 		seen[id] = true
 	}

@@ -42,7 +42,7 @@ var (
 	// writable directory.
 	sessionDirs = []string{"/tmp"}
 	// sessionSnippetCommand runs a session's snippet from stdin in the work directory.
-	sessionSnippetCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && cd "$PLIMSOLL_WORK" && exec node -`}
+	sessionSnippetCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && cd "$PLIMSOLL_WORK" && exec ` + sessionkit.GuestNode + ` -`}
 )
 
 const (
@@ -55,6 +55,10 @@ const (
 	// after it: the same as a stop, since both wait on the gateway's driver.
 	startBudget = 60 * time.Second
 )
+
+// A stop's budget is held under sandbox.SuspendBound, which a session layer's suspend
+// budget is derived from: a larger number here does not compile.
+const _ = uint64(sandbox.SuspendBound - stopBudget)
 
 // SupportsSessions is true: sessions need nothing beyond what runs need.
 func (*Provider) SupportsSessions() bool { return true }
@@ -424,7 +428,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	return fail, s.life.CallError(runCtx, err)
 }
 
-// RunProject writes the files and runs the steps through /runner.mjs in the session's
+// RunProject writes the files and runs the steps through the project runner in the session's
 // sandbox. The work directory is under /tmp, so files persist to the next call.
 func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	fail := sandbox.ProjectResult{Sandbox: Name, Isolation: s.tier}
@@ -540,15 +544,8 @@ func (s *session) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox
 		return fail, err
 	}
 	defer done()
-	files := make([]sessionkit.File, 0, len(req.Files))
-	for _, f := range req.Files {
-		files = append(files, sessionkit.File{Path: f.Path, Content: f.Content})
-	}
 	start := time.Now()
-	out, err := s.life.Interps.RunRelayed(runCtx, s.execFunc, s.attach, sessionkit.Cell{
-		Language: string(req.Language), Code: req.Code, Files: files,
-		Work: workDir, OutCap: maxOutputBytes, ErrCap: maxOutputBytes,
-	})
+	out, err := s.life.Interps.RunRelayed(runCtx, s.execFunc, s.attach, sandbox.SessionCell(req, s.Environments().Project, workDir, maxOutputBytes))
 	return sandbox.SessionCellResult(runCtx, fail, out, err, time.Since(start), "", "", s.Err,
 		func() error { return nil }, func(err error) error { return s.life.CallError(runCtx, err) })
 }

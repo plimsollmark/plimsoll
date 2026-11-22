@@ -38,6 +38,10 @@ class AgnoTests(ToolCases, unittest.TestCase):
         self.assertEqual(out.status, "success", fc.error)
         return fc.result
 
+    def model_view(self, tool: PlimsollTools) -> Any:
+        schema = _function(tool).to_dict()
+        return schema["description"], set(schema["parameters"]["properties"])
+
     def test_schema_names_the_offered_languages_and_input_files(self) -> None:
         schema = _function(self.make(echo(), languages=("python",))).to_dict()
         props = schema["parameters"]["properties"]
@@ -79,6 +83,19 @@ class AgnoTests(ToolCases, unittest.TestCase):
         # Agno's own timeout would be kept and bound nothing; the budget is the executor's.
         with self.assertRaises(ValueError):
             PlimsollTools(echo(), timeout=5)
+
+
+class FrameworkShapeTests(unittest.TestCase):
+    """Each member the adapter defines over the framework's own (inherited, or declared by a protocol it is used
+    as) against the framework at the version this suite installs: kind, coroutine, the calls it takes
+    (tests/_framework_shapes.py)."""
+
+    def test_the_adapter_takes_the_calls_the_framework_makes(self) -> None:
+        import importlib
+
+        from tests._framework_shapes import problems
+
+        self.assertEqual(problems(importlib.import_module('plimsoll_client.agno')), [])
 
 
 if __name__ == "__main__":

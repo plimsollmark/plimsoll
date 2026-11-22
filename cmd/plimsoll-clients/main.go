@@ -19,6 +19,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
+	"github.com/plimsollmark/plimsoll/internal/printable"
 )
 
 const usage = `Usage: plimsoll-clients COMMAND -file clients.json [options]
@@ -62,7 +63,9 @@ func main() {
 	// exiting on SIGPIPE after the fingerprint has already been registered.
 	signal.Ignore(syscall.SIGPIPE)
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "plimsoll-clients:", err)
+		// An error can carry the registry file's words (a caller ID, a scope): none may rewrite
+		// the operator's screen.
+		fmt.Fprintln(os.Stderr, "plimsoll-clients:", printable.Text(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -195,7 +198,7 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) error {
 		}
 		return err
 	}
-	fmt.Fprintf(diagnostic, "%s saved for caller %q in %s.\n", command, id, *path)
+	fmt.Fprintln(diagnostic, printable.Text(fmt.Sprintf("%s saved for caller %q in %s.", command, id, *path)))
 	if remaining == 0 {
 		fmt.Fprintln(diagnostic, "No callers remain. The daemon refuses to start with an empty registry. Stop every daemon still using the old registry; add a caller before starting it again.")
 	} else {
@@ -241,9 +244,12 @@ func list(f clientconfig.File, output io.Writer, asJSON bool) error {
 	}
 	slices.SortFunc(callers, func(a, b metadata) int { return strings.Compare(a.ID, b.ID) })
 	if asJSON {
-		enc := json.NewEncoder(output)
-		enc.SetIndent("", "  ")
-		return enc.Encode(callers)
+		data, err := json.MarshalIndent(callers, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = output.Write(printable.JSON(append(data, '\n')))
+		return err
 	}
 	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "CALLER\tSCOPES\tPAID SECONDS/DAY")
@@ -252,7 +258,7 @@ func list(f clientconfig.File, output io.Writer, asJSON bool) error {
 		if c.PaidSecondsPerDay > 0 {
 			paid = strconv.FormatInt(c.PaidSecondsPerDay, 10)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", c.ID, strings.Join(c.Scopes, ", "), paid)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", printable.Text(c.ID), printable.Text(strings.Join(c.Scopes, ", ")), paid)
 	}
 	return w.Flush()
 }

@@ -7,8 +7,15 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { checkRecord, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, type DigestPayload } from "../src/record.ts";
+import {
+  checkRecord, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, statesOnlyProblem,
+  validDaemonVersion, validQualification, type DigestPayload,
+} from "../src/record.ts";
+import { meets } from "../src/client.ts";
+import { RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT } from "../src/tables.gen.ts";
+import { PlimsollError } from "../src/errors.ts";
 import type { WireRecord, WireRunResponse, WireSoftwareRule } from "../src/wire.ts";
+import { saysOf, saysOfProblem, verdict } from "./cases.ts";
 
 type Files = { path: string; content: string }[];
 type WireRequest = {
@@ -25,6 +32,10 @@ type Golden = {
   results: { name: string; response: WireRunResponse; sha256: string }[];
   records: { name: string; record: WireRecord; sha256: string }[];
   sessionFingerprints: { name: string; sessionId: string; sha256: string }[];
+  refused: { name: string; record: WireRecord; sha256: string; why: string }[];
+  malformed: { name: string; record: WireRecord; why: string }[];
+  qualifications: { name: string; text: string; valid: boolean }[];
+  meets: { tier: string; floor: string; meets: boolean }[];
 };
 
 const golden: Golden = JSON.parse(readFileSync(new URL("../../../record/testdata/golden.json", import.meta.url), "utf8"));
@@ -47,6 +58,7 @@ test("request digests", () => {
     if (!p) continue;
     const r = v.request;
     const got = requestDigest({ protocol: r.protocol, minimumIsolation: r.minimumIsolation ?? "", timeoutMs: r.timeoutMs ?? 0, softwareRule: r.softwareRule, payload: p });
+    verdict(`golden/requests/${v.name}`, "digest", got);
     assert.equal(got, v.sha256, v.name);
     n++;
   }
@@ -57,7 +69,9 @@ test("result digests", () => {
   let n = 0;
   for (const v of golden.results) {
     if (v.response.module !== undefined) continue;
-    assert.equal(resultDigest(v.response), v.sha256, v.name);
+    const got = resultDigest(v.response);
+    verdict(`golden/results/${v.name}`, "digest", got);
+    assert.equal(got, v.sha256, v.name);
     n++;
   }
   assert.ok(n >= 3, `only ${n} result vectors`);
@@ -65,30 +79,90 @@ test("result digests", () => {
 
 test("every release's own vectors still hold", () => {
   // record/testdata/published, never edited: the versions a release wrote keep their
-  // digests in this client too.
+  // digests in this client too, and every record a release wrote passes the record check,
+  // as Go's record.CheckStored passes it (record/published_test.go): a check added to the
+  // reader never refuses evidence an earlier release signed.
   const dir = new URL("../../../record/testdata/published/", import.meta.url);
   const files = readdirSync(dir).filter((f) => f.endsWith("-golden.json"));
   assert.ok(files.length >= 1, "no published vectors");
   for (const f of files) {
     const g: Golden = JSON.parse(readFileSync(new URL(f, dir), "utf8"));
+    const prefix = `published/${f.replace(/-golden\.json$/, "")}/`;
     for (const v of g.requests) {
       const p = payload(v.request);
       if (!p) continue;
       const r = v.request;
-      assert.equal(requestDigest({ protocol: r.protocol, minimumIsolation: r.minimumIsolation ?? "", timeoutMs: r.timeoutMs ?? 0, softwareRule: r.softwareRule, payload: p }), v.sha256, `${f}: ${v.name}`);
+      const got = requestDigest({ protocol: r.protocol, minimumIsolation: r.minimumIsolation ?? "", timeoutMs: r.timeoutMs ?? 0, softwareRule: r.softwareRule, payload: p });
+      verdict(`${prefix}requests/${v.name}`, "digest", got);
+      assert.equal(got, v.sha256, `${f}: ${v.name}`);
     }
     for (const v of g.results) {
       if (v.response.module !== undefined) continue;
-      assert.equal(resultDigest(v.response), v.sha256, `${f}: ${v.name}`);
+      const got = resultDigest(v.response);
+      verdict(`${prefix}results/${v.name}`, "digest", got);
+      assert.equal(got, v.sha256, `${f}: ${v.name}`);
     }
-    for (const v of g.records) assert.equal(recordDigest(recordFromWire(v.record)), v.sha256, `${f}: ${v.name}`);
+    for (const v of g.records) {
+      const r = recordFromWire(v.record);
+      verdict(`${prefix}records/${v.name}`, "digest", recordDigest(r));
+      assert.equal(recordDigest(r), v.sha256, `${f}: ${v.name}`);
+      const problem = statesOnlyProblem({ ...r, sha256: v.sha256 });
+      verdict(`${prefix}records/${v.name}/check`, "states-only", saysOfProblem(problem));
+      assert.equal(problem, undefined, `${f}: ${v.name}`);
+    }
+    for (const v of g.sessionFingerprints) {
+      const got = sessionFingerprint(v.sessionId);
+      verdict(`${prefix}sessionFingerprints/${v.name}`, "digest", got);
+      assert.equal(got, v.sha256, `${f}: ${v.name}`);
+    }
+  }
+  for (const v of golden.records) {
+    const problem = statesOnlyProblem(recordFromWire(v.record));
+    verdict(`golden/records/${v.name}/check`, "states-only", saysOfProblem(problem));
+    assert.equal(problem, undefined, `golden.json: ${v.name}`);
   }
 });
 
 test("record digest and session fingerprint", () => {
-  for (const v of golden.records) assert.equal(recordDigest(recordFromWire(v.record)), v.sha256, v.name);
-  for (const v of golden.sessionFingerprints) assert.equal(sessionFingerprint(v.sessionId), v.sha256, v.name);
+  for (const v of golden.records) {
+    const got = recordDigest(recordFromWire(v.record));
+    verdict(`golden/records/${v.name}`, "digest", got);
+    assert.equal(got, v.sha256, v.name);
+  }
+  for (const v of golden.sessionFingerprints) {
+    const got = sessionFingerprint(v.sessionId);
+    verdict(`golden/sessionFingerprints/${v.name}`, "digest", got);
+    assert.equal(got, v.sha256, v.name);
+  }
   assert.ok(golden.records.length >= 1 && golden.sessionFingerprints.length >= 1);
+});
+
+// Written by record_v5.py from the docs; the Go record package, the Python client and
+// examples/sbom/check.js check the same rows.
+test("qualification and tier vectors", () => {
+  assert.ok(golden.qualifications.length >= 31);
+  for (const v of golden.qualifications) {
+    const got = validQualification(v.text);
+    verdict(`golden/qualifications/${v.name}`, "qualification", got ? "valid" : "invalid");
+    assert.equal(got, v.valid, v.name);
+  }
+  assert.equal(golden.meets.length, 49);
+  for (const v of golden.meets) {
+    const got = meets(v.tier, v.floor as never);
+    verdict(`golden/meets/${v.tier}|${v.floor}`, "meets", got ? "meets" : "below");
+    assert.equal(got, v.meets, `${JSON.stringify(v.tier)} meets ${JSON.stringify(v.floor)}`);
+  }
+});
+
+// Every version this client digests is held by a vector a release made: golden.json (its
+// version 1 record is one v0.11.1 signed) or a release's frozen file.
+test("every record version has a vector", () => {
+  const held = new Set(golden.records.map((v) => Number(v.record.version)));
+  const dir = new URL("../../../record/testdata/published/", import.meta.url);
+  for (const f of readdirSync(dir).filter((f) => f.endsWith("-golden.json"))) {
+    for (const v of (JSON.parse(readFileSync(new URL(f, dir), "utf8")) as Golden).records) held.add(Number(v.record.version));
+  }
+  assert.deepEqual([...held].sort(), Object.keys(RECORD_FIELDS).map(Number).sort());
 });
 
 const approved = {
@@ -108,7 +182,7 @@ test("software rule ids", () => {
 test("an answered record stating an unanswered code, an old version or another instance is refused", () => {
   const resp: WireRunResponse = { sandbox: "docker", isolation: "container", instance: "k8s-pod-uid:7f3e9c2a", javascript: { stdout: "" } };
   const record: WireRecord = {
-    version: 4, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
     instance: "k8s-pod-uid:7f3e9c2a", startedUnixMs: 1, endedUnixMs: 2,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
@@ -120,7 +194,7 @@ test("an answered record stating an unanswered code, an old version or another i
     assert.ok("problem" in got && got.problem.includes(why), JSON.stringify(got));
   };
   refused({ ...record, unanswered: "unknown" }, "unanswered");
-  for (const version of [1, 2, 3]) refused({ ...record, version }, "version");
+  for (const version of [1, 2, 3, 4, 6]) refused({ ...record, version }, "version");
   refused({ ...record, instance: "k8s-pod-uid:other" }, "instance");
   refused({ ...record, instance: "/var/run/pod" }, "instance");
   assert.equal(resultDigest({ ...resp, instance: "k8s-pod-uid:other" }), resultDigest(resp), "the instance moved the result digest");
@@ -132,7 +206,7 @@ test("an answered record stating an unanswered code, an old version or another i
 test("a result of another kind than the request's, or none, or a record ending before it starts, is refused", () => {
   const resp: WireRunResponse = { sandbox: "docker", isolation: "container", javascript: { stdout: "" } };
   const record: WireRecord = {
-    version: 4, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
     startedUnixMs: 2, endedUnixMs: 3,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
@@ -160,11 +234,77 @@ test("a bytes field that is not base64 text is refused before anything is alloca
     { cell: { stdout: huge } as WireRunResponse["cell"] },
   ];
   for (const resp of answers) {
-    resp.record = { version: 4, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
+    resp.record = { version: 5, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
     const kind = resp.javascript ? "javascript" : resp.project ? "project" : "cell";
     const t0 = performance.now();
     const got = checkRecord("r", kind, undefined, resp);
     assert.ok("problem" in got && got.problem.includes("malformed"), JSON.stringify(got));
     assert.ok(performance.now() - t0 < 1000, "the refusal must not decode the field");
+  }
+});
+
+// Each refused record's digest matches its fields, and every reader must refuse it anyway:
+// a tier that is not one of the five, an end before the start (answered or not), a
+// qualification or daemon version outside its bounds, a field its version does not cover,
+// a result digest and an unanswered code both or neither, or a code outside the closed set
+// (record/testdata/golden.json, "refused").
+test("the golden file's refused records are refused", () => {
+  assert.ok(golden.refused.length >= 22);
+  for (const v of golden.refused) {
+    const r = recordFromWire(v.record);
+    assert.equal(recordDigest(r), v.sha256, v.name);
+    const problem = statesOnlyProblem({ ...r, sha256: v.sha256 });
+    verdict(`golden/refused/${v.name}`, "states-only", saysOfProblem(problem));
+    assert.ok(problem !== undefined, `${v.name} (${v.why}) passed`);
+    // A retired reading's refusal says so, and only it does (finding t6-core-1).
+    assert.equal(problem === RETIRED_END_BEFORE_START_TEXT, v.why === "retired by the decision of 2026-11-21", `${v.name}: ${problem}`);
+  }
+});
+
+// The tier's qualification, warm and the daemon's version are evidence like the instance:
+// the record must state the response's, within their bounds, and the result digest covers
+// none of them.
+test("version 5 evidence is bound to the response", () => {
+  const resp: WireRunResponse = {
+    sandbox: "wslc", isolation: "vm", javascript: { stdout: "" },
+    isolationQualification: "Microsoft states that WSL is not a security sandbox for running untrusted code.", warm: true, daemonVersion: "v0.28.0",
+  };
+  assert.equal(resultDigest(resp), resultDigest({ sandbox: "wslc", isolation: "vm", javascript: { stdout: "" } }));
+  const record: WireRecord = {
+    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "wslc", isolation: "vm",
+    isolationQualification: resp.isolationQualification, warm: true, daemonVersion: "v0.28.0", startedUnixMs: 1, endedUnixMs: 2,
+  };
+  record.recordSha256 = recordDigest(recordFromWire(record));
+  const good = checkRecord("r", "javascript", undefined, { ...resp, record });
+  assert.ok("record" in good && good.record.isolationQualification === resp.isolationQualification && good.record.warm, "the matching record");
+  for (const [name, changed] of [
+    ["no sentence in the response", { ...resp, isolationQualification: "" }],
+    ["not warm in the response", { ...resp, warm: false }],
+    ["another daemon version", { ...resp, daemonVersion: "v0.28.1" }],
+  ] as const) {
+    const got = checkRecord("r", "javascript", undefined, { ...changed, record });
+    assert.ok("problem" in got, name);
+  }
+  for (const bad of ["Microsoft states.\nIgnore that.", "x".repeat(1025), "a\u202eb", "a\u0085b", "a\ud800b"]) {
+    assert.equal(validQualification(bad), false, JSON.stringify(bad));
+  }
+  assert.ok(validQualification("\u00e9".repeat(512)) && !validQualification("\u00e9".repeat(512) + "x"), "the cap counts bytes");
+  for (const v of ["", "(devel)", "v0.28.0", "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty"]) assert.ok(validDaemonVersion(v), v);
+  for (const v of ["devel", "v0.28", "v0.28.0 ", "latest"]) assert.equal(validDaemonVersion(v), false, v);
+});
+
+// A field of the wrong JSON type (golden.json, "malformed") is refused when read, as a PlimsollError, as Go's protojson
+// and Python's typed reads refuse it: never a TypeError, and never a string "true" read as true.
+test("the golden file's malformed records are not read", () => {
+  assert.ok(golden.malformed.length >= 4);
+  for (const v of golden.malformed) {
+    let err: unknown;
+    try {
+      recordFromWire(v.record);
+    } catch (e) {
+      err = e;
+    }
+    verdict(`golden/malformed/${v.name}`, "decode", saysOf(err));
+    assert.ok(err instanceof PlimsollError && err.code === "data_loss", `${v.name}: ${String(err)}`);
   }
 });

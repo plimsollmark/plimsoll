@@ -108,6 +108,10 @@ func sources(bundle, pem []byte, pages string) ([]source, error) {
 	return runs, nil
 }
 
+// checkQualification refuses a record whose provider's tier must come with a sentence it does not state. A test
+// switches it off to write the BOM another emitter could, and shows the browser checker refuses that BOM too.
+var checkQualification = cdxutil.CheckQualification
+
 // lineSource is one bundle line as a source: its record, link and messages, checked as
 // attest.VerifyEntry checks a line on its own.
 func lineSource(v *attest.Verifier, e attest.Entry) (source, error) {
@@ -127,6 +131,9 @@ func lineSource(v *attest.Verifier, e attest.Entry) (source, error) {
 	}
 	if _, _, ok := cdxutil.ImageDigest(r); !ok {
 		return source{}, fmt.Errorf("run %s states no image identity this emitter can map", r.SHA256)
+	}
+	if err := checkQualification(r); err != nil {
+		return source{}, err
 	}
 	return source{Entry: e, Line: link, Record: r, Request: req, Response: resp}, nil
 }
@@ -283,6 +290,9 @@ func buildBOM(s source, o options) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("run %s states no image identity this emitter can map", r.SHA256)
 	}
+	if err := checkQualification(r); err != nil {
+		return nil, err
+	}
 	pem := s.PEM
 	pub, err := attest.ParsePublicKey(pem)
 	if err != nil {
@@ -317,6 +327,10 @@ func buildBOM(s source, o options) ([]byte, error) {
 	}
 	if r.Instance != "" {
 		workflowProps = append(workflowProps, cdxutil.Props("instance", r.Instance)...)
+	}
+	// The sentence beside the tier, whenever the record states one, and never otherwise.
+	if r.IsolationQualification != "" {
+		workflowProps = append(workflowProps, cdxutil.Props("isolation_qualification", r.IsolationQualification)...)
 	}
 	var tasks, dependencies []object
 	var kinds []string
@@ -360,6 +374,9 @@ func buildBOM(s source, o options) ([]byte, error) {
 	} else {
 		tier += fmt.Sprintf("the stored request names host-API grant profile %s, the run's only route out, served by the daemon's broker, and the result digest is %s. Network beyond the grant is provider configuration; this record is not a network measurement.", grant, r.ResultSHA256)
 	}
+	if r.IsolationQualification != "" {
+		tier += " Beside that tier the daemon states, signed in the record: " + r.IsolationQualification
+	}
 	predicates := []string{
 		fmt.Sprintf("The program's %d files, file-set digest %s, are the files in the stored request whose signed digest %s covers them with the isolation floor and timeout.", len(files), fileDigest, r.RequestSHA256),
 		"The daemon states that the run executed in " + fmt.Sprintf(imageHow, imageDigest, r.Environment) + ".",
@@ -368,7 +385,7 @@ func buildBOM(s source, o options) ([]byte, error) {
 	var claims, requirements, maps []object
 	for i, name := range []string{"code", "image", "tier"} {
 		claims = append(claims, object{"bom-ref": "claim-" + name, "target": "program", "predicate": predicates[i], "reasoning": reasoning, "evidence": []string{"evidence-run-record"}})
-		titles := []string{"the code that ran is identified by digest", "the image is identified by its manifest digest", "the isolation tier the daemon states is signed"}
+		titles := []string{"the code that ran is identified by digest", cdxutil.ImageTitle(r), "the isolation tier the daemon states is signed"}
 		requirements = append(requirements, object{"bom-ref": "req-" + name, "identifier": "R" + strconv.Itoa(i+1), "title": titles[i]})
 		maps = append(maps, object{"requirement": "req-" + name, "claims": []string{"claim-" + name},
 			"conformance": object{"score": 1, "rationale": "The claim matches the signed exchange under a deterministic comparison; this is self-assessed consistency, not independent runtime assurance."},

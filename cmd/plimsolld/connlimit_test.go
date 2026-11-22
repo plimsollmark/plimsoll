@@ -50,6 +50,7 @@ func TestLimitConnectionsHoldsTheExtraConnection(t *testing.T) {
 	select {
 	case <-accepted:
 		t.Fatal("a third connection was accepted past a cap of two")
+	// fixed-wait: 300 ms with no third accept stands for "the cap holds it"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(300 * time.Millisecond):
 	}
 	_ = first.Close()

@@ -52,7 +52,13 @@ The file now reads:
 }
 ```
 
-A new file is created with mode `0600`; an existing file keeps its mode. The token is
+A new file is created with mode `0600` (only its owner can read or write it); an existing
+file keeps its mode. The daemon judges the file's permissions as it reads it: a callers
+file that its group or every other user can write, or that sits in a directory they can
+write, could be changed by another user of the machine to add a caller of their own. In
+<dfn>*hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`, the setting under which the daemon refuses to start unless every production safeguard is in force) the daemon refuses to start on such a file; otherwise it logs one warning
+line naming `PLIMSOLL_CLIENTS_FILE` and the mode bits. The exact rule:
+[hardened-mode.md](hardened-mode.md#files-another-user-could-change). The token is
 32 random bytes, hex encoded (256 bits of entropy). `code:run` is the default scope
 and the one every RPC that runs code requires; pass `-scope` once per additional
 scope.
@@ -121,9 +127,15 @@ HTTP 401 and a Connect error body (shown without its `details` array, which carr
 {"code":"unauthenticated","message":"missing bearer token"}
 ```
 
-A recognised token whose scopes omit `code:run` gets `permission_denied` on every
+A recognized token whose scopes omit `code:run` gets `permission_denied` on every
 procedure, `Describe` included, since it describes the code-running boundary. Every run's audit line carries the caller id
-(`caller=mcp-gateway`) and never the token.
+(`caller=mcp-gateway`) and never the token. A call refused before anything ran (a scope the token lacks, access by
+name to one of your APIs that the caller is not allowed or that does not exist, a minimum isolation or software rule
+the provider cannot meet) gets a line too, `call refused before it ran`, at most one per caller every 30 seconds: the
+caller id, the procedure, the code, the reason and `refused`, how many refusals the line stands for. It never carries
+the name the caller asked for or anything else the caller sent, so a caller trying names shows up as a count, and the
+names stay out of the log. A refusal that already has a line of its own (the ship scan's, a refused reattach) is not
+written twice.
 
 ## The id is what the rest of the system sees
 
@@ -138,6 +150,15 @@ creates for one run, when a run is granted one. Pick ids you are happy to see in
 audit log and in a downstream API's logs. `*` is reserved and refused.
 See [credential minting](architecture/credential-minting.md) for where the caller's
 token stops and the per-run downstream credential begins.
+
+The caller id is also the one gate on taking a <dfn>*session*</dfn>, one sandbox kept
+open for many calls, over from another process
+([sessions.md](sessions.md#carrying-a-session-on-from-another-worker)): a session belongs to
+the caller that opened it, and any holder of that caller's token who has the session's
+<dfn>*run records*</dfn>, the daemon's statements of each call, which name the session and
+its latest call, can take it over. Give each customer a
+caller of their own, or keep the takeover behind your application's own authorization. Open
+development mode, with no callers file and no token, refuses every takeover.
 
 ## List, rotate, revoke
 
@@ -171,7 +192,7 @@ past the window too, and owes them until that time, across a midnight if there i
 `SANDBOX_PAID_SECONDS_PER_DAY` is one allowance for the whole daemon on top. The counts
 live in the daemon's memory, so a restart forgets the day's spend, every caller's and the
 daemon's: changing an allowance with `limit` takes a restart, which gives every caller a
-fresh day. <dfn>*Hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`, which refuses to start unless
+fresh day. Hardened mode (`PLIMSOLL_HARDENED=1`, which refuses to start unless
 every production safeguard is on) requires an allowance on every caller with such a
 provider. `rotate` replaces the token and keeps
 the id and scopes, so `allowed_callers` lists and audit history stay valid. `revoke`
@@ -242,10 +263,14 @@ The daemon picks how it checks tokens in this order: `PLIMSOLL_CLIENTS_FILE` (th
 file, one principal per caller), then `PLIMSOLL_TOKEN` (one shared bearer token for
 every caller, with no per-caller identity), then open development mode (no token
 checked), which a real provider refuses unless `PLIMSOLL_INSECURE=1` acknowledges it.
-Open mode answers only a request addressed to `localhost` or a loopback address, so a web
-page that rebinds its own name to 127.0.0.1 is refused: its requests still name the page's
-host. That is not access control, since any program that can reach the port can send such a
-Host; bind loopback, and use a token for anything else.
+Open mode serves this host only: with a real provider the daemon refuses to start unless
+its RPC listener is bound to a loopback address, judged from the address it actually bound.
+With `PLIMSOLL_ADDR` unset it binds `127.0.0.1:8746`, which passes; an address that every
+network the machine is on can reach (`:8746`, `0.0.0.0:8746`) is refused. Open mode also answers only a request addressed to `localhost`
+or a loopback address, so a web page that rebinds its own name to 127.0.0.1 is refused: its
+requests still name the page's host. That header check is not access control, since any
+program that can reach the port can send such a Host; the loopback bind keeps other machines
+out, and a token is what lets anyone else in.
 Hardened mode (`PLIMSOLL_HARDENED=1`), under which the daemon refuses to
 start unless every production safeguard is configured, accepts only the clients file.
 Per-caller identity is what makes the `allowed_callers` lists and per-run token

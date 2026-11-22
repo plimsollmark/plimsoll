@@ -78,10 +78,10 @@ func TestDockerRunsTheAgentSandboxBoundaryScript(t *testing.T) {
 }
 
 // TestDockerRunsTheAgentSandboxRunnerScript runs the runner script as a project step
-// under docker's /runner.mjs: it must find the runner among its ancestors and be refused
+// under docker's project runner: it must find the runner among its ancestors and be refused
 // the runner's plan and report descriptors and memory. In a pod, pid 1 is the TLS
 // terminator and sandboxd its child, both root; under docker run pid 1 is the runner
-// itself and there is no sandboxd, so every check meets the guard.
+// itself and there is no sandboxd, so every check meets the runner's own non-dumpable state.
 func TestDockerRunsTheAgentSandboxRunnerScript(t *testing.T) {
 	d := dockertest.Sandbox(t)
 	t.Parallel()

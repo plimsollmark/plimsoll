@@ -400,7 +400,9 @@
           <dfn>tmpfs</dfn> (a filesystem held in memory) of the promised size, marked
           <code>noexec</code> (no program on it can run) and <code>nosuid</code> (no program on
           it can gain privileges). Then it tries a write at every mount point, to show those are
-          the only places a write lands.</li>
+          the only places a write lands when the code starts. Under <code>runc</code> the shipped
+          seccomp profile keeps it that way; under gVisor the code can later mount a folder of
+          its own, without <code>noexec</code>, inside gVisor's kernel.</li>
           <li><b>Reach a host socket.</b> The first test container mounts a throwaway Unix socket
           the way a run mounts its broker socket, and must connect to it. Under
           <code>runsc</code> that needs <code>--host-uds=open</code>. A runtime that cannot carry

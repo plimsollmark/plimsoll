@@ -44,25 +44,36 @@ the boundary.
 from __future__ import annotations
 
 import base64
+import errno
 import posixpath
 import re
 import shlex
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence, Union
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 from . import _validate as v
 from ._transport import CancelHandle
+from .errors import PlimsollError
 from .types import ProjectResult, SessionSummary
 
-__all__ = ["ExecOutcome", "Workspace", "WorkspacePathError", "WorkspaceTooLargeError", "STATE_DIR", "MAX_READ_BYTES", "STEP_KINDS"]
+__all__ = ["ExecOutcome", "Workspace", "WorkspaceCallError", "WorkspaceChangedError", "WorkspacePathError", "WorkspaceTooLargeError",
+           "STATE_DIR", "MAX_READ_BYTES", "MAX_WHOLE_BYTES", "STEP_KINDS", "close_quietly"]
 
 #: The directory in the work directory that carries each call's arguments and the
 #: shell's state. Never captured by ``persist`` and never listed by ``glob`` or ``grep``.
 STATE_DIR = ".plimsoll-shell"
 
 #: The most ``read`` returns and ``persist`` captures: the runner's artifact budget
-#: (docker/runner.mjs MAX_ARTIFACT_BYTES, 8 MiB across one call's artifacts).
+#: (the project runner's MAX_ARTIFACT_BYTES, 8 MiB across one call's artifacts).
 MAX_READ_BYTES = 8 << 20
+
+#: The most a whole-file read (``read_whole``, ``read_pieces``) takes unless its caller
+#: names another limit: 64 MiB, eight calls of the artifact budget. A whole read ends in
+#: the caller's memory, and code in the sandbox can make a file of any size for nothing
+#: (a sparse file takes no disk), so without a limit an agent's read could make the
+#: developer's process hold all of it. 64 MiB is far past the text any model's context
+#: takes in one tool answer and small beside the memory of a process that runs an agent.
+MAX_WHOLE_BYTES = 64 << 20
 
 # Raw bytes per call when bytes travel as base64 in a text file: 2.25 MiB, a multiple
 # of three so every chunk decodes on its own, 3 MiB encoded, under the 4 MiB the
@@ -95,13 +106,24 @@ _RUN_STEP = (
 )
 _TRUE_STEP = "true"
 _READ_STEP = _PRELUDE + 'head -c "$(cat "$__plimsoll_s/a2")" -- "$(cat "$__plimsoll_s/a1")" > "$__plimsoll_s/out"'
+# A read from byte a3 (counted from 1, tail's +N). The file is checked first because the
+# pipeline's status is head's: `set -o pipefail` is not in POSIX sh (dash refuses it).
+_READ_AT_STEP = (
+    _PRELUDE + '__plimsoll_p="$(cat "$__plimsoll_s/a1")"; [ -f "$__plimsoll_p" ] && [ -r "$__plimsoll_p" ] || '
+    '{ echo "$__plimsoll_p: cannot read" >&2; exit 1; }; '
+    'tail -c +"$(cat "$__plimsoll_s/a3")" -- "$__plimsoll_p" | head -c "$(cat "$__plimsoll_s/a2")" > "$__plimsoll_s/out"'
+)
 _WRITE_B64_STEP = (
     _PRELUDE + '__plimsoll_p="$(cat "$__plimsoll_s/a1")"; mkdir -p "$(dirname "$__plimsoll_p")" && '
     'base64 -d "$__plimsoll_s/in.b64" > "$__plimsoll_p"'
 )
 _APPEND_B64_STEP = _PRELUDE + 'base64 -d "$__plimsoll_s/in.b64" >> "$(cat "$__plimsoll_s/a1")"'
+# The pattern is expanded unquoted, so the shell matches it against the files, with the
+# field separator a line feed alone: the pattern holds none (glob refuses one), so it stays
+# one word, a space included, where the default separator split `my file*.txt` into `my`
+# and `file*.txt` (finding release-41). The printf builds the line feed portably.
 _GLOB_SHELL_STEP = (
-    _PRELUDE + 'cd "$(cat "$__plimsoll_s/a2")" || exit 2; '
+    _PRELUDE + 'cd "$(cat "$__plimsoll_s/a2")" || exit 2; IFS="$(printf \'\\n_\')"; IFS="${IFS%_}"; '
     'for __plimsoll_f in $(cat "$__plimsoll_s/a1"); do [ -e "$__plimsoll_f" ] && printf \'%s\\n\' "$__plimsoll_f"; done '
     "| sort | head -n 200"
 )
@@ -126,6 +148,7 @@ STEP_KINDS: Dict[str, str] = {
     _RUN_STEP: "run",
     _TRUE_STEP: "write",
     _READ_STEP: "read",
+    _READ_AT_STEP: "read",
     _WRITE_B64_STEP: "write",
     _APPEND_B64_STEP: "write",
     _GLOB_SHELL_STEP: "glob",
@@ -165,6 +188,23 @@ class WorkspaceTooLargeError(RuntimeError):
     budget)."""
 
 
+class WorkspaceChangedError(OSError):
+    """A file read in pieces that changed size while it was read (another call of the
+    session wrote it between two pieces): the pieces are not the file, so they are not
+    returned."""
+
+
+class WorkspaceCallError(RuntimeError):
+    """A call the daemon answered whose result the workspace cannot use: it ended
+    ``setup_failed`` (no step began), ``protocol_error`` or ``runner_failed``, or
+    without a step's report. ``result`` is the answer, checked like any other: its
+    tier and its run record."""
+
+    def __init__(self, message: str, result: ProjectResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 @dataclass(frozen=True)
 class ExecOutcome:
     """What one command gave: its streams, exit code, whether the daemon cut either
@@ -193,7 +233,9 @@ def _grep_key(line: str):
     """(file, line number, text) of a `file:line:text` line; a line in another shape
     sorts after the rest, by its text."""
     parts = line.split(":", 2)
-    if len(parts) == 3 and parts[1].isdigit():
+    # ASCII digits only: str.isdigit is true of "²" too, which int() refuses, and a file
+    # the sandbox names `x:²:y` makes such a line (finding release-47).
+    if len(parts) == 3 and parts[1].isascii() and parts[1].isdigit():
         return (0, parts[0], int(parts[1]), parts[2])
     return (1, line, 0, "")
 
@@ -206,6 +248,24 @@ def _check_text(what: str, text: str, *, allow_newline: bool) -> str:
     if not allow_newline and ("\n" in text or "\r" in text):
         raise ValueError(f"{what} must not contain a line break")
     return text
+
+
+def close_quietly(closeable) -> None:
+    """Closes a session or a workspace on a path that is already reporting another error (an open that failed, a
+    floor check after it, the end of a run). A PlimsollError from the close is dropped: the session has ended
+    already or is out of reach, and the daemon closes it at its lifetime either way. Any other error is raised.
+    Every framework adapter in this package closes through this one (the review of the unread half, 2026-11-18,
+    item 2: it was written five times)."""
+    try:
+        closeable.close()
+    except PlimsollError:
+        pass
+
+
+def _check_limit(limit: Optional[int]) -> Optional[int]:
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 0):
+        raise ValueError("limit must be a non-negative int of bytes, or None for none")
+    return limit
 
 
 def _check_path(path: str) -> None:
@@ -243,8 +303,11 @@ class Workspace:
 
     ``timeout`` (seconds) is the budget of a command whose ``exec`` names none, and of
     every other call; ``max_timeout`` caps any budget asked for, for a daemon whose
-    ceiling is known (``Info.project_environment.max_timeout_ms``). The daemon refuses
-    a budget past its own ceiling either way. ``confined=False`` lets ``read`` and
+    ceiling is known (``Info.project_environment.max_timeout_ms``). The docker provider
+    cuts a budget past its own ceiling to that ceiling rather than refusing it: measured on
+    2026-11-18, a session call asking 600 s of a 125-second command on a daemon whose
+    project ceiling is 120 s ended ``timed_out`` after 120.3 s (exit 124), so a long budget
+    can end a command early with no error. ``confined=False`` lets ``read`` and
     ``write`` take an absolute path outside the work directory (see the module
     docstring); everything else stays inside it.
     """
@@ -294,6 +357,11 @@ class Workspace:
         rel = path
         if rel.startswith("/"):
             root = self.root
+            # Normalized before it is compared, so `/work//etc` (whose rest, `/etc`, is
+            # absolute) and `/work/a/../../etc` are outside, as they are to the sandbox
+            # (finding release-47). normpath keeps a leading `//`, which POSIX leaves to the
+            # system; Linux reads it as `/`.
+            rel = "/" + posixpath.normpath(rel).lstrip("/")
             if rel == root:
                 return "."
             if not rel.startswith(root + "/"):
@@ -335,12 +403,13 @@ class Workspace:
 
     # ---- commands ----
 
-    def exec(self, command: str, *, timeout: Optional[float] = None) -> ExecOutcome:
+    def exec(self, command: str, *, timeout: Optional[float] = None, cancel: Optional[CancelHandle] = None) -> ExecOutcome:
         """Runs ``command`` as shell text (BusyBox ``sh`` on the docker images) in the
         shell's current directory with its exported variables, and keeps both for the
-        next command. A non-zero exit is an outcome, not an error."""
+        next command. A non-zero exit is an outcome, not an error. ``cancel`` stops a
+        call not yet sent and cuts one in flight."""
         _check_text("command", command, allow_newline=True)
-        result = self._call({_CMD: command}, [_EXEC_STEP], [_ROOT, _CWD], timeout, tolerate_timeout=True)
+        result = self._call({_CMD: command}, [_EXEC_STEP], [_ROOT, _CWD], timeout, tolerate_timeout=True, cancel=cancel)
         self._learn(result)
         step = result.steps[0]
         cwd = self._artifact_text(result, _CWD)
@@ -399,15 +468,21 @@ class Workspace:
 
     # ---- files ----
 
-    def read(self, path: str, *, max_bytes: int = 1 << 20, cancel: Optional[CancelHandle] = None) -> bytes:
-        """At most ``max_bytes`` of the file at ``path``. FileNotFoundError when there is
+    def read(self, path: str, *, max_bytes: int = 1 << 20, offset: int = 0, cancel: Optional[CancelHandle] = None) -> bytes:
+        """At most ``max_bytes`` of the file at ``path``, from byte ``offset``: a file
+        past one call's artifact budget is read in pieces. FileNotFoundError when there is
         no such file (a directory counts as none)."""
         if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
             raise ValueError("max_bytes must be a positive int")
         if max_bytes > MAX_READ_BYTES:
             raise ValueError(f"max_bytes must be at most {MAX_READ_BYTES}, the artifact budget")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative int")
         rel = self._file_path(path)
-        result = self._call({_A1: rel, _A2: str(max_bytes)}, [_READ_STEP], [_OUT], cancel=cancel)
+        if offset:
+            result = self._call({_A1: rel, _A2: str(max_bytes), _A3: str(offset + 1)}, [_READ_AT_STEP], [_OUT], cancel=cancel)
+        else:
+            result = self._call({_A1: rel, _A2: str(max_bytes)}, [_READ_STEP], [_OUT], cancel=cancel)
         step = result.steps[0]
         if step.exit_code != 0:
             raise FileNotFoundError(f"{path}: {step.stderr_text.strip() or 'cannot read'}")
@@ -415,6 +490,76 @@ class Workspace:
         if content is None:
             raise WorkspaceTooLargeError(f"{path}: the sandbox could not return it within the artifact budget")
         return content
+
+    def read_pieces(self, path: str, *, limit: Optional[int] = MAX_WHOLE_BYTES, cancel: Optional[CancelHandle] = None) -> Iterator[bytes]:
+        """The whole file at ``path``, ``MAX_READ_BYTES`` a call, each piece yielded as it
+        arrives (an empty file yields none). A file of one piece is one call. A longer one
+        is measured after its first piece (``wc -c``, one call) and its pieces must add up
+        to that size: :class:`WorkspaceChangedError` otherwise, never a cut or spliced
+        copy, since another call of the session can change the file between two pieces. A
+        change that keeps the size is not seen. FileNotFoundError, before any piece, as
+        :meth:`read` raises it.
+
+        ``limit`` (bytes, :data:`MAX_WHOLE_BYTES` by default, None for none) is the
+        longest file it reads: a longer one is :class:`WorkspaceTooLargeError`, raised
+        once its first piece or its measured size says so, before any other piece is
+        read. No piece reads past the measured size by more than one byte (the byte that
+        shows the file grew), so a size the sandbox understated cannot make it read on."""
+        yield from self._pieces(path, stop=None, limit=_check_limit(limit), cancel=cancel)
+
+    def read_whole(self, path: str, *, limit: Optional[int] = MAX_WHOLE_BYTES, cancel: Optional[CancelHandle] = None) -> bytes:
+        """The whole file at ``path``: :meth:`read_pieces` joined, with its ``limit``
+        (:data:`MAX_WHOLE_BYTES`, 64 MiB, unless the caller names another)."""
+        return b"".join(self.read_pieces(path, limit=limit, cancel=cancel))
+
+    def read_head(self, path: str, max_bytes: int, *, cancel: Optional[CancelHandle] = None) -> bytes:
+        """The first ``max_bytes`` of the file at ``path`` (all of it when it is shorter),
+        for any ``max_bytes``: read in pieces as :meth:`read_pieces` reads, the pieces
+        checked against the smaller of ``max_bytes`` and the file's measured size, so a
+        file that changed while it was read is :class:`WorkspaceChangedError`, never a cut
+        copy. ``max_bytes`` bounds what it holds."""
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive int")
+        return b"".join(self._pieces(path, stop=max_bytes, limit=None, cancel=cancel))
+
+    def _pieces(self, path: str, *, stop: Optional[int], limit: Optional[int], cancel: Optional[CancelHandle]) -> Iterator[bytes]:
+        """The file from its start: up to ``stop`` bytes (None: the whole file), refusing a
+        whole file longer than ``limit`` (None: no limit)."""
+        first = self.read(path, max_bytes=MAX_READ_BYTES if stop is None else min(stop, MAX_READ_BYTES), cancel=cancel)
+        if limit is not None and len(first) > limit:
+            raise WorkspaceTooLargeError(f"{path}: longer than the {limit} bytes a whole read takes; read it in parts with read and an offset")
+        if len(first) < MAX_READ_BYTES or (stop is not None and len(first) >= stop):
+            if first:
+                yield first
+            return
+        size = self._size(self._file_path(path), cancel)
+        if limit is not None and size is not None and size > limit:
+            raise WorkspaceTooLargeError(f"{path}: {size} bytes, past the {limit} a whole read takes; read it in parts with read and an offset")
+        target = size if stop is None or size is None else min(size, stop)
+        got = len(first)
+        yield first
+        while target is not None and got < target:
+            # Up to the target, and one byte past the measured size, which shows a file
+            # that grew (and caps what a size the sandbox understated could make it read).
+            want = min(MAX_READ_BYTES, target - got + (1 if target == size else 0))
+            try:
+                piece = self.read(path, max_bytes=want, offset=got, cancel=cancel)
+            except FileNotFoundError:
+                break  # removed after its first piece: the size check below says it changed
+            if not piece:
+                break
+            got += len(piece)
+            yield piece
+        if target is None or got != target:
+            raise WorkspaceChangedError(errno.EIO, f"the file changed while it was read ({got} bytes read, {size} measured)", path)
+
+    def _size(self, path: str, cancel: Optional[CancelHandle]) -> Optional[int]:
+        # `--`: a path the workspace accepts may start with `-` (finding release-42).
+        r = self.run(["wc", "-c", "--", path], cancel=cancel)
+        try:
+            return int(r.stdout_text.split()[0]) if r.exit_code == 0 else None
+        except (IndexError, ValueError):
+            return None
 
     def write(self, path: str, content: Union[str, bytes, bytearray], *, cancel: Optional[CancelHandle] = None) -> None:
         """Writes ``content`` to ``path``, creating parent directories. Text goes as the
@@ -539,11 +684,11 @@ class Workspace:
 
     # ---- the whole tree ----
 
-    def persist(self) -> bytes:
+    def persist(self, *, cancel: Optional[CancelHandle] = None) -> bytes:
         """The work directory as a tar stream with relative member names, the
         workspace's own state left out. :class:`WorkspaceTooLargeError` when the tree
         does not fit one call's artifact budget."""
-        result = self._call({}, [_PERSIST_STEP], [_WS_TAR])
+        result = self._call({}, [_PERSIST_STEP], [_WS_TAR], cancel=cancel)
         step = result.steps[0]
         if step.exit_code != 0:
             raise RuntimeError(f"persist: {step.stderr_text.strip() or 'tar failed'}")
@@ -552,12 +697,12 @@ class Workspace:
             raise WorkspaceTooLargeError("the work directory does not fit the artifact budget")
         return content
 
-    def hydrate(self, data: bytes) -> None:
+    def hydrate(self, data: bytes, *, cancel: Optional[CancelHandle] = None) -> None:
         """Extracts a stream ``persist`` produced into the work directory."""
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("data must be bytes")
-        self._put_bytes(_WS_TAR, bytes(data))
-        result = self._call({}, [_HYDRATE_STEP], [])
+        self._put_bytes(_WS_TAR, bytes(data), cancel)
+        result = self._call({}, [_HYDRATE_STEP], [], cancel=cancel)
         step = result.steps[0]
         if step.exit_code != 0:
             raise RuntimeError(f"hydrate: {step.stderr_text.strip() or 'tar failed'}")
@@ -581,9 +726,9 @@ class Workspace:
             budget = self._max_timeout
         result = self._session.run_project(files, list(steps), list(artifacts), timeout=budget, cancel=cancel)
         if result.outcome == "setup_failed":
-            raise RuntimeError(f"plimsoll: the call did not run: {result.outcome}: {result.detail}")
+            raise WorkspaceCallError(f"plimsoll: the call did not run: {result.outcome}: {result.detail}", result)
         if result.outcome in ("protocol_error", "runner_failed") or not result.steps:
-            raise RuntimeError(f"plimsoll: the call may have run, and its result is incomplete: {result.outcome}: {result.detail}")
+            raise WorkspaceCallError(f"plimsoll: the call may have run, and its result is incomplete: {result.outcome}: {result.detail}", result)
         if result.outcome == "timed_out" and not tolerate_timeout:
             raise TimeoutError(f"plimsoll: the call ran past its budget of {budget} s")
         return result

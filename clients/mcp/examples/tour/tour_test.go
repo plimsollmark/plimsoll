@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -286,12 +285,8 @@ func TestRecordingHoldsNoSecret(t *testing.T) {
 	var got struct{ Stdout, Stderr string }
 	_ = json.Unmarshal(first.Steps[0].Arguments, &sent)
 	_ = json.Unmarshal(first.Steps[0].Result, &got)
-	// The recording predates the daemon's Run cell: its first example ran as a project
-	// carrying the runner the daemon now holds (sandbox/cellrunner).
-	runner, err := os.ReadFile("../../../../sandbox/cellrunner/run.py")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Example 1 runs by itself, as a Run cell (prefer_warm): the line holds its code and
+	// nothing else, and its answer is the output the recording shows.
 	var e attest.Entry
 	if err := json.Unmarshal([]byte(rc.Line), &e); err != nil {
 		t.Fatal(err)
@@ -300,15 +295,10 @@ func TestRecordingHoldsNoSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := map[string]string{}
-	for _, f := range req.GetProject().GetFiles() {
-		files[f.GetPath()] = f.GetContent()
+	if c := req.GetCell(); c == nil || c.GetCode() != sent.Code || len(c.GetFiles()) != 0 {
+		t.Errorf("the receipt line's request is not example 1's cell alone: %v", req.GetPayload())
 	}
-	if len(files) != 2 || files[".plimsoll/cell.py"] != sent.Code || files[".plimsoll/run.py"] != string(runner) {
-		t.Errorf("the receipt line's request holds more than example 1's code and the server's runner: %v", slices.Sorted(maps.Keys(files)))
-	}
-	steps := resp.GetProject().GetSteps()
-	if len(steps) != 1 || string(steps[0].GetStdout()) != got.Stdout || string(steps[0].GetStderr()) != got.Stderr {
+	if c := resp.GetCell(); c == nil || string(c.GetStdout()) != got.Stdout || string(c.GetStderr()) != got.Stderr {
 		t.Error("the receipt line's response holds output other than example 1's")
 	}
 }

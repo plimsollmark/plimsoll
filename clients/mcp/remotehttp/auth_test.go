@@ -351,6 +351,11 @@ func TestPasskeyConsentTokensAndRealHTTPTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tools, err := os.ReadFile(filepath.Join(f.cfg.StateDir, "tools.jsonl"))
+	if err != nil || !bytes.Contains(tools, []byte(`"event":"tool_admission"`)) {
+		t.Fatalf("the tool call is not in the tool stream (%v)", err)
+	}
+	audit = append(audit, tools...)
 	for _, secret := range []string{testDaemonToken, pair.AccessToken, pair.RefreshToken, code, "secret-code-marker", "opaque-owner-state"} {
 		if bytes.Contains(audit, []byte(secret)) {
 			t.Fatal("audit disclosed sensitive content")
@@ -536,4 +541,96 @@ func TestAnsweredApprovalCannotIssueASecondCode(t *testing.T) {
 	approveCode(t, f.e, b)
 	requireStatus(t, request(f.e, "POST", "/owner/login/options", input(b), b), 403)
 	requireStatus(t, request(f.e, "POST", "/oauth/authorize", url.Values{"tx": {b.tx}, "csrf": {b.csrf}, "decision": {"approve"}}, b), 403)
+}
+
+// TestEnrollmentCodeFieldIsPlainTextAndCounted holds the enrollment page's code field to
+// the form a person can use: plain text, so a browser's password manager does not fill it
+// unseen with what it saved for the address (a password field is filled whatever its
+// autocomplete says, and the pasted code then lands beside it and is refused), with the
+// count of what the field holds and the code's length on the page. The page's script is
+// run by the real-browser check, not here.
+func TestEnrollmentCodeFieldIsPlainTextAndCounted(t *testing.T) {
+	f := newFixture(t)
+	code, err := f.e.EnrollmentCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := request(f.e, "GET", "/owner/enroll", nil, browser{}).Body.String()
+	for _, want := range []string{
+		`<input id="enrollCode" type="text" autocomplete="one-time-code"`,
+		`id="codeCount"`,
+		"The code is 50 characters and starts with enroll_.",
+		"replace(/\\s+/g,'')",
+		"enrollCode().length!==50",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the enrollment page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `type="password"`) {
+		t.Error("the enrollment page has a password field again")
+	}
+	if len(code) != 50 || !strings.HasPrefix(code, "enroll_") {
+		t.Errorf("the page states a 50-character code starting enroll_, and the code is %d characters", len(code))
+	}
+}
+
+// TestRefusedAuthorizeSaysWhichCheckRefused holds the audit trail to naming, as a fixed
+// word, which check refused a hosted client's sign-in request: the browser shows one
+// answer for an unknown client, a callback that is not a hosted client's and a callback
+// the client did not register, and the owner has nothing else to tell them apart. The
+// caller's own strings never reach the trail.
+func TestRefusedAuthorizeSaysWhichCheckRefused(t *testing.T) {
+	f := newFixture(t)
+	id := clientID(t, f.e)
+	for _, c := range []struct {
+		event  string
+		status int
+		q      url.Values
+	}{
+		{"authorize_refused_unknown_client", 400, url.Values{"client_id": {"client_never-registered-SECRETMARK"}, "redirect_uri": {chatgptRedirect}}},
+		{"authorize_refused_redirect_not_approved", 400, url.Values{"client_id": {id}, "redirect_uri": {"https://claude.com/api/mcp/SECRETMARK"}}},
+		{"authorize_refused_redirect_not_registered", 400, url.Values{"client_id": {id}, "redirect_uri": {claudeRedirect}}},
+		{"authorize_refused_repeated_parameter", 400, url.Values{"client_id": {id}, "redirect_uri": {chatgptRedirect}, "state": {"a", "SECRETMARK"}}},
+		{"authorize_refused_long_parameter", 400, url.Values{"client_id": {id}, "redirect_uri": {chatgptRedirect}, "state": {strings.Repeat("SECRETMARK", 205)}}},
+	} {
+		r := request(f.e, "GET", "/oauth/authorize?"+c.q.Encode(), nil, browser{})
+		requireStatus(t, r, c.status)
+		raw, err := os.ReadFile(filepath.Join(f.cfg.StateDir, "audit.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(raw), `"event":"`+c.event+`"`); n != 1 {
+			t.Errorf("%s: %d audit lines, want 1", c.event, n)
+		}
+		if strings.Contains(string(raw), "SECRETMARK") {
+			t.Errorf("%s: the caller's own string reached the audit trail", c.event)
+		}
+	}
+}
+
+// TestAuthorizeIgnoresAParameterItDoesNotKnow holds the sign-in request to OAuth 2.0's
+// rule that an authorization server ignores a request parameter it does not recognize
+// (RFC 6749, section 3.1): the approval page is served, and nothing of the unknown
+// parameter reaches the page or the audit trail.
+func TestAuthorizeIgnoresAParameterItDoesNotKnow(t *testing.T) {
+	f := newFixture(t)
+	id := clientID(t, f.e)
+	sum := sha256.Sum256([]byte("verifier"))
+	q := url.Values{"client_id": {id}, "redirect_uri": {chatgptRedirect}, "response_type": {"code"}, "resource": {testOrigin + "/mcp"}, "scope": {"code:run offline_access"}, "state": {"s"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
+	plain := request(f.e, "GET", "/oauth/authorize?"+q.Encode(), nil, browser{})
+	requireStatus(t, plain, 200)
+	q.Set("prompt", "SECRETMARK")
+	q["unknown_twice"] = []string{"SECRETMARK", "SECRETMARK"}
+	r := request(f.e, "GET", "/oauth/authorize?"+q.Encode(), nil, browser{})
+	requireStatus(t, r, 200)
+	if !strings.Contains(r.Body.String(), "Connect an AI application") {
+		t.Fatal("the approval page was not served")
+	}
+	raw, _ := os.ReadFile(filepath.Join(f.cfg.StateDir, "audit.jsonl"))
+	if strings.Contains(r.Body.String(), "SECRETMARK") || strings.Contains(string(raw), "SECRETMARK") {
+		t.Fatal("an unknown parameter's value reached the page or the audit trail")
+	}
+	huge := url.Values{"client_id": {id}, "redirect_uri": {chatgptRedirect}, "padding": {strings.Repeat("x", 17<<10)}}
+	requireStatus(t, request(f.e, "GET", "/oauth/authorize?"+huge.Encode(), nil, browser{}), 400)
 }

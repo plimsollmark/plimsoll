@@ -40,12 +40,14 @@ import (
 //	E2B_LIVE_GRANT_DENIED_PATH    default /not-allowed
 //	E2B_LIVE_GRANT_TOKEN           static bearer for the test API
 //
-// A skip here is invisible in a green suite, and this is the only test that
-// falsifies the guarded-E2B claim the documentation makes. `make audit E2B=1` runs
-// -run Live, so before E2B_GUARD_LIVE_REQUIRED existed, "audit: OK" could mean the
-// guarded path was never exercised. `make e2b-guard-live` sets that variable and
-// this test then FAILS on missing configuration instead of skipping, so the only
-// way to see it pass is to actually run it.
+// A skip here would be invisible in a green suite, and this is the only test that
+// falsifies the guarded-E2B claim the documentation makes. Its name matches the
+// selection of `make e2b-suite` (which `make audit E2B=1` runs), so before
+// E2B_GUARD_LIVE_REQUIRED existed "audit: OK" could mean the guarded path was never
+// exercised; that suite now leaves this test and TestE2BSessionGuardLive out by name,
+// and fails on any skip it does see. `make e2b-guard-live` sets the variable, and this
+// test then FAILS on missing configuration instead of skipping, so the only way to see
+// it pass is to actually run it.
 func TestE2BGuardLive(t *testing.T) {
 	g := liveGuardSetup(t)
 	e, grant, allowed, token := g.e, g.grant, g.allowed, g.token

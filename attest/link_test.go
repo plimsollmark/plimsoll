@@ -141,7 +141,7 @@ func TestBundleLinksProveTheWholeFile(t *testing.T) {
 	if _, err := VerifyBundle(good, v); err != nil {
 		t.Fatalf("cut back to the first checkpoint: %v (verifies by design; VerifyExpected catches it)", err)
 	}
-	if err := VerifyExpected(good, requests("a", "b", "c", "d")); !errors.Is(err, ErrExpected) {
+	if _, err := VerifyExpected(good, v, Expected{Requests: requests("a", "b", "c", "d")}); !errors.Is(err, ErrExpected) {
 		t.Fatalf("cut back to the first checkpoint, against the caller's four calls: %v", err)
 	}
 	if _, err := ResumeHarness(s, good[:3], &more); err == nil {
@@ -155,9 +155,19 @@ func TestBundleLinksProveTheWholeFile(t *testing.T) {
 func TestVerifyExpected(t *testing.T) {
 	key := newKey(t)
 	s := NewSigner(key)
+	v := NewVerifier(key.Public().(ed25519.PublicKey))
 	bundle := seal(t, s, traced(t, s, "a"), traced(t, s, "b"), traced(t, s, "c"))
-	if err := VerifyExpected(bundle, requests("c", "a", "b")); err != nil {
-		t.Fatal(err)
+	if rep, err := VerifyExpected(bundle, v, Expected{Requests: requests("c", "a", "b")}); err != nil || rep.Runs != 3 {
+		t.Fatalf("%+v, %v", rep, err)
+	}
+	// It verifies the bundle itself: two lines swapped, or a bundle under another key,
+	// is refused though every expected request is there (hunt-quality-24).
+	swapped := append([]Entry{bundle[1], bundle[0]}, bundle[2:]...)
+	if _, err := VerifyExpected(swapped, v, Expected{Requests: requests("a", "b", "c")}); !errors.Is(err, ErrLink) {
+		t.Errorf("two lines swapped: %v, want ErrLink", err)
+	}
+	if _, err := VerifyExpected(bundle, NewVerifier(newKey(t).Public().(ed25519.PublicKey)), Expected{Requests: requests("a", "b", "c")}); !errors.Is(err, ErrSignature) {
+		t.Errorf("another key: %v, want ErrSignature", err)
 	}
 	if CountCalls(bundle) != 3 {
 		t.Fatalf("CountCalls = %d", CountCalls(bundle))
@@ -171,23 +181,23 @@ func TestVerifyExpected(t *testing.T) {
 		"not a digest":      append(requests("a", "b"), "c"),
 		"upper-case hex":    append(requests("a", "b"), strings.ToUpper(requests("c")[0])),
 	} {
-		if err := VerifyExpected(bundle, want); !errors.Is(err, ErrExpected) {
+		if _, err := VerifyExpected(bundle, v, Expected{Requests: want}); !errors.Is(err, ErrExpected) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// The caller's call b sent one request; the bundle holds another under b's
 	// trace_id. A list of trace_ids could not tell them apart.
 	substituted := seal(t, s, traced(t, s, "a"), tracedAs(t, s, tracedCode("x"), "b"), traced(t, s, "c"))
-	if err := VerifyExpected(substituted, requests("a", "b", "c")); !errors.Is(err, ErrExpected) {
+	if _, err := VerifyExpected(substituted, v, Expected{Requests: requests("a", "b", "c")}); !errors.Is(err, ErrExpected) {
 		t.Errorf("a request substituted under the expected trace_id: %v; want refused", err)
 	}
 	// The same request sent twice is two calls with one digest: listed twice it
 	// verifies, listed once it does not.
 	repeated := seal(t, s, traced(t, s, "a"), traced(t, s, "b"), tracedAs(t, s, tracedCode("b"), "b-again"))
-	if err := VerifyExpected(repeated, requests("a", "b", "b")); err != nil {
+	if _, err := VerifyExpected(repeated, v, Expected{Requests: requests("a", "b", "b")}); err != nil {
 		t.Errorf("one request sent twice, listed twice: %v", err)
 	}
-	if err := VerifyExpected(repeated, requests("a", "b")); !errors.Is(err, ErrExpected) {
+	if _, err := VerifyExpected(repeated, v, Expected{Requests: requests("a", "b")}); !errors.Is(err, ErrExpected) {
 		t.Errorf("one request sent twice, listed once: %v; want refused", err)
 	}
 }

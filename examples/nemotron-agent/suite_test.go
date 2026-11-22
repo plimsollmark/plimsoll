@@ -319,6 +319,7 @@ func TestLongSessionStillClosesAndVerifies(t *testing.T) {
 	closeTimeout = 200 * time.Millisecond
 	t.Cleanup(func() { closeTimeout = old })
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// fixed-wait: the fake model's answer time, set longer than the 200 ms close timeout under test
 		time.Sleep(400 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)

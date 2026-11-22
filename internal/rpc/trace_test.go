@@ -14,7 +14,7 @@ func TestSanitizeTraceIDAccepts(t *testing.T) {
 		"3f1b7c0e-9a41-4d8e-8f0a-5b2c1d3e4f50",
 		"4bf92f3577b34da6a3ce929d0e0e4736",
 		"gateway:run.2026-08-09_a1b2",
-		strings.Repeat("a", maxTraceIDBytes),
+		strings.Repeat("a", 64),
 	} {
 		got, rejected := sanitizeTraceID(id)
 		if rejected || got != id {
@@ -39,7 +39,7 @@ func TestSanitizeTraceIDRejects(t *testing.T) {
 		"control byte":    "9af31c02\x00",
 		"percent escape":  "%2Fv1%2Fcustomers",
 		"non-ascii":       "café",
-		"over length":     strings.Repeat("a", maxTraceIDBytes+1),
+		"over length":     strings.Repeat("a", 65),
 	} {
 		got, rejected := sanitizeTraceID(id)
 		if !rejected {

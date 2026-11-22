@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/printable"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 )
 
@@ -103,9 +104,9 @@ func knownUnreadable(args []string, stdout, stderr io.Writer) (int, error) {
 		return 2, err
 	}
 	for _, u := range res.Unreadable {
-		fmt.Fprintf(stdout, "known unreadable: %s: %s (%d bytes)\n", withheld.CleanWhere(u.Where), u.Reason.Text(), u.Size)
+		fmt.Fprintf(stdout, "known unreadable: %s: %s (%d bytes)\n", withheld.CleanWhere(u.Where), printable.Text(u.Reason.Text()), u.Size)
 	}
-	fmt.Fprintf(stdout, "updated %s for image %s (%s): %d unreadable file/reason entries; %d images retained. This acknowledges unread bytes, not that they are free of withheld material.\n", withheld.CleanWhere(path), withheld.CleanWhere(ref), id, len(res.Unreadable), known.Images())
+	fmt.Fprintf(stdout, "updated %s for image %s (%s): %d unreadable file/reason entries; %d images retained. This acknowledges unread bytes, not that they are free of withheld material.\n", withheld.CleanWhere(path), withheld.CleanWhere(ref), printable.Text(id), len(res.Unreadable), known.Images())
 	return 0, nil
 }
 

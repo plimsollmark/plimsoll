@@ -55,10 +55,12 @@
 #          wasm32-wasi reactor modules;
 #   build  gcc links sim/worker.c against libwasmedge and `wasmedge compile`
 #          AOT-compiles the modules to shared objects;
-#   runtime node:22-bookworm-slim (the runner needs node; the WasmEdge binaries are
-#          glibc, which rules out the Alpine base the other images share) carrying
-#          libwasmedge, the worker, the models and runner.mjs, USER node, the same
-#          entrypoint as every project image.
+#   native-helper  the project runner (plimsoll's native helper) from the named
+#          build context nativehelper, checked against its pin, as docker/Dockerfile;
+#   runtime node:22-bookworm-slim (the oracle and the guest's steps need node; the
+#          WasmEdge binaries are glibc, which rules out the Alpine base the other images
+#          share) carrying libwasmedge, the worker, the models and the project runner,
+#          USER node, the same entrypoint as every project image.
 #
 # The wasm bytes, and so the artifact checksums the test asserts, depend on the
 # wasi-sdk digest, the Reference FMUs commit and shim.c; the machine code depends on
@@ -166,6 +168,14 @@ RUN gcc -O2 worker.c -I /opt/wasmedge/include -L /opt/wasmedge/lib64 -lwasmedge 
 COPY guard/runner.c /build/runner-guard.c
 RUN gcc -O2 -fPIC -shared -o /build/runner-guard.so /build/runner-guard.c
 
+# ---- native-helper: the project runner, as docker/Dockerfile takes it -------------
+FROM ${BASE_DEBIAN} AS native-helper
+ARG TARGETARCH
+COPY --from=nativehelper plimsoll-helper_${TARGETARCH} plimsoll-helper.sha256 /h/
+RUN cd /h && pin="$(grep -x "[0-9a-f]\{64\}  plimsoll-helper_${TARGETARCH}" plimsoll-helper.sha256)" \
+ && echo "$pin" | sha256sum -c - \
+ && install -m 0755 plimsoll-helper_${TARGETARCH} /plimsoll-helper
+
 # ---- runtime: the project image contract, plus the worker and the models --------
 FROM ${BASE_NODE_SLIM}
 # The real file only; ldconfig recreates the soname link libwasmedge.so.0 from it.
@@ -176,9 +186,9 @@ COPY --from=wasm /build/cartpole.wasm /models/cartpole.wasm
 COPY --from=wasm /build/shower.wasm /build/ship.wasm /build/buck.wasm /build/slits.wasm /build/blackhole.wasm /build/rocket.wasm /build/satclock.wasm /models/
 COPY sim/oracle/run.mjs sim/oracle/judge.mjs /oracle/
 COPY sim/graders/ /oracle/graders/
-COPY runner.mjs /runner.mjs
+COPY --from=native-helper /plimsoll-helper /usr/local/libexec/plimsoll-helper
 COPY --from=build /build/runner-guard.so /usr/local/lib/plimsoll-runner-guard.so
 # Fail the build, not the first run, if the worker's shared libraries are missing.
 RUN ldconfig && ! ldd /usr/local/bin/sim-worker | grep 'not found'
 USER node
-ENTRYPOINT ["sh", "-c", "export LD_PRELOAD=/usr/local/lib/plimsoll-runner-guard.so; exec node /runner.mjs"]
+ENTRYPOINT ["/usr/local/libexec/plimsoll-helper", "run-project"]

@@ -38,8 +38,9 @@
 
 import { createHash } from "node:crypto";
 
-import { PlimsollClient, type Info, type Isolation, type Language, type Session } from "./client.ts";
+import { PlimsollClient, type Info, type Isolation, type Language, type ProjectResult, type Session } from "./client.ts";
 import { PlimsollError, type Refusal } from "./errors.ts";
+import { GRANTED_CELL, PYTHON_GRANT_PROVIDERS, SNIPPET_CELL } from "./granted.gen.ts";
 import type { RunRecord } from "./record.ts";
 
 export type SessionMode = "auto" | "always" | "never";
@@ -195,6 +196,91 @@ export type CodeSandboxesOptions = {
   onRecord?: (record: RunRecord, key: SandboxKey | undefined) => void | Promise<void>;
 };
 
+/**
+ * The grant a tool's every call carries, chosen by the application, never by a model's
+ * tool call: the name of a grant profile the operator configured on the daemon
+ * (PLIMSOLL_GRANTS_FILE), and the description of its API that plimsoll-specgen wrote for
+ * that profile (-emit description), which the tool shows its model.
+ */
+export type ToolGrant = { profile: string; apiDescription: string };
+
+/** The most characters of an API description a tool takes: it travels in every model request (about 8,000 tokens). */
+export const MAX_API_DESCRIPTION_CHARS = 32_000;
+
+/**
+ * What the daemon's Describe said a granted tool can do, read once when the tool is
+ * built: the languages whose code can call the API there (JavaScript wherever a granted
+ * project or snippet runs; Python too where every project step gets the broker's socket,
+ * PYTHON_GRANT_PROVIDERS), and whether calls run as snippets (a daemon without projects).
+ */
+export type GrantPlan = ToolGrant & { provider: string; languages: Language[]; snippets: boolean };
+
+const LANGUAGE_NAMES: Record<Language, string> = { python: "Python", javascript: "JavaScript" };
+
+/** Said after a granted call that may have run. */
+export const GRANTED_MAY_HAVE_RUN = "It may have called the API too, as many times as the run's call budget allows; it was not retried.";
+/** Said after a granted call's permission refusal: the daemon's words name the profile; these say whose it is to fix. */
+export const GRANT_PERMISSION_NOTE =
+  "The API this tool is set up to call is not available to it, so nothing ran: the grant profile is unknown to the daemon, or this caller is not on it. " +
+  "That is the operator's to fix; do not retry, and tell the user the API could not be reached.";
+
+/** Why code in language cannot call the API on the daemon plan describes, and what to write instead. */
+export function grantRefusal(plan: GrantPlan, language: Language): string {
+  const others = plan.languages.map((l) => LANGUAGE_NAMES[l]);
+  const instead = others.length ? ` Write the program in ${others.join(" or ")}.` : "";
+  const why =
+    language === "python"
+      ? plan.snippets
+        ? `the daemon (provider ${plan.provider}) runs JavaScript snippets only`
+        : `its provider (${plan.provider}) gives a Python step no way to reach plimsoll's broker`
+      : `the daemon's project image (provider ${plan.provider}) states no ${LANGUAGE_NAMES[language]} interpreter`;
+  return `plimsoll: ${LANGUAGE_NAMES[language]} code cannot call the API on this sandbox: ${why}; nothing ran.${instead}`;
+}
+
+/**
+ * The languages a granted tool offers: the application's, less those whose code cannot
+ * call the API on the daemon plan describes, so the model is never offered a language
+ * that would be refused. None of them left is the application's mistake, said at once.
+ */
+export function offeredForGrant(languages: ToolLanguages, plan: GrantPlan): ToolLanguages {
+  const kept = languages.filter((l) => plan.languages.includes(l));
+  if (kept.length === 0) {
+    throw new PlimsollError(
+      "invalid_argument",
+      `plimsoll: this tool's code is to call the API of grant profile ${JSON.stringify(plan.profile)}, and on this daemon none of ${languages.join(", ")} can: ${grantRefusal(plan, languages[0])}`,
+      { notDispatched: "request" },
+    );
+  }
+  return kept as unknown as ToolLanguages;
+}
+
+/** Refuses a grant given to a tool factory that keeps state; the granted one is named. */
+export function refuseGrant(opts: object, granted: string): void {
+  if ((opts as { grant?: unknown }).grant !== undefined) {
+    throw new PlimsollError("invalid_argument", `plimsoll: this tool keeps state between calls, which a granted call cannot have; build a granted tool with ${granted}`, {
+      notDispatched: "request",
+    });
+  }
+}
+
+function grantPlanOf(grant: ToolGrant, info: Info): GrantPlan {
+  const noRun = (why: string) =>
+    new PlimsollError("unimplemented", `plimsoll: ${why}, so no call of this tool can carry grant profile ${JSON.stringify(grant.profile)}; nothing ran`, {
+      notDispatched: "unsupported",
+    });
+  if (!info.supportsProject) {
+    if (!info.supportsJavaScriptGrants) throw noRun(`the daemon's provider (${info.sandbox}) runs no projects and grants no snippet`);
+    return { ...grant, provider: info.sandbox, languages: ["javascript"], snippets: true };
+  }
+  if (!info.supportsProjectGrants) throw noRun(`the daemon's provider (${info.sandbox}) cannot give a project run a grant`);
+  const langs = info.environments.project.languages;
+  const languages = (["javascript", "python"] as const).filter(
+    (l) => langs.includes(l) && (l !== "python" || (PYTHON_GRANT_PROVIDERS as readonly string[]).includes(info.sandbox)),
+  );
+  if (languages.length === 0) throw noRun(`no language of the daemon's project image (provider ${info.sandbox}) can call the API from a granted run`);
+  return { ...grant, provider: info.sandbox, languages: [...languages], snippets: false };
+}
+
 /** What the executeCode tool takes. */
 export type ExecuteCodeInput = {
   code: string;
@@ -237,9 +323,20 @@ export type ExecuteCodeOutput = {
   freshSandbox?: true;
   /** The tier the code ran behind: configuration and provider evidence, not attestation. */
   isolation: string;
+  /**
+   * The sentence the provider states beside that tier, present only when it states one (only
+   * WSL runs so far: Microsoft's statement that WSL is not a security sandbox for running
+   * untrusted code). The record the client checked states it too.
+   */
+  isolationQualification?: string;
   /** SHA-256 of the run record checked by the client before this result was returned. */
   recordSha256: string;
 };
+
+/** The qualification beside a result's tier, as a field only when the provider states one. */
+function qualification(q: string): { isolationQualification?: string } {
+  return q === "" ? {} : { isolationQualification: q };
+}
 
 type Entry = {
   key: SandboxKey;
@@ -256,14 +353,55 @@ type Entry = {
 };
 
 export class CodeSandboxes {
-  readonly #opts: CodeSandboxesOptions;
+  readonly #opts: CodeSandboxesOptions & { grant?: ToolGrant };
   readonly #entries = new Map<string, Entry>();
   #clock = 0;
   #info: Promise<Info> | undefined;
   #client: PlimsollClient | undefined;
 
-  constructor(opts: CodeSandboxesOptions) {
+  /**
+   * With grant, every call carries it, and so runs in a sandbox of its own, never in a
+   * kept one (a session's interpreter outlives the call, and its code with it): the
+   * sandboxes are never opened, and sessions "always" is refused here.
+   */
+  constructor(opts: CodeSandboxesOptions & { grant?: ToolGrant }) {
+    if (opts.grant !== undefined) {
+      const g = opts.grant;
+      if (!g || typeof g.profile !== "string" || g.profile === "" || typeof g.apiDescription !== "string" || g.apiDescription.trim() === "") {
+        throw new PlimsollError("invalid_argument", "plimsoll: a tool's grant is a profile name and its API's description (plimsoll-specgen -emit description), both nonempty", {
+          notDispatched: "request",
+        });
+      }
+      if (g.apiDescription.length > MAX_API_DESCRIPTION_CHARS) {
+        throw new PlimsollError("invalid_argument", `plimsoll: the API's description holds ${g.apiDescription.length} characters, more than ${MAX_API_DESCRIPTION_CHARS}`, {
+          notDispatched: "request",
+        });
+      }
+      if (opts.sessions === "always") {
+        throw new PlimsollError(
+          "invalid_argument",
+          "plimsoll: sessions \"always\" asks for kept state, which a granted call cannot have: every call of a tool with a grant runs in a sandbox of its own. Keep a second tool without the grant for kept state",
+          { notDispatched: "request" },
+        );
+      }
+    }
     this.#opts = opts;
+  }
+
+  /** The grant every call carries, or undefined. */
+  get grant(): ToolGrant | undefined {
+    return this.#opts.grant;
+  }
+
+  /**
+   * What the daemon's Describe says this instance's grant can do: which languages' code
+   * can call the API, and whether calls run as snippets. Throws, marked not dispatched,
+   * reason unsupported, when the daemon cannot carry the grant at all.
+   */
+  async grantPlan(signal?: AbortSignal): Promise<GrantPlan> {
+    const grant = this.#opts.grant;
+    if (!grant) throw new PlimsollError("invalid_argument", "plimsoll: this tool carries no grant", { notDispatched: "request" });
+    return grantPlanOf(grant, await untilAborted(this.#describe(), signal));
   }
 
   get client(): PlimsollClient {
@@ -334,6 +472,10 @@ export class CodeSandboxes {
       return await this.#run(key, input, signal);
     } catch (e) {
       const err = saysWhetherItRan(e);
+      // A granted call that may have run may have called the API too, as often as the
+      // run's call budget allows; a permission refusal of one is the operator's to fix.
+      if (this.#opts.grant && !err.notDispatched && !err.message.includes(GRANTED_MAY_HAVE_RUN)) err.message += " " + GRANTED_MAY_HAVE_RUN;
+      if (this.#opts.grant && err.notDispatched === "permission" && !err.message.includes(GRANT_PERMISSION_NOTE)) err.message += " " + GRANT_PERMISSION_NOTE;
       // The Describe decides the mode and the languages for every call, and a daemon
       // can change under a long-lived process (restarted with sessions on or off, or
       // another image, tier or protocol). A refusal that says so drops it, and the next
@@ -344,6 +486,7 @@ export class CodeSandboxes {
   }
 
   async #run(keyOrResolver: SandboxKey | undefined | (() => SandboxKey | undefined), input: ExecuteCodeInput, signal?: AbortSignal): Promise<ExecuteCodeOutput> {
+    if (this.#opts.grant) return this.#granted(keyOrResolver, input, signal);
     const { key, id, info, language, files, persistent } = await beforeDispatch(async () => {
       const key = typeof keyOrResolver === "function" ? keyOrResolver() : keyOrResolver;
       const id = key === undefined ? undefined : keyId(key);
@@ -415,6 +558,7 @@ export class CodeSandboxes {
           filesPersist: !ended,
           ...(first ? { freshSandbox: true as const } : {}),
           isolation: r.isolation,
+          ...qualification(r.isolationQualification),
           recordSha256: r.record.sha256,
         };
       } catch (e) {
@@ -444,6 +588,79 @@ export class CodeSandboxes {
         this.#touch(id!);
       }
     }
+  }
+
+  // A granted call: in a sandbox of its own, never a kept one, as the fresh cell's form
+  // (GRANTED_CELL: the cell runner prints the final expression's value) in a granted
+  // project, or on a daemon that runs snippets only as a granted snippet. The key only
+  // names the conversation for onRecord; no sandbox is kept for it.
+  async #granted(keyOrResolver: SandboxKey | undefined | (() => SandboxKey | undefined), input: ExecuteCodeInput, signal?: AbortSignal): Promise<ExecuteCodeOutput> {
+    const { key, plan, language, files } = await beforeDispatch(async () => {
+      const key = typeof keyOrResolver === "function" ? keyOrResolver() : keyOrResolver;
+      if (key !== undefined) keyId(key);
+      const files = input.files ?? [];
+      const reserved = files.find((f) => f.path === ".plimsoll" || f.path.startsWith(".plimsoll/"));
+      if (reserved) {
+        throw new PlimsollError("invalid_argument", `plimsoll: ${JSON.stringify(reserved.path)} is under .plimsoll/, which the sandbox's runner reserves`, {
+          notDispatched: "request",
+        });
+      }
+      const language = input.language ?? this.languages[0];
+      const plan = await this.grantPlan(signal);
+      if (!plan.languages.includes(language)) {
+        throw new PlimsollError("unimplemented", grantRefusal(plan, language), { notDispatched: "unsupported" });
+      }
+      if (!this.languages.includes(language)) {
+        throw new PlimsollError("invalid_argument", `plimsoll: this tool runs ${this.languages.join(" or ")}, not ${language}`, { notDispatched: "request" });
+      }
+      if (plan.snippets && files.length > 0) {
+        throw new PlimsollError("unimplemented", `plimsoll: the daemon (${plan.provider}) runs JavaScript snippets only, which take no files`, {
+          notDispatched: "unsupported",
+        });
+      }
+      return { key, plan, language, files };
+    });
+    const opts = { timeoutMs: this.#opts.timeoutMs, minimumIsolation: this.#floor, signal, grantProfile: plan.profile };
+    if (plan.snippets) {
+      const r = await this.client.runJavaScript(SNIPPET_CELL[0] + JSON.stringify(input.code) + SNIPPET_CELL[1], opts);
+      this.#record(r.record, key);
+      return this.#freshOutput(language, r.timedOut ? 124 : r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated, r.isolation, r.isolationQualification, r.record);
+    }
+    const cell = GRANTED_CELL[language];
+    const project = { files: [...files, ...cell.files, { path: cell.codePath, content: input.code }], steps: [cell.step] };
+    let r: ProjectResult;
+    try {
+      r = await this.client.runProject(project, opts);
+    } catch (e) {
+      if (e instanceof PlimsollError && e.record) this.#record(e.record, key);
+      throw e;
+    }
+    this.#record(r.record, key);
+    const step = r.steps[0];
+    if (!step) {
+      // As a cell run by itself reads the same ends (sandbox.RunCellFresh).
+      if (r.outcome === "timed_out") return this.#freshOutput(language, 124, true, "", "", false, r.isolation, r.isolationQualification, r.record);
+      if (r.outcome === "setup_failed") {
+        throw new PlimsollError("invalid_argument", `plimsoll: the call's files could not be set up, so none of its code ran: ${r.detail}`, { notDispatched: "request", result: r });
+      }
+      throw new PlimsollError("unknown", `plimsoll: the run ended ${r.outcome} without a step's report (${r.detail}); the code may have run`, { result: r });
+    }
+    const timedOut = step.timedOut || r.outcome === "timed_out";
+    return this.#freshOutput(language, timedOut ? 124 : step.exitCode, timedOut, step.stdout, step.stderr, step.stdoutTruncated || step.stderrTruncated, r.isolation, r.isolationQualification, r.record);
+  }
+
+  #freshOutput(
+    language: Language, exitCode: number, timedOut: boolean, stdout: string, stderr: string, truncated: boolean,
+    isolation: string, isolationQualification: string, record: RunRecord,
+  ): ExecuteCodeOutput {
+    return {
+      ...this.#cut(language, exitCode, timedOut, stdout, stderr, truncated),
+      stateKept: false,
+      filesPersist: false,
+      isolation,
+      ...qualification(isolationQualification),
+      recordSha256: record.sha256,
+    };
   }
 
   /** Closes the key's sandbox, if it has one. Safe to call more than once. */
@@ -503,6 +720,7 @@ export class CodeSandboxes {
       stateKept: false,
       filesPersist: false,
       isolation: r.isolation,
+      ...qualification(r.isolationQualification),
       recordSha256: r.record.sha256,
     };
   }

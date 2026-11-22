@@ -716,11 +716,12 @@ func TestRegisteredTermsAreDefinedAtFirstUse(t *testing.T) {
 		p := pageProse(t, page)
 		text := p.text.String()
 		folded := foldASCII(text)
+		spans := longerTermSpans(reg.Terms, text, folded)
 		for _, rt := range reg.Terms {
 			if rt.Assumed || !rt.mayOccur(text, folded) {
 				continue
 			}
-			loc := rt.pattern().FindStringIndex(text)
+			loc := firstOwnUse(rt, text, spans)
 			if loc == nil {
 				continue
 			}
@@ -758,6 +759,46 @@ func TestMayOccurNeverSkipsAMatch(t *testing.T) {
 			t.Logf("%q: mayOccur searches a page it could have skipped (only slower)", rt.Term)
 		}
 	}
+}
+
+// termSpan is where one registered term of several words is used in a page's prose.
+type termSpan struct {
+	term       string
+	start, end int
+}
+
+// longerTermSpans lists every use of each registered term of more than one word, the
+// spans a shorter term inside them ("guest" and "guard" in "guest guard") does not count
+// in: the longer term is the word used there, and its own definition covers it.
+func longerTermSpans(terms []registeredTerm, text, folded string) []termSpan {
+	var spans []termSpan
+	for _, rt := range terms {
+		if !strings.Contains(rt.Term, " ") || !rt.mayOccur(text, folded) {
+			continue
+		}
+		for _, loc := range rt.pattern().FindAllStringIndex(text, -1) {
+			spans = append(spans, termSpan{rt.Term, loc[0], loc[1]})
+		}
+	}
+	return spans
+}
+
+// firstOwnUse is rt's first use in text that lies inside no longer use of another
+// registered term; nil when it has none.
+func firstOwnUse(rt registeredTerm, text string, spans []termSpan) []int {
+	for _, loc := range rt.pattern().FindAllStringIndex(text, -1) {
+		inside := false
+		for _, s := range spans {
+			if s.term != rt.Term && s.start <= loc[0] && loc[1] <= s.end && s.end-s.start > loc[1]-loc[0] {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			return loc
+		}
+	}
+	return nil
 }
 
 func definedAt(p *prose, rt registeredTerm, loc []int) bool {

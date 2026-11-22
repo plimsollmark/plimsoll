@@ -14,12 +14,13 @@ import (
 
 // ErrReservedPredicate means SignStatement or OpenStatement was given a predicate
 // type this package handles only through its own checked paths: a run record (Sign,
-// Verify), a bundle link and a session close. A generic signer could otherwise put
+// Verify), a bundle link, a session close and the statement that a session's close could
+// not be collected. A generic signer could otherwise put
 // the harness's signature on a run record nobody checked.
 var ErrReservedPredicate = errors.New("attest: this predicate type is signed and verified only through its own checked path")
 
 // reserved are the predicate types SignStatement and OpenStatement refuse.
-var reserved = map[string]bool{PredicateType: true, LinkPredicateType: true, ClosePredicateType: true}
+var reserved = map[string]bool{PredicateType: true, LinkPredicateType: true, ClosePredicateType: true, CloseNotCollectedPredicateType: true}
 
 // statement is an in-toto Statement v1 with any predicate, as SignStatement encodes it.
 type statement struct {
@@ -127,8 +128,6 @@ func predicatePresent(payload []byte) bool {
 	return json.Unmarshal(payload, &st) == nil && len(st.Predicate) > 0 && !bytes.Equal(bytes.TrimSpace(st.Predicate), []byte("null"))
 }
 
-// decodeStrict decodes exactly one JSON value from data into v, refusing unknown
-// fields and anything after the value.
 // uniqueJSONKeys refuses ambiguous objects, including inside an opaque RawMessage
 // predicate. Signatures bind bytes; readers must not disagree about repeated names.
 // Names are case-sensitive as JSON specifies, so distinct schema keys stay distinct.

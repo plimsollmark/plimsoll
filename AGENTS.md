@@ -48,7 +48,7 @@ Read the document for the subsystem you touch, not all of them.
 | Seams for embedders | [docs/seams.md](docs/seams.md) |
 | Example programs and their pages | [docs/example-programs.md](docs/example-programs.md), `docs/examples/` |
 | Releasing and module identity | [docs/releasing.md](docs/releasing.md) |
-| Every environment variable | `plimsolld -h` (the text is `helpText` in [cmd/plimsolld/providers.go](cmd/plimsolld/providers.go); a test fails if the package reads a variable the text omits) |
+| Every environment variable | `plimsolld -h`, printed from the one table of settings, [internal/settings/registry.go](internal/settings/registry.go): each variable's kind, default and help, declared once; every reader reads through it, and a test fails if daemon code names a variable outside it |
 | Limitations stated plainly | [docs/limitations.md](docs/limitations.md) |
 
 ## Layout
@@ -83,9 +83,14 @@ Read the document for the subsystem you touch, not all of them.
   [clients/mcp/](clients/mcp/): the Python and TypeScript clients, and the MCP server (its own
   Go module). Each makes the Go client's checks: protocol number, every run record recomputed,
   the isolation floor, a session's chain, the request ID's echo.
+  [internal/clientcases](internal/clientcases/) accounts for every shared case by id (golden
+  vectors, checkpoint vectors, daemon answers, attach forgeries, its own record cases) and
+  judges each client's verdicts: a case skipped or answered otherwise fails, unless
+  `testdata/differences.json` states why.
 - [docker/](docker/): the image recipes (`Dockerfile`, `python.Dockerfile`, `sim.Dockerfile`,
-  `wasm-cc.Dockerfile`, `agentsandbox.Dockerfile`), the in-sandbox project runner
-  [runner.mjs](docker/runner.mjs), the runner guard [guard/runner.c](docker/guard/runner.c), the agent-sandbox image's TLS terminator for sandboxd [sandboxdtls/](docker/sandboxdtls/main.go),
+  `wasm-cc.Dockerfile`, `agentsandbox.Dockerfile`; every project image carries the in-sandbox
+  project runner, the native helper of [sandbox/internal/nativehelper](sandbox/internal/nativehelper/),
+  at its pin), the guard library for plimsoll's own node programs [guard/runner.c](docker/guard/runner.c), the agent-sandbox image's TLS terminator for sandboxd [sandboxdtls/](docker/sandboxdtls/main.go),
   the simulation worker [sim/](docker/sim/), the audited seccomp allowlist `seccomp.json`.
 - [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`, `fanout`, `fanout-cartpole`,
   `wasm-controller`, `wasm-buck`, `providers`, `sessions`, `capsule`, `sbom`, `agentsandbox`,
@@ -164,7 +169,7 @@ in force ([docs/hardened-mode.md](docs/hardened-mode.md)).
   server-side profile (`grant_profile`); a raw grant is never accepted on the wire.
 - `plimsolld` serves `plimsoll.v1.SandboxService` over Connect; auth is fail-closed when
   configured (`PLIMSOLL_CLIENTS_FILE`, then `PLIMSOLL_TOKEN`, then open dev mode with a
-  warning). Every run is audit-logged with the principal, sizes, profile, provider, exit,
+  warning, which a real provider serves only on a bound loopback address). Every run is audit-logged with the principal, sizes, profile, provider, exit,
   duration, never the code (a run's outcome detail can carry the runner's own error text,
   which may name a caller's file: [docs/efficiency-advisor.md](docs/efficiency-advisor.md)).
   Internal faults reach a caller as `internal error <id>` only.
@@ -200,8 +205,9 @@ The three tools the gate shells out to are pinned in
 are pinned by go.mod `tool` directives.
 
 **CI** ([.github/workflows/](.github/workflows/)) runs `make audit`, `make clients-suite`,
-`make capsule-suite`, `make sbom-suite`, `make mcp-suite` and `make docker-suite` under
-runc, and the docker suite under runsc in a separate workflow. No CI run exercises E2B,
+`make capsule-suite`, `make sbom-suite`, `make mcp-suite` and each part of `make docker-suite`
+(`DOCKER_SUITE_PARTS`, one job per part, from `docker-suite.yml`) under runc, and the same
+parts under runsc in a separate workflow. No CI run exercises E2B,
 Docker Cloud, OpenShell or WSL containers: **never add an E2B key or a Docker token to repository
 secrets.** Third-party actions are pinned by commit SHA.
 

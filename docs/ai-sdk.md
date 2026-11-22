@@ -82,6 +82,24 @@ on the session's open, a client that cannot be built) also carries it, reason
 `environment`; the error's message, which is all the model sees, starts `Nothing ran`
 or `The code may have run` accordingly.
 
+## A tool whose code calls one web API
+
+`plimsollGrantedCodeTool` builds the same tool with a grant your application chose (a
+profile the operator configured on the daemon, and the description `plimsoll-specgen`
+wrote for it), so the code can call that profile's routes, and nothing else, through
+plimsoll's broker, which adds the API's key outside the sandbox. It reads the daemon's
+Describe first and offers only the languages that can call the API there: JavaScript
+wherever grants run, Python too on docker and openshell (`import plimsoll_host`). Every
+call runs in a sandbox of its own, so kept state is not available to it; keep
+`plimsollCodeTools`' tool beside it for that. The code can do whatever an allowed route
+permits and read whatever it returns
+([the grant, INTERNAL · capability grants →](capability-grants.md#from-an-agent-kits-code-tool);
+[options, INTERNAL · TypeScript client guide →](../clients/typescript/README.md#a-grant-executecode-whose-code-calls-one-web-api)).
+
+```ts
+const { executeCode } = await plimsollGrantedCodeTool({ client, grant: { profile: "lights", apiDescription } });
+```
+
 ## Verify locally without a paid model
 
 Start a local plimsolld using Docker/gVisor and `plimsoll/sandbox-python` as its

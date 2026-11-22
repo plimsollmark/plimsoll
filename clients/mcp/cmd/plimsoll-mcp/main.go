@@ -112,7 +112,7 @@ func remoteCommand(command string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "Owner enrollment: %s/owner/enroll\nOne-use local enrollment code (expires in five minutes): %s\nOAuth and tools are unavailable in enrollment-only mode.\n", cfg.PublicURL, code)
+			fmt.Fprintf(os.Stderr, "Owner enrollment: %s/owner/enroll\nOne-use local enrollment code (expires in five minutes), on the next line by itself:\n%s\nOAuth and tools are unavailable in enrollment-only mode.\n", cfg.PublicURL, code)
 		}
 		fmt.Fprintf(os.Stderr, "plimsoll-mcp: dedicated HTTP listener %s; public routing is configured separately\n", cfg.Listen)
 		return engine.Run(ctx)

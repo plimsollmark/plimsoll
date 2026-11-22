@@ -230,6 +230,50 @@ func TestReceiptOperatorKeyRefusals(t *testing.T) {
 	}
 }
 
+// receipt.sh asks buildvcs.sh and builds plimsolld with none of the caller's GIT_ variables, which would make git and
+// Go's stamp read another repository. Stand-in git and go programs record the environment each is started with (the
+// go one fails, so the run stops at the build): git must be called at all, which buildvcs.sh does only with no GIT_
+// variable set, and neither may see one.
+func TestReceiptBuildsTheDaemonWithoutTheCallersGitVariables(t *testing.T) {
+	dir := receiptScratch(t)
+	source, project, bin, records := filepath.Join(dir, "source"), filepath.Join(dir, "project"), filepath.Join(dir, "bin"), filepath.Join(dir, "records")
+	for _, d := range []string{filepath.Join(source, "examples", "sbom"), filepath.Join(source, ".git"), project, bin, records} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "examples", "sbom", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, exit := range map[string]string{"git": "1", "go": "3"} {
+		stand := fmt.Sprintf("#!/bin/sh\n{ echo \"args: $*\"; env; } >> %q/%s.env\nexit %s\n", records, name, exit)
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(stand), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := receiptCommand(t, []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "PLIMSOLL_SOURCE=" + source, "XDG_CACHE_HOME=" + filepath.Join(dir, "cache"),
+		"GIT_DIR=" + filepath.Join(dir, "other", ".git"), "GIT_WORK_TREE=" + filepath.Join(dir, "other"), "GIT_INDEX_FILE=" + filepath.Join(dir, "index"),
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.worktree", "GIT_CONFIG_VALUE_0=" + filepath.Join(dir, "other"), "GIT_NAMESPACE=x"},
+		"bash", "receipt.sh", project, filepath.Join(dir, "out"))
+	if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 3 {
+		t.Fatalf("receipt.sh: %v, want the stand-in go's exit 3\n%s", err, out)
+	}
+	for _, name := range []string{"git", "go"} {
+		b, err := os.ReadFile(filepath.Join(records, name+".env"))
+		if err != nil {
+			t.Fatalf("the stand-in %s was never started (%v): buildvcs.sh or the build saw a GIT_ variable", name, err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "GIT_") {
+				t.Errorf("the stand-in %s was started with %s", name, line)
+			}
+		}
+		if name == "go" && !strings.Contains(string(b), "args: -C "+source+" build -buildvcs=false -o ") {
+			t.Errorf("the stand-in go was not asked for plimsolld without the stamp:\n%s", b)
+		}
+	}
+}
+
 // A minimum test count is refused before anything is built or run when it is not a whole
 // number of 1 or more, or when no test report is asked for, since then nothing is counted.
 func TestReceiptMinimumTestsRefusals(t *testing.T) {

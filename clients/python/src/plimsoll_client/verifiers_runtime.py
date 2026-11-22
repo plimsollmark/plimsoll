@@ -99,6 +99,7 @@ from verifiers.v1.runtimes import (
 )
 
 from ._record import record_digest
+from ._tables import TRACE_ID_PATTERN
 from ._transport import in_thread
 from .client import Client
 from .errors import PlimsollError
@@ -120,7 +121,7 @@ IMPORT_PATH = __name__ + ".PlimsollBackend"
 
 # plimsoll's correlation id: the backend's name goes to the daemon's audit line only when
 # it already fits, never trimmed (a trimmed id joins to nothing).
-_TRACE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_TRACE_ID = re.compile(TRACE_ID_PATTERN)
 
 # Exit codes a shell reports for a process ended by SIGKILL and SIGTERM, for a buffered
 # process killed before it ran.
@@ -225,6 +226,9 @@ class PlimsollBackend(RuntimeBackend):
         self.records: List[RunRecord] = []
         self._workspace: Optional[Workspace] = None
         self._lock = threading.Lock()
+        # Held across an open, in its worker thread, and by cleanup(): a cleanup that races a
+        # start waits for the open, then closes what it opened, so no session outlives it.
+        self._open_lock = threading.Lock()
         self._max_timeout: Optional[float] = None
         self._environment = ""
 
@@ -258,6 +262,10 @@ class PlimsollBackend(RuntimeBackend):
         )
 
     def _provision(self) -> Workspace:
+        with self._open_lock:
+            return self._provision_locked()
+
+    def _provision_locked(self) -> Workspace:
         session = self._open_session()
         workspace = Workspace(
             _RecordingSession(session, self),
@@ -281,7 +289,7 @@ class PlimsollBackend(RuntimeBackend):
         asked = self.config.workdir
         if asked is not None and asked.rstrip("/") != root:
             if not self._same_directory(workspace, asked, root):
-                self.cleanup()
+                self._release()
                 raise SandboxError(
                     f"the plimsoll runtime works in the daemon's directory {root}; the task asks for {asked!r}, "
                     f"which the daemon's image does not make that directory (a link to {root} would)"
@@ -318,7 +326,12 @@ class PlimsollBackend(RuntimeBackend):
 
     def cleanup(self) -> None:
         """Closes the session (its sandbox and files are gone) and logs the daemon's count
-        of calls and last record. Idempotent; also run at interpreter exit."""
+        of calls and last record. Idempotent; also run at interpreter exit. A cleanup made
+        while :meth:`start` is opening waits for that open and closes the session it opened."""
+        with self._open_lock:
+            self._release()
+
+    def _release(self) -> None:
         with self._lock:
             workspace, self._workspace = self._workspace, None
         if workspace is None:

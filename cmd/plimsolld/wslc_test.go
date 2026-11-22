@@ -10,6 +10,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/wslc"
 )
@@ -35,10 +36,10 @@ func TestWSLCVariablesAreUnderTheDaemonsGuards(t *testing.T) {
 		if strings.HasPrefix(name, "SANDBOX_WSLC_") {
 			own++
 		}
-		if got := unknownVariables([]string{name + "=x"}, helpText()); len(got) != 0 {
+		if got := unknownVariables([]string{name + "=x"}); len(got) != 0 {
 			t.Errorf("wslc reads %s but -h does not name it", name)
 		}
-		if got := unknownVariables([]string{name + "X=x"}, helpText()); !slices.Equal(got, []string{name + "X"}) {
+		if got := unknownVariables([]string{name + "X=x"}); !slices.Equal(got, []string{name + "X"}) {
 			t.Errorf("a misspelled %sX is not named at startup (got %v)", name, got)
 		}
 	}
@@ -285,12 +286,49 @@ func TestWSLCDaemonFloorVMRefusesToStartWithoutAcceptance(t *testing.T) {
 	}
 }
 
+// Every WSL mode's sentence fits a run record, so plimsolld starts on each; a provider
+// whose sentence no record can carry is refused at startup, before any work.
+func TestEveryWSLCQualificationFitsARunRecord(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest"},
+		{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_ACCEPT_VM_TIER": "1"},
+		{"SANDBOX_PROVIDER": "wslc", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox:latest", "SANDBOX_WSLC_MODE": "shared"},
+	} {
+		p, err := buildProvider(getenvFrom(env))
+		if err != nil {
+			t.Fatalf("%v: %v", env, err)
+		}
+		q, ok := p.Sandbox.(sandbox.Qualifier)
+		if !ok || q.Qualification() == "" {
+			t.Fatalf("%v: states no qualification", env)
+		}
+		if err := qualificationError(p.Sandbox); err != nil {
+			t.Errorf("%v: %v", env, err)
+		}
+	}
+	// gVisor's sentence is added to either per-run sentence (its setup needs a runsc
+	// binary on disk, so the longest form is checked from its parts).
+	for _, q := range []string{wslc.PerRunQualification + " " + wslc.GVisorQualification, wslc.PerRunAcceptedQualification + " " + wslc.GVisorQualification} {
+		if !record.ValidQualification(q) {
+			t.Errorf("the gVisor form, %d bytes, does not fit a record", len(q))
+		}
+	}
+	if err := qualificationError(overLongQualifier{}); err == nil {
+		t.Error("a sentence over the cap passed")
+	}
+}
+
+type overLongQualifier struct{ sandbox.Sandbox }
+
+func (overLongQualifier) Name() string          { return "fake" }
+func (overLongQualifier) Qualification() string { return strings.Repeat("x", 1025) }
+
 // -h states the values SANDBOX_WSLC_ACCEPT_VM_TIER takes exactly as the provider reads them
-// (sandbox.BoolFromEnv): unset, 0 or false is off and the per-run mode reports container;
+// (the Bool kind of internal/settings): unset, 0 or false is off and the per-run mode reports container;
 // 1 or true is on and it reports vm; letter case and surrounding spaces are ignored; any
 // other value refuses startup (finding wslc-31: -h named only unset, 0 and 1).
 func TestWSLCAcceptVMTierHelpListsTheValuesTheCodeAccepts(t *testing.T) {
-	help := strings.Join(strings.Fields(wslcUsage), " ")
+	help := strings.Join(strings.Fields(helpText()), " ")
 	start := strings.Index(help, "SANDBOX_WSLC_ACCEPT_VM_TIER per-run only")
 	end := strings.Index(help, "SANDBOX_WSLC_MAX_SESSIONS")
 	if start < 0 || end < start {

@@ -82,6 +82,52 @@ gets the first one's summary or error: the daemon forgets a session at its first
 would answer a second with NotFound. A close refused not dispatched (aborted before it was
 sent, say) closed nothing, so a later `close()` tries again.
 
+### Carrying a session on from another process
+
+Another process of your application, with the same token, can take a session over from a
+*checkpoint*: the session's public chain head and the policy it stated at open, which holds
+no secret. This client keeps no store; save the checkpoint where only your application can
+write, keyed by identities it verified.
+
+```ts
+import { checkpointToJSON, parseCheckpoint, PlimsollClient } from "@plimsollmark/client";
+
+const a = new PlimsollClient({ baseUrl, token, daemonName: "prod" }); // a short name, never a URL
+const s = await a.openSession();
+await s.runCell({ language: "python", code: "x = 1" });
+const saved = checkpointToJSON(await s.checkpoint()); // after each call
+// In another process:
+const b = new PlimsollClient({ baseUrl, token, daemonName: "prod" });
+const t = await b.attachSession(parseCheckpoint(saved));
+await t.runCell({ language: "python", code: "x" }); // the same interpreter
+```
+
+- The first process's later calls and close are refused before they run
+  (`StaleOwnerError`, marked not dispatched). A checkpoint that is not the session's head
+  is `CheckpointMismatchError`, and nothing moves. An answer that does not repeat the
+  checkpoint is `data_loss`, and the session is not closed. A failed or aborted attach is
+  never retried.
+- **A call whose answer was lost.** After a call ends with no answer this client could
+  check, `session.lostRequestSha256` names it. `attachSession(checkpoint, {
+  lostRequestSha256 })` from the checkpoint saved before that call then takes the session
+  over across that one call (the *explained gap*), when the daemon's last record is that
+  call, and `session.lostCall` holds its record; its output is lost. The record says whether
+  the daemon answered it: a result digest when the daemon answered, which does not show that
+  the call ran to its end (a step stopped at its time limit and a setup that failed are
+  answers too), an `unanswered` code when it ended without an answer, so that it may have
+  done none, part or all of its work. The new session's first call is refused, with nothing sent, if it repeats that
+  call, which was already sent once (`CallAlreadySentError`). Only the first call is checked,
+  so a different first call spends the check and the lost call can then run again; the rule
+  is this client's, not the daemon's.
+- **The limit:** with no store, this client can name a lost call only when the answer was
+  lost in the same process. A process that died mid-call leaves a gap the next one cannot
+  explain unless your application recorded the call's request digest before sending.
+- Anyone who holds the token and a session's run records can take the session over. Open
+  development mode refuses every takeover.
+
+The rules in full:
+[carrying a session on from another worker](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#carrying-a-session-on-from-another-worker).
+
 Cleartext HTTP is accepted only to a loopback address unless you pass `insecureHttp: true`.
 
 ## `executeCode` for an agent: `CodeSandboxes`
@@ -97,7 +143,8 @@ Every call of a conversation runs in the same sandbox, so code one call ran can 
 later calls see: a call's output is only as trustworthy as the calls before it in that
 conversation
 ([what a session gives up](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#what-a-session-gives-up)).
-The tool's calls are cells, which carry no grant, so no API access is shared between them.
+The tool's calls are cells, which carry no grant, so no API access is shared between them;
+a tool whose code calls an API is the granted one below, whose calls keep nothing.
 
 **The key decides who shares a sandbox, so derive it from identities you verified.** A
 sandbox holds one trust domain: everything one call leaves there, later calls with the same
@@ -284,9 +331,56 @@ The session ID is a capability. It lives in the client's memory and nowhere else
 a log line, not in a record, not in Trigger.dev's `chat.local` (which is serialized into
 subtask metadata). Records carry its SHA-256.
 
+### A grant: `executeCode` whose code calls one web API
+
+`plimsollGrantedCodeTool` (AI SDK) and `plimsollGrantedExecuteCode` (Mastra) build the tool
+with a grant your application chose, never the model: the name of a grant profile the
+operator configured on the daemon, and the description `plimsoll-specgen -only allow.json
+-emit description api.json` wrote for it
+([capability-grants.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md#from-an-agent-kits-code-tool)).
+
+```ts
+import { plimsollGrantedCodeTool } from "@plimsollmark/client/ai-sdk";
+
+const apiDescription = readFileSync("description.txt", "utf8");
+const { executeCode } = await plimsollGrantedCodeTool({ client, grant: { profile: "lights", apiDescription } });
+```
+
+- **Built after the daemon's Describe**, which decides what it offers: JavaScript wherever
+  a granted project runs (docker, openshell, e2b with a guard URL, dockercloud) or, on a
+  daemon that runs snippets only, a granted snippet without files; Python too on docker and
+  openshell, through `import plimsoll_host` (`plimsoll_host.get(path)`, `post(path, body)`,
+  `put`, `patch`, `delete`, `call`). The description tells the model the routes and how to
+  call them; a tool left with no language, or a daemon that cannot carry the grant, rejects
+  the factory, marked not dispatched. On a daemon that runs snippets only (wasm), top-level
+  `await` does not work, and the description says to end the code with an async function's
+  call instead.
+- **Describe is read once, when the tool is built.** The tool's languages and description
+  stay as that answer made them, and its calls reuse it, as `CodeSandboxes` reuses its one
+  Describe; the Python executor, by contrast, reads Describe again on every call. A refusal
+  that says the daemon changed (`unsupported`, `environment`, `protocol`, `isolation`) makes
+  the next call read it again, but the tool's description does not change: after the daemon
+  moves to another provider or image, build the tool again.
+- **Every call runs in a sandbox of its own** (the cell's form in a granted project, so the
+  last expression's value still prints), never a conversation's kept sandbox: a cell
+  carries no grant, so kept state is not available to the granted tool, and it says so.
+  `sessions: "always"` with a grant is refused; keep `plimsollCodeTools`' tool beside it
+  for kept state. `plimsollCodeTools`, `plimsollExecuteCode` and `plimsollCodeSandbox`
+  refuse a grant.
+- **Refusals say what to do.** A Python call where steps cannot reach the broker is refused
+  `unsupported` with what to write instead; an unknown profile is `permission`, the
+  operator's to fix; a call that may have run says the API may have been called too.
+- The broker, outside the sandbox, holds the key and adds it; the code can still do
+  whatever an allowed route permits and read whatever it returns. The run record does not
+  list the calls.
+
+A runnable example against a stand-in API: `examples/granted.ts`. The client's
+`runProject` and `runJavaScript` take a per-call `grantProfile` (`GrantRunOptions`).
+
 ## Vercel AI SDK
 
-`@plimsollmark/client/ai-sdk` exports `plimsollCodeTools`. Its `executeCode` tool
+`@plimsollmark/client/ai-sdk` exports `plimsollCodeTools`, and `plimsollGrantedCodeTool`
+for a tool whose code calls a granted API (above). Its `executeCode` tool
 runs fresh; `forConversation({userId, conversationId})` binds a tool to
 application-owned identity and the shared sandbox manager, with the user as the key's
 owner. It accepts Python or JavaScript plus text files and returns checked results. The
@@ -294,7 +388,7 @@ default minimum isolation is kernel, as for every add-on on `CodeSandboxes`; use
 verified gVisor or VM daemon for hostile code.
 
 See [usage, lifecycle and the no-spend local smoke check, EXTERNAL · official docs ↗](https://github.com/plimsollmark/plimsoll/blob/main/docs/ai-sdk.md).
-This source add-on needs the optional `ai` and `zod` peer packages.
+This source add-on needs the optional `ai` (>=7.0.126 <8, tested at exactly 7.0.126) and `zod` (>=4.6.7 <5, tested at exactly 4.6.7) peer packages.
 
 ## Trigger.dev
 
@@ -302,6 +396,10 @@ The add-on follows Trigger.dev's own
 [code-sandbox recipe](https://trigger.dev/docs/ai-chat/patterns/code-sandbox): warm in
 `onTurnStart`, reuse in `executeCode`, dispose in `onChatSuspend` (right before the run
 sleeps) and in `onComplete`.
+
+This add-on needs the optional `@trigger.dev/sdk` (>=4.7.0 <5, tested at exactly 4.7.0),
+`ai` (>=7.0.126 <8, tested at exactly 7.0.126) and `zod` (>=4.6.7 <5, tested at exactly
+4.6.7) peer packages.
 
 ```ts
 import { chat } from "@trigger.dev/sdk/ai";
@@ -365,6 +463,9 @@ export const analyst = new Agent({ id: "analyst", name: "analyst", instructions:
 
 No floor is set here, so the tool requires `kernel`; for local development against an
 ordinary docker daemon, pass `minimumIsolation: "container"`.
+
+This add-on needs the optional `@mastra/core` (>=1.73.0 <2, tested at exactly 1.73.0)
+and `zod` (>=4.6.7 <5, tested at exactly 4.6.7) peer packages.
 
 Recorded calls through this tool, two users and a disposed thread included, replay on its
 integration page: [see a run, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html).

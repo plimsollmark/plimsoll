@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 func mapEnv(values map[string]string) func(string) string {
@@ -161,7 +163,22 @@ func TestBuildConfiguresBothPinnedDockerImages(t *testing.T) {
 	if d.Image != snippet || d.ProjectImage != project || !d.RequirePinnedImages {
 		t.Fatalf("docker config = image %q, project %q, require-pinned %v", d.Image, d.ProjectImage, d.RequirePinnedImages)
 	}
-	if !isDigestPinned(d.Image) || !isDigestPinned(d.ProjectImage) {
+	if _, ok := providerkit.PinnedDigest(d.Image); !ok {
 		t.Fatal("Build produced an image that hardened Preflight would reject")
+	}
+	if _, ok := providerkit.PinnedDigest(d.ProjectImage); !ok {
+		t.Fatal("Build produced an image that hardened Preflight would reject")
+	}
+}
+
+// E2B_TEMPLATE is trimmed by Build, as hardened mode always read it (internal/settings):
+// until 2026-11-18 Build passed " tmpl " to E2B while hardened mode checked "tmpl".
+func TestBuildTrimsTheE2BTemplate(t *testing.T) {
+	p, err := Build(mapEnv(map[string]string{"SANDBOX_PROVIDER": "e2b", "E2B_API_KEY": "k", "E2B_TEMPLATE": " tmpl "}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := p.Sandbox.(*E2B); e.Template != "tmpl" {
+		t.Fatalf("template %q, want the trimmed %q", e.Template, "tmpl")
 	}
 }

@@ -1,19 +1,18 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/csv"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
@@ -138,20 +137,35 @@ type DockerSandbox struct {
 	// verifiedSeccompSettings are the two settings verifiedSeccomp was made from; a
 	// changed setting is not ready until Preflight runs again, as a changed runtime is.
 	verifiedSeccompSettings [2]string
-	verifiedPlatform        string
-	lastVerified            time.Time
+	// verifiedGuard is the guest guard file the last Preflight wrote or checked
+	// (writeGuestGuard): every container mounts it and starts its commands behind it.
+	verifiedGuard    string
+	verifiedPlatform string
+	lastVerified     time.Time
 	// loopbackListen, when a test sets it, replaces hostAPIListen as the address the
 	// forwarder of a run with sdk_env listens on, so a listener that cannot bind can be
 	// exercised (hostAPIListenAddr).
 	loopbackListen string
+	// projectRunner, when a test sets it, is the command started as the project runner in
+	// place of dockerProjectRunner, in a run, a granted run and a session call alike
+	// (runnerCommand): the runner equivalence suite (docker_runner_equivalence_test.go)
+	// starts the runner under a wrapper through it. Nothing a daemon reads sets it.
+	projectRunner []string
 	// provenImageIDs are the image IDs the last successful SmokeTest probed, by
 	// reference; nil until one has run. Runs launch only these once it has: a tag
 	// re-pointed after startup names content whose lockdown, runner guard and
 	// languages nobody proved (review F1).
 	provenImageIDs map[string]string
+	// provenGuard is the guest guard's policy word (guestGuardPolicy) the last successful
+	// SmokeTest proved in force from a guest-started program in every image (smokeGuestGuard);
+	// "" until one has, and again while one runs. GuestGuard states it.
+	provenGuard string
 	// quarantine holds the containers whose removal could not be confirmed, each with
 	// the capacity of the call that made it, until ReconcileOrphans confirms it gone.
-	quarantine    providerkit.Quarantine
+	quarantine providerkit.Quarantine
+	// reapSkipped is whether the last orphan pass was skipped for want of a pinned daemon
+	// (noteReapSkipped logs each change).
+	reapSkipped   atomic.Bool
 	preflightNow  func() time.Time // test clock; nil uses time.Now
 	preflightWait time.Duration    // bounded wait on preflight contention; 0 uses the default
 
@@ -185,6 +199,10 @@ const (
 	dockerPreflightPoll        = 20 * time.Millisecond
 )
 
+// A preflight's budget is held under PreflightBound, which the daemon's readiness budget
+// is derived from: a larger number here does not compile.
+const _ = uint64(PreflightBound - dockerPreflightTimeout)
+
 // snippetCeiling and projectCeiling are the longest a snippet or project run may
 // take; the timeout functions cut a request to them and Environments states them.
 func (d *DockerSandbox) snippetCeiling() time.Duration {
@@ -202,31 +220,19 @@ func (d *DockerSandbox) projectCeiling() time.Duration {
 }
 
 func (d *DockerSandbox) snippetTimeout(requested time.Duration) time.Duration {
-	def, max := d.DefaultTimeout, d.snippetCeiling()
+	def := d.DefaultTimeout
 	if def <= 0 {
 		def = dockerDefaultTimeout
 	}
-	if requested <= 0 {
-		requested = def
-	}
-	if requested > max {
-		requested = max
-	}
-	return requested
+	return providerkit.ClampTimeout(requested, def, d.snippetCeiling())
 }
 
 func (d *DockerSandbox) projectTimeout(requested time.Duration) time.Duration {
-	def, max := d.ProjectTimeout, d.projectCeiling()
+	def := d.ProjectTimeout
 	if def <= 0 {
 		def = dockerProjectTimeout
 	}
-	if requested <= 0 {
-		requested = def
-	}
-	if requested > max {
-		requested = max
-	}
-	return requested
+	return providerkit.ClampTimeout(requested, def, d.projectCeiling())
 }
 
 func (d *DockerSandbox) maxOutput() int {
@@ -334,9 +340,31 @@ func (d *DockerSandbox) lockdownArgs(name string, expires time.Time, workTmpfs b
 }
 
 // launch is the tail of a docker run that starts argv in imageID, whatever the
-// image's ENTRYPOINT and CMD say: every process plimsoll starts is one it chose.
-func launch(imageID string, argv []string) []string {
-	return append([]string{"--entrypoint", argv[0], imageID}, argv[1:]...)
+// image's ENTRYPOINT and CMD say: every process plimsoll starts is one it chose, and
+// it starts behind the guest guard (guardFirst), the file guard Preflight wrote,
+// mounted read-only at guestGuardTarget (docker_guestguard.go).
+func launch(guard, imageID string, argv []string) ([]string, error) {
+	if guard == "" {
+		return nil, errors.New("docker: no guest guard file was verified at Preflight; nothing starts without it")
+	}
+	cmd, err := guardFirst(argv)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{"--mount", guestGuardMount(guard), "--entrypoint", cmd[0], imageID}, cmd[1:]...), nil
+}
+
+// launchPID1 is launch for a session's container: the guard in its process-1 mode
+// (guestGuardPID1), which stays as process 1 behind its own filter, starts argv as its child and
+// collects every process that ends in the container, in place of docker's --init (finding
+// guest-guard-10, decision 10 B).
+func launchPID1(guard, imageID string, argv []string) ([]string, error) {
+	tail, err := launch(guard, imageID, argv)
+	if err != nil {
+		return nil, err
+	}
+	// tail: --mount VALUE --entrypoint GUARD IMAGE -- ARGV...; the mode word goes before "--".
+	return slices.Insert(tail, 5, guestGuardPID1), nil
 }
 
 // containerExpiry is when a container started under ctx may be reaped
@@ -384,6 +412,12 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime, seccomp string) [
 		// environment: a process plimsoll did not start, beside guest code (measured
 		// 2026-10-02: a 1-second check ran in a lockdown container until this flag).
 		"--no-healthcheck",
+		// No docker init as process 1, said explicitly: a daemon whose own setting is init
+		// (daemon.json "init": true, dockerd --init) starts docker's init in front of every
+		// run that leaves it unsaid, outside the guest guard (finding guest-guard-39). Process
+		// 1 is the guard itself (launch, launchPID1), and the refusing point requires this
+		// word in every run (checkGuardedRun).
+		dockerNoInit,
 	)
 	// Pin an EXPLICIT seccomp policy when one is configured, so kernel attack surface
 	// is reduced by an audited profile rather than whatever the daemon defaults to
@@ -410,6 +444,9 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime, seccomp string) [
 	// starts without it.
 	files, _ := dockerProcessFiles()
 	args = append(args, "--mount", bindMountSpec(files.resolvConf, "/etc/resolv.conf"))
+	if dockerNativeHelperFile != "" {
+		args = append(args, "--mount", bindMountSpec(dockerNativeHelperFile, nativehelper.InContainer))
+	}
 	if workTmpfs {
 		workFlag := fmt.Sprintf("/work:rw,noexec,nosuid,size=%dm,mode=1777", d.workDiskMB())
 		args = append(args, "--tmpfs", workFlag, "--workdir", "/work")
@@ -515,43 +552,6 @@ func dockerArgs(host string, args ...string) ([]string, error) {
 	return append([]string{"--host", host}, args...), nil
 }
 
-// randID returns a short random hex string for a unique container name.
-func randID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
 // SupportsModules reports whether a module image is configured; RunModule
 // returns ErrUnsupported otherwise.
 func (d *DockerSandbox) SupportsModules() bool { return d.ModuleImage != "" }
-
-// cappedBuffer collects up to limit bytes and silently drops the rest, so a
-// runaway program cannot exhaust memory through its output. Truncation is
-// reported out-of-band via Truncated — the retained prefix is never annotated
-// with an in-band marker, so consumers see exactly the bytes the guest wrote.
-type cappedBuffer struct {
-	buf     bytes.Buffer
-	limit   int
-	dropped bool
-}
-
-func (c *cappedBuffer) Write(p []byte) (int, error) {
-	if remaining := c.limit - c.buf.Len(); remaining > 0 {
-		if len(p) > remaining {
-			c.buf.Write(p[:remaining])
-			c.dropped = true
-		} else {
-			c.buf.Write(p)
-		}
-	} else if len(p) > 0 {
-		c.dropped = true
-	}
-	// Always report the full length written so the pipe is not blocked.
-	return len(p), nil
-}
-
-func (c *cappedBuffer) String() string { return c.buf.String() }
-
-// Truncated reports whether the cap dropped any bytes.
-func (c *cappedBuffer) Truncated() bool { return c.dropped }

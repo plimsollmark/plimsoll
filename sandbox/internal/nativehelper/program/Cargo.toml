@@ -1,0 +1,47 @@
+[package]
+name = "plimsoll-helper"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+description = "plimsoll's own program inside a docker sandbox: the project runner (run-project) and its per-run self-check"
+license = "Apache-2.0"
+publish = false
+
+# No dependencies, on purpose (the design review's finding 8: a hostile-code TCB, and the
+# few system calls the standard library does not offer are declared by hand in src/sys.rs).
+# make rust-suite fails when `cargo tree` lists anything but this crate.
+[dependencies]
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+struct_excessive_bools = "allow"
+# Sizes and exit codes cross between usize, i64 and the kernel's c_int on purpose, each
+# bounded where it is converted.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+# The comments are prose that names files, settings and constants; backticks would not help them.
+doc_markdown = "allow"
+similar_names = "allow"
+
+# The pinned build (build.sh) is a release build. Every setting here bears on the bytes:
+# one codegen unit and link-time optimization so the order of work cannot change the
+# output, abort on panic so no unwinding tables or unwinder are linked, no debug
+# information and the symbols stripped.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+incremental = false
+# Integer overflow aborts (no report: the call reads protocol_error) instead of wrapping into
+# a wrong size in a signed report (finding rust-native-helper-32). Read on 2026-11-20, no sum
+# the guest influences can overflow; this keeps a future slip from wrapping silently.
+overflow-checks = true

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# A smolagents package: a CodeAgent's Python executor over one plimsoll session. The code is
+# plimsoll_client.smolagents (PlimsollExecutor and code_agent); this package depends on that
+# exact plimsoll-client release, and its version moves with plimsoll's releases
+# (TestClientVersionsAgree in clients/typescript checks both). smolagents supports Python 3.10
+# or later; the suite in clients/python/frameworks/smolagents runs against the version below.
+[project]
+name = "smolagents-plimsoll"
+version = "0.28.0"
+description = "A smolagents CodeAgent executor that runs agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "smolagents==1.26.0",
+    "plimsoll-client==0.28.0",
+]
+keywords = ["smolagents", "codeagent", "sandbox", "code execution", "agents", "gvisor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/smolagents-plimsoll"
+Source = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/smolagents-plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+smolagents_plimsoll = ["py.typed"]

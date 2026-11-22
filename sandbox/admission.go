@@ -233,6 +233,15 @@ func (a *admissionSandbox) Qualification() string {
 	return ""
 }
 
+// GuestGuard forwards what the wrapped provider states of plimsoll's guest guard, so hardened
+// mode reads it through the decorator; a provider that states none has not proved it.
+func (a *admissionSandbox) GuestGuard() (string, bool) {
+	if g, ok := a.Sandbox.(GuestGuarded); ok {
+		return g.GuestGuard()
+	}
+	return "", false
+}
+
 // SupportsModules forwards the wrapped provider's static capability, like
 // SupportsProjects.
 func (a *admissionSandbox) SupportsModules() bool {
@@ -276,6 +285,7 @@ var (
 	_ GrantCapable       = (*admissionSandbox)(nil)
 	_ Describer          = (*admissionSandbox)(nil)
 	_ Qualifier          = (*admissionSandbox)(nil)
+	_ GuestGuarded       = (*admissionSandbox)(nil)
 	_ Preflighter        = (*admissionSandbox)(nil)
 	_ SmokeTester        = (*admissionSandbox)(nil)
 	_ OrphanReconciler   = (*admissionSandbox)(nil)

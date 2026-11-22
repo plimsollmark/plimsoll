@@ -30,7 +30,8 @@ export type WireCellRun = { language: string; code: string; files?: { path: stri
 
 export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun; cell?: WireCellRun };
 
-export type WireSessionRunRequest = WireRunRequest & { sessionId: string };
+/** A session call: the run request with the session ID and the current ownership generation (a uint64, as a decimal string). */
+export type WireSessionRunRequest = WireRunRequest & { sessionId: string; generation: string };
 
 export type WireRecord = {
   version?: number;
@@ -49,6 +50,9 @@ export type WireRecord = {
   softwareIdentity?: string;
   softwareRuleId?: string;
   instance?: string;
+  isolationQualification?: string;
+  warm?: boolean;
+  daemonVersion?: string;
   recordSha256?: string;
 };
 
@@ -116,6 +120,8 @@ export type WireRunResponse = {
   environment?: string;
   instance?: string;
   warm?: boolean;
+  isolationQualification?: string;
+  daemonVersion?: string;
   javascript?: WireJavaScriptResult;
   project?: WireProjectResult;
   module?: unknown;
@@ -162,6 +168,10 @@ export type WireOpenSessionRequest = {
 };
 
 export type WireOpenSessionResponse = {
+  generation?: string | number;
+  /** The floor and software rule the open sent, as the daemon keeps them. */
+  minimumIsolation?: string;
+  softwareRule?: WireSoftwareRule;
   sessionId?: string;
   session?: string;
   sandbox?: string;
@@ -169,7 +179,17 @@ export type WireOpenSessionResponse = {
   expiresUnixMs?: string | number;
   idleTimeoutMs?: number;
   softwareIdentity?: string;
+  isolationQualification?: string;
 };
+
+export type WireCloseSessionRequest = { protocol: number; sessionId: string; generation: string };
+
+/** A session's public chain head, the uint64s as decimal strings (plimsoll.v1.SessionCheckpoint). */
+export type WireSessionCheckpoint = { generation?: string | number; calls?: string | number; lastRecordSha256?: string };
+
+export type WireAttachSessionRequest = { protocol: number; session: string; checkpoint: WireSessionCheckpoint; traceId?: string; lostRequestSha256?: string };
+
+export type WireAttachSessionResponse = { sessionInfo?: WireOpenSessionResponse; checkpoint?: WireSessionCheckpoint; lostRecord?: WireRecord };
 
 export type WireCloseSessionResponse = {
   session?: string;
@@ -194,9 +214,32 @@ export class WireShapeError extends Error {}
  * "length" allocates that many bytes and reads each index, so a 30-byte
  * {"length":2000000000} would cost 2 GB and a blocked event loop past the
  * response's 32 MiB cap (Claude Security scan, 2026-10-27).
+ *
+ * The text must be base64 throughout, standard or URL-safe, padded or not, as protobuf
+ * JSON and Connect error details may carry it, and as the Python client reads it:
+ * Buffer.from skips any character outside the alphabet, so "CAY!" read as "CAY", and a
+ * refusal detail with a stray character marked a call nothing ran in where the Go and
+ * Python clients believe nothing of the detail (finding hunt-quality-93).
+ *
+ * The padding is counted off the end, not stripped with a pattern: /=+$/ is tried from
+ * every "=" of a run that is not at the end, so an answer holding a million "=" and one
+ * letter took minutes on one synchronous call that no deadline can cut (finding
+ * hunt-security-35). The alphabet test left is one anchored character class: one pass.
  */
 export function wireBytes(v: unknown): Buffer {
   if (v === undefined || v === null) return Buffer.alloc(0);
   if (typeof v !== "string") throw new WireShapeError(`a bytes field holds a ${Array.isArray(v) ? "list" : typeof v}, not base64 text`);
-  return Buffer.from(v, "base64");
+  const core = v.slice(0, v.length - trailing(v, "="));
+  // Node's base64 decoder reads both alphabets, as Python's does with its URL-safe
+  // characters translated.
+  if (!/^[A-Za-z0-9+/_-]*$/.test(core) || core.length % 4 === 1) throw new WireShapeError("a bytes field is not base64 text");
+  return Buffer.from(core, "base64");
+}
+
+/** How many times ch (one UTF-16 unit) ends s, counted from the end in one pass. */
+export function trailing(s: string, ch: string): number {
+  const c = ch.charCodeAt(0);
+  let n = 0;
+  while (n < s.length && s.charCodeAt(s.length - 1 - n) === c) n++;
+  return n;
 }

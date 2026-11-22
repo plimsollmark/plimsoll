@@ -8,7 +8,8 @@ import { before, test } from "node:test";
 
 import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
 import { errorFromWire, sessionEndFromWire } from "../src/errors.ts";
-import { RECORD_VERSION, recordDigest, recordFromWire } from "../src/record.ts";
+import { recordDigest, recordFromWire, validText } from "../src/record.ts";
+import { RECORD_VERSION } from "../src/tables.gen.ts";
 
 // The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
 // a body would; without it the client refuses the answer as another request's.
@@ -320,6 +321,28 @@ function describing(extra: Record<string, unknown>): PlimsollClient {
   });
 }
 
+// Protocol 7 came with the provider name's rule (record.ValidText, hunt-security-39,
+// 2026-11-21): this client refuses a record whose provider holds a control or
+// bidirectional character, which a protocol 6 client accepted. A daemon of protocol 6 refuses
+// this client's run before anything runs, and the refusal is marked not dispatched.
+test("this client speaks protocol 7, and a protocol 6 daemon refuses it before anything runs", async () => {
+  assert.equal(PROTOCOL, 7, "this test pins protocol 7 to the provider name's rule");
+  assert.equal(validText("docker\u001b[2J"), false);
+  const stated: unknown[] = [];
+  const client = new PlimsollClient({
+    baseUrl: "http://127.0.0.1:1",
+    fetch: async (_input, init) => {
+      stated.push(JSON.parse(String(init?.body)).protocol);
+      const rid = new Headers(init?.headers).get("Plimsoll-Request-Id") ?? "";
+      const body = { code: "unimplemented", message: "this daemon serves protocol 6 and the request states 7; nothing ran",
+        details: [{ type: "plimsoll.v1.NotDispatched", value: "CAM" }] };
+      return new Response(JSON.stringify(body), { status: 501, headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": rid } });
+    },
+  });
+  await assert.rejects(client.runJavaScript("1"), (e: unknown) => e instanceof PlimsollError && e.code === "unimplemented" && e.notDispatched === "protocol");
+  assert.deepEqual(stated, [7]);
+});
+
 test("describe reads the isolation qualification whole, and an answer without it as empty", async () => {
   const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's.";
   assert.equal((await describing({ isolationQualification: sentence }).describe()).isolationQualification, sentence);
@@ -585,6 +608,26 @@ test("a session end this client has no name for is an end, never open", { skip }
   assert.equal(s.ended?.reason, "unknown", "the answer said the session ended");
 });
 
+// Every daemon opens a session at generation 1. An answer that states none is refused
+// as data loss, and the session it names is closed first, with generation 1: it exists
+// on the daemon either way, and nothing else holds its ID.
+test("an open answer without a generation is refused and the session closed", { skip }, async () => {
+  const closes: { generation?: string; ok: boolean; ended?: string }[] = [];
+  const c = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      if (!res.ok) return res;
+      const body = await res.json();
+      if (String(input).endsWith("/OpenSession")) delete body.generation;
+      if (String(input).endsWith("/CloseSession")) closes.push({ generation: JSON.parse(String(init?.body)).generation, ok: res.ok, ended: body.ended });
+      return rewritten(res, body);
+    },
+  });
+  await assert.rejects(c.openSession(), (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /generation/.test(e.message));
+  assert.deepEqual(closes, [{ generation: "1", ok: true, ended: "SESSION_END_CLOSED" }]);
+});
+
 test("a session call whose record skips a call is data loss", { skip }, async () => {
   const c = tampering(sessionsUrl!, (b) => {
     if (b.run?.record) b.run.record.sequence = "5";
@@ -677,6 +720,54 @@ test("a session closes once, however many holders close it", { skip }, async () 
   await assert.rejects(t.close(aborted.signal), { code: "canceled", notDispatched: "request" });
   assert.equal((await t.close()).calls, 0n);
   assert.equal(procedures.filter((p) => p === "CloseSession").length, 2);
+});
+
+// Finding hunt-quality-90: a close that got no answer is sent again, as the daemon's own
+// "close it again" asks, so the session is closed and its count collected; a close the
+// daemon answered with its count is never sent again, even when that count is not the
+// one this client saw (the same rule as the Go and Python clients).
+test("a close with no answer is sent again, an answered one never", { skip }, async () => {
+  let closes = 0;
+  let lose = true;
+  const lossy = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      if (String(input).endsWith("/CloseSession")) {
+        closes++;
+        if (lose) {
+          lose = false;
+          throw new TypeError("the connection dropped before the daemon read the close");
+        }
+      }
+      return fetch(input, init);
+    },
+  });
+  const s = await lossy.openSession();
+  await s.runJavaScript("1");
+  await assert.rejects(s.close(), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
+  const sum = await s.close();
+  assert.equal(sum.calls, 1n, "the close sent again collected the daemon's count");
+  assert.equal(closes, 2);
+  assert.equal(await s.close(), sum, "and a later close is that answer");
+  assert.equal(closes, 2);
+
+  let counted = 0;
+  const miscounting = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      if (!String(input).endsWith("/CloseSession") || !res.ok) return res;
+      counted++;
+      const body = await res.json();
+      body.calls = "7";
+      return rewritten(res, body);
+    },
+  });
+  const t = await miscounting.openSession();
+  const isDataLoss = (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /counts 7 calls/.test(e.message);
+  await assert.rejects(t.close(), isDataLoss);
+  await assert.rejects(t.close(), isDataLoss, "a second close is the first one's answer");
+  assert.equal(counted, 1, "the answered close was not sent again");
 });
 
 // An unanswered call's record must meet the session's floor, which every call carries,

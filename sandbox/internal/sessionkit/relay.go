@@ -3,18 +3,19 @@ package sessionkit
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	_ "embed"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // A relay (relay.js) runs beside an interpreter, so a cell costs a line on a pipe
@@ -51,7 +52,7 @@ type AttachFunc func(argv []string, env map[string]string) (Attached, error)
 
 // RelayArgv is the relay's command for an interpreter's language and work directory.
 func RelayArgv(lang, work string) []string {
-	return []string{"node", "-e", relayJS, interpRoot + lang, work}
+	return NodeArgv("-e", relayJS, interpRoot+lang, work)
 }
 
 type frame struct {
@@ -97,8 +98,8 @@ func (r *relay) gone() bool {
 	}
 }
 
-func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*relay, error) {
-	att, err := attach(RelayArgv(lang, work), nil)
+func startRelay(ctx context.Context, attach AttachFunc, argv []string) (*relay, error) {
+	att, err := attach(argv, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the relay could not start: %v", ErrLaunch, err)
 	}
@@ -308,11 +309,15 @@ func (in *Interpreters) Close() {
 // attachRelay starts lang's relay, keeps it only once it is confirmed to be the relay
 // plimsoll started, and records it.
 func (in *Interpreters) attachRelay(ctx context.Context, attach AttachFunc, lang, work string) (*relay, error) {
-	r, err := startRelay(ctx, attach, lang, work)
+	argv, err := in.pinned(RelayArgv(lang, work))
 	if err != nil {
 		return nil, err
 	}
-	if reportedCmd(r.id) != argvHex(RelayArgv(lang, work)) {
+	r, err := startRelay(ctx, attach, argv)
+	if err != nil {
+		return nil, err
+	}
+	if reportedCmd(r.id) != argvHex(argv) {
 		err = fmt.Errorf("%w: the relay reported a process that is not the %s relay", ErrLaunch, lang)
 	} else {
 		kind := "relay"
@@ -381,11 +386,10 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 	if _, ok := command[c.Language]; !ok {
 		return CellOutcome{}, fmt.Errorf("unknown interpreter language %q", c.Language)
 	}
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return CellOutcome{}, err
+	if len(c.Stated) > 0 && !slices.Contains(c.Stated, c.Language) {
+		return CellOutcome{}, fmt.Errorf("%w: the environment states %s, not %s", ErrNoInterpreter, strings.Join(c.Stated, ", "), c.Language)
 	}
-	nonce := hex.EncodeToString(raw)
+	nonce := providerkit.RandHex(16)
 	var outcome CellOutcome
 	// An interpreter started for a cell whose files failed was never reported;
 	// this cell reports it, or nothing would say the earlier state is gone.

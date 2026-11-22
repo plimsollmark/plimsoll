@@ -13,7 +13,8 @@ import (
 
 // The project contract of the providers that run each step through their platform's own
 // exec (E2B one-shot, E2B sessions, Docker Cloud), written once. The in-sandbox runner
-// (docker, OpenShell, agentsandbox) keeps the same contract in docker/runner.mjs, and
+// (docker, OpenShell, agentsandbox, WSL containers) keeps the same contract in the native
+// helper's run-project mode (sandbox/internal/nativehelper), and
 // projecttest holds every provider to it: the three exec paths once kept a loop each,
 // and they and the runner disagreed on artifacts after a timeout, an artifact over the
 // cap, links among the artifacts, the per-step output cap and a step that killed its own

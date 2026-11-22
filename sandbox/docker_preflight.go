@@ -3,7 +3,6 @@ package sandbox
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,11 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 func (d *DockerSandbox) preflightTime() time.Time {
@@ -193,6 +196,15 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	if err := checkGuestResolvConfFile(files.resolvConf); err != nil {
 		return err
 	}
+	// The guest guard every container command starts behind (docker_guestguard.go): written
+	// at the first Preflight, compared with the bytes inside plimsolld at each later one, as
+	// the resolv.conf is. A machine with no tested build, a folder on a filesystem mounted
+	// noexec, a file that cannot be written or was changed: the provider is not ready, and
+	// nothing starts unguarded (writeGuestGuard says which).
+	guard, err := writeGuestGuard(files.guard)
+	if err != nil {
+		return err
+	}
 	if err := d.validateWritableBudget(); err != nil {
 		return err
 	}
@@ -207,8 +219,8 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	}
 	if d.RequirePinnedImages {
 		for _, img := range d.configuredImages() {
-			if !isDigestPinned(img) {
-				return fmt.Errorf("image %q is not pinned to an immutable @sha256: digest (RequirePinnedImages is on)", img)
+			if _, pinned := providerkit.PinnedDigest(img); !pinned {
+				return fmt.Errorf("image %q is not pinned to an immutable digest, %s (RequirePinnedImages is on)", img, providerkit.PinForm)
 			}
 		}
 	}
@@ -228,7 +240,7 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 		// Unix socket, and force-remove must target the same host. Resolve the active
 		// context exactly once; later probes deliberately verify this pinned endpoint
 		// instead of following mutable DOCKER_CONTEXT/config state.
-		if host := strings.TrimSpace(os.Getenv("DOCKER_HOST")); dockerHostIsRemote(host) {
+		if host := settings.DockerHost.Get(os.Getenv); dockerHostIsRemote(host) {
 			return fmt.Errorf("DOCKER_HOST=%q points to a remote daemon; plimsoll requires a local daemon (unix socket) so its broker and teardown hold", host)
 		}
 		var err error
@@ -256,16 +268,24 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	verifiedIDs := make(map[string]string, len(images))
 	verifiedManifests := make(map[string]string, len(images))
 	verifiedEnvs, platformEnvs := make(map[string][]string, len(images)), make(map[string][]string, len(images))
-	platform := dockerSelectedPlatform(ctx, pinnedHost)
-	if err := ctx.Err(); err != nil {
+	daemonPlatform, err := dockerDaemonPlatform(ctx, pinnedHost)
+	if err != nil {
 		return err
 	}
+	platform := dockerSelectedPlatform(daemonPlatform)
+	imagePlatforms := make(map[string]string, len(images))
 	for _, img := range images {
-		id, env, err := verifyImageForRun(ctx, pinnedHost, img)
+		id, env, imagePlatform, err := verifyImageForRun(ctx, pinnedHost, img)
 		if err != nil {
 			return err
 		}
-		verifiedIDs[img], verifiedEnvs[img] = id, env
+		verifiedIDs[img], verifiedEnvs[img], imagePlatforms[img] = id, env, imagePlatform
+	}
+	// The guest guard is plimsolld's machine's build (writeGuestGuard); a container on another
+	// machine would get a guard it cannot run, or one run under emulation, whose filter is never
+	// proven to apply to the guest's requests (finding guest-guard-22).
+	if err := checkGuestGuardPlatform(runtime.GOARCH, daemonPlatform, settings.DockerDefaultPlatform.Get(os.Getenv), imagePlatforms); err != nil {
+		return err
 	}
 	if platform != "" {
 		containerdStore, err := dockerUsesContainerdStore(ctx, pinnedHost)
@@ -285,7 +305,7 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 				if containerdStore {
 					return fmt.Errorf("docker could not inspect the %s manifest of image %q on the containerd image store", platform, img)
 				}
-				if os.Getenv("DOCKER_DEFAULT_PLATFORM") != "" {
+				if settings.DockerDefaultPlatform.Get(os.Getenv) != "" {
 					return fmt.Errorf("cannot verify image %q for DOCKER_DEFAULT_PLATFORM=%q", img, platform)
 				}
 				platform = "" // classic image store: Docker's default selection, no software identity
@@ -315,29 +335,10 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	d.verifiedPlatform = platform
 	d.verifiedSeccomp = seccomp
 	d.verifiedSeccompSettings = [2]string{d.Seccomp, d.SeccompSDK}
+	d.verifiedGuard = guard
 	d.lastVerified = d.preflightTime()
 	d.stateMu.Unlock()
 	return nil
-}
-
-// isDigestPinned reports whether an image reference is pinned to an immutable
-// content digest (…@sha256:<hex>) rather than a mutable tag.
-func isDigestPinned(image string) bool {
-	const marker = "@sha256:"
-	i := strings.LastIndex(image, marker)
-	if i <= 0 {
-		return false
-	}
-	digest := image[i+len(marker):]
-	if len(digest) != 64 {
-		return false
-	}
-	for _, c := range digest {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 // hostPasswdPath and hostGroupPath are where checkGuestUIDUnused looks; variables so a
@@ -443,46 +444,119 @@ func verifyDockerDaemon(ctx context.Context, host, runtime string) (bool, error)
 // promises is closed. Returning the ID from the same inspect binds that check to
 // the exact image content, so a tag re-pointed after Preflight cannot swap in an
 // unverified config. Requires the image to be present (inspect does not pull).
-func verifyImageForRun(ctx context.Context, host, image string) (string, []string, error) {
+func verifyImageForRun(ctx context.Context, host, image string) (id string, env []string, platform string, err error) {
 	// One whole-object inspect: a compound template like `{{.Id}} {{json
 	// .Config.Volumes}}` fails on daemons that omit the empty Volumes key, and two
 	// separate inspects would let the tag move between reading the ID and the
 	// volume config.
 	args, err := dockerArgs(host, "image", "inspect", "--format", "{{json .}}", image)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	out, err := dockerOutput(ctx, args...)
 	if err != nil {
-		return "", nil, fmt.Errorf("docker image %q is not inspectable on the pinned daemon (build or pull it before serving): %w", image, err)
+		return "", nil, "", fmt.Errorf("docker image %q is not inspectable on the pinned daemon (build or pull it before serving): %w", image, err)
 	}
 	id, volumes, env, err := parseImageIDAndVolumes(out)
 	if err != nil {
-		return "", nil, fmt.Errorf("docker image %q: %w", image, err)
+		return "", nil, "", fmt.Errorf("docker image %q: %w", image, err)
 	}
 	if len(volumes) > 0 {
-		return "", nil, fmt.Errorf("docker image %q declares VOLUME %s; docker would auto-create unbounded writable host volumes for it, so this image is refused — rebuild it without VOLUME", image, strings.Join(volumes, ", "))
+		return "", nil, "", fmt.Errorf("docker image %q declares VOLUME %s; docker would auto-create unbounded writable host volumes for it, so this image is refused; rebuild it without VOLUME", image, strings.Join(volumes, ", "))
 	}
-	return id, env, nil
+	return id, env, parseImagePlatform(out), nil
+}
+
+// parseImagePlatform is the os/arch[/variant] an image inspect states, "" when it states none.
+func parseImagePlatform(out []byte) string {
+	var inspected struct {
+		OS      string `json:"Os"`
+		Arch    string `json:"Architecture"`
+		Variant string `json:"Variant"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &inspected) != nil || inspected.OS == "" || inspected.Arch == "" {
+		return ""
+	}
+	if inspected.Variant != "" {
+		return inspected.OS + "/" + inspected.Arch + "/" + inspected.Variant
+	}
+	return inspected.OS + "/" + inspected.Arch
+}
+
+// dockerDaemonPlatform is the docker daemon's own platform, os/arch, as docker version
+// states it. A daemon that does not say is an error: the guest guard's machine could not be
+// checked against it (checkGuestGuardPlatform).
+func dockerDaemonPlatform(ctx context.Context, host string) (string, error) {
+	args, err := dockerArgs(host, "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
+	if err != nil {
+		return "", err
+	}
+	out, err := dockerOutput(ctx, args...)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("docker did not state its platform (docker version), so the guest guard's machine cannot be checked against the one containers run on: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // dockerSelectedPlatform fixes the platform Docker will select at launch. A
 // caller may intentionally set DOCKER_DEFAULT_PLATFORM; otherwise the daemon's
-// native platform is used. The launch receives this exact value explicitly, so
-// a later environment change cannot select a different manifest.
-func dockerSelectedPlatform(ctx context.Context, host string) string {
-	if p := os.Getenv("DOCKER_DEFAULT_PLATFORM"); p != "" {
+// native platform (daemon, dockerDaemonPlatform) is used. The launch receives this
+// exact value explicitly, so a later environment change cannot select a different
+// manifest.
+func dockerSelectedPlatform(daemon string) string {
+	if p := settings.DockerDefaultPlatform.Get(os.Getenv); p != "" {
 		return p
 	}
-	args, err := dockerArgs(host, "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
-	if err != nil {
-		return ""
+	return daemon
+}
+
+// platformMachine is a platform's os/arch, normalized (normalizePlatform), without the
+// variant: the guard is built for the baseline of its machine (program/build.sh), so it runs on
+// every variant of it.
+func platformMachine(p string) string {
+	parts := strings.Split(normalizePlatform(p), "/")
+	if len(parts) < 2 {
+		return normalizePlatform(p)
 	}
-	out, err := dockerOutput(ctx, args...)
-	if err != nil {
-		return ""
+	return parts[0] + "/" + parts[1]
+}
+
+// checkGuestGuardPlatform refuses to serve when a container could run on another machine than
+// the guest guard's (finding guest-guard-22). The guard mounted into every container is the
+// build for plimsolld's own machine, goarch (writeGuestGuard), while a container runs on the
+// docker daemon's platform, or on DOCKER_DEFAULT_PLATFORM when it is set, in the image's own
+// platform on the classic image store: against a daemon of another machine the guard cannot
+// start, and under emulation its filter would be put on the emulator's requests, which nothing
+// has measured. So the daemon's platform (daemon), DOCKER_DEFAULT_PLATFORM (defaultPlatform,
+// "" when unset) and each configured image's (images, by reference) must all be linux on the
+// guard's machine, and an image that states no platform is refused too.
+func checkGuestGuardPlatform(goarch, daemon, defaultPlatform string, images map[string]string) error {
+	want := platformMachine("linux/" + goarch)
+	if daemon == "" {
+		return fmt.Errorf("docker stated no platform (docker version), so the guest guard's machine (%s) cannot be checked against the one containers run on", want)
 	}
-	return strings.TrimSpace(string(out))
+	if got := platformMachine(daemon); got != want {
+		return fmt.Errorf("the docker daemon runs containers on %s, but the guest guard plimsolld mounts into every container is its own machine's build, %s; run plimsolld on a %s host for this daemon", got, want, got)
+	}
+	if defaultPlatform != "" {
+		if got := platformMachine(defaultPlatform); got != want {
+			return fmt.Errorf("DOCKER_DEFAULT_PLATFORM=%q would run every container on %s, but the guest guard is built for %s, plimsolld's machine; unset it or set it to %s", defaultPlatform, got, want, want)
+		}
+	}
+	refs := slices.Sorted(maps.Keys(images))
+	for _, ref := range refs {
+		p := images[ref]
+		if p == "" {
+			return fmt.Errorf("docker image %q states no platform, so the guest guard's machine (%s) cannot be checked against it", ref, want)
+		}
+		if got := platformMachine(p); got != want {
+			return fmt.Errorf("docker image %q is built for %s, but the guest guard is built for %s, plimsolld's machine; a run of it would land on another machine than the guard's (rebuild or pull the image for %s)", ref, got, want, want)
+		}
+	}
+	return nil
 }
 
 // inspectPlatformImage inspects, once, the config of the very platform a run will
@@ -612,11 +686,10 @@ func parseDockerSelectedManifest(out []byte, platform string) string {
 	}
 	manifestType := inspected.Descriptor.MediaType == "application/vnd.oci.image.manifest.v1+json" ||
 		inspected.Descriptor.MediaType == "application/vnd.docker.distribution.manifest.v2+json"
+	// The digest by the one rule every provider uses (providerkit.ValidDigest: lower-case
+	// hexadecimal only), never a rule of its own here (finding release-43).
 	if normalizePlatform(actual) != normalizePlatform(platform) || inspected.ID != inspected.Descriptor.Digest || !manifestType ||
-		!strings.HasPrefix(inspected.ID, "sha256:") || len(inspected.ID) != len("sha256:")+64 {
-		return ""
-	}
-	if _, err := hex.DecodeString(strings.TrimPrefix(inspected.ID, "sha256:")); err != nil {
+		!providerkit.ValidDigest(inspected.ID) {
 		return ""
 	}
 	return "oci-manifest:" + normalizePlatform(platform) + "@" + inspected.ID
@@ -639,7 +712,7 @@ func parseImageIDAndVolumes(out []byte) (string, []string, []string, error) {
 	if err := json.Unmarshal(bytes.TrimSpace(out), &inspect); err != nil {
 		return "", nil, nil, fmt.Errorf("returned unparseable inspect output: %w", err)
 	}
-	if !strings.HasPrefix(inspect.ID, "sha256:") {
+	if !providerkit.ValidDigest(inspect.ID) {
 		return "", nil, nil, fmt.Errorf("returned no content-addressed image ID (got %q)", inspect.ID)
 	}
 	if err := checkEnvEntries(inspect.Config.Env); err != nil {
@@ -674,6 +747,12 @@ type dockerExecutionState struct {
 	env map[string][]string
 	// seccomp is the pinned profiles a run selects from (dockerSeccomp.seccompFor).
 	seccomp dockerSeccomp
+	// guard is the guest guard file Preflight wrote, which every container mounts and
+	// starts its commands behind (launch).
+	guard string
+	// guardPolicy names that file by the SHA-256 of its bytes (guestGuardPolicy), as every
+	// run's policy states it (withGuard).
+	guardPolicy string
 }
 
 // executionState is the verified state runs launch under (verifiedState), refused
@@ -716,6 +795,9 @@ func (d *DockerSandbox) verifiedState() (dockerExecutionState, error) {
 	if d.ModuleImage != "" {
 		moduleImageID = d.verifiedImageIDs[d.ModuleImage]
 	}
+	if guestGuardPolicy(d.verifiedGuard) == "" { // no guard file, or not one writeGuestGuard named
+		return dockerExecutionState{}, errors.New("docker provider has no verified guest guard; re-run Preflight")
+	}
 	if imageID == "" || projectImageID == "" || (d.ModuleImage != "" && moduleImageID == "") {
 		// The configured references changed since Preflight verified them; running
 		// the new tags would launch content whose volume config was never checked.
@@ -737,6 +819,8 @@ func (d *DockerSandbox) verifiedState() (dockerExecutionState, error) {
 		projectManifest: d.verifiedManifestIDs[d.ProjectImage],
 		moduleManifest:  d.verifiedManifestIDs[d.ModuleImage],
 		seccomp:         d.verifiedSeccomp,
+		guard:           d.verifiedGuard,
+		guardPolicy:     guestGuardPolicy(d.verifiedGuard),
 		env: map[string][]string{
 			imageID:        d.verifiedImageEnvs[d.Image],
 			projectImageID: d.verifiedImageEnvs[d.ProjectImage],

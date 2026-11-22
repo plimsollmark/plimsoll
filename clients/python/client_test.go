@@ -7,58 +7,46 @@
 package python
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
+	"io/fs"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
-	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
-	"github.com/plimsollmark/plimsoll/internal/answertest"
-	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/internal/clientcases"
+	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
-	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
 
-// TestPython serves six daemons and runs the Python suite against them:
-//
-//   - wasm: the real wasm provider, for single runs and its refusals;
-//   - auth: the same behind a bearer token;
-//   - tamper: the real wasm provider with each snippet's output changed after its
-//     record was computed, as anything between the daemon and the client could;
-//   - scripted: a provider that runs nothing and answers projects, modules and
-//     snippets with fixed, awkward results, behind the real handler, which states
-//     their records;
-//   - liar: a handler that breaks the protocol in the ways the client must catch;
-//   - sessions: the in-memory session provider, with POST /test/end-last ending the
-//     most recently opened session as a lifetime or a disk budget would;
-//   - tls: the real wasm provider over TLS, its certificate (for 127.0.0.1, ::1 and
-//     example.com) handed to the suite as the only trusted authority.
+// TestPython serves every daemon of internal/clientsuite's table (honest and hostile:
+// its Daemons list says what each one tests) and runs the Python suite against them,
+// with what only this suite needs beside them: the Go side's protocol number and record
+// version, a fixture of digests the Go record package computed, and a plimsoll-attest
+// binary.
 //
 // The suite fails rather than skips when it is run here, so a green test means
 // every case ran. It needs python3 >= 3.10 and nothing else.
+//
+// A working copy may keep test modules of its own beside the published ones, which need
+// none of these daemons and run under a runner of its own: PLIMSOLL_PY_ELSEWHERE names
+// them (unittest module names, space separated), and this test then runs every other
+// module and logs the ones it left out (unittestArgs). Unset, as in the published tree,
+// it runs every module discover finds.
 func TestPython(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -68,11 +56,6 @@ func TestPython(t *testing.T) {
 		clientSkipOrFail(t, "the client needs Python 3.10 or later: %v %s", err, out)
 	}
 
-	sessions := &sandboxtest.Sessions{}
-	sessionSvc := quiet(rpc.NewSandboxService(sessions))
-	sessionSvc.Sessions = rpc.SessionConfig{MaxSessions: 16, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	ends := map[string]sandbox.SessionEnd{"expired": sandbox.SessionExpired, "disk_exceeded": sandbox.SessionDiskExceeded}
-
 	fixture := filepath.Join(t.TempDir(), "digests.json")
 	writeFixture(t, fixture)
 	// A Python test verifies a signed run bundle with plimsoll-attest;
@@ -81,38 +64,12 @@ func TestPython(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", attest, "github.com/plimsollmark/plimsoll/cmd/plimsoll-attest").CombinedOutput(); err != nil {
 		t.Fatalf("building plimsoll-attest: %v\n%s", err, out)
 	}
-	tlsURL, tlsCA := serveTLS(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())))
-
-	env := append(os.Environ(),
-		"PLIMSOLL_WASM_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), nil, nil),
-		"PLIMSOLL_AUTH_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), verifier{token: "py-token"}, nil),
-		"PLIMSOLL_TAMPER_URL="+serve(t, tampering{quiet(rpc.NewSandboxService(sandboxtest.Wasm()))}, nil, nil),
-		"PLIMSOLL_SCRIPTED_URL="+serve(t, quiet(rpc.NewSandboxService(scripted{})), nil, nil),
-		"PLIMSOLL_LIAR_URL="+serve(t, liar{}, nil, nil),
-		"PLIMSOLL_SESSIONS_URL="+serve(t, sessionSvc, nil, func(mux *http.ServeMux) {
-			mux.HandleFunc("POST /test/end-last", func(w http.ResponseWriter, r *http.Request) {
-				opened := sessions.Opened()
-				reason, ok := ends[r.URL.Query().Get("reason")]
-				if len(opened) == 0 || !ok {
-					http.Error(w, "no session, or an unknown reason", http.StatusBadRequest)
-					return
-				}
-				opened[len(opened)-1].End(reason)
-			})
-		}),
-		"PLIMSOLL_BREAKING_URL="+serve(t, breakingSvc(), nil, nil),
-		"PLIMSOLL_LOSSY_URL="+lossyProxy(t, serve(t, plainSessionSvc(), nil, nil)),
-		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL(t),
-		"PLIMSOLL_POOLED_URL="+serve(t, pooledSessionSvc(), nil, nil),
-		"PLIMSOLL_ONE_CALL_URL="+countedCells(t, 2, 1<<20),
-		"PLIMSOLL_NO_POOL_URL="+countedCells(t, 0, 5),
-		"PLIMSOLL_CLAIM_MISS_URL="+countedCells(t, 2, 0),
-	)
-	env = append(env, bindingDaemons(t)...)
+	// The suite writes its verdict on each shared case here, and the judge reads them after
+	// it (internal/clientcases): a case the suite skipped, or answered otherwise than its
+	// file states, fails this test even when every Python assertion passed.
+	verdicts := filepath.Join(t.TempDir(), "verdicts.jsonl")
+	env := append(os.Environ(), clientsuite.Env(t)...)
 	env = append(env,
-		"PLIMSOLL_TLS_URL="+tlsURL,
-		"PLIMSOLL_TLS_CA="+tlsCA,
-		"PLIMSOLL_SCRIPTED_SOFTWARE="+scriptedSoftware,
 		"PLIMSOLL_GO_PROTOCOL="+strconv.FormatUint(uint64(protocol.Number), 10),
 		"PLIMSOLL_GO_RECORD_VERSION="+strconv.Itoa(record.Version),
 		"PLIMSOLL_DIGEST_FIXTURE="+fixture,
@@ -120,11 +77,25 @@ func TestPython(t *testing.T) {
 		"PLIMSOLL_INTEGRATION_REQUIRED=1",
 		"PYTHONPATH=src",
 		"PYTHONDONTWRITEBYTECODE=1",
+		// Every temporary directory the suite makes goes under one that this test removes: the suite's tests
+		// call tempfile.mkdtemp in many places and do not all clean up, and one run left thousands of
+		// directories in the system's temporary directory.
+		"TMPDIR="+t.TempDir(),
+		"PLIMSOLL_CASE_VERDICTS="+verdicts,
 	)
-	cmd := exec.Command(python, "-B", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v")
+	leaveOut := strings.Fields(os.Getenv("PLIMSOLL_PY_ELSEWHERE"))
+	args, err := unittestArgs("tests", leaveOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leaveOut) > 0 {
+		t.Logf("left out, for a runner of their own (PLIMSOLL_PY_ELSEWHERE): %s", strings.Join(leaveOut, " "))
+	}
+	cmd := exec.Command(python, append([]string{"-B", "-m", "unittest"}, args...)...)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	t.Logf("%s", out)
+	judgeVerdicts(t, "python", verdicts)
 	if err != nil {
 		t.Fatalf("python3 -m unittest: %v", err)
 	}
@@ -135,36 +106,102 @@ func TestPython(t *testing.T) {
 	}
 }
 
-// bindingDaemons are the daemons the answer-binding tests use (failure-injection
-// review, findings 1 and 3): two replaying proxies in front of one daemon, whose run
-// count PLIMSOLL_REPLAY_RUNS_URL reports so a test can show the daemon ran the call it
-// was given another answer for; a daemon that does not echo the request ID; one whose
-// read cap refuses a body before the handler; and one serving no procedure at all.
-func bindingDaemons(t *testing.T) []string {
-	svc := quiet(rpc.NewSandboxService(sandboxtest.Wasm()))
-	upstream := serve(t, svc, nil, func(mux *http.ServeMux) {
-		mux.HandleFunc("GET /runs", func(w http.ResponseWriter, _ *http.Request) {
-			total, _ := svc.RunCounts()
-			_, _ = fmt.Fprint(w, total)
-		})
-	})
-	unbound := http.NewServeMux()
-	unbound.Handle(plimsollv1connect.NewSandboxServiceHandler(quiet(rpc.NewSandboxService(sandboxtest.Wasm()))))
-	unboundSrv := httptest.NewServer(unbound)
-	t.Cleanup(unboundSrv.Close)
-	early := http.NewServeMux()
-	early.Handle(rpc.NewHandler(quiet(rpc.NewSandboxService(sandboxtest.Wasm())), connect.WithReadMaxBytes(256)))
-	earlySrv := httptest.NewServer(early)
-	t.Cleanup(earlySrv.Close)
-	none := httptest.NewServer(rpc.BindAnswers(http.NotFoundHandler()))
-	t.Cleanup(none.Close)
-	return []string{
-		"PLIMSOLL_REPLAY_REFUSAL_URL=" + answertest.Replay(t, upstream),
-		"PLIMSOLL_REPLAY_SUCCESS_URL=" + answertest.Replay(t, upstream),
-		"PLIMSOLL_REPLAY_RUNS_URL=" + upstream + "/runs",
-		"PLIMSOLL_UNBOUND_URL=" + unboundSrv.URL,
-		"PLIMSOLL_EARLY_REFUSAL_URL=" + earlySrv.URL,
-		"PLIMSOLL_NO_PROCEDURE_URL=" + none.URL,
+// judgeVerdicts judges the verdict file a client's suite wrote against every shared case;
+// a file the suite never wrote is every case missing.
+func judgeVerdicts(t *testing.T, client, path string) {
+	t.Helper()
+	a, err := clientcases.Load("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := clientcases.ReadVerdicts(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	clientcases.Judge(t, a, client, vs)
+}
+
+// unittestArgs returns python -m unittest's arguments for the suite in dir, a package in
+// the working directory: discover's, or, when leaveOut names modules a runner of their own
+// runs, every other test module of dir by name (dir.<module>), in discover's order.
+// Discover finds the files directly in dir named test*.py with a valid module name, and the
+// test modules of any subpackage, which a list of names would miss, so a subpackage is
+// refused; so is a name in leaveOut that is not one of dir's test modules (a stale list),
+// and a leaveOut that leaves nothing to run.
+func unittestArgs(dir string, leaveOut []string) ([]string, error) {
+	if len(leaveOut) == 0 {
+		return []string{"discover", "-s", dir, "-t", ".", "-v"}, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	modules := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), "__init__.py")); err == nil {
+				return nil, fmt.Errorf("%s/%s is a package, whose tests discover finds and a list of modules does not: PLIMSOLL_PY_ELSEWHERE cannot be used beside it", dir, e.Name())
+			}
+			continue
+		}
+		if testModule.MatchString(e.Name()) {
+			modules[dir+"."+strings.TrimSuffix(e.Name(), ".py")] = true
+		}
+	}
+	for _, m := range leaveOut {
+		if !modules[m] {
+			return nil, fmt.Errorf("PLIMSOLL_PY_ELSEWHERE names %s, which is not a test module of %s", m, dir)
+		}
+		delete(modules, m)
+	}
+	if len(modules) == 0 {
+		return nil, fmt.Errorf("PLIMSOLL_PY_ELSEWHERE leaves out every test module of %s", dir)
+	}
+	args := []string{"-v"}
+	for m := range modules {
+		args = append(args, m)
+	}
+	slices.Sort(args[1:])
+	return args, nil
+}
+
+// testModule is discover's default pattern, test*.py, for a file whose name is a module's.
+var testModule = regexp.MustCompile(`^test\w*\.py$`)
+
+// TestUnittestArgs: with nothing left out the suite is discovered; with modules left out,
+// every other test module runs by name, and a name that is no module, a list leaving
+// nothing, or a subpackage discover would search is refused.
+func TestUnittestArgs(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const dir = "tests"
+	for _, f := range []string{"__init__.py", "_env.py", "test_b.py", "test_a.py", "test_c.py", "mutate_x.py", "test-y.py", "data/x.json", "testdata/make.py"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := unittestArgs(dir, nil); !slices.Equal(got, []string{"discover", "-s", dir, "-t", ".", "-v"}) {
+		t.Errorf("nothing left out: %q", got)
+	}
+	if got, err := unittestArgs(dir, []string{dir + ".test_b"}); err != nil || !slices.Equal(got, []string{"-v", dir + ".test_a", dir + ".test_c"}) {
+		t.Errorf("test_b left out: %q, %v", got, err)
+	}
+	if _, err := unittestArgs(dir, []string{dir + ".test_gone"}); err == nil {
+		t.Error("a name that is no module is accepted")
+	}
+	if _, err := unittestArgs(dir, []string{dir + ".mutate_x"}); err == nil {
+		t.Error("a module that is not a test module is accepted")
+	}
+	if _, err := unittestArgs(dir, []string{dir + ".test_a", dir + ".test_b", dir + ".test_c"}); err == nil {
+		t.Error("leaving out every module is accepted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "testdata", "__init__.py"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unittestArgs(dir, []string{dir + ".test_b"}); err == nil {
+		t.Error("a subpackage, whose tests a list of modules would miss, is accepted")
 	}
 }
 
@@ -177,224 +214,6 @@ func clientSkipOrFail(t *testing.T, format string, args ...any) {
 }
 
 var pythonSkip = regexp.MustCompile(`(?m)\.\.\. skipped|skipped=[0-9]+`)
-
-// quiet is svc without its audit log, which would only fill the test output.
-func quiet(svc *rpc.SandboxService) *rpc.SandboxService {
-	svc.Logger = slog.New(slog.DiscardHandler)
-	return svc
-}
-
-func serve(t *testing.T, h plimsollv1connect.SandboxServiceHandler, v rpc.TokenVerifier, extra func(*http.ServeMux)) string {
-	t.Helper()
-	mux := http.NewServeMux()
-	path, handler := rpc.NewHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(v)))
-	mux.Handle(path, handler)
-	if extra != nil {
-		extra(mux)
-	}
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-// serveTLS serves h over TLS and returns its URL and a PEM file of its certificate,
-// which is self-signed and so the authority a client must trust to reach it.
-func serveTLS(t *testing.T, h plimsollv1connect.SandboxServiceHandler) (url, caFile string) {
-	t.Helper()
-	mux := http.NewServeMux()
-	path, handler := rpc.NewHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
-	mux.Handle(path, handler)
-	srv := httptest.NewTLSServer(mux)
-	t.Cleanup(srv.Close)
-	caFile = filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return srv.URL, caFile
-}
-
-// verifier accepts exactly one token, with the code:run scope.
-type verifier struct{ token string }
-
-func (v verifier) VerifyToken(_ context.Context, token string) (rpc.Principal, bool, error) {
-	if token != v.token {
-		return rpc.Principal{}, false, nil
-	}
-	return rpc.Principal{UserID: "python", Scopes: []string{rpc.ScopeCodeRun}}, true, nil
-}
-
-// tampering is the real handler with every snippet's output changed after the
-// daemon stated its record.
-type tampering struct{ *rpc.SandboxService }
-
-func (s tampering) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
-	resp, err := s.SandboxService.Run(ctx, req)
-	if err == nil && resp.Msg.GetJavascript() != nil {
-		resp.Msg.GetJavascript().Stdout = []byte("43\n")
-	}
-	return resp, err
-}
-
-const scriptedSoftware = "oci-manifest:linux/amd64@sha256:5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
-
-// scripted is a provider that runs nothing. It states a software identity, so a
-// caller's software rule is admitted or refused by the real handler, and it answers
-// with the values a JSON client is most likely to get wrong: bytes that are not
-// UTF-8, negative zero, the largest and smallest doubles, an integer-valued double
-// beyond 2^53, and NaN.
-type scripted struct{}
-
-var _ sandbox.Sandbox = scripted{}
-
-func (scripted) Name() string                           { return "scripted" }
-func (scripted) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
-func (scripted) SupportsProjects() bool                 { return true }
-func (scripted) SupportsModules() bool                  { return true }
-
-func (scripted) Environments() sandbox.Environments {
-	kind := sandbox.PayloadEnvironment{Identity: "scripted-image:sha256:0001", SoftwareIdentity: scriptedSoftware, MaxTimeout: time.Minute}
-	project := kind
-	project.Languages = []sandbox.Language{sandbox.LanguagePython, sandbox.LanguageJavaScript}
-	return sandbox.Environments{JavaScript: kind, Project: project, Module: kind, Policy: "scripted-policy:sha256:00"}
-}
-
-func (scripted) RunJavaScript(_ context.Context, req sandbox.Request) (sandbox.Result, error) {
-	return sandbox.Result{
-		Stdout: "\xff\xfe" + req.Code, Stderr: "warn\n", ExitCode: 3, StdoutTruncated: true,
-		Duration: 5 * time.Millisecond, Sandbox: "scripted", Isolation: sandbox.IsolationContainer,
-		SoftwareIdentity: scriptedSoftware, EnvironmentIdentity: "scripted-image:sha256:0001",
-	}, nil
-}
-
-func (scripted) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
-	out := sandbox.ProjectResult{
-		Sandbox: "scripted", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
-		SoftwareIdentity: scriptedSoftware, EnvironmentIdentity: "scripted-image:sha256:0001",
-	}
-	files := map[string]string{}
-	for _, f := range req.Files {
-		files[f.Path] = f.Content
-	}
-	for i, step := range req.Steps {
-		out.Steps = append(out.Steps, sandbox.StepResult{Command: step, Stdout: strconv.Itoa(i) + "\n", Stderr: "\x00\xff", ExitCode: i, Duration: time.Millisecond})
-	}
-	for _, a := range req.Artifacts {
-		if content, ok := files[a]; ok {
-			out.Artifacts = append(out.Artifacts, sandbox.Artifact{Path: a, Content: append([]byte(content), 0x00, 0xff)})
-		}
-	}
-	return out, nil
-}
-
-// canonicalNaN is the quiet NaN Python's float("nan") has. JSON writes every NaN as
-// "NaN", so only this one survives the trip with its bits; see the NaN cases.
-var canonicalNaN = math.Float64frombits(0x7ff8000000000000)
-
-func (scripted) RunModule(_ context.Context, req sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
-	out := sandbox.ModuleResult{
-		Width: 3, Sandbox: "scripted", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
-		SoftwareIdentity: scriptedSoftware, EnvironmentIdentity: "scripted-image:sha256:0001",
-		Stdout: "rows=" + strconv.Itoa(len(req.Rows)) + "\n",
-	}
-	for i, row := range req.Rows {
-		outputs := []float64{row[0], math.Copysign(0, -1), math.MaxFloat64, math.SmallestNonzeroFloat64, 1e21, 123456789012345678901}
-		switch req.Model {
-		case "nan":
-			outputs[1] = canonicalNaN
-		case "nan-payload":
-			outputs[1] = math.NaN() // Go's NaN carries a payload bit JSON cannot state
-		case "nan-negative":
-			outputs[1] = math.Float64frombits(0xfff8000000000000) // x86's default NaN, from 0/0
-		}
-		status := int32(2)
-		if i == 1 {
-			status, outputs = -3, nil
-		}
-		out.Runs = append(out.Runs, sandbox.ModuleRun{Status: status, Outputs: outputs})
-	}
-	return out, nil
-}
-
-// liar answers in the ways the client must refuse: weaker evidence than the floor,
-// no record, a result of another kind, another protocol, an unmarked failure, and a
-// session whose fingerprint or tier is not what was asked for.
-type liar struct {
-	plimsollv1connect.UnimplementedSandboxServiceHandler
-}
-
-func (liar) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
-	return connect.NewResponse(&plimsollv1.DescribeResponse{Sandbox: "liar", Isolation: "vm", Protocol: protocol.Number + 1}), nil
-}
-
-func stamped(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) *connect.Response[plimsollv1.RunResponse] {
-	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}, resp)
-	return connect.NewResponse(resp)
-}
-
-func notDispatched(code connect.Code, reason plimsollv1.NotDispatchedReason, msg string) error {
-	err := connect.NewError(code, errors.New(msg))
-	if d, derr := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: reason}); derr == nil {
-		err.AddDetail(d)
-	}
-	return err
-}
-
-func (liar) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
-	if req.Msg.GetProtocol() != protocol.Number {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("the client stated another protocol"))
-	}
-	executed := &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("already executed")}}
-	switch req.Msg.GetJavascript().GetCode() {
-	case "weak-evidence":
-		return stamped(req.Msg, &plimsollv1.RunResponse{Sandbox: "liar", Isolation: "container", Result: executed}), nil
-	case "no-record":
-		return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "liar", Isolation: "vm", Result: executed}), nil
-	case "wrong-kind":
-		return stamped(req.Msg, &plimsollv1.RunResponse{Sandbox: "liar", Isolation: "vm",
-			Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{}}}), nil
-	case "other-protocol":
-		return nil, notDispatched(connect.CodeUnimplemented, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL, protocol.Mismatch(protocol.Number+1, protocol.Number))
-	default:
-		return nil, connect.NewError(connect.CodeInternal, errors.New("failed after dispatch"))
-	}
-}
-
-func (liar) OpenSession(_ context.Context, req *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
-	const id = "00112233445566778899aabbccddeeff"
-	fingerprint := record.SessionFingerprint(id)
-	if req.Msg.GetTraceId() == "bad-fingerprint" {
-		fingerprint = record.SessionFingerprint("another session")
-	}
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: id, Session: fingerprint, Sandbox: "liar", Isolation: "container"}), nil
-}
-
-// SessionRun answers every call with the record of a call that may have run, stating
-// evidence the session did not state at open: "weaker" names the tier process,
-// anything else names another provider.
-func (liar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
-	provider, isolation := "liar", "container"
-	if req.Msg.GetJavascript().GetCode() == "weaker" {
-		isolation = "process"
-	} else {
-		provider = "other"
-	}
-	rec := record.StampUnanswered(sandbox.RunRecord{
-		RequestSHA256: record.SessionRunRequestDigest(req.Msg), Provider: provider, Isolation: isolation,
-		Started: time.UnixMilli(1), Ended: time.UnixMilli(2),
-		Session: record.SessionFingerprint("00112233445566778899aabbccddeeff"), Sequence: 1,
-	}, "unknown")
-	err := connect.NewError(connect.CodeUnknown, errors.New("the stream broke after the code ran"))
-	if d, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
-		err.AddDetail(d)
-	}
-	return nil, err
-}
-
-func (liar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
-	return connect.NewResponse(&plimsollv1.CloseSessionResponse{
-		Session: record.SessionFingerprint("00112233445566778899aabbccddeeff"), Ended: plimsollv1.SessionEnd_SESSION_END_CLOSED,
-	}), nil
-}
 
 // --- the digest fixture -----------------------------------------------------------
 
@@ -469,7 +288,7 @@ func writeFixture(t *testing.T, path string) {
 		{"module", &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Module{Module: &plimsollv1.ModuleResult{
 			Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED, Width: 4, Stdout: []byte("rows=2\n"), Stderr: []byte{0x80},
 			Runs: []*plimsollv1.ModuleRowResult{
-				{Status: 1, Outputs: []float64{math.Copysign(0, -1), math.Inf(1), math.Inf(-1), canonicalNaN}},
+				{Status: 1, Outputs: []float64{math.Copysign(0, -1), math.Inf(1), math.Inf(-1), clientsuite.CanonicalNaN}},
 				{Status: -3},
 				{Status: 1, Outputs: []float64{math.MaxFloat64, math.SmallestNonzeroFloat64, 1e21, 123456789012345678901}},
 			},
@@ -507,148 +326,15 @@ func writeFixture(t *testing.T, path string) {
 
 // The package ships its own copy of the license, because a published package carries
 // nothing from outside its directory; it must stay the repository's license.
-func TestLicenseMatchesRepository(t *testing.T) {
-	own, err := os.ReadFile("LICENSE")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(own) != string(root) {
-		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
-	}
+func TestLicenseMatchesRepository(t *testing.T) { clientsuite.LicenseMatchesRepository(t) }
+
+// pythonDeclined names the daemons of internal/clientsuite's table this suite does not
+// use, and why; TestPythonUsesOrDeclinesEveryDaemon fails a daemon the suite neither
+// reads nor names here.
+var pythonDeclined = map[string]string{
+	"PLIMSOLL_ECHO_URL": "the client's own suite runs no executeCode tool; the framework suites, which run code tools, use tool-echo",
 }
 
-// countingRuns counts the Run requests that reach the daemon, and those that asked for
-// a pool member (prefer_warm).
-type countingRuns struct {
-	*rpc.SandboxService
-	runs, preferWarm atomic.Int32
-}
-
-func (c *countingRuns) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
-	c.runs.Add(1)
-	if req.Msg.GetPreferWarm() {
-		c.preferWarm.Add(1)
-	}
-	return c.SandboxService.Run(ctx, req)
-}
-
-// countedCells serves a daemon that states a pool of pool, whose provider hands warm
-// warm-only opens a pool member and runs fresh projects (sandboxtest.Pooled), and that
-// answers POST /test/counts with the Runs that reached it, those that asked for a
-// member, the members claimed and the fresh runs made.
-func countedCells(t *testing.T, pool, warm int) string {
-	t.Helper()
-	p := sandboxtest.NewPooled(warm)
-	svc := quiet(rpc.NewSandboxService(p))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: pool, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	c := &countingRuns{SandboxService: svc}
-	return serve(t, c, nil, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /test/counts", func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]int{"runs": int(c.runs.Load()), "preferWarm": int(c.preferWarm.Load()),
-				"claimed": len(p.Opened()), "fresh": len(p.FreshRuns())})
-		})
-	})
-}
-
-// pooledSessionSvc states a pool of 2 and has one member waiting: one warm-only open
-// is handed a session, the next is refused.
-func pooledSessionSvc() *rpc.SandboxService {
-	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{Warm: 1}))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	return svc
-}
-
-func plainSessionSvc() *rpc.SandboxService {
-	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{}))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	return svc
-}
-
-// quickIdleURL serves a daemon whose idle timeout is the shortest it takes, 1 s, so it
-// closes a session no request named by then as unclaimed. POST /test/wait-ended answers
-// once every session it opened has ended (200), or after 10 s (504).
-func quickIdleURL(t *testing.T) string {
-	p := &sandboxtest.Sessions{}
-	svc := quiet(rpc.NewSandboxService(p))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Second}
-	return serve(t, svc, nil, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /test/wait-ended", func(w http.ResponseWriter, r *http.Request) {
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			if p.WaitEnded(ctx) != nil {
-				http.Error(w, "a session is still open", http.StatusGatewayTimeout)
-			}
-		})
-	})
-}
-
-func breakingSvc() *rpc.SandboxService {
-	svc := quiet(rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}}))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	return svc
-}
-
-// breakingSessions opens fake sessions whose second snippet call runs and then
-// returns an unmarked error, as an exec stream that broke after the code ran does:
-// the daemon sends that call's record with the error.
-type breakingSessions struct{ *sandboxtest.Sessions }
-
-func (p *breakingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
-	s, err := p.Sessions.OpenSession(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &breakingSession{Session: s}, nil
-}
-
-type breakingSession struct {
-	sandbox.Session
-	n int
-}
-
-func (s *breakingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
-	res, err := s.Session.RunJavaScript(ctx, req)
-	if s.n++; s.n == 2 {
-		return res, errors.New("the exec stream broke after the code ran")
-	}
-	return res, err
-}
-
-// lossyProxy forwards to target and drops the answer to the second SessionRun after
-// the daemon handled it: the call ran, and its answer never arrives.
-func lossyProxy(t *testing.T, target string) string {
-	var runs atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		out, err := http.NewRequestWithContext(r.Context(), r.Method, target+r.URL.Path, bytes.NewReader(body))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		out.Header = r.Header.Clone()
-		resp, err := http.DefaultClient.Do(out)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		answer, _ := io.ReadAll(resp.Body)
-		if strings.HasSuffix(r.URL.Path, "/SessionRun") && runs.Add(1) == 2 {
-			if conn, _, herr := w.(http.Hijacker).Hijack(); herr == nil {
-				_ = conn.Close()
-			}
-			return
-		}
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = w.Write(answer)
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
+func TestPythonUsesOrDeclinesEveryDaemon(t *testing.T) {
+	clientsuite.CheckDeclined(t, pythonDeclined, filepath.Join("tests", "*.py"))
 }

@@ -37,6 +37,7 @@
     "docs/dockercloud.md",
     "docs/releasing.md",
     "docs/run-results.md",
+    "docs/agent-kits.md",
     "docs/inner-loop-workflow.md",
     "docs/seams.md",
     "docs/trainers/README.md",
@@ -72,6 +73,14 @@
       "variants": ["agents"],
       "assumed": true,
       "definition": "An AI model left alone with a job and a terminal: it writes code, runs it, reads what happened and tries again, like a new hire on a first day with a laptop and no manager."
+    },
+    {
+      "term": "agent kit",
+      "anchor": "agent-kit",
+      "variants": [
+        "agent kits"
+      ],
+      "definition": "A library for building an AI agent, such as LangChain, CrewAI or OpenAI's Agents SDK: it calls the model, makes the tool calls the model asks for and hands back their answers. plimsoll plugs into one as a code tool, a sandbox backend or an MCP server."
     },
     {
       "term": "agent-sandbox",
@@ -163,6 +172,12 @@
       "variants": ["checkpoints"],
       "assumed": true,
       "definition": "A saved snapshot of a model partway through training, like saving a game so you can compare how you played at different stages."
+    },
+    {
+      "term": "checkpoint store",
+      "anchor": "checkpoint-store",
+      "variants": ["checkpoint stores"],
+      "definition": "Storage an application keeps for its sessions' checkpoints, with an atomic compare-and-set, which the Python client passes every call of a session through so two processes never send at once."
     },
     {
       "term": "circuit breaker",
@@ -278,6 +293,12 @@
       "definition": "A bug that lets code inside a sandbox act outside it."
     },
     {
+      "term": "explained gap",
+      "anchor": "explained-gap",
+      "variants": ["explained gaps"],
+      "definition": "A takeover of a session across one call whose answer never reached the process that sent it: the takeover names that call, and the daemon allows it only when its last record is that call."
+    },
+    {
       "term": "fail closed",
       "anchor": "fail-closed",
       "variants": ["fails closed", "failed closed", "fail-closed"],
@@ -336,6 +357,12 @@
       "anchor": "guest",
       "variants": ["guests"],
       "definition": "The code running inside a sandbox, seen from the host machine that runs it."
+    },
+    {
+      "term": "guest guard",
+      "anchor": "guest-guard",
+      "variants": [],
+      "definition": "A small program of plimsoll's that starts first in front of every program the docker provider starts in a sandbox and puts a seccomp filter on it, which refuses the code the requests that make a namespace or a mount of its own, and tracing; every program started after it keeps the filter."
     },
     {
       "term": "gVisor",
@@ -474,6 +501,12 @@
       "definition": "A mount option that stops the kernel from running any program stored on that filesystem."
     },
     {
+      "term": "non-dumpable",
+      "anchor": "non-dumpable",
+      "variants": [],
+      "definition": "Said of a Linux process that other programs of the same user may not inspect: they can open none of its descriptors and read none of its memory. plimsoll makes its own programs in a docker sandbox so with a small library loaded before each starts."
+    },
+    {
       "term": "nosuid",
       "anchor": "nosuid",
       "variants": [],
@@ -498,6 +531,12 @@
       "variants": ["overfit"],
       "assumed": true,
       "definition": "Scoring well on the practice set by memorizing it instead of getting better at the job, like a student who memorized last year's quiz and fails this year's."
+    },
+    {
+      "term": "ownership generation",
+      "anchor": "ownership-generation",
+      "variants": ["ownership generations"],
+      "definition": "A number a session starts with at 1 and that goes up by one each time another process takes the session over; every call and close carries it, and an older one is refused before anything runs."
     },
     {
       "term": "percentage points",
@@ -693,6 +732,12 @@
       "anchor": "session",
       "variants": ["sessions"],
       "definition": "One sandbox kept open for many calls: the files a call writes are there for the next, a cleanup between calls ends what a call left running, and an interpreter kept for cells can carry its state from one call to the next."
+    },
+    {
+      "term": "session checkpoint",
+      "anchor": "session-checkpoint",
+      "variants": ["session checkpoints"],
+      "definition": "What an application saves after each call of a session so another process can take it over: the session's fingerprint, its ownership generation, its count of calls, its last record's digest and the policy it stated at open, and no secret."
     },
     {
       "term": "SHA-256",

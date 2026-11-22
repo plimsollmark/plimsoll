@@ -22,6 +22,9 @@ func TestParseDockerSelectedManifest(t *testing.T) {
 		strings.Replace(manifest, `"digest":"`+digest+`"`, `"digest":"sha256:`+strings.Repeat("b", 64)+`"`, 1),
 		strings.Replace(manifest, `image.manifest.v1+json`, `image.index.v1+json`, 1),
 		strings.Replace(manifest, `"Descriptor":{`, `"Missing":{`, 1),
+		// Upper-case hexadecimal, by the one digest rule (providerkit.ValidDigest), which
+		// the check here once bypassed (finding release-43).
+		strings.ReplaceAll(manifest, digest, "sha256:"+strings.Repeat("A", 64)),
 	} {
 		if got := parseDockerSelectedManifest([]byte(raw), "linux/amd64"); got != "" {
 			t.Fatalf("unproven manifest claimed %q", got)
@@ -31,7 +34,7 @@ func TestParseDockerSelectedManifest(t *testing.T) {
 
 func TestDockerDefaultPlatformOverridesDetection(t *testing.T) {
 	t.Setenv("DOCKER_DEFAULT_PLATFORM", "linux/arm64")
-	if got := dockerSelectedPlatform(context.Background(), ""); got != "linux/arm64" {
+	if got := dockerSelectedPlatform("linux/amd64"); got != "linux/arm64" {
 		t.Fatalf("selected platform = %q, want explicit override", got)
 	}
 }

@@ -8,15 +8,15 @@ build-backend = "setuptools.build_meta"
 # plimsoll's releases (TestClientVersionsAgree in clients/typescript checks both).
 [project]
 name = "crewai-plimsoll"
-version = "0.27.2"
+version = "0.28.0"
 description = "A CrewAI tool that runs agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-    "crewai>=1.15.23,<2",
-    "plimsoll-client==0.27.2",
+    "crewai==1.15.23",
+    "plimsoll-client==0.28.0",
 ]
 keywords = ["crewai", "sandbox", "code execution", "agents", "gvisor"]
 classifiers = [

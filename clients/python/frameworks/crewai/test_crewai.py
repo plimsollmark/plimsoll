@@ -32,6 +32,10 @@ class CrewAITests(ToolCases, unittest.TestCase):
     async def acall(self, tool: PlimsollCodeTool, **args: Any) -> str:
         return await tool.arun(**args)
 
+    def model_view(self, tool: PlimsollCodeTool) -> Any:
+        # CrewAI renders a tool for its model from these two (BaseTool._generate_description).
+        return tool.description, set(tool.args_schema.model_json_schema()["properties"])
+
     def test_is_a_crewai_tool_with_a_schema_of_the_offered_languages(self) -> None:
         tool = self.make(echo(), languages=("python",))
         self.assertIsInstance(tool, BaseTool)
@@ -143,6 +147,19 @@ class CrewAIPlimsollPackageTests(unittest.TestCase):
 
         out = json.loads(crewai_plimsoll.PlimsollCodeTool(echo()).run(code="print(1)"))
         self.assertIs(out["ran"], True)
+
+
+class FrameworkShapeTests(unittest.TestCase):
+    """Each member the adapter defines over the framework's own (inherited, or declared by a protocol it is used
+    as) against the framework at the version this suite installs: kind, coroutine, the calls it takes
+    (tests/_framework_shapes.py)."""
+
+    def test_the_adapter_takes_the_calls_the_framework_makes(self) -> None:
+        import importlib
+
+        from tests._framework_shapes import problems
+
+        self.assertEqual(problems(importlib.import_module('plimsoll_client.crewai')), [])
 
 
 if __name__ == "__main__":

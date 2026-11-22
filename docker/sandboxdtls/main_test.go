@@ -113,8 +113,26 @@ func front(t *testing.T, k keyFiles, backend string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
-	go serve(ln, k.config(), backend, t.Logf)
+	// Closing the listener stops serve, not a handle already running, and a handle that
+	// logs after its test has ended races with the testing package (seen under -race, about
+	// one run in 60). The cleanup marks the test done under the same lock every log line
+	// takes, so a line either lands before the cleanup returns or is dropped.
+	var mu sync.Mutex
+	done := false
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		done = true
+		mu.Unlock()
+	})
+	logf := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			t.Logf(format, args...)
+		}
+	}
+	go serve(ln, k.config(), backend, logf)
 	return ln.Addr().String()
 }
 
@@ -228,6 +246,7 @@ func TestFrontRefusesAllButTLSWithH2(t *testing.T) {
 	if bytes.Contains(b, []byte("PRI")) {
 		t.Errorf("cleartext HTTP/2 was echoed: %q", b)
 	}
+	// fixed-wait: 100 ms for a connection that must never reach the backend; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	time.Sleep(100 * time.Millisecond)
 	if n.Load() != 0 {
 		t.Fatalf("%d connections reached the backend", n.Load())
@@ -337,6 +356,12 @@ func TestTheFrontLogsAFailedHandshakeWithoutTheClientsBytes(t *testing.T) {
 				if strings.Contains(l, "planted") || strings.Contains(l, "\x1b") {
 					t.Fatalf("the log quotes the client: %q", l)
 				}
+			}
+			// The failure is named from crypto/tls's own words for it ("application
+			// protocol", handshakeFailure): this real handshake is what holds that reading to
+			// the Go release in use. With other words the line would say "refused by TLS".
+			if !strings.Contains(strings.Join(got, "\n"), "no protocol in common") {
+				t.Fatalf("a real handshake with no protocol in common was logged as %q: crypto/tls words this failure another way now, and handshakeFailure no longer reads it", got)
 			}
 			return
 		}

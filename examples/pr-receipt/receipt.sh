@@ -72,7 +72,22 @@ if [ $(( ${#daemon_tmp} + 1 + socket_room )) -gt 107 ]; then
   exit 1
 fi
 # Local-only. No project file is built or executed on the runner itself.
-go -C "$source_dir" build -o "$work_dir/plimsolld" ./cmd/plimsolld
+# At a clean release tag the daemon is built with Go's version control stamp, so the receipt names the plimsoll release
+# that made it; anywhere else the stamp is left out and its records state (devel) (buildvcs.sh says why). When the
+# binary states anything but that release, it is built again without the stamp.
+# Both run with every GIT_ variable removed. git reads its repository, work tree, index, objects, ref names and
+# settings from them (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_COMMON_DIR, GIT_NAMESPACE,
+# GIT_CONFIG_COUNT and the rest), and Go runs git in the same environment to stamp, so a caller's (git sets some for
+# hooks) could make both read another repository and stamp its release. buildvcs.sh answers false while any is set.
+no_git_env=()
+for name in $(compgen -e); do
+  if [[ "$name" == GIT_* ]]; then no_git_env+=(-u "$name"); fi
+done
+buildvcs="$(env "${no_git_env[@]}" bash "$script_dir/buildvcs.sh" "$source_dir")"
+env "${no_git_env[@]}" go -C "$source_dir" build -buildvcs="$buildvcs" -o "$work_dir/plimsolld" ./cmd/plimsolld
+if ! env "${no_git_env[@]}" bash "$script_dir/buildvcs.sh" "$source_dir" "$work_dir/plimsolld"; then
+  env "${no_git_env[@]}" go -C "$source_dir" build -buildvcs=false -o "$work_dir/plimsolld" ./cmd/plimsolld
+fi
 go -C "$source_dir" build -o "$work_dir/plimsoll-attest" ./cmd/plimsoll-attest
 go -C "$source_dir/examples/sbom" build -o "$work_dir/sbom" .
 # Choose an unused loopback port. Bind failure is still fatal if another process

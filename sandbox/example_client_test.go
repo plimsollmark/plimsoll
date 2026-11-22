@@ -29,7 +29,7 @@ func inventoryMockGateway(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// TestExampleClientE2E runs agent code that uses the committed example domain SDK
+// TestDockerExampleClientE2E runs agent code that uses the committed example domain SDK
 // against a mock host API, through the docker provider's brokered host bridge. It is
 // the end-to-end check of the code-mode path: grant -> preamble -> host.* -> route
 // allowlist -> upstream.
@@ -37,7 +37,7 @@ func inventoryMockGateway(t *testing.T) *httptest.Server {
 // It deliberately loads the SAME file the documentation tells a reader to copy
 // (docs/examples/grants/inventory.client.js) rather than a fixture written for the
 // test, so documentation that stops working fails the build.
-func TestExampleClientE2E(t *testing.T) {
+func TestDockerExampleClientE2E(t *testing.T) {
 
 	preamble, err := os.ReadFile("../docs/examples/grants/inventory.client.js")
 	if err != nil {
@@ -79,10 +79,10 @@ func TestExampleClientE2E(t *testing.T) {
 	}
 }
 
-// TestExampleClientRejectsUngrantedRoute proves the SDK's convenience methods cannot
+// TestDockerExampleClientRejectsUngrantedRoute proves the SDK's convenience methods cannot
 // widen the grant: adjust() is a real method on the documented client, and the route
 // it calls is absent from the Allow list above, so the call is refused.
-func TestExampleClientRejectsUngrantedRoute(t *testing.T) {
+func TestDockerExampleClientRejectsUngrantedRoute(t *testing.T) {
 
 	preamble, err := os.ReadFile("../docs/examples/grants/inventory.client.js")
 	if err != nil {

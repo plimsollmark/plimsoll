@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // Every container the provider starts declares its lifetime, rounded up to the second.
@@ -50,7 +52,7 @@ func TestDockerReconcileReapsAnExpiredRunContainer(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 	}
-	expired, live := "crsbx-lease-expired-"+randID(), "crsbx-lease-live-"+randID()
+	expired, live := "crsbx-lease-expired-"+providerkit.RandHex(8), "crsbx-lease-live-"+providerkit.RandHex(8)
 	start(expired, time.Now().Add(-dockerReapMargin-time.Minute))
 	start(live, time.Now().Add(time.Minute))
 	if _, err := d.ReconcileOrphans(ctx); err != nil {
@@ -146,6 +148,7 @@ func TestDockerRefusesAnImageTheSmokeTestDidNotProve(t *testing.T) {
 	t.Parallel()
 	d := DefaultDocker("")
 	d.ready, d.daemonHost, d.verifiedRuntime, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.Runtime, d.guestUID()
+	d.verifiedGuard = fakeGuestGuardPath // a faked Preflight: the guard file it would have written
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}
 	if _, err := d.executionState(); err != nil {
 		t.Fatalf("before any smoke test: %v", err)
@@ -171,7 +174,7 @@ func TestDockerRepointedTagIsRefusedUntilProven(t *testing.T) {
 	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
-	tag := "plimsoll-test/proof:" + randID()
+	tag := "plimsoll-test/proof:" + providerkit.RandHex(8)
 	retag := func(src string) {
 		t.Helper()
 		if out, err := exec.Command("docker", "tag", src, tag).CombinedOutput(); err != nil {

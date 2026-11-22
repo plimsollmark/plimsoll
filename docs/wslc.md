@@ -79,7 +79,8 @@ channel, `HKLM\SOFTWARE\Microsoft\WindowsSelfHost\UI\Selection` (its value `UIBr
   no run started, and nothing was left behind after two runs at once and a refused one. Rerun repeatedly on
   2026-11-14, one of them failed intermittently ([Known limitation](#known-limitation-a-lost-session-with-gvisor-on));
   the three passed again that day on the code as released, and on 2026-11-15 with the per-run tier change of v0.27.2,
-  where a run under gVisor states `container` without the setting.
+  where a run under gVisor states `container` without the setting. Those runs used gVisor release-20260907.0; the
+  three passed again on 2026-11-21 with release-20261116.0 and its seven helper programs.
 
 **What CI can and cannot test.** plimsoll's CI runs on GitHub's hosted Linux runners, which have no WSL, so it builds
 the package and runs its unit tests against the stand-in program only. GitHub's hosted Windows Server 2025 image lists
@@ -202,12 +203,18 @@ field `isolation_qualification` (`Info.IsolationQualification` in the Go client,
 Python client, `isolationQualification` in the TypeScript client, and the summary text of the MCP server's
 `server_info`). It is the mode's sentence above, with gVisor's added when gVisor is on.
 The startup log carries it too (`isolation_qualification`), and so do `plimsolld -h` and this
-page. It is informational, like the tier: no run record (the daemon's statement of what it ran and where) and no run
-request carries it, and the protocol number did not change for it, so a client shows it and does not require it. A
-run's record carries the provider's name, `wslc`, and the tier name alone, and with gVisor on also the policy
-`gvisor:proven` ([below](#gvisor-inside-each-per-run-vm)). From v0.27.2 on, a record that names `wslc` and `vm` was
-made by a daemon whose operator set `SANDBOX_WSLC_ACCEPT_VM_TIER=1`. A record does not name the daemon's release, so a
-record from v0.27.0 or v0.27.1, which stated `vm` with no setting, cannot be told apart by its fields.
+page. Every run's answer states it (`RunResponse.isolation_qualification`), and from record version 5 and protocol 6
+so does the run's record (the daemon's statement of what it ran and where, which a harness signs), with the
+provider's name, `wslc`, the tier and, with gVisor on, the policy `gvisor:proven`
+([below](#gvisor-inside-each-per-run-vm)). A bill of materials from [examples/sbom](examples/sbom/index.html) states
+it beside the tier and is refused for a WSL run whose record states none, so every version 4 WSL record is refused
+there. From v0.27.2 on, a record that names `wslc` and `vm` was made by a daemon whose operator set
+`SANDBOX_WSLC_ACCEPT_VM_TIER=1`. A version 4 record does not name the daemon's release, so one from v0.27.0 or
+v0.27.1, which stated `vm` with no setting, cannot be told apart by its fields; a version 5 record names it
+(`daemon_version`). A record's environment, `wslc-image:sha256:` and a digest, is the image ID: the SHA-256 of the
+image's configuration, by which every run is started. It is not a registry manifest digest, and no pin is stated: the
+provider checks a pin only by finding it among the repository digests `wslc image inspect` lists at startup, and the
+copy of the image each per-run VM loads holds no manifest whose digest is a registry pin (measured on wslc 3.0.5.0).
 
 The four reasons hardened mode refuses the per-run mode, whatever tier it reports:
 
@@ -240,7 +247,8 @@ Hardened mode refuses the provider with gVisor on as well.
   code, with interop on (WSL's default).
 - **The sandbox image in that user's default WSLC session:** plimsoll's sandbox image
   ([docker/Dockerfile](../docker/Dockerfile)) or one built FROM it, since every run starts plimsoll's project runner
-  (`/runner.mjs`) and its guard from it. Load it with `wslc image load`, or pull it with `wslc image pull`. The per-run
+  (the native helper, `/usr/local/libexec/plimsoll-helper`) from it; the smoke test refuses an image whose file there is
+  not the helper this plimsolld was built with, so an image built on an earlier release's must be rebuilt. Load it with `wslc image load`, or pull it with `wslc image pull`. The per-run
   mode copies it from there into its template, by ID.
 - **In the per-run mode, two programs at fixed paths:** Windows PowerShell at
   `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` and `mkfs.ext4` at `/usr/sbin/mkfs.ext4` in the
@@ -258,7 +266,7 @@ The provider's variables (`plimsolld -h` lists every variable the daemon reads):
 | `SANDBOX_WSLC_MODE` | `per-run` | `per-run` or `shared`; any other value fails startup. |
 | `SANDBOX_WSLC_ACCEPT_VM_TIER` | off | Per-run mode only. Off (unset, `0` or `false`), the per-run mode reports `container`, so a request's `vm` or `kernel` floor is refused before anything starts and `SANDBOX_MIN_ISOLATION=vm` or `kernel` fails startup. On (`1` or `true`) is the operator accepting Microsoft's statement that WSL is not a security sandbox for running untrusted code, and the mode then reports `vm` with that statement attached ([The tier](#the-tier-and-why-hardened-mode-refuses-it)). Hardened mode refuses the provider either way. Letter case and spaces around the value are ignored; any other value fails startup. In the shared mode any value fails startup, `0` and `false` included, since the setting means nothing there. |
 | `SANDBOX_WSLC_IMAGE` | none: required | The image every run starts. Letters, digits and `. _ : / @ -` only, not starting with `-`, because it becomes an argument to `wslc.exe` ([What crosses to Windows](#what-crosses-to-windows)). |
-| `SANDBOX_REQUIRE_PINNED_IMAGES` | off | `1` requires `SANDBOX_WSLC_IMAGE` in the form `name@sha256:<64 hex digits>`, and the smoke test then refuses an image whose repository digests, as `wslc image inspect` reports them, do not include that digest. |
+| `SANDBOX_REQUIRE_PINNED_IMAGES` | off | `1` requires `SANDBOX_WSLC_IMAGE` in the form `name@sha256:<64 lower-case hex digits>`, and the smoke test then refuses an image whose repository digests, as `wslc image inspect` reports them, do not include that digest. |
 | `SANDBOX_WSLC_PATH` | `/mnt/c/Program Files/WSL/wslc.exe` | `wslc.exe` as the distribution sees it (where the WSL package installs it); an absolute path. |
 | `SANDBOX_WSLC_MAX_SESSIONS` | `2` | Per-run mode only: the most runs in VMs of their own at once, 1 to 16. A run past it is refused before anything starts, marked not dispatched with reason `capacity`; a run also waits while an ended run's VM is still being torn down. The default is 2 because each live VM held about 0.9 GB of Windows memory in a sizing check on the laptop above (one machine, a design figure, not a benchmark). Set in the shared mode, it fails startup. |
 | `SANDBOX_WSLC_RUN_ROOT` | the Windows user's `%LOCALAPPDATA%\plimsoll-wslc` | Per-run mode only: the folder for the template and the run disks, given as the distribution mounts it (a clean absolute path under a Windows drive, such as `/mnt/d/plimsoll-wslc`). Its Windows path must be a drive letter, then folders named with letters, digits and `. _ -` only, so a Windows user name with a space in it needs this setting. Only names plimsolld creates there are ever deleted, and each plimsolld needs a folder of its own ([One plimsolld to a run folder](#one-plimsolld-to-a-run-folder)). Who may write to it, and to the folders above it, is checked at startup ([The run folder](#the-run-folder)). Set in the shared mode, it fails startup. |
@@ -294,7 +302,7 @@ wslc.exe [--session plimsoll-run-<16 hex digits>] container run
   --workdir /work --no-healthcheck --stop-timeout 1
   --entrypoint /usr/bin/env <image ID>
   -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/
-  LD_PRELOAD=/usr/local/lib/plimsoll-runner-guard.so node /runner.mjs
+  /usr/local/libexec/plimsoll-helper run-project
 ```
 
 The image is the one the smoke test inspected, named by its ID and never fetched. User 61000 is the docker provider's
@@ -443,8 +451,9 @@ whose docker settings plimsoll never rewrites.
 
 - **The template carries gVisor.** gVisor's runtime program, <dfn>*runsc*</dfn>, and the helper programs it needs are
   the operator's files, named with their SHA-512 digests (the variables above); plimsoll's gVisor installer
-  ([INTERNAL · gVisor setup →](gvisor.md)) puts a pinned release's `runsc` in `/usr/local/bin` and its four helper
-  programs in `/usr/local/bin/gvisor-bin`, the files the live tests used. At startup the template build refuses any file
+  ([INTERNAL · gVisor setup →](gvisor.md)) puts a pinned release's `runsc` in `/usr/local/bin` and its helper
+  programs in `/usr/local/bin/gvisor-bin` (seven in release-20261116.0, four in release-20260907.0), the files the
+  live tests used: name every one of them. At startup the template build refuses any file
   whose digest is not the configured one, streams them onto the template disk on standard input (never as an argument,
   never through a Windows folder), reads each digest back inside the VM, and refuses a template that holds another
   digest, a file nobody sent, or a `runsc` that does not print a version.

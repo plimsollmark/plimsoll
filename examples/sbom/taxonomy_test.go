@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/record"
+	"github.com/plimsollmark/plimsoll/sandbox"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -225,7 +227,9 @@ func TestPublishedBOMsFollowTheTaxonomy(t *testing.T) {
 func TestFreshBOMsFollowTheTaxonomy(t *testing.T) {
 	tx := readTaxonomy(t)
 	runs, _, _ := fixtures(t)
-	policies := []string{"seccomp:sha256:" + strings.Repeat("a", 64), "seccomp:docker-default", "seccomp:unconfined", "seccomp:skipped:runsc"}
+	guestGuard := " " + sandbox.GuestGuardPolicyPrefix + strings.Repeat("b", 64)
+	policies := []string{"seccomp:sha256:" + strings.Repeat("a", 64), "seccomp:docker-default", "seccomp:unconfined", "seccomp:skipped:runsc",
+		"seccomp:sha256:" + strings.Repeat("a", 64) + guestGuard, "seccomp:docker-default" + guestGuard, "seccomp:unconfined" + guestGuard, "seccomp:skipped:runsc" + guestGuard}
 	for i, run := range runs {
 		with := run
 		with.Record.Policy = policies[i%len(policies)]
@@ -260,12 +264,11 @@ func TestFreshBOMsFollowTheTaxonomy(t *testing.T) {
 
 // TestRunsTheTaxonomyCannotDescribeAreRefused holds the taxonomy's scope: its provider
 // list is the providers whose records name the image they ran in. A run from any other
-// provider (its tier would carry a qualification no run record states, as WSL's does)
-// must be refused, not written.
+// provider must be refused, not written. WSL runs left this list in taxonomy version 2,
+// once their records carry the sentence beside the tier (wslc_test.go).
 func TestRunsTheTaxonomyCannotDescribeAreRefused(t *testing.T) {
 	runs, _, _ := fixtures(t)
 	for _, c := range []struct{ provider, environment string }{
-		{"wslc", "wslc-image:sha256:" + strings.Repeat("b", 64)},
 		{"e2b", "e2b-template:" + strings.Repeat("c", 20)},
 		{"openshell", "openshell-image:sha256:" + strings.Repeat("d", 64)},
 		{"wasm", "quickjs-wasm:sha256:" + strings.Repeat("e", 64)},
@@ -336,6 +339,30 @@ func TestTaxonomyFollowsTheCanonicalDocs(t *testing.T) {
 			t.Errorf("the run records page lists policy %s; the taxonomy's policy row does not", m[1])
 		}
 	}
+
+	// The guest guard's word: both pages name it as the docker provider writes it, after a
+	// seccomp form, and the format check accepts each seccomp form alone and followed by one
+	// space and the word, and nothing else.
+	word := sandbox.GuestGuardPolicyPrefix + "..."
+	for page, text := range map[string]string{"run records page's policy row": row, "taxonomy's policy row": policy} {
+		if !regexp.MustCompile("`seccomp:[^` ]+ " + regexp.QuoteMeta(word) + "`").MatchString(text) {
+			t.Errorf("the %s does not name the guest guard's word %s after a seccomp form", page, word)
+		}
+	}
+	hex := func(form string) string { return strings.ReplaceAll(form, "...", strings.Repeat("c", 64)) }
+	for _, m := range forms {
+		seccomp, _, _ := strings.Cut(m[1], " ")
+		for _, v := range []string{hex(seccomp), hex(seccomp + " " + word)} {
+			if !policyValue.MatchString(v) {
+				t.Errorf("the format check refuses %q, a policy the pages allow", v)
+			}
+		}
+		for _, v := range []string{hex(seccomp + " " + word + " " + word), hex(word), hex(seccomp + "  " + word), hex(seccomp + " guard:sha256:...")} {
+			if policyValue.MatchString(v) {
+				t.Errorf("the format check accepts %q, a policy the pages do not allow", v)
+			}
+		}
+	}
 }
 
 var (
@@ -343,7 +370,7 @@ var (
 	unsigned     = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 	signedValue  = regexp.MustCompile(`^(0|-?[1-9][0-9]*)$`)
 	typedValue   = regexp.MustCompile(`^[a-z0-9-]+:.+$`)
-	policyValue  = regexp.MustCompile(`^(seccomp:sha256:[0-9a-f]{64}|seccomp:docker-default|seccomp:unconfined|seccomp:skipped:runsc)$`)
+	policyValue  = regexp.MustCompile(`^(seccomp:sha256:[0-9a-f]{64}|seccomp:docker-default|seccomp:unconfined|seccomp:skipped:runsc)( ` + regexp.QuoteMeta(sandbox.GuestGuardPolicyPrefix) + `[0-9a-f]{64})?$`)
 	traceIDValue = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 )
 
@@ -440,6 +467,8 @@ func followsTaxonomy(t *testing.T, tx taxonomy, name string, raw []byte) {
 						bad = !signedValue.MatchString(v)
 					case strings.Contains(text, "_Integer_"):
 						bad = !unsigned.MatchString(v)
+					case strings.Contains(text, "_Text_"):
+						bad = v == "" || !record.ValidQualification(v)
 					case strings.Contains(text, "_Typed reference_"):
 						bad = v != "" && !typedValue.MatchString(v)
 					}
@@ -467,7 +496,8 @@ func followsTaxonomy(t *testing.T, tx taxonomy, name string, raw []byte) {
 				switch {
 				case strings.Contains(text, "MUST appear exactly once") && len(values[n]) != 1:
 					t.Errorf("%s: %s appears %d times on an element at %s, want exactly once", name, n, len(values[n]), path)
-				case strings.Contains(text, "MAY appear at most once") && len(values[n]) > 1:
+				case strings.Contains(text, "MAY appear at most once") && len(values[n]) > 1,
+					strings.Contains(text, "MUST appear exactly when the run record states one") && len(values[n]) > 1:
 					t.Errorf("%s: %s appears %d times on an element at %s, want at most once", name, n, len(values[n]), path)
 				}
 			}
@@ -530,8 +560,14 @@ func TestTaxonomyClaimsNoMoreThanTheRecord(t *testing.T) {
 			t.Errorf("the %s row no longer says %q", c.name, c.want)
 		}
 	}
-	if got := sortedKeys(enumeration(rowText(tx, "plimsoll:provider", workflow))); strings.Join(got, " ") != "agentsandbox docker dockercloud" {
-		t.Errorf("the provider list is %v; the emitter maps runs on agentsandbox, docker and dockercloud only (cdxutil.ImageDigest)", got)
+	if got := sortedKeys(enumeration(rowText(tx, "plimsoll:provider", workflow))); strings.Join(got, " ") != "agentsandbox docker dockercloud wslc" {
+		t.Errorf("the provider list is %v; the emitter maps runs on agentsandbox, docker, dockercloud and wslc only (cdxutil.ImageDigest)", got)
+	}
+	// A WSL run's image is an image ID, never called a pin or a registry manifest digest
+	// (finding cyclonedx-13).
+	if row := rowText(tx, "plimsoll:environment", walkerPath("$.components[]")); !strings.Contains(row, "the digest is the image ID") ||
+		!strings.Contains(row, "It is not a registry manifest digest, and no registry pin is stated") {
+		t.Errorf("the environment row does not say a wslc-image digest is an image ID and no pin: %q", row)
 	}
 }
 

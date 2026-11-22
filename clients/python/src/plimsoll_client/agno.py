@@ -74,7 +74,7 @@ class PlimsollTools(Toolkit):
         if kwargs.get("cache_results"):
             raise ValueError("plimsoll: PlimsollTools runs every call; Agno's cache_results would answer repeats without running them")
         self.executor = executor
-        self.languages = ct.check_languages(languages)
+        self.languages = ct.offered(executor, languages)
         self.max_output_chars = ct.check_max_output(max_output_chars)
         kwargs.setdefault("name", "plimsoll_tools")
         super().__init__(tools=[self._tool(sync=True)], async_tools=[(self._tool(sync=False), ct.TOOL_NAME)], **kwargs)
@@ -90,7 +90,7 @@ class PlimsollTools(Toolkit):
     # reserves `files` for the media it injects and leaves it out of the schema.
     def _tool(self, *, sync: bool) -> Any:
         doc = (
-            ct.description(self.languages)
+            ct.description(self.languages, self.executor.grant)
             + "\n\nArgs:\n"
             + f"    code: {ct.CODE_HELP}\n"
             + f"    language: {ct.LANGUAGE_HELP} Default \"{self.languages[0]}\".\n"

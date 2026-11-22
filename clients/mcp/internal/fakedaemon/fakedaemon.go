@@ -19,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
@@ -295,9 +296,14 @@ func ServeWasm(t testing.TB) string {
 }
 
 func serve(t testing.TB, svc *rpc.SandboxService, strip bool, calls *callCount) (string, func()) {
+	return serveWith(t, svc, strip, calls, nil)
+}
+
+// serveWith is serve behind a token verifier (nil: open, as a development daemon is).
+func serveWith(t testing.TB, svc *rpc.SandboxService, strip bool, calls *callCount, v rpc.TokenVerifier) (string, func()) {
 	svc.Logger = slog.New(slog.DiscardHandler)
 	mux := http.NewServeMux()
-	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(v)))
 	mux.Handle(path, h)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.add(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
@@ -314,12 +320,12 @@ func serve(t testing.TB, svc *rpc.SandboxService, strip bool, calls *callCount) 
 type stripping struct{ http.ResponseWriter }
 
 func (s stripping) WriteHeader(code int) {
-	s.Header().Del("Plimsoll-Request-Id")
+	s.Header().Del(protocol.RequestIDHeader)
 	s.ResponseWriter.WriteHeader(code)
 }
 
 func (s stripping) Write(b []byte) (int, error) {
-	s.Header().Del("Plimsoll-Request-Id")
+	s.Header().Del(protocol.RequestIDHeader)
 	return s.ResponseWriter.Write(b)
 }
 

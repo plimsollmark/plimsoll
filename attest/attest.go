@@ -85,7 +85,13 @@ type Predicate struct {
 	PreviousSHA256   string `json:"previous_sha256"`
 	Unanswered       string `json:"unanswered,omitempty"` // an unanswered session call's error code
 	Instance         string `json:"instance,omitempty"`   // the sandbox instance, as a typed reference
-	RecordSHA256     string `json:"record_sha256"`
+	// From record version 5: the sentence the provider states beside the tier, whether a
+	// waiting pool sandbox ran the call, and the daemon's version. Each is left out when
+	// empty or false, so a version 4 record's predicate reads as it was signed.
+	IsolationQualification string `json:"isolation_qualification,omitempty"`
+	Warm                   bool   `json:"warm,omitempty"`
+	DaemonVersion          string `json:"daemon_version,omitempty"`
+	RecordSHA256           string `json:"record_sha256"`
 }
 
 func predicateOf(r sandbox.RunRecord) Predicate {
@@ -95,7 +101,9 @@ func predicateOf(r sandbox.RunRecord) Predicate {
 		SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(),
 		Session: r.Session, Sequence: r.Sequence, PreviousSHA256: r.PreviousSHA256,
-		Unanswered: r.Unanswered, Instance: r.Instance, RecordSHA256: r.SHA256,
+		Unanswered: r.Unanswered, Instance: r.Instance,
+		IsolationQualification: r.IsolationQualification, Warm: r.Warm, DaemonVersion: r.DaemonVersion,
+		RecordSHA256: r.SHA256,
 	}
 }
 
@@ -106,7 +114,9 @@ func (p Predicate) record() sandbox.RunRecord {
 		SoftwareIdentity: p.SoftwareIdentity, SoftwareRuleID: p.SoftwareRuleID,
 		Started: time.UnixMilli(p.StartedUnixMs).UTC(), Ended: time.UnixMilli(p.EndedUnixMs).UTC(),
 		Session: p.Session, Sequence: p.Sequence, PreviousSHA256: p.PreviousSHA256,
-		Unanswered: p.Unanswered, Instance: p.Instance, SHA256: p.RecordSHA256,
+		Unanswered: p.Unanswered, Instance: p.Instance,
+		IsolationQualification: p.IsolationQualification, Warm: p.Warm, DaemonVersion: p.DaemonVersion,
+		SHA256: p.RecordSHA256,
 	}
 }
 
@@ -215,6 +225,15 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 	if err != nil {
 		return sandbox.RunRecord{}, err
 	}
+	// The version comes first, from the signed payload: a newer record adds fields this
+	// release does not know, which the strict reading below refuses, so a version this
+	// release does not read is record.ErrVersion ("upgrade the verifier") before that
+	// reading can call it an invalid statement. A known version is read strictly as before.
+	if version, ok := predicateVersion(payload); ok {
+		if err := record.CheckVersion(version); err != nil {
+			return sandbox.RunRecord{}, err
+		}
+	}
 	var st Statement
 	if err := decodeStrict(payload, &st); err != nil {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: %v", ErrStatement, err)
@@ -226,9 +245,10 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 	rec := st.Predicate.record()
 	// Any published record version verifies: evidence signed under an older release
 	// still checks (record.CheckStored). One no release wrote is record.ErrVersion, not
-	// ErrStatement, so a caller can tell "upgrade the verifier" from "forged".
+	// ErrStatement, so a caller can tell "upgrade the verifier" from "forged". A record
+	// refused by a retired reading (record.ErrRetired) is not called forged either.
 	if err := record.CheckStored(rec); err != nil {
-		if errors.Is(err, record.ErrVersion) {
+		if errors.Is(err, record.ErrVersion) || errors.Is(err, record.ErrRetired) {
 			return sandbox.RunRecord{}, err
 		}
 		return sandbox.RunRecord{}, fmt.Errorf("%w: %v", ErrStatement, err)
@@ -237,6 +257,22 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: the record's digest does not match the subject", ErrStatement)
 	}
 	return rec, nil
+}
+
+// predicateVersion reads a run-record statement's predicate version from a payload whose
+// signature has verified, without the strict reading: ok is false when the payload is not
+// a run-record statement with an integer version, which the strict reading then refuses.
+func predicateVersion(payload []byte) (int, bool) {
+	var st struct {
+		PredicateType string `json:"predicateType"`
+		Predicate     struct {
+			Version *int `json:"version"`
+		} `json:"predicate"`
+	}
+	if json.Unmarshal(payload, &st) != nil || st.PredicateType != PredicateType || st.Predicate.Version == nil {
+		return 0, false
+	}
+	return *st.Predicate.Version, true
 }
 
 // signedPayload returns an envelope's payload once a signature from this key

@@ -26,6 +26,8 @@ func TestConfigRefuses(t *testing.T) {
 		"bad namespace":       func(c *Config) { c.Namespace = "Default" },
 		"path in a pool name": func(c *Config) { c.WarmPool = "../pool" },
 		"unpinned image":      func(c *Config) { c.Image = "plimsoll/sandbox-agentsandbox:dev" },
+		"upper-case digest":   func(c *Config) { c.Image = "plimsoll/sandbox-agentsandbox" + "@sha256:" + strings.Repeat("AB", 32) },
+		"no name":             func(c *Config) { c.Image = "@sha256:" + strings.Repeat("1", 64) },
 		"short token":         func(c *Config) { c.SandboxdToken = "short" },
 		"token with a space":  func(c *Config) { c.SandboxdToken = strings.Repeat("a", 20) + " " + strings.Repeat("b", 20) },
 		"no sandboxd CA":      func(c *Config) { c.SandboxdCAFile = "" },

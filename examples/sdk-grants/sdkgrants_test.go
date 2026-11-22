@@ -235,6 +235,15 @@ func TestSeccompDiffOfThePublishedProfiles(t *testing.T) {
 	if _, err := diffSeccomp(def, def, policy); err == nil {
 		t.Error("the default published as the variant was accepted")
 	}
+	// A daemon since the guest guard ends its policy with the guest guard's word, which the page
+	// does not read; the profiles still have to be the published two.
+	guarded := policy + " guest-guard:sha256:" + strings.Repeat("ab", 32)
+	if _, err := diffSeccomp(def, vari, guarded); err != nil {
+		t.Errorf("a policy ending with the guest guard's word: %v", err)
+	}
+	if d, v, err := splitPolicy(guarded); err != nil || d != "seccomp:sha256:"+sha256Hex(def) || v != "seccomp:sha256:"+sha256Hex(vari) {
+		t.Errorf("splitPolicy(%q) = %q, %q, %v", guarded, d, v, err)
+	}
 }
 
 // TestDeriveRefusesOtherGuestCode: the page's socket, version, stream and sent-header

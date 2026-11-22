@@ -11,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/boundary"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // requestedSize is the CPU count and memory a create asks for: the operator's
@@ -40,7 +44,7 @@ func (d *DockerCloud) instance() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.instanceID == "" {
-		d.instanceID = randID()
+		d.instanceID = providerkit.RandHex(8)
 	}
 	return d.instanceID
 }
@@ -65,7 +69,7 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 
 // createLabeled is create with labels recorded on the sandbox (REST only).
 func (d *DockerCloud) createLabeled(ctx context.Context, budget time.Duration, labels map[string]string) (dcVM, error) {
-	vm := dcVM{name: d.namePrefix() + randID()}
+	vm := dcVM{name: d.namePrefix() + providerkit.RandHex(8)}
 	d.leases.Track(vm.name) // before the request, so the reconciler never races this create
 	ok, unknown, unsent := false, false, false
 	defer func() {
@@ -353,6 +357,9 @@ func (d *DockerCloud) ReconcileOrphans(ctx context.Context) (int, error) {
 
 // ---- startup smoke test ----
 
+// dcSmokeHangPath is the staged step the smoke's time-limit probe hangs in.
+const dcSmokeHangPath = "/tmp/plimsoll-smoke-hang.sh"
+
 // SmokeTest proves the configured account, image and endpoint serve this provider's
 // contract by exercising one throwaway sandbox end to end: capabilities, create
 // with the deny-all policy, the effective policy read back, directory creation and
@@ -361,11 +368,10 @@ func (d *DockerCloud) ReconcileOrphans(ctx context.Context) (int, error) {
 // working directory and, from inside the guest, whether egress is really denied;
 // then a hung command and a flood prove the in-guest time limit and output cap.
 // It creates one billable sandbox, so the daemon runs it once at startup and never
-// on a poll path.
-// dcSmokeHangPath is the staged step the smoke's time-limit probe hangs in.
-const dcSmokeHangPath = "/tmp/plimsoll-smoke-hang.sh"
-
+// on a poll path. Each claim is recorded as its check passes, and the record must
+// match dockerCloudClaims (dockercloud_claims.go).
 func (d *DockerCloud) SmokeTest(ctx context.Context) error {
+	proof := dockerCloudClaims.Start()
 	if err := d.Preflight(ctx); err != nil {
 		return err
 	}
@@ -379,9 +385,14 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("dockercloud smoke: %w", err)
 	}
 	defer d.destroy(ctx, vm)
+	// create refuses a sandbox whose reported size exceeds the request (verifySandbox).
+	proof.Proved(boundary.MemoryLimit, "SmokeTest")
+	proof.Proved(boundary.CPULimit, "SmokeTest")
 	if err := d.verifyEgressDenied(ctx, vm); err != nil {
 		return fmt.Errorf("dockercloud smoke: %w", err)
 	}
+	// The capabilities, the new sandbox's endpoint and booted image, its policy read back.
+	proof.Proved(boundary.SetupReadBack, "SmokeTest")
 	dir := d.projectDir()
 	const stepPath = "/tmp/plimsoll-smoke-step.sh"
 	if err := d.mkdirs(ctx, vm, map[string]struct{}{dir: {}}); err != nil {
@@ -389,7 +400,7 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	}
 	files := []File{
 		{Path: pathpkg.Join(dir, "plimsoll-smoke.cjs"), Content: vmSmokeProbe},
-		{Path: stepPath, Content: "node plimsoll-smoke.cjs\n"},
+		{Path: stepPath, Content: sessionkit.GuestNode + " plimsoll-smoke.cjs\n"},
 		{Path: dcSmokeHangPath, Content: "sleep 30\n"},
 	}
 	if err := d.wire().upload(ctx, vm, files); err != nil {
@@ -418,9 +429,11 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	if report.Cwd != dir {
 		return fmt.Errorf("dockercloud smoke: probe ran in %q, not the project dir %q; the step working directory is not honored", report.Cwd, dir)
 	}
+	proof.Proved(boundary.RunPath, "SmokeTest")
 	if len(report.EgressOpen) > 0 {
 		return fmt.Errorf("dockercloud smoke: egress is OPEN to %s; the deny-all network policy is not in force", strings.Join(report.EgressOpen, ", "))
 	}
+	proof.Proved(boundary.NoEgress, "SmokeTest")
 
 	// The bounds the API does not give must actually hold in this guest. busybox
 	// `timeout` fails open when kill(2) is refused (its watcher reads the error as
@@ -436,6 +449,7 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	if !hang.timedOut {
 		return fmt.Errorf("dockercloud smoke: the in-guest time limit is not in force (a hung step exited %d instead of being ended at 1 s; the image's timeout must end the step's whole process group)", hang.exitCode)
 	}
+	proof.Proved(boundary.DeadlineKill, "SmokeTest")
 	flood, err := d.execLimited(ctx, vm, []string{"yes"}, "", 10, d.maxOutput())
 	if err != nil {
 		return fmt.Errorf("dockercloud smoke: output-cap probe: %w", err)
@@ -444,6 +458,7 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("dockercloud smoke: the in-guest output cap is not in force (exit %d, %d bytes, truncated=%v)",
 			flood.exitCode, len(flood.stdout), flood.stdoutTruncated)
 	}
+	proof.Proved(boundary.OutputCap, "SmokeTest")
 	// The languages a project step or a session's cell can use: JavaScript, proved above,
 	// and each other language whose check answers (LanguageSpecs).
 	langs := []Language{LanguageJavaScript}
@@ -453,6 +468,10 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 				langs = append(langs, l)
 			}
 		}
+	}
+	proof.Proved(boundary.Languages, "SmokeTest")
+	if err := proof.Done(); err != nil {
+		return err
 	}
 	d.mu.Lock()
 	d.langs = langs

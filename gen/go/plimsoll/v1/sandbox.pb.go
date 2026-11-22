@@ -352,8 +352,8 @@ type DescribeResponse struct {
 	// WSL containers provider's per-run mode says there that Microsoft states WSL is not a
 	// security sandbox for untrusted code, and names gVisor's position when it is on.
 	// Informational, like the tier: configuration and provider evidence, never runtime
-	// attestation. A client reads it and must not require it: run records and the protocol
-	// number do not carry it.
+	// attestation. Every run's answer and record state the sentence that went with that
+	// run's tier (RunResponse.isolation_qualification, record version 5, protocol 6).
 	IsolationQualification string `protobuf:"bytes,22,opt,name=isolation_qualification,json=isolationQualification,proto3" json:"isolation_qualification,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -1174,9 +1174,24 @@ type RunResponse struct {
 	// warm is true when a cell run with prefer_warm ran in a waiting pool member: a
 	// sandbox made before the call, which had run only plimsoll's own programs (its
 	// interpreters), handed to this call alone and deleted after it. False when the
-	// call ran in a sandbox made for it. Informational, like duration_ms: the record
-	// does not cover it.
+	// call ran in a sandbox made for it. The record repeats it (from record version 5)
+	// so the client checks both statements.
 	Warm bool `protobuf:"varint,8,opt,name=warm,proto3" json:"warm,omitempty"`
+	// isolation_qualification is the sentence the provider's vendor or design requires to
+	// stand beside the tier, as DescribeResponse.isolation_qualification states it, empty
+	// for a provider with none (every provider but WSL containers so far). At most 1024
+	// bytes of UTF-8 with no control character, no bidirectional control (U+061C, U+200E,
+	// U+200F, U+202A to U+202E, U+2066 to U+2069) and no line or paragraph separator
+	// (record.ValidQualification). Like the tier it is configuration and
+	// provider evidence, never runtime attestation. The record repeats it so the client
+	// checks both statements, and every surface that states this answer's tier states it.
+	IsolationQualification string `protobuf:"bytes,9,opt,name=isolation_qualification,json=isolationQualification,proto3" json:"isolation_qualification,omitempty"`
+	// daemon_version is the plimsoll module version of the daemon that answered, from its
+	// build information: a release tag such as "v0.28.0", a Go pseudo-version for a build
+	// from an untagged commit, or "(devel)" when the build states none; empty when the
+	// daemon could read no build information or the version it read is outside that form. The daemon's own statement about itself,
+	// like every other field here. The record repeats it so the client checks both.
+	DaemonVersion string `protobuf:"bytes,14,opt,name=daemon_version,json=daemonVersion,proto3" json:"daemon_version,omitempty"`
 	// Exactly one result, of the payload's kind.
 	//
 	// Types that are valid to be assigned to Result:
@@ -1276,6 +1291,20 @@ func (x *RunResponse) GetWarm() bool {
 	return false
 }
 
+func (x *RunResponse) GetIsolationQualification() string {
+	if x != nil {
+		return x.IsolationQualification
+	}
+	return ""
+}
+
+func (x *RunResponse) GetDaemonVersion() string {
+	if x != nil {
+		return x.DaemonVersion
+	}
+	return ""
+}
+
 func (x *RunResponse) GetResult() isRunResponse_Result {
 	if x != nil {
 		return x.Result
@@ -1358,7 +1387,7 @@ func (*RunResponse_Cell) isRunResponse_Result() {}
 // library.
 type RunRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// version is the encoding version, 4: every field below, every time. A
+	// version is the encoding version, 5: every field below, every time. A
 	// session call that may have run but ended in an error sets unanswered and
 	// leaves result_sha256 empty. A live answer must carry this version; a verifier
 	// of stored evidence reads every published version (record.published).
@@ -1391,6 +1420,12 @@ type RunRecord struct {
 	// error text. Empty on an answered call's record.
 	Unanswered string `protobuf:"bytes,16,opt,name=unanswered,proto3" json:"unanswered,omitempty"`
 	Instance   string `protobuf:"bytes,17,opt,name=instance,proto3" json:"instance,omitempty"` // RunResponse.instance
+	// From record version 5: RunResponse.isolation_qualification, RunResponse.warm and
+	// RunResponse.daemon_version. An unanswered call's record states the qualification
+	// the session stated at open, warm false, and the daemon's version.
+	IsolationQualification string `protobuf:"bytes,18,opt,name=isolation_qualification,json=isolationQualification,proto3" json:"isolation_qualification,omitempty"`
+	Warm                   bool   `protobuf:"varint,19,opt,name=warm,proto3" json:"warm,omitempty"`
+	DaemonVersion          string `protobuf:"bytes,20,opt,name=daemon_version,json=daemonVersion,proto3" json:"daemon_version,omitempty"`
 	// record_sha256 covers every field above.
 	RecordSha256  string `protobuf:"bytes,13,opt,name=record_sha256,json=recordSha256,proto3" json:"record_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1535,6 +1570,27 @@ func (x *RunRecord) GetUnanswered() string {
 func (x *RunRecord) GetInstance() string {
 	if x != nil {
 		return x.Instance
+	}
+	return ""
+}
+
+func (x *RunRecord) GetIsolationQualification() string {
+	if x != nil {
+		return x.IsolationQualification
+	}
+	return ""
+}
+
+func (x *RunRecord) GetWarm() bool {
+	if x != nil {
+		return x.Warm
+	}
+	return false
+}
+
+func (x *RunRecord) GetDaemonVersion() string {
+	if x != nil {
+		return x.DaemonVersion
 	}
 	return ""
 }
@@ -2294,8 +2350,9 @@ type OpenSessionRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Protocol uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"` // see Run
 	// The floor for the whole session, checked at open against the provider's
-	// evidence; each call may state its own, checked against the tier measured
-	// at open.
+	// evidence. Every call must state at least this floor: a call that omits it or
+	// states a weaker one is InvalidArgument, not dispatched. A call may state a
+	// stronger floor, checked against the tier measured at open.
 	MinimumIsolation string `protobuf:"bytes,2,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"`
 	TraceId          string `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // see RunRequest.trace_id
 	// Shorter than the daemon's own, or 0 for the daemon's.
@@ -2443,8 +2500,15 @@ type OpenSessionResponse struct {
 	// named by then is closed instead (SESSION_END_UNCLAIMED).
 	IdleTimeoutMs    uint32 `protobuf:"varint,6,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`
 	SoftwareIdentity string `protobuf:"bytes,7,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // selected image, when the provider can establish it
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The sentence the provider states beside the tier at open
+	// (RunResponse.isolation_qualification), empty when it states none. An unanswered
+	// call's record states this one.
+	IsolationQualification string        `protobuf:"bytes,8,opt,name=isolation_qualification,json=isolationQualification,proto3" json:"isolation_qualification,omitempty"`
+	Generation             uint64        `protobuf:"varint,9,opt,name=generation,proto3" json:"generation,omitempty"`                                     // positive ownership number; every run and close must carry it
+	MinimumIsolation       string        `protobuf:"bytes,10,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"` // floor requested at open; empty means no requested floor
+	SoftwareRule           *SoftwareRule `protobuf:"bytes,11,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`             // immutable rule established at open
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *OpenSessionResponse) Reset() {
@@ -2526,6 +2590,243 @@ func (x *OpenSessionResponse) GetSoftwareIdentity() string {
 	return ""
 }
 
+func (x *OpenSessionResponse) GetIsolationQualification() string {
+	if x != nil {
+		return x.IsolationQualification
+	}
+	return ""
+}
+
+func (x *OpenSessionResponse) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *OpenSessionResponse) GetMinimumIsolation() string {
+	if x != nil {
+		return x.MinimumIsolation
+	}
+	return ""
+}
+
+func (x *OpenSessionResponse) GetSoftwareRule() *SoftwareRule {
+	if x != nil {
+		return x.SoftwareRule
+	}
+	return nil
+}
+
+// SessionCheckpoint is public chain state, never a credential. Applications must
+// protect its integrity separately from conversation history.
+type SessionCheckpoint struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Generation       uint64                 `protobuf:"varint,1,opt,name=generation,proto3" json:"generation,omitempty"`
+	Calls            uint64                 `protobuf:"varint,2,opt,name=calls,proto3" json:"calls,omitempty"`
+	LastRecordSha256 string                 `protobuf:"bytes,3,opt,name=last_record_sha256,json=lastRecordSha256,proto3" json:"last_record_sha256,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SessionCheckpoint) Reset() {
+	*x = SessionCheckpoint{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionCheckpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionCheckpoint) ProtoMessage() {}
+
+func (x *SessionCheckpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionCheckpoint.ProtoReflect.Descriptor instead.
+func (*SessionCheckpoint) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SessionCheckpoint) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *SessionCheckpoint) GetCalls() uint64 {
+	if x != nil {
+		return x.Calls
+	}
+	return 0
+}
+
+func (x *SessionCheckpoint) GetLastRecordSha256() string {
+	if x != nil {
+		return x.LastRecordSha256
+	}
+	return ""
+}
+
+type AttachSessionRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Protocol   uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Session    string                 `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`       // public lowercase SHA-256 fingerprint, never the secret ID
+	Checkpoint *SessionCheckpoint     `protobuf:"bytes,3,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"` // required, including before the first call
+	TraceId    string                 `protobuf:"bytes,4,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	// The request digest (RunRecord.request_sha256) of the call the caller believes ran
+	// after the checkpoint with no answer reaching it, or empty. With it, a checkpoint
+	// exactly one call behind the head is taken over when the session's last record
+	// follows the checkpoint and carries this request digest (the "explained gap"); that
+	// record comes back in lost_record. Any other difference from the head is still a
+	// checkpoint mismatch, and nothing moves.
+	LostRequestSha256 string `protobuf:"bytes,5,opt,name=lost_request_sha256,json=lostRequestSha256,proto3" json:"lost_request_sha256,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *AttachSessionRequest) Reset() {
+	*x = AttachSessionRequest{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachSessionRequest) ProtoMessage() {}
+
+func (x *AttachSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachSessionRequest.ProtoReflect.Descriptor instead.
+func (*AttachSessionRequest) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *AttachSessionRequest) GetProtocol() uint32 {
+	if x != nil {
+		return x.Protocol
+	}
+	return 0
+}
+
+func (x *AttachSessionRequest) GetSession() string {
+	if x != nil {
+		return x.Session
+	}
+	return ""
+}
+
+func (x *AttachSessionRequest) GetCheckpoint() *SessionCheckpoint {
+	if x != nil {
+		return x.Checkpoint
+	}
+	return nil
+}
+
+func (x *AttachSessionRequest) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *AttachSessionRequest) GetLostRequestSha256() string {
+	if x != nil {
+		return x.LostRequestSha256
+	}
+	return ""
+}
+
+type AttachSessionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The existing session's identity and immutable policy, with its new generation.
+	// session_info.session_id is secret and must remain in memory only.
+	SessionInfo *OpenSessionResponse `protobuf:"bytes,1,opt,name=session_info,json=sessionInfo,proto3" json:"session_info,omitempty"`
+	Checkpoint  *SessionCheckpoint   `protobuf:"bytes,2,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"` // the new head
+	// Set only on an attach taken over from a checkpoint one call behind: the record of
+	// the call that ran after the checkpoint, which the caller checks against the
+	// checkpoint and the digest it named before carrying the chain on.
+	LostRecord    *RunRecord `protobuf:"bytes,3,opt,name=lost_record,json=lostRecord,proto3" json:"lost_record,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttachSessionResponse) Reset() {
+	*x = AttachSessionResponse{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachSessionResponse) ProtoMessage() {}
+
+func (x *AttachSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachSessionResponse.ProtoReflect.Descriptor instead.
+func (*AttachSessionResponse) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *AttachSessionResponse) GetSessionInfo() *OpenSessionResponse {
+	if x != nil {
+		return x.SessionInfo
+	}
+	return nil
+}
+
+func (x *AttachSessionResponse) GetCheckpoint() *SessionCheckpoint {
+	if x != nil {
+		return x.Checkpoint
+	}
+	return nil
+}
+
+func (x *AttachSessionResponse) GetLostRecord() *RunRecord {
+	if x != nil {
+		return x.LostRecord
+	}
+	return nil
+}
+
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
 // It is a separate message so that a daemon that predates sessions refuses it
 // (Unimplemented) instead of dropping the ID and running the payload alone. A
@@ -2540,6 +2841,10 @@ type SessionRunRequest struct {
 	TimeoutMs        int32                  `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	SessionId        string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	SoftwareRule     *SoftwareRule          `protobuf:"bytes,6,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
+	// The current ownership number (OpenSessionResponse.generation, or the one
+	// AttachSession returned). Zero is InvalidArgument; any other number but the
+	// current one is FailedPrecondition, reason permission. Both are not dispatched.
+	Generation uint64 `protobuf:"varint,7,opt,name=generation,proto3" json:"generation,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*SessionRunRequest_Javascript
@@ -2552,7 +2857,7 @@ type SessionRunRequest struct {
 
 func (x *SessionRunRequest) Reset() {
 	*x = SessionRunRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2564,7 +2869,7 @@ func (x *SessionRunRequest) String() string {
 func (*SessionRunRequest) ProtoMessage() {}
 
 func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2577,7 +2882,7 @@ func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunRequest.ProtoReflect.Descriptor instead.
 func (*SessionRunRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{22}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SessionRunRequest) GetProtocol() uint32 {
@@ -2620,6 +2925,13 @@ func (x *SessionRunRequest) GetSoftwareRule() *SoftwareRule {
 		return x.SoftwareRule
 	}
 	return nil
+}
+
+func (x *SessionRunRequest) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 func (x *SessionRunRequest) GetPayload() isSessionRunRequest_Payload {
@@ -2695,7 +3007,7 @@ type CellRun struct {
 
 func (x *CellRun) Reset() {
 	*x = CellRun{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2707,7 +3019,7 @@ func (x *CellRun) String() string {
 func (*CellRun) ProtoMessage() {}
 
 func (x *CellRun) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2720,7 +3032,7 @@ func (x *CellRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellRun.ProtoReflect.Descriptor instead.
 func (*CellRun) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CellRun) GetLanguage() string {
@@ -2766,7 +3078,7 @@ type CellResult struct {
 
 func (x *CellResult) Reset() {
 	*x = CellResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2778,7 +3090,7 @@ func (x *CellResult) String() string {
 func (*CellResult) ProtoMessage() {}
 
 func (x *CellResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2791,7 +3103,7 @@ func (x *CellResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellResult.ProtoReflect.Descriptor instead.
 func (*CellResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CellResult) GetStdout() []byte {
@@ -2864,7 +3176,7 @@ type SessionRunResponse struct {
 
 func (x *SessionRunResponse) Reset() {
 	*x = SessionRunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2876,7 +3188,7 @@ func (x *SessionRunResponse) String() string {
 func (*SessionRunResponse) ProtoMessage() {}
 
 func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2889,7 +3201,7 @@ func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunResponse.ProtoReflect.Descriptor instead.
 func (*SessionRunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SessionRunResponse) GetRun() *RunResponse {
@@ -2914,16 +3226,19 @@ func (x *SessionRunResponse) GetEndDetail() string {
 }
 
 type CloseSessionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Protocol      uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Protocol  uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	SessionId string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// The current ownership number, checked as SessionRunRequest.generation is,
+	// before anything of the session is closed.
+	Generation    uint64 `protobuf:"varint,3,opt,name=generation,proto3" json:"generation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2935,7 +3250,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2948,7 +3263,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *CloseSessionRequest) GetProtocol() uint32 {
@@ -2963,6 +3278,13 @@ func (x *CloseSessionRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *CloseSessionRequest) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type CloseSessionResponse struct {
@@ -2980,7 +3302,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2992,7 +3314,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3005,7 +3327,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CloseSessionResponse) GetSession() string {
@@ -3048,7 +3370,7 @@ type SessionEnded struct {
 
 func (x *SessionEnded) Reset() {
 	*x = SessionEnded{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3060,7 +3382,7 @@ func (x *SessionEnded) String() string {
 func (*SessionEnded) ProtoMessage() {}
 
 func (x *SessionEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3073,7 +3395,7 @@ func (x *SessionEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEnded.ProtoReflect.Descriptor instead.
 func (*SessionEnded) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{28}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SessionEnded) GetReason() SessionEnd {
@@ -3104,7 +3426,7 @@ type NotDispatched struct {
 
 func (x *NotDispatched) Reset() {
 	*x = NotDispatched{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3116,7 +3438,7 @@ func (x *NotDispatched) String() string {
 func (*NotDispatched) ProtoMessage() {}
 
 func (x *NotDispatched) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3129,7 +3451,7 @@ func (x *NotDispatched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotDispatched.ProtoReflect.Descriptor instead.
 func (*NotDispatched) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *NotDispatched) GetReason() NotDispatchedReason {
@@ -3151,7 +3473,7 @@ type UnansweredCall struct {
 
 func (x *UnansweredCall) Reset() {
 	*x = UnansweredCall{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3163,7 +3485,7 @@ func (x *UnansweredCall) String() string {
 func (*UnansweredCall) ProtoMessage() {}
 
 func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3176,7 +3498,7 @@ func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnansweredCall.ProtoReflect.Descriptor instead.
 func (*UnansweredCall) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *UnansweredCall) GetRecord() *RunRecord {
@@ -3264,7 +3586,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xfc\x03\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xdc\x04\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
@@ -3274,7 +3596,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x11software_identity\x18\x05 \x01(\tR\x10softwareIdentity\x12 \n" +
 	"\venvironment\x18\x06 \x01(\tR\venvironment\x12\x1a\n" +
 	"\binstance\x18\a \x01(\tR\binstance\x12\x12\n" +
-	"\x04warm\x18\b \x01(\bR\x04warm\x12?\n" +
+	"\x04warm\x18\b \x01(\bR\x04warm\x127\n" +
+	"\x17isolation_qualification\x18\t \x01(\tR\x16isolationQualification\x12%\n" +
+	"\x0edaemon_version\x18\x0e \x01(\tR\rdaemonVersion\x12?\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
@@ -3282,7 +3606,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
 	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06module\x12-\n" +
 	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cellB\b\n" +
-	"\x06result\"\xc8\x04\n" +
+	"\x06result\"\xbc\x05\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
 	"\x0erequest_sha256\x18\x02 \x01(\tR\rrequestSha256\x12#\n" +
@@ -3302,7 +3626,10 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"unanswered\x18\x10 \x01(\tR\n" +
 	"unanswered\x12\x1a\n" +
-	"\binstance\x18\x11 \x01(\tR\binstance\x12#\n" +
+	"\binstance\x18\x11 \x01(\tR\binstance\x127\n" +
+	"\x17isolation_qualification\x18\x12 \x01(\tR\x16isolationQualification\x12\x12\n" +
+	"\x04warm\x18\x13 \x01(\bR\x04warm\x12%\n" +
+	"\x0edaemon_version\x18\x14 \x01(\tR\rdaemonVersion\x12#\n" +
 	"\rrecord_sha256\x18\r \x01(\tR\frecordSha256\"\x86\x02\n" +
 	"\x10JavaScriptResult\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
@@ -3370,7 +3697,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1c\n" +
 	"\tlanguages\x18\a \x03(\tR\tlanguages\x12\x14\n" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12\x1b\n" +
-	"\twarm_only\x18\t \x01(\bR\bwarmOnly\"\x83\x02\n" +
+	"\twarm_only\x18\t \x01(\bR\bwarmOnly\"\xc9\x03\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -3379,7 +3706,35 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\tisolation\x18\x04 \x01(\tR\tisolation\x12&\n" +
 	"\x0fexpires_unix_ms\x18\x05 \x01(\x03R\rexpiresUnixMs\x12&\n" +
 	"\x0fidle_timeout_ms\x18\x06 \x01(\rR\ridleTimeoutMs\x12+\n" +
-	"\x11software_identity\x18\a \x01(\tR\x10softwareIdentity\"\x9f\x03\n" +
+	"\x11software_identity\x18\a \x01(\tR\x10softwareIdentity\x127\n" +
+	"\x17isolation_qualification\x18\b \x01(\tR\x16isolationQualification\x12\x1e\n" +
+	"\n" +
+	"generation\x18\t \x01(\x04R\n" +
+	"generation\x12+\n" +
+	"\x11minimum_isolation\x18\n" +
+	" \x01(\tR\x10minimumIsolation\x12>\n" +
+	"\rsoftware_rule\x18\v \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\"w\n" +
+	"\x11SessionCheckpoint\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x01 \x01(\x04R\n" +
+	"generation\x12\x14\n" +
+	"\x05calls\x18\x02 \x01(\x04R\x05calls\x12,\n" +
+	"\x12last_record_sha256\x18\x03 \x01(\tR\x10lastRecordSha256\"\xd7\x01\n" +
+	"\x14AttachSessionRequest\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x18\n" +
+	"\asession\x18\x02 \x01(\tR\asession\x12>\n" +
+	"\n" +
+	"checkpoint\x18\x03 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\n" +
+	"checkpoint\x12\x19\n" +
+	"\btrace_id\x18\x04 \x01(\tR\atraceId\x12.\n" +
+	"\x13lost_request_sha256\x18\x05 \x01(\tR\x11lostRequestSha256\"\xd5\x01\n" +
+	"\x15AttachSessionResponse\x12C\n" +
+	"\fsession_info\x18\x01 \x01(\v2 .plimsoll.v1.OpenSessionResponseR\vsessionInfo\x12>\n" +
+	"\n" +
+	"checkpoint\x18\x02 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\n" +
+	"checkpoint\x127\n" +
+	"\vlost_record\x18\x03 \x01(\v2\x16.plimsoll.v1.RunRecordR\n" +
+	"lostRecord\"\xbf\x03\n" +
 	"\x11SessionRunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3388,7 +3743,10 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12>\n" +
-	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12<\n" +
+	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1e\n" +
+	"\n" +
+	"generation\x18\a \x01(\x04R\n" +
+	"generation\x12<\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
@@ -3414,11 +3772,14 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x03run\x18\x01 \x01(\v2\x18.plimsoll.v1.RunResponseR\x03run\x12-\n" +
 	"\x05ended\x18\x02 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x05ended\x12\x1d\n" +
 	"\n" +
-	"end_detail\x18\x03 \x01(\tR\tendDetail\"P\n" +
+	"end_detail\x18\x03 \x01(\tR\tendDetail\"p\n" +
 	"\x13CloseSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\"\xa3\x01\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x03 \x01(\x04R\n" +
+	"generation\"\xa3\x01\n" +
 	"\x14CloseSessionResponse\x12\x18\n" +
 	"\asession\x18\x01 \x01(\tR\asession\x12\x14\n" +
 	"\x05calls\x18\x02 \x01(\x04R\x05calls\x12,\n" +
@@ -3460,11 +3821,12 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"!NOT_DISPATCHED_REASON_UNSUPPORTED\x10\x04\x12#\n" +
 	"\x1fNOT_DISPATCHED_REASON_ISOLATION\x10\x05\x12\"\n" +
 	"\x1eNOT_DISPATCHED_REASON_CAPACITY\x10\x06\x12%\n" +
-	"!NOT_DISPATCHED_REASON_ENVIRONMENT\x10\a2\x89\x03\n" +
+	"!NOT_DISPATCHED_REASON_ENVIRONMENT\x10\a2\xe1\x03\n" +
 	"\x0eSandboxService\x128\n" +
 	"\x03Run\x12\x17.plimsoll.v1.RunRequest\x1a\x18.plimsoll.v1.RunResponse\x12G\n" +
 	"\bDescribe\x12\x1c.plimsoll.v1.DescribeRequest\x1a\x1d.plimsoll.v1.DescribeResponse\x12P\n" +
-	"\vOpenSession\x12\x1f.plimsoll.v1.OpenSessionRequest\x1a .plimsoll.v1.OpenSessionResponse\x12M\n" +
+	"\vOpenSession\x12\x1f.plimsoll.v1.OpenSessionRequest\x1a .plimsoll.v1.OpenSessionResponse\x12V\n" +
+	"\rAttachSession\x12!.plimsoll.v1.AttachSessionRequest\x1a\".plimsoll.v1.AttachSessionResponse\x12M\n" +
 	"\n" +
 	"SessionRun\x12\x1e.plimsoll.v1.SessionRunRequest\x1a\x1f.plimsoll.v1.SessionRunResponse\x12S\n" +
 	"\fCloseSession\x12 .plimsoll.v1.CloseSessionRequest\x1a!.plimsoll.v1.CloseSessionResponseB@Z>github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1;plimsollv1b\x06proto3"
@@ -3482,42 +3844,45 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
-	(ProjectOutcome)(0),          // 0: plimsoll.v1.ProjectOutcome
-	(SessionEnd)(0),              // 1: plimsoll.v1.SessionEnd
-	(NotDispatchedReason)(0),     // 2: plimsoll.v1.NotDispatchedReason
-	(*DescribeRequest)(nil),      // 3: plimsoll.v1.DescribeRequest
-	(*DescribeResponse)(nil),     // 4: plimsoll.v1.DescribeResponse
-	(*PayloadEnvironment)(nil),   // 5: plimsoll.v1.PayloadEnvironment
-	(*SoftwareRule)(nil),         // 6: plimsoll.v1.SoftwareRule
-	(*RunResources)(nil),         // 7: plimsoll.v1.RunResources
-	(*AdviceFinding)(nil),        // 8: plimsoll.v1.AdviceFinding
-	(*RunRequest)(nil),           // 9: plimsoll.v1.RunRequest
-	(*JavaScriptRun)(nil),        // 10: plimsoll.v1.JavaScriptRun
-	(*RunResponse)(nil),          // 11: plimsoll.v1.RunResponse
-	(*RunRecord)(nil),            // 12: plimsoll.v1.RunRecord
-	(*JavaScriptResult)(nil),     // 13: plimsoll.v1.JavaScriptResult
-	(*ProjectFile)(nil),          // 14: plimsoll.v1.ProjectFile
-	(*StepResult)(nil),           // 15: plimsoll.v1.StepResult
-	(*Artifact)(nil),             // 16: plimsoll.v1.Artifact
-	(*ProjectRun)(nil),           // 17: plimsoll.v1.ProjectRun
-	(*ProjectResult)(nil),        // 18: plimsoll.v1.ProjectResult
-	(*ModuleRow)(nil),            // 19: plimsoll.v1.ModuleRow
-	(*ModuleRun)(nil),            // 20: plimsoll.v1.ModuleRun
-	(*ModuleRowResult)(nil),      // 21: plimsoll.v1.ModuleRowResult
-	(*ModuleResult)(nil),         // 22: plimsoll.v1.ModuleResult
-	(*OpenSessionRequest)(nil),   // 23: plimsoll.v1.OpenSessionRequest
-	(*OpenSessionResponse)(nil),  // 24: plimsoll.v1.OpenSessionResponse
-	(*SessionRunRequest)(nil),    // 25: plimsoll.v1.SessionRunRequest
-	(*CellRun)(nil),              // 26: plimsoll.v1.CellRun
-	(*CellResult)(nil),           // 27: plimsoll.v1.CellResult
-	(*SessionRunResponse)(nil),   // 28: plimsoll.v1.SessionRunResponse
-	(*CloseSessionRequest)(nil),  // 29: plimsoll.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil), // 30: plimsoll.v1.CloseSessionResponse
-	(*SessionEnded)(nil),         // 31: plimsoll.v1.SessionEnded
-	(*NotDispatched)(nil),        // 32: plimsoll.v1.NotDispatched
-	(*UnansweredCall)(nil),       // 33: plimsoll.v1.UnansweredCall
+	(ProjectOutcome)(0),           // 0: plimsoll.v1.ProjectOutcome
+	(SessionEnd)(0),               // 1: plimsoll.v1.SessionEnd
+	(NotDispatchedReason)(0),      // 2: plimsoll.v1.NotDispatchedReason
+	(*DescribeRequest)(nil),       // 3: plimsoll.v1.DescribeRequest
+	(*DescribeResponse)(nil),      // 4: plimsoll.v1.DescribeResponse
+	(*PayloadEnvironment)(nil),    // 5: plimsoll.v1.PayloadEnvironment
+	(*SoftwareRule)(nil),          // 6: plimsoll.v1.SoftwareRule
+	(*RunResources)(nil),          // 7: plimsoll.v1.RunResources
+	(*AdviceFinding)(nil),         // 8: plimsoll.v1.AdviceFinding
+	(*RunRequest)(nil),            // 9: plimsoll.v1.RunRequest
+	(*JavaScriptRun)(nil),         // 10: plimsoll.v1.JavaScriptRun
+	(*RunResponse)(nil),           // 11: plimsoll.v1.RunResponse
+	(*RunRecord)(nil),             // 12: plimsoll.v1.RunRecord
+	(*JavaScriptResult)(nil),      // 13: plimsoll.v1.JavaScriptResult
+	(*ProjectFile)(nil),           // 14: plimsoll.v1.ProjectFile
+	(*StepResult)(nil),            // 15: plimsoll.v1.StepResult
+	(*Artifact)(nil),              // 16: plimsoll.v1.Artifact
+	(*ProjectRun)(nil),            // 17: plimsoll.v1.ProjectRun
+	(*ProjectResult)(nil),         // 18: plimsoll.v1.ProjectResult
+	(*ModuleRow)(nil),             // 19: plimsoll.v1.ModuleRow
+	(*ModuleRun)(nil),             // 20: plimsoll.v1.ModuleRun
+	(*ModuleRowResult)(nil),       // 21: plimsoll.v1.ModuleRowResult
+	(*ModuleResult)(nil),          // 22: plimsoll.v1.ModuleResult
+	(*OpenSessionRequest)(nil),    // 23: plimsoll.v1.OpenSessionRequest
+	(*OpenSessionResponse)(nil),   // 24: plimsoll.v1.OpenSessionResponse
+	(*SessionCheckpoint)(nil),     // 25: plimsoll.v1.SessionCheckpoint
+	(*AttachSessionRequest)(nil),  // 26: plimsoll.v1.AttachSessionRequest
+	(*AttachSessionResponse)(nil), // 27: plimsoll.v1.AttachSessionResponse
+	(*SessionRunRequest)(nil),     // 28: plimsoll.v1.SessionRunRequest
+	(*CellRun)(nil),               // 29: plimsoll.v1.CellRun
+	(*CellResult)(nil),            // 30: plimsoll.v1.CellResult
+	(*SessionRunResponse)(nil),    // 31: plimsoll.v1.SessionRunResponse
+	(*CloseSessionRequest)(nil),   // 32: plimsoll.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),  // 33: plimsoll.v1.CloseSessionResponse
+	(*SessionEnded)(nil),          // 34: plimsoll.v1.SessionEnded
+	(*NotDispatched)(nil),         // 35: plimsoll.v1.NotDispatched
+	(*UnansweredCall)(nil),        // 36: plimsoll.v1.UnansweredCall
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
@@ -3529,12 +3894,12 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	10, // 6: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
 	17, // 7: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
 	20, // 8: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	26, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
+	29, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
 	12, // 10: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
 	13, // 11: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
 	18, // 12: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
 	22, // 13: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	27, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
+	30, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
 	8,  // 15: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
 	14, // 16: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
 	15, // 17: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
@@ -3545,32 +3910,39 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	21, // 22: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
 	0,  // 23: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
 	6,  // 24: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	6,  // 25: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 26: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 27: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	26, // 28: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
-	14, // 29: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
-	11, // 30: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 31: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 32: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 33: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 34: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	12, // 35: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
-	9,  // 36: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 37: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 38: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	25, // 39: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	29, // 40: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 41: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 42: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 43: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	28, // 44: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	30, // 45: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	41, // [41:46] is the sub-list for method output_type
-	36, // [36:41] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	6,  // 25: plimsoll.v1.OpenSessionResponse.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	25, // 26: plimsoll.v1.AttachSessionRequest.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
+	24, // 27: plimsoll.v1.AttachSessionResponse.session_info:type_name -> plimsoll.v1.OpenSessionResponse
+	25, // 28: plimsoll.v1.AttachSessionResponse.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
+	12, // 29: plimsoll.v1.AttachSessionResponse.lost_record:type_name -> plimsoll.v1.RunRecord
+	6,  // 30: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 31: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 32: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	29, // 33: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
+	14, // 34: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
+	11, // 35: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	1,  // 36: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 37: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 38: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	2,  // 39: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	12, // 40: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
+	9,  // 41: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 42: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 43: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	26, // 44: plimsoll.v1.SandboxService.AttachSession:input_type -> plimsoll.v1.AttachSessionRequest
+	28, // 45: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	32, // 46: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 47: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 48: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 49: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	27, // 50: plimsoll.v1.SandboxService.AttachSession:output_type -> plimsoll.v1.AttachSessionResponse
+	31, // 51: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	33, // 52: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	47, // [47:53] is the sub-list for method output_type
+	41, // [41:47] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -3590,7 +3962,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 		(*RunResponse_Module)(nil),
 		(*RunResponse_Cell)(nil),
 	}
-	file_plimsoll_v1_sandbox_proto_msgTypes[22].OneofWrappers = []any{
+	file_plimsoll_v1_sandbox_proto_msgTypes[25].OneofWrappers = []any{
 		(*SessionRunRequest_Javascript)(nil),
 		(*SessionRunRequest_Project)(nil),
 		(*SessionRunRequest_Cell)(nil),
@@ -3601,7 +3973,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   31,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

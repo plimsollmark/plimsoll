@@ -30,6 +30,7 @@ var guestScriptTests = map[string]string{
 	"openshell/smoke.go:smokeProbeScript":  "TestDockerRunsTheOpenShellSmokeScript",
 	"openshell/grant.go:relayScript":       "TestDockerRunsTheOpenShellGrantRelay",
 	"e2b.go:vmSmokeProbe":                  "TestDockerRunsTheE2BSmokeScript",
+	"e2b.go:e2bSessionNodeScript":          "TestE2BSessionDockerSmokeTest",
 }
 
 // targetGuestScripts are the Node programs of a provider whose sandboxes no docker-suite run
@@ -164,7 +165,7 @@ func checkTargetGuestScript(t *testing.T, key string, p privateGuestScript, make
 		t.Errorf("%s names the target %s, which %s does not define", key, p.target, makefile)
 		return
 	}
-	line := regexp.MustCompile(`DOCKER\)" = "1" \]; then .*go test ` + regexp.QuoteMeta(pkgPath(dir)) + ` -run '([^']+)'(?: -skip '([^']+)')?`).FindStringSubmatch(recipe[1])
+	line := regexp.MustCompile(`DOCKER\)" = "1" \]; then .*\$\(SUITE_TEST\) ` + regexp.QuoteMeta(pkgPath(dir)) + ` -run '([^']+)'(?: -skip '([^']+)')?`).FindStringSubmatch(recipe[1])
 	if line == nil || !regexp.MustCompile(line[1]).MatchString(p.test) || line[2] != "" && regexp.MustCompile(line[2]).MatchString(p.test) {
 		t.Errorf("%s's target %s does not run %s in %s under DOCKER=1", key, p.target, p.test, pkgPath(dir))
 	}
@@ -245,11 +246,18 @@ func dockerSuite(t *testing.T) dockerSuiteSelection {
 	}
 	var sel dockerSuiteSelection
 	sel.run = regexp.MustCompile(strings.TrimSpace(m[1]))
-	line := regexp.MustCompile(`(?m)^\s+\$\(NO_PAID_KEYS\) go test -race (.+) -run '\$\(DOCKER_TESTS\)' -skip '([^']+)'`).FindStringSubmatch(mk)
+	// The suite's go test runs through the results reader, and its -skip is DOCKER_GO_SKIP:
+	// the live tests' pattern, then, under a named runtime other than runc, the tests whose
+	// containers never run under it. The default pass's skip is the part before that.
+	line := regexp.MustCompile(`(?m)^\s+\$\(NO_PAID_KEYS\) \$\(SUITE_TEST\) -race (.+) -run '\$\(DOCKER_TESTS\)' -skip '\$\(DOCKER_GO_SKIP\)'`).FindStringSubmatch(mk)
 	if line == nil {
 		t.Fatal("no docker-suite go test line in the Makefile")
 	}
+	skip := regexp.MustCompile(`(?m)^DOCKER_GO_SKIP = (.*?)\$\(if `).FindStringSubmatch(mk)
+	if skip == nil || skip[1] == "" {
+		t.Fatal("no DOCKER_GO_SKIP with a default pass's pattern in the Makefile")
+	}
 	sel.packages = strings.Fields(line[1])
-	sel.skip = regexp.MustCompile(strings.ReplaceAll(line[2], "$$", "$"))
+	sel.skip = regexp.MustCompile(strings.ReplaceAll(skip[1], "$$", "$"))
 	return sel
 }

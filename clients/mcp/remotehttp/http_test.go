@@ -308,19 +308,26 @@ func TestAuditRotationAndStorageFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A security line, then three times the tool stream's cap in tool lines: the tool
+	// stream rotates, and the security line is still there (hunt-security-26).
+	a.event("token_issued", strings.Repeat("g", 45), strings.Repeat("d", 64))
 	for i := 0; i < 18000; i++ {
 		a.event("checked_record", strings.Repeat("g", 45), strings.Repeat("a", 64))
 	}
 	if !a.healthy() {
 		t.Fatal("rotation failed")
 	}
-	for _, name := range []string{"audit.jsonl", "audit.previous.jsonl"} {
+	for _, name := range []string{"tools.jsonl", "tools.previous.jsonl", "audit.jsonl"} {
 		st, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || st.Size() > 1<<20 || st.Mode().Perm() != 0o600 {
-			t.Fatal("audit exceeded its byte or permission boundary")
+			t.Fatalf("%s exceeded its byte or permission boundary: %v", name, err)
 		}
 	}
-	if err = a.file.Close(); err != nil {
+	security, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	if err != nil || !strings.Contains(string(security), `"event":"token_issued"`) || strings.Contains(string(security), "checked_record") {
+		t.Fatalf("after 3 MiB of tool lines the security file holds: %.200s (%v)", security, err)
+	}
+	if err = a.security.file.Close(); err != nil {
 		t.Fatal(err)
 	}
 	a.event("disk_failure", "", "")
@@ -486,6 +493,120 @@ func TestTokenEndpointAnswersServerFaultsAsUnavailable(t *testing.T) {
 	f.e.state.write = func([]byte) error { return errors.New("disk full") }
 	requireStatus(t, request(f.e, "POST", "/oauth/token", refresh, browser{}), 503)
 	requireStatus(t, request(f.e, "POST", "/oauth/token", refresh, browser{}), 503)
+}
+
+// A refresh that meets the tool server stopping is answered 503 and leaves the grant
+// as it was, so the client's retry with the credential it sent can succeed; it once
+// revoked the grant, and the owner had to approve the app again (hunt-security-28).
+// The retry is shown to succeed after the restart too: the engine is closed and a new
+// one opened on the same state, as a restarted process is, and the earlier refresh
+// credential refreshes there, and the credentials it returns work. The store accepts
+// that earlier credential only for refreshGrace after the rotation (store.refresh's
+// retry rule); past it, presenting it is reuse, which
+// TestARefreshRetriedPastTheGraceAfterARestartRevokesTheGrant measures.
+func TestARefreshThatMeetsAStoppingToolServerKeepsTheGrant(t *testing.T) {
+	f, id, refresh := refreshMeetsAStoppingToolServer(t)
+	activeGrants := func(e *Engine) int {
+		e.state.mu.Lock()
+		defer e.state.mu.Unlock()
+		active := 0
+		for _, g := range e.state.data.Grants {
+			if activeGrant(&e.state.data, g, e.state.now()) {
+				active++
+			}
+		}
+		return active
+	}
+	if active := activeGrants(f.e); active != 1 {
+		t.Fatalf("%d active grants after a refresh met the stopping tool server, want 1", active)
+	}
+	restarted := restart(t, f)
+	if active := activeGrants(restarted); active != 1 {
+		t.Fatalf("%d active grants after the restart, want 1", active)
+	}
+	r := request(restarted, "POST", "/oauth/token", refresh, browser{})
+	requireStatus(t, r, 200)
+	var pair tokenPair
+	if err := json.Unmarshal(r.Body.Bytes(), &pair); err != nil || pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatalf("the earlier credential's refresh after the restart: %v, %s", err, r.Body.String())
+	}
+	cs := connectMCP(t, restarted, pair.AccessToken)
+	if _, err := cs.ListTools(context.Background(), nil); err != nil {
+		t.Fatalf("the access token the restarted engine issued: %v", err)
+	}
+	next := url.Values{"grant_type": {"refresh_token"}, "client_id": {id}, "refresh_token": {pair.RefreshToken}, "resource": {restarted.resource()}}
+	requireStatus(t, request(restarted, "POST", "/oauth/token", next, browser{}), 200)
+}
+
+// The limit of the test above, measured: the store accepts a rotated refresh credential
+// again only for refreshGrace (30 seconds) after its rotation, so a client that retries
+// with it after a restart that took longer presents a used credential, which
+// store.refresh treats as reuse and answers by revoking the grant. The owner then
+// approves the app again. Recorded as part of hunt-security-28.
+func TestARefreshRetriedPastTheGraceAfterARestartRevokesTheGrant(t *testing.T) {
+	f, _, refresh := refreshMeetsAStoppingToolServer(t)
+	restarted := restart(t, f)
+	later := time.Now().Add(refreshGrace + time.Second)
+	restarted.state.mu.Lock()
+	restarted.state.now = func() time.Time { return later }
+	restarted.state.mu.Unlock()
+	requireStatus(t, request(restarted, "POST", "/oauth/token", refresh, browser{}), 400)
+	restarted.state.mu.Lock()
+	defer restarted.state.mu.Unlock()
+	for _, g := range restarted.state.data.Grants {
+		if activeGrant(&restarted.state.data, g, later) {
+			t.Fatalf("grant %s is still active after its rotated credential was presented past the grace", g.ID)
+		}
+	}
+}
+
+// refreshMeetsAStoppingToolServer issues a grant, stops the tool server, and refreshes
+// twice with the grant's refresh credential (the refresh, then its retry), each answered
+// 503. It returns the fixture, the client id and that refresh request.
+func refreshMeetsAStoppingToolServer(t *testing.T) (*fixture, string, url.Values) {
+	t.Helper()
+	f := newFixture(t)
+	id := clientID(t, f.e)
+	v := strings.Repeat("s", 43)
+	b := authorizeBrowser(t, f.e, id, v)
+	login(t, f, b)
+	pair := exchangeCode(t, f.e, id, approveCode(t, f.e, b), v)
+	f.e.tools.Shutdown()
+	refresh := url.Values{"grant_type": {"refresh_token"}, "client_id": {id}, "refresh_token": {pair.RefreshToken}, "resource": {f.e.resource()}}
+	for range 2 { // the refresh, then its retry with the same credential
+		r := request(f.e, "POST", "/oauth/token", refresh, browser{})
+		requireStatus(t, r, 503)
+		if !strings.Contains(r.Body.String(), "temporarily_unavailable") {
+			t.Fatalf("the refresh's answer: %s", r.Body.String())
+		}
+	}
+	return f, id, refresh
+}
+
+// restart closes the fixture's engine and opens a new one on the same state directory
+// and configuration, as a restarted process does.
+func restart(t *testing.T, f *fixture) *Engine {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := f.e.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	return e
 }
 
 // A grant the store pruned before the expiry sweep ran still has a workspace,
@@ -801,6 +922,78 @@ func TestBatchesAreRefused(t *testing.T) {
 	f.e.ServeHTTP(w, r)
 	if w.Code != 400 || strings.Contains(w.Body.String(), "tools") {
 		t.Fatalf("a batch was answered %d: %.200s", w.Code, w.Body.String())
+	}
+}
+
+// The remote transport's tool-call slots are the calls that run code the tool server holds
+// at once, and a grant's burst is all of them: the transport's number is the server's own
+// (hunt-quality-58: it was a second 16 that a comment said was the same).
+func TestToolSlotsAreTheServersOutstandingCalls(t *testing.T) {
+	if toolSlots != server.MaxOutstanding || grantBurst != server.MaxOutstanding || sharedBurst != 4*server.MaxOutstanding {
+		t.Errorf("toolSlots %d, a grant's burst %d and the shared burst %d; want the server's %d calls, the same, and four times it",
+			toolSlots, grantBurst, sharedBurst, server.MaxOutstanding)
+	}
+	if e := newFixture(t).e; cap(e.requests) != server.MaxOutstanding {
+		t.Errorf("the engine serves %d tool requests at once, want the server's %d", cap(e.requests), server.MaxOutstanding)
+	}
+}
+
+// A request refused before the MCP handler made no call, so the grant's meter gets its
+// charge back, whichever refusal it was: more batches and over-budget bodies than the
+// grant's whole burst leave its meter full (hunt-quality-46).
+func TestARequestRefusedBeforeTheHandlerKeepsTheGrantsMeter(t *testing.T) {
+	f := newFixture(t)
+	id := clientID(t, f.e)
+	v := strings.Repeat("m", 43)
+	b := authorizeBrowser(t, f.e, id, v)
+	login(t, f, b)
+	pair := exchangeCode(t, f.e, id, approveCode(t, f.e, b), v)
+	g, err := f.e.state.access(pair.AccessToken, f.e.resource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(body string) int {
+		r := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
+		r.Host = "mcp.example.test"
+		r.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "application/json, text/event-stream")
+		w := httptest.NewRecorder()
+		f.e.ServeHTTP(w, r)
+		return w.Code
+	}
+	meter := func() float64 {
+		f.e.mu.Lock()
+		defer f.e.mu.Unlock()
+		return f.e.grantLimits[g.ID].calls.tokens
+	}
+	batch := `[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`
+	for i := range 2 * grantBurst {
+		if code := send(batch); code != 400 {
+			t.Fatalf("batch %d was answered %d, not refused as a batch", i, code)
+		}
+	}
+	if left := meter(); left < grantBurst-0.5 {
+		t.Errorf("after refused batches the grant's meter holds %.1f of %d", left, grantBurst)
+	}
+	if !f.e.bodyBudget.TryAcquire(mcpBodyBudget) {
+		t.Fatal("could not hold the body budget")
+	}
+	for i := range 2 * grantBurst {
+		if code := send(`{"jsonrpc":"2.0","id":1,"method":"ping"}`); code != 429 {
+			t.Fatalf("body %d was answered %d with the body budget held", i, code)
+		}
+	}
+	f.e.bodyBudget.Release(mcpBodyBudget)
+	if left := meter(); left < grantBurst-0.5 {
+		t.Errorf("after bodies over the budget the grant's meter holds %.1f of %d", left, grantBurst)
+	}
+	// A request that reaches the handler is charged.
+	if code := send(`{"jsonrpc":"2.0","id":1,"method":"ping"}`); code == 429 || code == 400 {
+		t.Fatalf("a ping was answered %d", code)
+	}
+	if left := meter(); left > grantBurst-0.5 {
+		t.Errorf("a request the handler served was not charged: the meter holds %.1f", left)
 	}
 }
 

@@ -10,16 +10,22 @@ automatic retry of a request that is not idempotent.
 
 The classes mirror the Go client's sentinel errors (package ``client`` and
 package ``sandbox``); the comment on each names its Go counterpart.
+
+:func:`retry_on` is that distinction as a predicate for a framework's automatic
+retry (LangGraph's ``RetryPolicy``, LangChain's ``ToolRetryMiddleware``): it says
+yes only to a marked refusal that another try of the same call may pass.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Optional
 
 if TYPE_CHECKING:
     from .types import RunRecord
 
 __all__ = [
+    "RETRY_REASONS",
+    "retry_on",
     "PlimsollError",
     "InvalidBaseURLError",
     "InsecureHTTPError",
@@ -192,6 +198,33 @@ class SessionEndedError(PlimsollError):
         self.detail = detail
 
 
+class StaleOwnerError(PlimsollError):
+    """A session call or close carried an ownership generation that is no longer the
+    session's: another worker took the session over with an attach. Refused, not
+    dispatched; the session goes on for its new owner, and this worker must not use it."""
+
+    default_code = "failed_precondition"
+
+
+class CallAlreadySentError(PlimsollError):
+    """The first call of a session taken over across an explained gap repeats the lost
+    call: that call was already sent once and its answer was lost, so this is a retry of
+    it. Refused before anything was sent (``not_dispatched == "request"``), and never a
+    retry signal. Only the first call is checked (Go: ``client.ErrCallAlreadySent``, in the
+    same words). The lost call's record says whether the daemon answered it
+    (``Session.lost_call``)."""
+
+    default_code = "failed_precondition"
+
+
+class CheckpointMismatchError(PlimsollError):
+    """An attach's saved checkpoint is not the daemon's head of the session: a call ran
+    after the checkpoint was saved, its answer perhaps lost. Refused, not dispatched;
+    ownership did not move."""
+
+    default_code = "failed_precondition"
+
+
 # --- no Connect answer --------------------------------------------------------
 
 
@@ -295,3 +328,36 @@ class SoftwareEvidenceMismatchError(DataLossError):
 class ResultKindMismatchError(DataLossError):
     """The answer holds a result of another kind than the request, or none
     (Go: ``client.ErrResultKindMismatch``)."""
+
+
+# --- whether an automatic retry may run a call again ------------------------------
+
+RETRY_REASONS: FrozenSet[str] = frozenset({"capacity", "environment"})
+"""The not-dispatched reasons :func:`retry_on` retries. Every marked refusal ran
+nothing, so a retry of any of them is safe; these two are the ones where another try
+of the same call on the same daemon may pass. ``capacity``: admission or a rate limit
+shed the run, and a later try may be admitted. ``environment``: the daemon could not be
+reached before anything was sent (a refused or hanging connect, a failed TLS
+handshake, a Describe that failed), its token verifier was unavailable, or a session's
+sandbox could not be read back before the call (a call the docs say can be sent to the
+same session again). The same reason also covers an image outside the caller's
+software rule, which fails the same way each time: a retry then costs the policy's few
+attempts and runs nothing. Not retried, because the same daemon answers the same way:
+``request`` (a malformed request, a call cancelled before it was sent, a session that
+has ended), ``permission``, ``protocol``, ``unsupported``, ``isolation`` (a stronger
+backend is a placement decision, not a retry) and ``unknown`` (a reason this client
+has no name for)."""
+
+
+def retry_on(exc: BaseException) -> bool:
+    """Whether a framework's automatic retry may run this call again.
+
+    True only for a :class:`PlimsollError` that carries the not-dispatched mark with a
+    reason in :data:`RETRY_REASONS`: nothing ran, and another try may pass. False for
+    every unmarked error, after which the code may have run and a second run could
+    repeat what it did; for every other refusal; and for every exception that is not a
+    :class:`PlimsollError`. Pass it as ``RetryPolicy(retry_on=retry_on)`` (LangGraph)
+    or ``ToolRetryMiddleware(retry_on=retry_on)`` (LangChain): both frameworks' own
+    defaults retry a :class:`PlimsollError`, unmarked ones included."""
+    reason = exc.not_dispatched if isinstance(exc, PlimsollError) else None
+    return isinstance(reason, str) and reason in RETRY_REASONS

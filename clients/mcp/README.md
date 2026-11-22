@@ -21,8 +21,12 @@ can reach. It serves MCP 2026-07-28 and the 2025 revisions (the official Go SDK,
 | `run_code` | Runs `code` (`language` `"python"` or `"javascript"`, optional text `files` written first). Without `sandbox` the call is one cell the daemon runs by itself and nothing is kept: it asks for a sandbox the daemon keeps ready (`prefer_warm`), which on a daemon with a warm pool answers at once and is deleted after; with no pool or none waiting the daemon runs it in a sandbox made for it, through a runner that runs it as a session's interpreter does, and the summary says which ran. A pool sandbox runs the code in the session's image (on docker the project image, which a fresh call uses too); the record is a single run's either way and does not cover which ran ([docs/sessions.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md), "A cell for one call"). With `sandbox`, a handle from `open_sandbox`, it runs where that handle's earlier calls ran, so files and interpreter state remain. An optional `trace` (1 to 64 letters, digits or `. _ : -`) ties the run to a log of the caller's, such as a coding session's ID, and is signed into its receipt; [the agent-session example](../../examples/agent-session/README.md) sets it from a hook. A program that fails is a result with its exit code. |
 | `open_sandbox` | Opens a sandbox that keeps state and answers once the daemon has opened it, with its handle, languages, tier and when it ends. At most `PLIMSOLL_MAX_SANDBOXES` are open; past that the open is refused (`capacity`) and names the idle sandboxes in `idleSandboxes`. Nothing is ever closed for room: deleting a sandbox's state takes a `close_sandbox` naming it, so `open_sandbox` is not marked destructive. |
 | `close_sandbox` | Closes a handle's sandbox; `deleted` says whether the daemon confirmed it. |
-| `get_record` | The run record of a call, by the `recordSha256` its result or failure gave. The last 256 are kept in memory until the server restarts, at most 64 KiB each and 16 MiB in all. |
+| `get_record` | The run record of a call, by the `recordSha256` its result or failure gave. The last 256 are kept in memory until the server restarts, at most 64 KiB each and 16 MiB in all; over the remote transport, for each connection ([REMOTE.md](REMOTE.md)). |
 | `server_info` | This server's version, its tools with a digest of their names, descriptions, schemas and annotations, and what the daemon states. If the tools listed differ from those the agent can call, the host's tool list is out of date. |
+
+Installed with a grant (`PLIMSOLL_GRANT_PROFILE`, below), `run_code` without `sandbox` runs
+instead as the same cell form in a granted project of its own, never a pooled sandbox, so its
+code can call the profile's routes; `server_info`'s summary names the profile in force.
 
 MCP's 2026-07-28 revision has no protocol sessions, so state is a handle the model passes
 back. A handle is random and is never the daemon's session ID. A sandbox the daemon ended
@@ -38,7 +42,11 @@ block, because a host that passes on only the structured value would drop the bl
 A failure is a tool error whose text is JSON: `summary`, and `ran`, which is `"no"` when the
 daemon or this server refused before any code was sent (with the daemon's `refusal` reason
 when it gave one) or when the daemon classified a project run as `setup_failed` (no step
-began), and `"maybe"` when the code may have run without an answer that checked.
+began), and `"maybe"` when the code may have run without an answer that checked, or when the
+call reached its tool and the tool's output could not be written as JSON that fits its schema
+(a number that is not finite, say): the server writes every tool's output itself, its own
+tools' and those an embedder adds with `Extend` and `ExtendRun`. Arguments the tool's input
+schema refuses are refused before the tool starts, and are `"no"`.
 A `"maybe"` is never retried: running the code again could repeat what it did. A session call
 that may have run still has a checked record, whose `recordSha256` the failure carries.
 
@@ -46,7 +54,8 @@ that may have run still has a checked record, whose `recordSha256` the failure c
 
 With `PLIMSOLL_SIGNING_KEY_FILE` and `PLIMSOLL_RECEIPTS_DIR` set, every checked exchange is
 signed with plimsoll's attest harness into the directory, and each result's `receipt` says
-where: `status` (`stored`, written and synced; or `failed`, with `reason`), `file`, `line`,
+where: `status` (`stored`, written and synced; `failed`, with `reason`; or `unknown`, with
+`reason`, when this server knows no line for the record), `file`, `line`,
 `lineSha256`, `keyId`, and `session`: `none` for a fresh run, `open` for a sandbox call until
 its sandbox's close is signed, then `closed`, or `incomplete` when the server let the sandbox
 go without a signed close (the daemon was gone, the host killed the server) or a call of the
@@ -93,15 +102,17 @@ All from the environment. A value left as an unfilled placeholder such as
 | `PLIMSOLL_MIN_ISOLATION` | `kernel` | The weakest tier a run or sandbox accepts: `vm`, `kernel`, `container` or `process`. `kernel` is a verified gVisor runtime, the weakest fit for code you did not write. A plain docker daemon is `container`, which you must ask for. |
 | `PLIMSOLL_SOFTWARE_IDENTITY` | none | Image identities allowed to run code, comma-separated, such as `oci-manifest:linux/amd64@sha256:...`. One is an exact pin, several an approved set. Checked by the daemon before each run and by the client on each answer. |
 | `PLIMSOLL_TIMEOUT_MS` | `50000` | Each run's budget in the sandbox. |
-| `PLIMSOLL_CALL_TIMEOUT_MS` | `80000` | A whole tool call: the daemon's Describe, opening a sandbox, waiting for its turn and the run. At least 10 s over the run budget, and under the host's own tool timeout. A call that waited for its sandbox's turn is refused (`ran: "no"`, call again) when less than the run budget plus 5 s remains, rather than cut off mid-run. |
+| `PLIMSOLL_CALL_TIMEOUT_MS` | `80000` | A whole tool call: the daemon's Describe, opening a sandbox, waiting for its turn and the run. At least 10 s over the run budget, and under the host's own tool timeout. A sandbox call that waited for its turn, or reopened a sandbox the daemon had ended, is refused (`ran: "no"`, call again) when less than the run budget plus 5 s remains, rather than cut off mid-run. |
 | `PLIMSOLL_SANDBOX_LIFETIME_MS` | `1800000` | Asked of the daemon for each sandbox. A host may kill the server before it closes its sandboxes (Claude Code allows half a second), so this bounds how long an orphaned sandbox holds the daemon. |
 | `PLIMSOLL_LANGUAGES` | `python,javascript` | The languages `run_code` offers, the first the default; a sandbox offers those its image states. |
 | `PLIMSOLL_MAX_SANDBOXES` | `3` | Handles open at once, 1 to 16. Over the remote transport one approved app holds at most one fewer, and at least 2 is required. The daemon's own caps apply too. |
 | `PLIMSOLL_MAX_OUTPUT_BYTES` | `16000` | Bytes of stdout and of stderr returned to the model. |
 | `PLIMSOLL_SIGNING_KEY_FILE` | none | An Ed25519 key (`plimsoll-attest keygen -out harness` writes `harness.key` and `harness.pub`). With `PLIMSOLL_RECEIPTS_DIR`, turns on signed receipts. Refused if other users can read it. |
 | `PLIMSOLL_RECEIPTS_DIR` | none | Where receipts are written: created owner-only (with any missing parents), its name synced to disk before any receipt in it is called stored, and refused if other users can read it, if it is a symbolic link, or if a parent is one this user may write but not open (an entry there could not be synced). |
-| `PLIMSOLL_RECEIPTS_MAX_MB` | `1024` | The directory's limit, checked when each call is admitted, and for a sandbox call again once it has its turn: past it, the call is refused before anything runs. This server's own receipts count as they are written. The directory itself (another server's files sharing it, and what you move away) is measured again once the last measurement is 30 s old, counted from when its walk began, and at every check at or past the limit, so moving receipts away lets work in at once; checks that arrive during a walk share it. A file another server wrote more than 30 s before a check is always counted; one written since may not be, and a time bound sets no bound on how many bytes another server writes in that time. A walk costs about 1.4 µs a file (143 ms at 100,000 files on ext4 with a warm cache), so a full measurement at every call would grow with every receipt ever kept. A threshold, not a reservation: a call admitted under it may take the directory past it. Nothing is deleted for you. |
+| `PLIMSOLL_RECEIPTS_MAX_MB` | `1024` | The directory's limit, checked when each call is admitted, and for a sandbox call again once it has its turn: past it, the call is refused before anything runs. This server's own receipts count as they are written. The directory itself (another server's files sharing it, and what you move away) is measured again once the last measurement is 30 s old, counted from when its walk began, and at every check at or past the limit, so moving receipts away lets work in at once; checks that arrive during a walk share it. A file another server wrote more than 30 s before a check is always counted; one written since may not be, and a time bound sets no bound on how many bytes another server writes in that time. A walk costs about 1.4 µs a file (143 ms at 100,000 files on ext4 with a warm cache), so a full measurement at every call would grow with every receipt ever kept. A threshold, not a reservation: a call admitted under it may take the directory past it. Nothing is deleted for you. Over the remote transport each approved app may write at most half of the room the directory had for this server's receipts, and is refused alone past that ([REMOTE.md](REMOTE.md)). |
 | `PLIMSOLL_INSECURE_HTTP` | unset | `1` allows cleartext HTTP to a host other than loopback. Development only: the token would cross the network in clear. |
+| `PLIMSOLL_GRANT_PROFILE` | none | A grant profile the operator configured on the daemon (`PLIMSOLL_GRANTS_FILE`) that this server's token may use. Every `run_code` call without a sandbox then carries it, so its code can call that profile's routes of one web API through plimsoll's broker, which adds the API's key outside the sandbox. Set with `PLIMSOLL_GRANT_DESCRIPTION_FILE`. The server then asks the daemon's Describe once at startup which languages can call the API there (JavaScript wherever grants run; Python too on docker and openshell, through `import plimsoll_host`), says so in `run_code`'s description, and does not start if the daemon cannot carry the grant or does not answer. |
+| `PLIMSOLL_GRANT_DESCRIPTION_FILE` | none | The API's description for the model, as `plimsoll-specgen -only allow.json -emit description api.json` writes it for the profile; `run_code`'s description carries it. At most 32,000 characters. |
 
 ## Setup
 
@@ -153,7 +164,8 @@ Mirror 0.1.1 (`~/.mirror/mcp/plimsoll.json`, then `/connect plimsoll`):
 Mirror treats each `env` value as the **name of an environment variable**, not
 its literal value. Supply `PLIMSOLL_URL` and the caller token to the process
 that launches Mirror, using your credential manager. For an open development
-daemon, remove the `PLIMSOLL_TOKEN` entry. To sign receipts, also forward
+daemon (it serves loopback only, so `PLIMSOLL_URL` is a loopback address), remove the
+`PLIMSOLL_TOKEN` entry. To sign receipts, also forward
 `PLIMSOLL_SIGNING_KEY_FILE` and `PLIMSOLL_RECEIPTS_DIR` by name. Keep keys out of
 the connection file. Mirror's 90 s deadline sits above this server's default
 80 s deadline.
@@ -200,11 +212,19 @@ Desktop's own install and launch of a bundle, and both macOS builds, are not exe
 - It proves what the daemon stated and the client checked, not more: a tier is the daemon's
   configuration and provider evidence plus its startup smoke tests, never hardware
   attestation.
-- `get_record` keeps the last 256 records in memory (at most 64 KiB each, 16 MiB in all);
+- `get_record` keeps the last 256 records in memory (at most 64 KiB each, 16 MiB in all; over
+  the remote transport, for each connection);
   receipts on disk are kept until you delete them.
 - No CycloneDX bill of materials yet: the mapping covers answered single project runs only,
   and is not yet a library.
-- No grant profile reaches the code, and the sandbox has no network.
+- The sandbox has no network. Installed with a grant (`PLIMSOLL_GRANT_PROFILE`), `run_code`
+  without a sandbox can call that profile's routes of one web API and nothing else; a call
+  with a sandbox handle, and `open_sandbox`'s sandboxes, never can. The broker, outside the
+  sandbox, holds and adds the API's key, but the code can do whatever an allowed route
+  permits and read whatever it returns (an answer that holds an exact copy of the key is
+  withheld and ends the run's grant; a route that echoes its request is still one not to allow)
+  ([capability-grants.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md#from-an-agent-kits-code-tool)).
+  The run record does not list the calls.
 - No file comes back out of the sandbox except as stdout and stderr.
 - Stdio is the default. Hosted clients can use the optional
   [INTERNAL · remote HTTP mode →](REMOTE.md), with passkey sign-in and explicit consent.

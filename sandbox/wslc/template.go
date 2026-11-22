@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // templateDiskBytes is the template's virtual size: the most one run's session can write
@@ -140,8 +142,8 @@ func (p *Provider) formatDisk(ctx context.Context, dst string) error {
 	defer cancel()
 	cmd := hostCommand(mctx, p.cfg.Mkfs, "-q", "-F", "-m", "0", "-L", "plimsoll-wslc",
 		"-E", "root_owner=0:0,lazy_itable_init=1,lazy_journal_init=1", raw)
-	var out cappedBuffer
-	out.limit = errorCap
+	var out providerkit.Capture
+	out.Limit = errorCap
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("mkfs.ext4: %w: %s", err, strings.TrimSpace(out.String()))

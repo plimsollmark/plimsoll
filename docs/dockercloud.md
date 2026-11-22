@@ -160,6 +160,10 @@ command wrapper around `sh <script>`). That proves `node`, `timeout` and `head` 
 present, the step's working directory is honored, and <dfn>*egress*</dfn> (network
 traffic leaving the sandbox) is denied from inside the guest.
 
+plimsoll's startup check shows that code under the deny-all policy cannot make an
+ordinary network connection. One other connection route inside Docker's virtual
+machine has not been measured.
+
 The smoke test creates a billable sandbox, so it runs once at startup and never on
 the unauthenticated `/readyz` path, which checks configuration only.
 

@@ -37,13 +37,7 @@ func (b *RouteBudget) charge(origin string, capped []HostRoute, limits map[HostR
 	if len(capped) == 0 {
 		return true
 	}
-	limit := make(map[routeKey]int, len(capped))
-	for _, r := range capped {
-		k := routeKey{origin: canonicalOrigin(origin), method: strings.ToUpper(r.Method), path: strings.ToLower(r.Path)}
-		if l, seen := limit[k]; !seen || limits[r] < l {
-			limit[k] = limits[r]
-		}
-	}
+	limit := capKeys(origin, capped, limits)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for k, l := range limit {
@@ -55,6 +49,18 @@ func (b *RouteBudget) charge(origin string, capped []HostRoute, limits map[HostR
 		b.calls[k]++
 	}
 	return true
+}
+
+// capKeys is each capped route's count key and the tightest cap on it.
+func capKeys(origin string, capped []HostRoute, limits map[HostRoute]int) map[routeKey]int {
+	limit := make(map[routeKey]int, len(capped))
+	for _, r := range capped {
+		k := routeKey{origin: canonicalOrigin(origin), method: strings.ToUpper(r.Method), path: strings.ToLower(r.Path)}
+		if l, seen := limit[k]; !seen || limits[r] < l {
+			limit[k] = limits[r]
+		}
+	}
+	return limit
 }
 
 // canonicalOrigin is how an origin is keyed, so that two grants reaching one API

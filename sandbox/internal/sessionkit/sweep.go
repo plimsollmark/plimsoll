@@ -27,16 +27,22 @@
 //     PF_KTHREAD flag, which no user process can set. A container shows none.
 //   - The verdict is the sweep's exit status alone, which code in the sandbox cannot
 //     forge without attaching to it. The provider prevents that: openshell refuses a
-//     host whose Yama ptrace_scope would allow it, and docker runs the sweep
-//     non-dumpable under the runner guard.
+//     host whose Yama ptrace_scope would allow it, and docker refuses the same host
+//     (which covers the moment before the guard loads) and runs the sweep
+//     non-dumpable under the runner guard (which covers the rest). Node's own
+//     debugger is the other way in, opened by SIGUSR1 from any process of the same
+//     user; every script here starts with it shut (NodeArgv, node.go).
 package sessionkit
 
 import (
+	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Sweep exit statuses; any other status, or no status, means the boundary is unproven.
@@ -162,8 +168,9 @@ process.stdout.write(JSON.stringify({ptrace,procs}))`
 // one appears.
 //
 // What the window is: until a program of plimsoll's has loaded the runner guard, a
-// process of the same uid can open its stdin, stdout and memory, and a descriptor
-// opened before PR_SET_DUMPABLE=0 stays usable afterwards, memory included. The project
+// process of the same uid can open its stdin and stdout (its memory too, on a host
+// whose Yama ptrace_scope is 0, where a session does not open), and a descriptor
+// opened before PR_SET_DUMPABLE=0 stays usable afterwards. The project
 // runner's plan arrives on that stdin and carries the key its report is authenticated
 // with.
 const QuiesceScript = clearFn + `const fs=require("node:fs");const keep=new Set(process.argv.slice(1));
@@ -226,10 +233,10 @@ else why.push(pid+": unknown kind")}
 if(why.length>0)process.stderr.write(why.join("; ")+"\n");process.exit(why.length>0?1:0)`
 
 // CheckArgv is the check's command line for identities given as kind:identity.
-func CheckArgv(ids []string) []string { return append([]string{"node", "-e", CheckScript}, ids...) }
+func CheckArgv(ids []string) []string { return append(NodeArgv("-e", CheckScript), ids...) }
 
 // ListArgv is the lister's command line.
-func ListArgv() []string { return []string{"node", "-e", ListScript} }
+func ListArgv() []string { return NodeArgv("-e", ListScript) }
 
 // Measure is how the sweep measures a session's files against its budget.
 type Measure string
@@ -251,15 +258,15 @@ const (
 // SweepArgv is the sweep's command line: the disk budget (0 measures nothing), how
 // to measure, the directories it measures, and every process identity to keep.
 func SweepArgv(diskBytes int64, measure Measure, dirs []string, keep []string) []string {
-	return append([]string{"node", "-e", SweepScript, strconv.FormatInt(diskBytes, 10),
-		strconv.Itoa(MaxDiskEntries), string(measure), strings.Join(dirs, ",")}, keep...)
+	return append(NodeArgv("-e", SweepScript, strconv.FormatInt(diskBytes, 10),
+		strconv.Itoa(MaxDiskEntries), string(measure), strings.Join(dirs, ",")), keep...)
 }
 
 // QuiesceArgv is the quiesce's command line: the identities to leave alone, which are
 // plimsoll's own processes (the sandbox's own and the relays). Everything else in the
 // sandbox is killed, the session's interpreters included.
 func QuiesceArgv(own []string) []string {
-	return append([]string{"node", "-e", QuiesceScript}, own...)
+	return append(NodeArgv("-e", QuiesceScript), own...)
 }
 
 // Process is one entry of the lister's output.
@@ -325,6 +332,87 @@ func Baseline(stdout []byte, main []string, requirePtrace bool) ([]string, error
 		return nil, fmt.Errorf("an untouched sandbox runs %d processes, %d of them the main process; want PID 1 and one main process", len(keep), mains)
 	}
 	return keep, nil
+}
+
+// BaselineSettled is Baseline for a main process that a program of plimsoll's becomes by
+// exec after saying it started: docker's session shell writes the open's marker and then
+// execs main, so a listing taken in between shows the shell (before, its whole command
+// line) as the one child of PID 1 (hunt-quality-102: the open failed then, with "an
+// untouched sandbox runs an unexpected process"). On exactly that listing, list is called
+// again, pausing 10 ms and then twice as long each time up to 200 ms, until ctx ends; the
+// shell must still be the same process (the same pid and start time) on every listing
+// that shows it, and the listing accepted is one Baseline accepts whose main process has
+// that pid and start time: an exec keeps both. So it accepts nothing Baseline would
+// refuse, and refuses what Baseline would accept when main is another process than the
+// one that wrote the marker. Any other listing Baseline refuses is refused at once. It
+// returns the listing accepted, for checks of its own, and Baseline's identities.
+func BaselineSettled(ctx context.Context, list func(context.Context) ([]byte, error), main, before []string, requirePtrace bool) ([]byte, []string, error) {
+	stdout, err := list(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	keep, err := Baseline(stdout, main, requirePtrace)
+	if err == nil {
+		return stdout, keep, nil
+	}
+	shell, ok := pendingMain(stdout, before, requirePtrace)
+	if !ok {
+		return nil, nil, err
+	}
+	for wait := 10 * time.Millisecond; ; wait = min(2*wait, 200*time.Millisecond) {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, nil, fmt.Errorf("%w; the main process (pid %d) had not become %q when the open's deadline ended: %w", err, shell.PID, strings.Join(main, " "), ctx.Err())
+		case <-t.C:
+		}
+		stdout, lerr := list(ctx)
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		keep, berr := Baseline(stdout, main, requirePtrace)
+		if berr == nil {
+			l, _ := ParseListing(stdout) // Baseline parsed it
+			for _, pr := range l.Procs {
+				if pr.PID != 1 && (pr.PID != shell.PID || pr.Start != shell.Start) {
+					return nil, nil, fmt.Errorf("the main process is pid %d started at %s, not pid %d started at %s, which wrote the open's marker", pr.PID, pr.Start, shell.PID, shell.Start)
+				}
+			}
+			return stdout, keep, nil
+		}
+		again, ok := pendingMain(stdout, before, requirePtrace)
+		if !ok || again.PID != shell.PID || again.Start != shell.Start {
+			return nil, nil, berr
+		}
+	}
+}
+
+// pendingMain reports the one process of a listing that Baseline refused only because the
+// child of PID 1 still runs before (byte for byte, its whole command line): PID 1, and one
+// child of PID 1 running before, and nothing else, on a host Baseline's ptrace rule allows.
+func pendingMain(stdout []byte, before []string, requirePtrace bool) (Process, bool) {
+	l, err := ParseListing(stdout)
+	if err != nil || len(l.Procs) != 2 {
+		return Process{}, false
+	}
+	if scope, err := strconv.Atoi(l.Ptrace); requirePtrace && (err != nil || scope < 1) {
+		return Process{}, false
+	}
+	want := hex.EncodeToString([]byte(strings.Join(before, "\x00") + "\x00"))
+	var shell Process
+	init := false
+	for _, pr := range l.Procs {
+		switch {
+		case pr.PID == 1:
+			init = true
+		case pr.PPID == 1 && pr.CmdHex == want:
+			shell = pr
+		default:
+			return Process{}, false
+		}
+	}
+	return shell, init && shell.PID != 0
 }
 
 // BaselineAll reads the lister's output from a virtual machine no call has touched and

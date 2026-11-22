@@ -54,39 +54,50 @@ the one the daemon sent did not check. Nothing a daemon
 executes depends on the record, so adding it did not change the <dfn>*protocol
 number*</dfn>: the version every request states, which goes up when a new request field
 changes what a daemon may execute, or when clients start requiring something new of
-answers. Protocol 4 (2026-10-23) came with record version 4, which every client now
-requires. Protocol 5 came with `RunRequest.prefer_warm` and `OpenSessionRequest.warm_only`,
-which an older daemon would have ignored, making a sandbox the caller asked it not to.
+answers. Protocol 4 (2026-10-23) came with record version 4. Protocol 5 came with
+`RunRequest.prefer_warm` and `OpenSessionRequest.warm_only`, which an older daemon would have
+ignored, making a sandbox the caller asked it not to. Protocol 6 came with record version 5,
+which every client now requires of a live answer: an older daemon refuses the request before
+anything runs, instead of running it and giving an answer the client would have to reject.
+Protocol 7 (2026-11-21) came with the provider name's character rule (below): every client
+refuses a record whose provider holds a control or bidirectional format character, which a
+client of protocol 6 accepted, so a daemon of either number refuses a client of the other
+before anything runs.
 
 ## Fields
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version. A daemon writes `4`, for every record, a call answered or one that may have run but ended in an error (below), and signers sign `4` only; a live answer must carry it. A verifier of stored evidence (`attest`, `record.CheckExchange`) also reads every version an earlier release wrote, by that version's own layout (below): `1` (v0.10.0 to v0.11.1), `2` (answered calls, v0.12.0 to v0.22.0) and `3` (unanswered session calls, v0.15.0 to v0.22.0), so evidence signed under an older release checks without its release's binary. A version no release wrote is `record.ErrVersion`: upgrade the verifier, not "forged". |
+| `version` | The encoding version. A daemon writes `5`, for every record, a call answered or one that may have run but ended in an error (below), and signers sign `5` only; a live answer must carry it. A verifier of stored evidence (`attest`, `record.CheckExchange`) also reads every version an earlier release wrote, by that version's own layout (below): `1` (v0.10.0 to v0.11.1), `2` (answered calls, v0.12.0 to v0.22.0), `3` (unanswered session calls, v0.15.0 to v0.22.0) and `4` (v0.23.0 to v0.27.x), so evidence signed under an older release checks without its release's binary. A version no release wrote is `record.ErrVersion`: upgrade the verifier, not "forged". |
 | `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
-| `provider` | The provider that ran it (the response's `sandbox`). |
-| `isolation` | The tier the response states, verbatim. |
+| `provider` | The provider that ran it (the response's `sandbox`). It is shown to a reader beside the tier, so it holds to the qualification's character rule (below) in every version: valid UTF-8 with no control character and none of the bidirectional controls or line and paragraph separators. A record whose provider holds one is refused, and a daemon refuses every call, before anything runs, when its provider's name holds one. Since 2026-11-21; before, such a name passed every reader's check and was signed. |
+| `isolation` | The tier the response states, verbatim: one of `none`, `process`, `container`, `kernel` or `vm` ([INTERNAL · isolation tiers →](isolation-tiers.md)). A record that names anything else, another spelling, `unknown` or nothing at all, is refused, whatever floor the request named. |
+| `isolation_qualification` | The sentence the provider's vendor or its design requires beside the tier, as the response states it (`RunResponse.isolation_qualification`, the same sentence `Describe` states), or empty when the provider states none. Only the [WSL containers (INTERNAL · operator guide →)](wslc.md) provider states one so far: Microsoft's statement that WSL is not a security sandbox for running untrusted code, and, when the operator turns it on, the place of the user-space kernel that also runs inside each run's virtual machine. At most 1024 bytes of UTF-8 with no control character (U+0000 to U+001F, U+007F to U+009F) and none of U+061C, U+200E, U+200F, U+2028, U+2029, U+202A to U+202E or U+2066 to U+2069: Unicode's bidirectional controls, which show text in another order than it is stored, and its line and paragraph separators. A record outside that is refused. Other invisible characters, such as the zero-width space, are not refused. From version 5. |
 | `environment` | The exact outer image artifact or embedded interpreter selected for the run. For Docker this is the image index ID (the ID of the list that points to the image for each platform), which may include fresh build metadata even when the executable image is unchanged. Empty when none is stated. |
 | `software_identity` | The <dfn>*manifest*</dfn> (the file listing one image's configuration and layers) of the executable image selected, with its platform, for example `oci-manifest:linux/amd64@sha256:<digest>`. Empty when the provider cannot establish which image it selected. |
 | `software_rule_id` | The software rule the caller required, which the daemon checks before the run starts: `exact:<identity>` or `approved:sha256:<digest of approved identities>`. Empty when the caller set no rule. The request digest covers the complete approved list. |
-| `policy` | The sandbox policy the provider verified for the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. For docker it is the <dfn>*seccomp*</dfn> profile (the kernel's list of the operations a program may ask it for) this run applied: `seccomp:sha256:...` names the file by the SHA-256 of its bytes (the default, or the variant a run gets when its API permission asked for the local address for client libraries, `sdk_env`, [seccomp.md](seccomp.md)), `seccomp:docker-default` and `seccomp:unconfined` the two docker keywords, and `seccomp:skipped:runsc` a run under the `runsc` runtime, where no host profile is applied. A call in a session carries the provider's statement instead (the default and, when configured, the variant), since a session never applies the variant. Empty for providers without one. |
+| `policy` | The sandbox policy the provider verified for the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. For docker it is the <dfn>*seccomp*</dfn> profile (the kernel's list of the operations a program may ask it for) this run applied: `seccomp:sha256:...` names the file by the SHA-256 of its bytes (the default, or the variant a run gets when its API permission asked for the local address for client libraries, `sdk_env`, [seccomp.md](seccomp.md)), `seccomp:docker-default` and `seccomp:unconfined` the two docker keywords, and `seccomp:skipped:runsc` a run under the `runsc` runtime, where no host profile is applied. Then, under either runtime, one space and `guest-guard:sha256:...` name the <dfn>*guest guard*</dfn> the run's commands started behind, plimsoll's own filter in front of every program it starts in the container, by the SHA-256 of its program ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)): so a docker policy is one of those four seccomp forms, then one space and the guest guard's word, such as `seccomp:sha256:... guest-guard:sha256:...`, and a docker record with no guest guard word comes from a daemon from before the guest guard. A call in a session names the profile its session's container applies for its life, which the session states when it opens: the default (a session never applies the variant), on the record of a call that ended without an answer too. Empty for providers without one. |
 | `instance` | The sandbox instance that ran the call, as the response states it: a typed reference, a kind of lowercase letters, digits and `-`, a colon, and an ID of letters, digits and `. _ : -`, at most 160 bytes in all, such as `k8s-pod-uid:` and the UID the Kubernetes API server gave the pod. Empty when the provider names none (so far every provider but the [agent-sandbox (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#agent-sandbox) one). It is an opaque join key, never a name or a path: it lets evidence kept outside plimsoll, such as a log of everything the pod's code asked its kernel to do, be tied to this run. |
-| `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
+| `warm` | `true` when a waiting pool sandbox ran the call (a `Run` of interpreter code with `prefer_warm`, [sessions.md](sessions.md)), as the response states it; `false` otherwise, and on every unanswered call's record. From version 5. |
+| `daemon_version` | The answering daemon's plimsoll module version, from the build information Go writes into the binary, as the response states it: a release tag such as `v0.28.0`, a Go pseudo-version for a build from a commit no tag names (the next patch version above the latest release tag the commit's repository holds, then `-0.`, a time and the commit), or `(devel)` when the build states none, as `go test` and a build from a directory replacement do. A repository without plimsoll's release tags gives a pseudo-version above whatever tags it does hold. The example programs and the steps that regenerate their published pages build plimsolld with `-buildvcs=false`, so their records state `(devel)`; the pull-request recipe does the same except when it builds from the top of a plimsoll clone, unchanged, whose checkout holds a release tag naming its commit, where its daemon states that release: the tag itself must be in the checkout (the recipe's workflow fetches the release tags that name the one commit it is set to use), and a checkout without it states `(devel)`. Empty when the daemon could read no build information, or when the version it read is outside the form below. It must be `(devel)` or a `v` and three numbers with optional `-` and `+` parts of letters, digits, `.` and `-`, at most 128 bytes. The daemon's own statement about itself, like every evidence field, and only as true as Go's build stamping: a daemon built inside a git worktree nested in another checkout can state that outer checkout's commit, and `modified` false, as its pseudo-version (seen 2026-11-17). A release built from its tag states its tag. From version 5. |
+| `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. A record that ends before it starts is refused, whether or not the call was answered; for a version 1 or 2 record that reading was retired on 2026-11-21 (below). |
 | `session`, `sequence`, `previous_sha256` | A call's place in its session and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
 | `unanswered` | On the record of a call that may have run but got no answer: the status code of the error it ended with (`unknown`, `deadline_exceeded`, `unavailable`, ...), the daemon's own word, never error text. `result_sha256` is then empty. |
 | `record_sha256` | Digest of every field above. |
+
+**Retired on 2026-11-21: version 1 and 2 records that end before they start.** Daemons v0.10.0 to v0.12.0 read a record's start and its end from the wall clock separately, so a clock step between the two readings could write a genuine record whose end is before its start (from v0.13.0 the end is the start plus the time measured on a monotonic clock). A version 2 record does not say which daemon wrote it, so the retirement covers all of versions 1 and 2. From v0.28.0 every verifier (`record`, `attest` and `plimsoll-attest verify-record`, the Python and TypeScript clients; the bill of materials checker reads no version below 4) refuses such a record, with the text "the record ends before it starts, and that reading is retired by the decision of 2026-11-21" (`record.ErrRetired`, which `attest` does not call an invalid statement), so the refusal reads as a retirement, not as a forgery. Every other version 1 and 2 record still verifies, and a record of version 3 or later that ends before it starts is refused as before.
 
 Left out on purpose: the **trace id** (the caller's own ID for matching this run to
 its logs; it changes nothing that runs, and leaving it out keeps one request's digest the
 same on every attempt), **durations** (they differ on every run, so a replay could never match),
 **advice** (analysis of the run's host-API calls, not its output), and for a
 [cell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell)
-`Run` runs by itself (code for a Python or JavaScript interpreter, its last value printed), **`prefer_warm`** on the request and **`warm`** on the answer (whether a
-waiting pool sandbox ran it, [sessions.md](sessions.md), "A cell for one call"). The
-first chooses which sandbox runs the cell, not what runs. The second states which did,
-and is not signed: record version 4 has no field for it, and adding one is a new record
-version. Such a cell's record is a single run's on either path, with no session fields.
+`Run` runs by itself (code for a Python or JavaScript interpreter, its last value printed), **`prefer_warm`** on the request
+(whether a waiting pool sandbox may run it, [sessions.md](sessions.md), "A cell for one
+call"): it chooses which sandbox runs the cell, not what runs. The answer's `warm`, which
+states which did, is signed from record version 5 on. Such a cell's record is a single
+run's on either path, with no session fields.
 
 ## The encoding
 
@@ -152,20 +163,22 @@ sent, then `kind`
 A cell's result depends on what earlier cells of its session left in the interpreter,
 so a cell is replayed only as part of its session's chain, in order, never alone.
 
-### Record: domain `plimsoll.run-record.v4`
+### Record: domain `plimsoll.run-record.v5`
 
 The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
 digest covers the version without a field of its own: a record that names another version
 cannot keep its digest.
 
-Version 4 encodes every field, every time, empty strings and zeros included:
-`request_sha256`, `result_sha256`, `unanswered`, `provider`, `isolation`, `environment`,
-`policy`, `software_identity`, `software_rule_id`, `instance`, `started_unix_ms`,
+Version 5 encodes every field, every time, empty strings, zeros and `false` included:
+`request_sha256`, `result_sha256`, `unanswered`, `provider`, `isolation`,
+`isolation_qualification`, `environment`, `policy`, `software_identity`,
+`software_rule_id`, `instance`, `warm`, `daemon_version`, `started_unix_ms`,
 `ended_unix_ms`, `session`, `sequence`, `previous_sha256`. An answered call's record has
 an empty `unanswered`; an unanswered call's has an empty `result_sha256`.
 
 The earlier versions, which verifiers still read, encode fewer fields, in this order, and
-a record of one may state no field its version leaves out:
+a record of one may state no field its version leaves out (so no earlier record states a
+qualification, `warm` as `true` or a daemon version):
 
 - version 1: `request_sha256`, `result_sha256`, `provider`, `isolation`, `environment`,
   `policy`, `started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`.
@@ -174,6 +187,11 @@ a record of one may state no field its version leaves out:
   `policy`. Answered calls only.
 - version 3: version 2's fields with `unanswered` after `result_sha256`. Unanswered
   session calls only.
+- version 4: `request_sha256`, `result_sha256`, `unanswered`, `provider`, `isolation`,
+  `environment`, `policy`, `software_identity`, `software_rule_id`, `instance`,
+  `started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`. Both kinds
+  of call. Published version 4 evidence (bundles, the bills of materials on the example
+  pages) is read as it is and not remade.
 
 A request sent under protocol 1 (the records of version 1) has domain
 `plimsoll.run-request.v1` and no software fields; every later protocol has the encoding
@@ -182,9 +200,10 @@ order and joined with a zero byte. Identity syntax excludes zero bytes. The
 `RunResponse` repeats the outer environment and selected software identities,
 and the official client checks that both agree with the record. It also checks
 that the selected software is in the rule the request sent, that the record's tier
-meets the request's `minimum_isolation`, that an answered call's record names no
-`unanswered` code, and that the record's `instance` is the response's and has the typed
-form.
+is one of the five and meets the request's `minimum_isolation`, that an answered call's record names no
+`unanswered` code, that the record's `instance` is the response's and has the typed
+form, and, from version 5, that its `isolation_qualification`, `warm` and
+`daemon_version` are the response's and in their bounds.
 
 ## Reference implementation
 
@@ -240,10 +259,10 @@ response to read it from), and sends that record with the error as the
 `CloseSession` counts it. A call refused before it ran (an error marked not dispatched)
 gets no record and is not counted.
 
-The official clients check that record (version 4, no result, a status code, the digest
+The official clients check that record (version 5, no result, a status code, the digest
 of the request they sent, its software rule and that its software is in it, its tier
 against the call's floor, its own digest, its place in the chain, and that its provider,
-tier and software are what the session stated at open), keep it in their chain, and
+tier, the tier's qualification and software are what the session stated at open), keep it in their chain, and
 return the error: the session goes on, and the call's outcome
 stays unknown. A call whose answer never arrived (a dropped connection) carries no
 record, so the client cannot follow the daemon's chain any more, and it refuses every
@@ -262,7 +281,8 @@ Package [attest](../attest/) is the harness's half. It runs outside the daemon a
 uses the standard library only (Ed25519, SHA-256, JSON).
 
 - **Sign.** The harness checks the record against its own copy of the request and the
-  response (`record.Check`), then signs it. A record whose digest does not match its
+  response (`record.CheckExchange`, after refusing any record version but the current
+  one), then signs it. A record whose digest does not match its
   fields is never signed, and neither is one whose isolation is below the request's
   `minimum_isolation`, or an answered call's record that names an unanswered code, or
   one whose instance is not the response's. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
@@ -288,6 +308,45 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   `https://plimsollmark.github.io/plimsoll/session-close/v1`. A close that does not
   match (some call ran that this client did not make) is `DataLoss` and is not signed,
   and neither is the close of a session the client refused at open.
+- **A close that could not be collected.** Sometimes the daemon can never answer a
+  close with its count: it restarted (sessions live only in its memory), the close came
+  more than 10 minutes after the session ended by itself (the daemon keeps an ended
+  session's count that long), another holder of the session ID already closed it, the
+  close reached a daemon that never had it (a load balancer in front of several daemons,
+  where the session may still be alive on another), or another worker took the session
+  over. The daemon then refuses the close, as `NotFound` marked not dispatched ("no such
+  session for this caller", which is all it says, whichever of those happened) or as a
+  stale owner (`client.ErrStaleOwner`). On
+  exactly those two refusals, and on no other failure, the Go client's `Close` has a
+  recorder that implements `client.CloseNotCollectedRecorder` (`attest.Harness` does)
+  sign the harness's own statement that the close could not be collected, with predicate
+  type `https://plimsollmark.github.io/plimsoll/session-close-not-collected/v1`. Its
+  fields are `session` (the SHA-256 of the session's ID, as its records name it), `calls_seen` (how many of the session's calls
+  this client saw), `last_record_sha256` (the last of those calls' record digest),
+  `unanswered_request_sha256` (below), `reason` (`not_found` or `stale_owner`) and
+  `noted_unix_ms` (the harness's clock when it signed, its word only).
+  `unanswered_request_sha256` is the request digest (what `request_sha256` in a run record
+  would say) of a call this client sent after the ones it saw and got no answer for, as
+  when a daemon restart drops the connection in the middle of a call: that call may have
+  run, changed files or called the caller's own API through the sandbox, and no line of
+  the bundle holds it, so the
+  statement names it. It is `""` when there was none, and there is never more than one:
+  a session's calls go one at a time, and the first that ends with no answer the client
+  can check stops the session, so every later call is refused before it is sent. (A call
+  that ended with the daemon's record of a call that may have run is in the session's
+  chain itself, among the calls seen.) The harness signs it with its own key; the daemon signs nothing
+  and holds no key. It ends the session in the bundle, as a close does, and `Close`
+  returns `client.ErrCloseNotCollected` wrapping the daemon's refusal: the client sends
+  nothing more on that session, its close included, and the harness writes no second
+  ending for it. A timeout, a dropped connection or any error without the daemon's mark
+  signs nothing, since the close may still be collected by trying again. A client
+  process that died signs nothing either: no client is left that saw the calls. Nor is
+  anything signed for a session the client had already stopped because an answer failed
+  its check (a call came back numbered after a gap, so another holder of the session ID
+  ran a call between two of this client's; or a record did not match the call sent): the
+  client then holds proof that something it did not send ran, so the session keeps no
+  ending, its bundle fails `verify` as an unfinished session's does, and `Close`'s error
+  says why.
 - **Verify.** A bundle is the file of signed records the harness keeps, in JSON Lines
   (one JSON object per line). A call's line is its stored request and response (their
   binary protobuf encodings, in base64) and its envelope; a close's line is an envelope
@@ -310,9 +369,65 @@ uses the standard library only (Ed25519, SHA-256, JSON).
     `record.ErrVersion`.
 
   A chain without a close fails, because a chain whose last calls were cut off looks
-  exactly like an ended session. A session closed before any call is its close alone,
+  exactly like an ended session. A close's line (and the line of the statement that a
+  close could not be collected, below) is its envelope alone: one that also stores a
+  request or a response is refused, by `verify` and by `verify-entry` alike, so it is
+  never counted as a call. A session closed before any call is its close alone,
   with a count of zero and no last record. A call another holder of the session ID made
   shows up as a gap, since the daemon numbers the calls it executed.
+
+  The harness's statement that a close could not be collected (above) also ends a
+  session, under the same rules: its `calls_seen` and last record must be the chain's,
+  and nothing of the session may follow it. Such a session is reported as **not proven
+  complete**: `verify` exits 0, its first words are "verified, NOT PROVEN COMPLETE:"
+  (never a plain "verified", so a reader who stops there is not misled), and it says, for
+  the session, "N calls (the session's first N, none between them), NOT PROVEN COMPLETE:
+  its close could not be collected (the daemon that answered the close said it has no
+  such session for this caller); the harness signed that the client saw these N calls in
+  this order, and the daemon's own count of the session's calls is unknown", then what
+  that means. What is proven: these are the session's first N calls, in order, none
+  removed and none between them, since the chain numbers calls from 1 with no gap and
+  each names the one before, and the links catch any line removed or added. What is not:
+  that the daemon ran no call after the last (made by another holder of the session ID,
+  by the worker that took the session over, or a call this program sent whose answer was
+  lost), which only the daemon's count shows, and that the close truly could not be collected, which is the
+  harness's word (the daemon's own log line for each close it answers is where an operator
+  checks it). When the statement names a call sent with no answer, `verify` and
+  `verify-entry` add "and one more call was sent after them with no answer (request R): it
+  may have run", R being its full request digest, so a caller can find that call in its
+  own log. `-require-close` makes `verify` fail instead unless every session ends in the
+  daemon's close (`attest.Report.Complete` in Go, `attest.ErrNotProvenComplete`); use it
+  where the daemon's count is required. The Go library is stricter by default than the
+  command: `attest.VerifyBundle` and `attest.VerifyExpected` refuse such a session with
+  `attest.ErrNotProvenComplete` (`VerifyBundle` returns its report beside the error), so a
+  program that checks only the error never takes the session for a closed one; a program
+  that accepts it passes `attest.AcceptNotProvenComplete` and must say "not proven
+  complete" where it reports the session, as `plimsoll-attest verify` does. Resuming a
+  bundle (`attest.ResumeHarness`) and replaying one accept it, since neither claims
+  anything about calls the bundle lacks. `-expect` and `-expect-count` (below) show the
+  harness was handed every call the caller made, not that the daemon ran no other. A call
+  sent with no answer returned no record and is in no line, so it is counted apart, and
+  only if the caller says so: in the `-expect` file as a line `unanswered DIGEST`, and as
+  a number with `-expect-unanswered M`, each matched against the statements alone
+  (`attest.Expected.Unanswered` in Go). Left out, such a call is shown and required of
+  nothing. It never makes up for a line: a digest listed without the mark, and
+  `-expect-count`, are matched against the bundle's call lines exactly, so an answered
+  retry of the lost call cut off with the bundle's tail is found missing. A session with
+  neither ending still fails.
+
+  A verifier from v0.18.0 to v0.27.2 refuses a bundle holding this statement: it stops at
+  the bundle's first record, of version 5, which those releases do not read, and past that
+  it would read the statement as "not a valid run-record statement", since they read any
+  line they do not know as a run record. Verify such a bundle with v0.28.0 or
+  later. From v0.28.0 on, a line the bundle's key signed
+  whose statement is plimsoll's (its predicate type starts
+  `https://plimsollmark.github.io/plimsoll/`) but of a kind the verifier does not read is
+  refused as `attest.ErrUnknownStatement`: "a kind of plimsoll statement this release does
+  not read as a bundle line: a newer release may have written it (upgrade the verifier); if
+  none has, plimsoll writes no such line". A later kind of line then does not read as a
+  forged one, while the words stay true of the other case: plimsoll also signs statements
+  with a harness key that never belong in a bundle (`sign-statement`, below), and only the
+  key's holder could put one in a line, since every line's link is checked first.
 
   - follows the bundle's links: every line carries a second envelope the harness signed,
     a link (`https://plimsollmark.github.io/plimsoll/bundle-link/v1`, one signature, the
@@ -346,7 +461,10 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   counting them is exact and no ID has to be unique. Each line of the file is one
   digest; anything after it on the line, such as the call's `trace_id`, is a label the
   check ignores. The list binds what was sent, not what came back: a caller that also
-  needs a result proven compares that call's `result_sha256` with its own log.
+  needs a result proven compares that call's `result_sha256` with its own log. A call the
+  client sent and got no answer for goes on a line of its own as `unanswered DIGEST`
+  (above); `-expect-count N` counts the calls that returned a record, and
+  `-expect-unanswered M` the calls sent with no answer.
 - **Replay.** The bundle is verified first, and nothing is sent unless it verifies.
   Each stored single run is then sent again, and each recorded session's calls in
   their order into a fresh session, and every result digest is compared with the
@@ -379,12 +497,24 @@ go run ./cmd/plimsoll-attest verify-record -pub harness.pub -line 1 old-runs.jso
 go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.pub runs.jsonl
 ```
 
+What the command prints of a daemon's answer, a bundle or a file (a provider's name, an
+isolation tier, an error's text) shows each control character (escape, carriage return and
+line feed among them, and the C1 range), line or paragraph separator and bidirectional
+control as a visible escape, such as `\x1b` or `\u202e`, so a hostile daemon cannot
+rewrite the screen or forge a line of the command's own. JSON it prints (`open-statement`,
+`verify-receipt`) carries the same characters as JSON escapes, which read as the same
+value. `plimsoll-clients`, `plimsoll-withheld` and the daemon's log lines do the same.
+
 `verify-entry` checks one call line on its own (`attest.VerifyEntry`): its signature, its
 stored request and response against the signed record, and its link at the place it
 states. It is for a line whose bundle is not whole yet, such as a call of a session still
 open, whose chain has no close statement and so fails `verify`. It says what it does not
 establish: that the line is in the bundle its holder names, that the bundle around it is
 whole, and, for a session call, that its session's chain is. `verify` is unchanged.
+On a session's ending line (the daemon's close, or the harness's statement that the close
+could not be collected) it checks the line's link and the statement (`attest.VerifyEnding`)
+and prints what the statement says, naming the second as the harness's word and not the
+daemon's.
 
 `verify-record` checks one call line with no link at all (`attest.VerifyCall`): its
 signature, and its stored request and response against the signed record. It is how a
@@ -403,14 +533,15 @@ go run ./cmd/plimsoll-attest open-statement -pub harness.pub \
 `sign-statement` signs an in-toto statement the harness makes about evidence it has checked
 (`attest.SignStatement`): `statement.json` holds `{"subject": [...], "predicate": {...}}`, and
 the envelope is the standard signed form, so anything that reads a standard predicate (in-toto's
-test-result, OpenVEX) takes it as it is. It refuses the run record, link and close types, which
-are signed only through their own checked paths. `open-statement` checks the signature and the
+test-result, OpenVEX) takes it as it is. It refuses the run record, link and close types and
+the statement that a close could not be collected, which are signed only through their own
+checked paths. `open-statement` checks the signature and the
 type and prints `{"keyid", "subject", "predicate"}`. A signature says who made the statement,
 not that the predicate is true: the harness signs what it is given, so a reader rebuilds the
 predicate from the evidence it names and compares, as `examples/pr-receipt/verify.py` does.
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 5, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 7, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only

@@ -184,7 +184,7 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 	if !entered {
 		return box{}, nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
 	}
-	b := box{name: namePrefix + randHex(7)}
+	b := box{name: namePrefix + providerkit.RandHex(7)}
 	labels := map[string]string{
 		instanceLabel: p.instance,
 		runLabel:      "1",
@@ -566,8 +566,8 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 	cancel()
 	sendErr := <-sent
 	_ = stream.CloseResponse()
-	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped || out.cutAfterExit
-	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped || out.cutAfterExit
+	out.stdout, out.stdoutTruncated = stdout.Bytes(), stdout.Truncated() || out.cutAfterExit
+	out.stderr, out.stderrTruncated = stderr.Bytes(), stderr.Truncated() || out.cutAfterExit
 	switch {
 	case out.exited:
 		return out, nil

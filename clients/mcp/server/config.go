@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 
@@ -74,6 +75,15 @@ type Config struct {
 	MaxOutputBytes int
 	// Owner is the end user the daemon's per-owner session cap counts. Default "local".
 	Owner string
+	// GrantProfile and GrantDescription, both or neither, are set by whoever installs
+	// the server, never by a model: the name of a grant profile the operator configured
+	// on the daemon (PLIMSOLL_GRANTS_FILE), which every run_code call without a sandbox
+	// then carries, and the description of its API that plimsoll-specgen wrote for that
+	// profile, which run_code's description shows the model. With them, New reads the
+	// daemon's Describe once to decide which languages can call the API there, and
+	// refuses to start when the daemon cannot carry the grant (grant.go).
+	GrantProfile     string
+	GrantDescription string
 
 	// For tests and embedders: the HTTP client to the daemon, and a Recorder that
 	// receives every checked exchange.
@@ -244,6 +254,14 @@ func FromEnv(getenv func(string) string) (Config, error) {
 			c.Languages = append(c.Languages, sandbox.Language(l))
 		}
 	}
+	c.GrantProfile = get("PLIMSOLL_GRANT_PROFILE")
+	if file := get("PLIMSOLL_GRANT_DESCRIPTION_FILE"); file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("PLIMSOLL_GRANT_DESCRIPTION_FILE: %w", err))
+		}
+		c.GrantDescription = string(b)
+	}
 	c.SigningKeyFile, c.ReceiptsDir = get("PLIMSOLL_SIGNING_KEY_FILE"), get("PLIMSOLL_RECEIPTS_DIR")
 	if (c.SigningKeyFile == "") != (c.ReceiptsDir == "") {
 		errs = append(errs, errors.New("PLIMSOLL_SIGNING_KEY_FILE and PLIMSOLL_RECEIPTS_DIR turn receipts on together: set both, or neither"))
@@ -314,6 +332,12 @@ func (c Config) withDefaults() (Config, error) {
 			return c, fmt.Errorf("kit %q holds %d files and %d bytes; a kit holds 1 to %d files and at most %d bytes", k.Name, len(k.Files), total, MaxFiles/2, kitBytes)
 		}
 	}
+	if (c.GrantProfile == "") != (strings.TrimSpace(c.GrantDescription) == "") {
+		return c, errors.New("a grant is a profile name and its API's description together (PLIMSOLL_GRANT_PROFILE and PLIMSOLL_GRANT_DESCRIPTION_FILE, the file plimsoll-specgen -emit description writes): set both, or neither")
+	}
+	if c.GrantProfile != "" && (len(c.GrantProfile) > maxGrantProfileBytes || !utf8.ValidString(c.GrantDescription) || utf8.RuneCountInString(c.GrantDescription) > MaxGrantDescriptionChars) {
+		return c, fmt.Errorf("the grant profile name is at most %d bytes and the API's description at most %d characters of UTF-8 text", maxGrantProfileBytes, MaxGrantDescriptionChars)
+	}
 	uris := map[string]bool{}
 	for _, p := range c.Panels {
 		if !strings.HasPrefix(p.URI, "ui://") || len(p.URI) > 200 || uris[p.URI] || p.Name == "" || p.HTML == "" || len(p.HTML) > 2<<20 {
@@ -323,8 +347,11 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	// A run that cannot finish inside the call would be cut off by the server's own
 	// deadline, which the model would read as a run that may have happened.
-	if c.RunTimeout+10*time.Second > c.CallTimeout {
-		return c, fmt.Errorf("the run timeout (%s) must be at least 10 s under the call timeout (%s), which also covers opening a sandbox; a call that waited for its sandbox's turn is refused, not cut off, when less than the run timeout plus 5 s remains", c.RunTimeout, c.CallTimeout)
+	// Both numbers in the words are the constants the checks use (runTimeoutGap here,
+	// runAnswerMargin in timeLeft): they were typed again in the text until 2026-11-20
+	// (hunt-quality-58).
+	if c.RunTimeout+runTimeoutGap > c.CallTimeout {
+		return c, fmt.Errorf("the run timeout (%s) must be at least %s under the call timeout (%s), which also covers opening a sandbox; a sandbox call that waited for its turn or reopened its sandbox is refused, not cut off, when less than the run timeout plus %s remains", c.RunTimeout, spaced(runTimeoutGap), c.CallTimeout, spaced(runAnswerMargin))
 	}
 	return c, nil
 }

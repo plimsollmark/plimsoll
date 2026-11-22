@@ -21,6 +21,7 @@
 #              SANDBOX_AGENTSANDBOX_WARM_POOL=plimsoll-run SANDBOX_AGENTSANDBOX_RUNTIME_CLASS=gvisor
 #              SANDBOX_AGENTSANDBOX_IMAGE=<the image> SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE=<file>
 #              SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE=<ca.crt>
+#              PLIMSOLL_ADDR=0.0.0.0:8746 (unset, it listens on its own pod's loopback only)
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata: {name: gvisor}

@@ -3,10 +3,11 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/plimsollmark/plimsoll/internal/settings"
 )
 
 // Provider is a checked, constructed execution provider plus the effective
@@ -71,28 +72,29 @@ func Build(getenv func(string) string) (Provider, error) {
 	// Normalize so casing/whitespace variants from a .env or k8s manifest ("WASM",
 	// " docker", "e2b ") select the intended provider instead of silently falling to
 	// Disabled. The default branch stays fail-safe: an unknown value never executes.
-	raw := getenv("SANDBOX_PROVIDER")
+	raw := settings.Provider.Raw(getenv)
+	name := settings.Provider.Get(getenv)
 	// A security setting that does nothing must not look applied: only docker picks
 	// its guests' uid.
-	if strings.TrimSpace(getenv("SANDBOX_GUEST_UID")) != "" && strings.ToLower(strings.TrimSpace(raw)) != "docker" {
+	if settings.GuestUID.Set(getenv) && name != "docker" {
 		return Provider{}, fmt.Errorf("SANDBOX_GUEST_UID applies to the docker provider only, not %q: leave it unset", strings.TrimSpace(raw))
 	}
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	switch name {
 	case "docker":
-		d := DefaultDocker(getenv("SANDBOX_DOCKER_IMAGE"))
-		if projectImage := getenv("SANDBOX_DOCKER_PROJECT_IMAGE"); projectImage != "" {
+		d := DefaultDocker(settings.DockerImage.Get(getenv))
+		if projectImage := settings.DockerProjectImage.Get(getenv); projectImage != "" {
 			d.ProjectImage = projectImage
 		}
-		d.ModuleImage = getenv("SANDBOX_DOCKER_MODULE_IMAGE") // "" = module runs unsupported
-		d.Runtime = getenv("SANDBOX_DOCKER_RUNTIME")          // e.g. "runsc" (gVisor); "" = runc
-		d.Seccomp = getenv("SANDBOX_DOCKER_SECCOMP")          // "" = docker default (explicit); path or "unconfined"
-		d.SeccompSDK = getenv("SANDBOX_DOCKER_SECCOMP_SDK")   // the profile a run whose grant sets sdk_env gets instead; "" = none
-		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		d.ModuleImage = settings.DockerModuleImage.Get(getenv) // "" = module runs unsupported
+		d.Runtime = settings.DockerRuntime.Get(getenv)         // e.g. "runsc" (gVisor); "" = runc
+		d.Seccomp = settings.DockerSeccomp.Get(getenv)         // "" = docker default (explicit); path or "unconfined"
+		d.SeccompSDK = settings.DockerSeccompSDK.Get(getenv)   // the profile a run whose grant sets sdk_env gets instead; "" = none
+		requirePinned, err := settings.RequirePinnedImages.Get(getenv)
 		if err != nil {
 			return Provider{}, err
 		}
 		d.RequirePinnedImages = requirePinned
-		if raw := strings.TrimSpace(getenv("SANDBOX_GUEST_UID")); raw != "" {
+		if raw := settings.GuestUID.Get(getenv); raw != "" {
 			uid, err := strconv.Atoi(raw)
 			if err != nil {
 				return Provider{}, fmt.Errorf("SANDBOX_GUEST_UID %q is not a number", raw)
@@ -105,8 +107,8 @@ func Build(getenv func(string) string) (Provider, error) {
 		res.applyDocker(d)
 		return Provider{Sandbox: d, Resources: res}, nil
 	case "e2b":
-		e := &E2B{APIKey: getenv("E2B_API_KEY"), Template: getenv("E2B_TEMPLATE"), GuardURL: getenv("E2B_GUARD_URL"),
-			SessionGrants: getenv("E2B_SESSION_GRANTS")}
+		e := &E2B{APIKey: settings.E2BAPIKey.Get(getenv), Template: settings.E2BTemplate.Get(getenv), GuardURL: settings.E2BGuardURL.Get(getenv),
+			SessionGrants: settings.E2BSessionGrants.Get(getenv)}
 		if err := validateE2BSessionGrants(e.SessionGrants, e.GuardURL); err != nil {
 			return Provider{}, err
 		}
@@ -123,17 +125,17 @@ func Build(getenv func(string) string) (Provider, error) {
 		return Provider{Sandbox: e, Resources: res}, nil
 	case "dockercloud":
 		d := &DockerCloud{
-			Token:      getenv("DOCKER_SBX_TOKEN"),
-			Username:   getenv("DOCKER_SBX_USERNAME"),
-			AuthURL:    getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
-			API:        getenv("SANDBOX_DOCKERCLOUD_API"),
-			APIURL:     getenv("SANDBOX_DOCKERCLOUD_API_URL"),
-			Image:      getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
-			StoreImage: getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE"),
-			GuardURL:   getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),
-			PolicyURL:  getenv("SANDBOX_DOCKERCLOUD_POLICY_URL"),
+			Token:      settings.DockerSBXToken.Get(getenv),
+			Username:   settings.DockerSBXUsername.Get(getenv),
+			AuthURL:    settings.DockercloudAuthURL.Get(getenv),
+			API:        settings.DockercloudAPI.Get(getenv),
+			APIURL:     settings.DockercloudAPIURL.Get(getenv),
+			Image:      settings.DockercloudImage.Get(getenv),
+			StoreImage: settings.DockercloudStoreImage.Get(getenv),
+			GuardURL:   settings.DockercloudGuardURL.Get(getenv),
+			PolicyURL:  settings.DockercloudPolicyURL.Get(getenv),
 		}
-		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		requirePinned, err := settings.RequirePinnedImages.Get(getenv)
 		if err != nil {
 			return Provider{}, err
 		}
@@ -173,19 +175,19 @@ func ProviderNames() []string { return []string{"wasm", "docker", "e2b", "docker
 // and a malformed or negative value is an error. It is exported for a provider an
 // embedder constructs outside Build, which must read the envelope the same way.
 func ResourcesFromEnv(getenv func(string) string) (Resources, error) {
-	memory, err := nonNegativeIntEnv(getenv, "SANDBOX_MEMORY_MB")
+	memory, err := settings.MemoryMB.Get(getenv)
 	if err != nil {
 		return Resources{}, err
 	}
-	cpus, err := nonNegativeFloatEnv(getenv, "SANDBOX_CPUS")
+	cpus, err := settings.CPUs.Get(getenv)
 	if err != nil {
 		return Resources{}, err
 	}
-	pids, err := nonNegativeIntEnv(getenv, "SANDBOX_PIDS")
+	pids, err := settings.Pids.Get(getenv)
 	if err != nil {
 		return Resources{}, err
 	}
-	disk, err := nonNegativeIntEnv(getenv, "SANDBOX_DISK_MB")
+	disk, err := settings.DiskMB.Get(getenv)
 	if err != nil {
 		return Resources{}, err
 	}
@@ -228,41 +230,12 @@ func (r Resources) applyWasm(w *WasmSandbox) {
 	}
 }
 
-func nonNegativeIntEnv(getenv func(string) string, key string) (int, error) {
-	raw := strings.TrimSpace(getenv(key))
-	if raw == "" {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
-		return 0, fmt.Errorf("%s=%q must be a non-negative integer", key, raw)
-	}
-	return n, nil
-}
-
-func nonNegativeFloatEnv(getenv func(string) string, key string) (float64, error) {
-	raw := strings.TrimSpace(getenv(key))
-	if raw == "" {
-		return 0, nil
-	}
-	f, err := strconv.ParseFloat(raw, 64)
-	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("%s=%q must be a finite non-negative number", key, raw)
-	}
-	return f, nil
-}
-
-// BoolFromEnv parses an opt-in boolean variable: unset, 0 or false is false, 1 or
-// true is true (any case), and anything else is an error, so a typo can never
-// silently disable a safety opt-in. It is exported, like ResourcesFromEnv, for a
-// provider an embedder constructs outside Build.
+// BoolFromEnv parses an opt-in boolean variable an embedder's own provider reads, by the
+// rule every plimsoll boolean setting follows (internal/settings): unset, 0 or false is
+// false, 1 or true is true (any case), and anything else is an error, so a typo can
+// never silently disable a safety opt-in. It is exported, like ResourcesFromEnv, for a
+// provider an embedder constructs outside Build; plimsoll's own code reads each of its
+// variables through its setting.
 func BoolFromEnv(getenv func(string) string, key string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(getenv(key))) {
-	case "", "0", "false":
-		return false, nil
-	case "1", "true":
-		return true, nil
-	default:
-		return false, fmt.Errorf("%s must be one of 0, 1, false, or true", key)
-	}
+	return settings.ParseBool(key, getenv(key))
 }

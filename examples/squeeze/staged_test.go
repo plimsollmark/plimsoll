@@ -14,6 +14,15 @@ import (
 
 const stagedPublished = "../../docs/examples/squeeze-recipe"
 
+// The tests that verify a published page, or a copy of one in a test's own directory, call
+// t.Parallel: they only read the published files and the package's state, and under the race
+// detector each takes 10 to 60 s (gzip, JSON and Ed25519, about 23 times their plain time), so
+// run one after another they made this package the slowest in make race by four minutes
+// (244 s in CI on 2026-11-17, 238 s on four cores here, all of it on one core). Go runs a
+// package's parallel tests only after its serial ones, so the tests that swap courseFS or
+// harnessTree and put them back stay apart from these. A test that changes package state must
+// not call t.Parallel.
+
 // The resampling draws exactly what CPython's random.Random draws for the same seed, so the
 // page's intervals are the registered rule's script's own. The expected values were printed by
 // Python 3.12: random.Random(seed).getrandbits(32), and random.Random(20261106).choice over
@@ -115,6 +124,7 @@ func TestStagedRuleDecidesEachOutcome(t *testing.T) {
 // values below are what private tooling printed from the same agents (each rounded to four
 // places), before this page existed.
 func TestStagedPagePublishedVerifies(t *testing.T) {
+	t.Parallel()
 	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +184,7 @@ func TestStagedPagePublishedVerifies(t *testing.T) {
 // What the page says is held to the evidence: a claim the evidence does not bear stops the
 // render, and a changed rule or a changed number refuses -verify.
 func TestStagedPageRefusesWhatTheFilesDoNotSay(t *testing.T) {
+	t.Parallel()
 	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +273,7 @@ func renderThenVerify(dir string, job *Job) error {
 // removed too and the page rendered again, since the signed bundle still grades it and its group
 // falls short of the stage's build size.
 func TestStagedRefusesAMissingTranscript(t *testing.T) {
+	t.Parallel()
 	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -305,6 +317,7 @@ func TestStagedRefusesAMissingTranscript(t *testing.T) {
 // A transcript whose controller text was edited, its declared digest kept, is
 // refused: the text read for the words measure and the generator checks must be the graded one.
 func TestStagedRefusesAnEditedControllerText(t *testing.T) {
+	t.Parallel()
 	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +339,8 @@ func TestStagedRefusesAnEditedControllerText(t *testing.T) {
 // brief, another system prompt, another after-session question, another recipe) is refused, each
 // on its own, even with the page rendered again.
 func TestStagedRefusesASessionOutsideTheDesign(t *testing.T) {
-	job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
+	t.Parallel()
+	design, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,19 +354,27 @@ func TestStagedRefusesASessionOutsideTheDesign(t *testing.T) {
 		}, "brief"},
 		{"system prompt", func(x *Transcript) { x.System += " Take your time." }, "system prompt"},
 		{"question", func(x *Transcript) { x.Question = afterQuestion("") }, "after-session question"},
-		{"recipe", func(x *Transcript) { x.Recipe = job.Courses[0].Loops[0].Recipe }, "recipe"},
+		{"recipe", func(x *Transcript) { x.Recipe = design.Courses[0].Loops[0].Recipe }, "recipe"},
 	} {
-		dir := stagedCopy(t, "recipe", func(ts []Transcript) []Transcript {
-			for i := range ts {
-				if ts[i].Group == "scrambled" && ts[i].N == 5 {
-					c.edit(&ts[i])
-				}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			// Each case renders and verifies with a job of its own, so no two share one.
+			job, err := loadJob(filepath.Join("jobs", "recipe-scramble-easy.json"))
+			if err != nil {
+				t.Fatal(err)
 			}
-			return ts
+			dir := stagedCopy(t, "recipe", func(ts []Transcript) []Transcript {
+				for i := range ts {
+					if ts[i].Group == "scrambled" && ts[i].N == 5 {
+						c.edit(&ts[i])
+					}
+				}
+				return ts
+			})
+			if err := renderThenVerify(dir, job); err == nil || !strings.Contains(err.Error(), "easy.scrambled.5") || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s changed in easy.scrambled.5's transcript: %v", c.name, err)
+			}
 		})
-		if err := renderThenVerify(dir, job); err == nil || !strings.Contains(err.Error(), "easy.scrambled.5") || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s changed in easy.scrambled.5's transcript: %v", c.name, err)
-		}
 	}
 }
 
@@ -447,6 +469,7 @@ func TestMethodPagePublished(t *testing.T) {
 // scrambled word is tagged with the item it came from, so the figure can be read back to the
 // recipe word for word.
 func TestRecipeStripsAndScrambledWords(t *testing.T) {
+	t.Parallel()
 	p := publishedPage(t)
 	strips, err := p.HonestStrips()
 	if err != nil {
@@ -491,6 +514,7 @@ func TestRecipeStripsAndScrambledWords(t *testing.T) {
 // The flight grid draws every agent and every sealed flight, each row's runs land exactly the
 // agent's score, and the column counts sum to the landings of the whole run.
 func TestFlightGridMatchesTheScores(t *testing.T) {
+	t.Parallel()
 	p := publishedPage(t)
 	g, err := p.Grid()
 	if err != nil {
@@ -589,6 +613,7 @@ func popcount(x int) int {
 // the data: the agents at the fly-call cap are the ones the evidence says, and the caption
 // says all landed only when every recorded flight did.
 func TestPracticeCapAndCourseCaptionAreComputed(t *testing.T) {
+	t.Parallel()
 	p := publishedPage(t)
 	capped := p.FlyCapped()
 	for _, a := range p.Ev.Agents {

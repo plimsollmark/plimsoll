@@ -161,6 +161,7 @@ func TestEgressGuardOneRunCannotTakeEverySlot(t *testing.T) {
 			<-done
 		}
 	}()
+	// fixed-wait: 100 ms stands for "run-a's requests have taken what they can"; not shown safe: if they have not, run-b is served for another reason
 	time.Sleep(100 * time.Millisecond) // let run-a's requests take what they can
 	req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items"}`))
 	req.Header.Set(EgressGuardHeader, "run-b")

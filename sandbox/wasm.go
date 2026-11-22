@@ -19,6 +19,7 @@ import (
 	"github.com/tetratelabs/wazero/sys"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // REFERENCE SANDBOX (2026-06-19): this package is the canonical sandbox, and
@@ -180,13 +181,7 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 		// A configuration it cannot run with: nothing ran.
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, NotDispatched(RefusalEnvironment, w.configErr)
 	}
-	timeout := req.Timeout
-	if timeout <= 0 {
-		timeout = w.defaultTimeout()
-	}
-	if m := w.maxTimeout(); timeout > m {
-		timeout = m
-	}
+	timeout := providerkit.ClampTimeout(req.Timeout, w.defaultTimeout(), w.maxTimeout())
 	// A module that does not compile here does not compile in the run either, which
 	// reports it as it always has; this only keeps the compiled module held.
 	_ = qjsCompiled()
@@ -233,9 +228,9 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, fmt.Errorf("instantiate WASI: %w", err)
 	}
 
-	var stdout, stderr cappedBuffer
-	stdout.limit = w.maxOutput()
-	stderr.limit = w.maxOutput()
+	var stdout, stderr providerkit.Capture
+	stdout.Limit = w.maxOutput()
+	stderr.Limit = w.maxOutput()
 	cfg := wazero.NewModuleConfig().
 		WithStdout(&stdout).WithStderr(&stderr).
 		WithArgs(args...)

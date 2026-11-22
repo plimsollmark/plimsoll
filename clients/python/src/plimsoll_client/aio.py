@@ -25,6 +25,7 @@ from typing import Any, List, Optional, Sequence
 
 from . import _validate as v
 from ._transport import in_thread
+from .checkpoint import CheckpointStore, SessionCheckpoint
 from .client import DEFAULT_REQUEST_TIMEOUT, Client, Session
 from .types import (
     CellResult,
@@ -51,9 +52,10 @@ class AsyncClient:
         insecure_http: bool = False,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         ssl_context: Optional[ssl.SSLContext] = None,
+        daemon_name: Optional[str] = None,
     ) -> None:
         self.sync = Client(
-            base_url, token, insecure_http=insecure_http, request_timeout=request_timeout, ssl_context=ssl_context
+            base_url, token, insecure_http=insecure_http, request_timeout=request_timeout, ssl_context=ssl_context, daemon_name=daemon_name
         )
         """The synchronous client every call goes through."""
 
@@ -160,6 +162,8 @@ class AsyncClient:
         languages: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
         warm_only: bool = False,
+        checkpoint_store: Optional[CheckpointStore] = None,
+        checkpoint_key: Optional[str] = None,
     ) -> "AsyncSession":
         # Cancelling the await does not stop the open in its thread, and a session
         # the daemon opens after the cancel would reach nobody and hold its slot
@@ -179,6 +183,8 @@ class AsyncClient:
                 languages=languages,
                 owner=owner,
                 warm_only=warm_only,
+                checkpoint_store=checkpoint_store,
+                checkpoint_key=checkpoint_key,
             )
             with lock:
                 if not abandoned:
@@ -199,6 +205,14 @@ class AsyncClient:
         if s is None:  # unreachable: only a cancel abandons the open
             raise asyncio.CancelledError()
         return AsyncSession(s)
+
+    async def attach_session(
+        self, key: str, *, store: CheckpointStore, fingerprint: Optional[str] = None, trace_id: Optional[str] = None
+    ) -> "AsyncSession":
+        """:meth:`Client.attach_session`. Cancelling the await cuts the attach's
+        connection; the daemon may have moved the session to this worker all the same,
+        so nothing is retried and the stored checkpoint may now be stale."""
+        return AsyncSession(await in_thread(self.sync.attach_session, key, store=store, fingerprint=fingerprint, trace_id=trace_id))
 
 
 class AsyncSession:
@@ -236,6 +250,10 @@ class AsyncSession:
     @property
     def calls(self) -> int:
         return self.sync.calls
+
+    async def checkpoint(self) -> SessionCheckpoint:
+        """:meth:`Session.checkpoint`, in a thread: it waits for a call in flight."""
+        return await asyncio.to_thread(self.sync.checkpoint)
 
     async def run_javascript(
         self,

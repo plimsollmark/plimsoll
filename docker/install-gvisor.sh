@@ -49,7 +49,7 @@ BUNDLE="$STAGE/gvisor.tar.zstd"
 if [[ -n "$ARCHIVE" ]]; then
   cp -- "$ARCHIVE" "$BUNDLE"
 else
-  URL="https://github.com/google/gvisor/releases/download/release-${RELEASE}/gvisor-${ARCH}.tar.zstd"
+  URL="https://github.com/gvisor/gvisor/releases/download/release-${RELEASE}/gvisor-${ARCH}.tar.zstd"
   # A progress bar, not --silent: the bundle is tens of MB, and a silent download
   # looks like a hung installer.
   echo "Downloading gVisor $RELEASE ($ARCH) from GitHub (up to 5 minutes)..."

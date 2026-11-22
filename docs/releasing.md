@@ -19,9 +19,7 @@ staying registered and its owning account staying secure.
 Outside a Go workspace (`go mod tidy`, `go mod vendor`, Docker builds), Go fetches
 this module's versions from `proxy.golang.org`, the public module proxy, and checks
 them against `sum.golang.org`, the public checksum database, like any other public
-module. There is nothing to configure. The `make modproxy` target publishes a module
-proxy made of local files, which Go can use as its `GOPROXY`; it is how a
-pre-publication tag would be served, and no released version needs it.
+module. There is nothing to configure.
 
 ## Why public releases start at v0.2.0
 
@@ -91,6 +89,40 @@ the `plimsoll-client` of the same number. It is published by its own workflow,
 [publish-crewai.yml](../.github/workflows/publish-crewai.yml), with the same checks, and its PyPI trusted publisher
 names that workflow. A project's trusted-publishing token covers only the projects of the publisher its workflow
 matched, so sharing `publish-python.yml` left this package's uploads refused.
+
+The LangChain package `langchain-plimsoll` (clients/python/langchain-plimsoll, which gives a LangChain agent a function that
+runs code in plimsoll, and a Deep Agents agent one sandbox kept for its whole run) works the same way: the same version, the
+`plimsoll-client` of the same number, and its own workflow, [publish-langchain.yml](../.github/workflows/publish-langchain.yml),
+which its PyPI trusted publisher names.
+
+The Microsoft Agent Framework package `agent-framework-plimsoll` (clients/python/agent-framework-plimsoll, which gives an
+Agent Framework agent a shell in one plimsoll sandbox kept for its conversation, and a function that runs code in
+plimsoll) works the same way: the same version, the `plimsoll-client` of the same number, and its own workflow,
+[publish-agent-framework.yml](../.github/workflows/publish-agent-framework.yml), which its PyPI trusted publisher names
+(environment `pypi`, as the others). It also requires one exact version of `agent-framework-tools`, the Agent Framework
+package that holds its shell support, which is a beta released about weekly, so each release checks the newest beta
+first: its framework suite runs against that version, and a test fails when the package and the suite's lock name
+different ones.
+
+The smolagents package `smolagents-plimsoll` (clients/python/smolagents-plimsoll, which runs the Python a smolagents
+`CodeAgent` writes in one plimsoll sandbox kept for the agent's run) works the same way: the same version, the
+`plimsoll-client` of the same number, and its own workflow,
+[publish-smolagents.yml](../.github/workflows/publish-smolagents.yml), which its PyPI trusted publisher names
+(environment `pypi`, as the others). It requires exactly the smolagents its suite is locked to (`smolagents==1.26.0`),
+and its framework suite holds the SHA-256 of the source of each part of smolagents the executor's final-answer protocol
+is copied from, so requiring a newer smolagents starts with that suite: a smolagents that changed any of them
+fails it. One test, `TestAdaptersPinTheVersionTheirLockInstalls`, fails when any framework package under
+`clients/python/*-plimsoll` declares a framework version other than exactly the one its suite's lock file installs.
+
+The PydanticAI package `pydantic-ai-plimsoll` (clients/python/pydantic-ai-plimsoll, which gives a PydanticAI agent
+the files of one plimsoll sandbox kept for its conversation, a shell in that sandbox, and a function that runs code in
+plimsoll) works the same way: the same version, the `plimsoll-client` of the same number, and its own workflow,
+[publish-pydantic-ai.yml](../.github/workflows/publish-pydantic-ai.yml), which its PyPI trusted publisher names
+(environment `pypi`, as the others). It requires one exact version of `pydantic-ai-slim`, because PydanticAI's guide
+says new or stricter rules for workspace backends may come in minor releases, so each release checks the newest
+PydanticAI first: PydanticAI's conformance suite runs against that version in real docker sandboxes
+(`TestPydanticAIDocker`), with every rule it skips compared with the list the package does not promise, and a test
+fails when the package and the suite's lock name different versions.
 
 ## Freezing the record vectors at a release
 

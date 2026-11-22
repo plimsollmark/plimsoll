@@ -56,7 +56,7 @@ type box struct {
 // the create is sent, so the caller deletes it (deleteLater) whenever b.claim is set,
 // whatever the error: a create whose answer was lost may still have made it.
 func (p *Provider) claimSandbox(ctx context.Context, lifetime time.Duration) (b box, err error) {
-	b.claim = "plimsoll-" + randHex(8)
+	b.claim = "plimsoll-" + providerkit.RandHex(8)
 	p.leases.Track(b.claim)
 	issued := time.Now()
 	c := claim{
@@ -147,12 +147,12 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 	if len(pd.Status.ContainerStatuses) != 1 || !pd.Status.ContainerStatuses[0].Ready {
 		return fail(errors.New("sandboxd is not ready"))
 	}
-	m := imageDigestRE.FindStringSubmatch(pd.Status.ContainerStatuses[0].ImageID)
-	if m == nil {
+	running, ok := providerkit.ReportedDigest(pd.Status.ContainerStatuses[0].ImageID)
+	if !ok {
 		return fail(fmt.Errorf("image ID %q names no digest", pd.Status.ContainerStatuses[0].ImageID))
 	}
-	if d, ok := pinnedDigest(p.cfg.Image); ok && d != m[1] {
-		return fail(fmt.Errorf("it runs image %s, not the pinned %s", m[1], d))
+	if d, ok := providerkit.PinnedDigest(p.cfg.Image); ok && d != running {
+		return fail(fmt.Errorf("it runs image %s, not the pinned %s", running, d))
 	}
 	ip, err := podIP(c, pd)
 	if err != nil {
@@ -171,7 +171,7 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 	if tier == sandbox.IsolationVM && !validName(pd.Spec.NodeName) {
 		return fail(fmt.Errorf("it names node %q", pd.Spec.NodeName))
 	}
-	if err := p.checkPodImage(m[1]); err != nil {
+	if err := p.checkPodImage(running); err != nil {
 		return fail(err)
 	}
 	instance := sandbox.PodInstance(pd.Meta.UID)
@@ -179,7 +179,7 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 		return fail(fmt.Errorf("its UID %q is not a UID", pd.Meta.UID))
 	}
 	b.roots = roots
-	b.ip, b.environment, b.tier, b.node, b.instance = ip, m[1], tier, pd.Spec.NodeName, instance
+	b.ip, b.environment, b.tier, b.node, b.instance = ip, running, tier, pd.Spec.NodeName, instance
 	return b, nil
 }
 
@@ -284,7 +284,7 @@ const tierCheckBytes = 64 << 10
 // proveTier holds a claimed pod to its tier from inside, with the smoke test's kernel and
 // seccomp checks. The read-back reads the runtime class's handler, a name each node maps to
 // a runtime in configuration the API does not show, and the startup smoke test proves that
-// mapping only on the nodes its two pods landed on. Live on kind (2026-10-18), with the
+// mapping only on the nodes its pods landed on. Live on kind (2026-10-18), with the
 // node's runsc handler remapped to runc after startup, a daemon whose smoke test had passed
 // under gVisor signed a run at the kernel tier that ran on the host's kernel with no seccomp
 // filter. Under the vm tier the guest's boot ID is also compared with the one its node's

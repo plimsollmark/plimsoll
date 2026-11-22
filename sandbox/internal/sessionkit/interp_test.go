@@ -2,6 +2,7 @@ package sessionkit
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -434,6 +435,79 @@ func TestBaselineAllKeepsEveryProcessButRefusesTheGuestUID(t *testing.T) {
 	}
 	if _, err := BaselineAll([]byte("not json"), 61000); err == nil {
 		t.Error("output that is not a listing was accepted")
+	}
+}
+
+// The open's process list can come between the shell writing the open's marker and its
+// exec of the main process (hunt-quality-102). A stand-in lister answers that early shape
+// first: the open waits for the exec and accepts the same process (pid and start time)
+// running main, and accepts nothing more than Baseline does. Before, the first listing was
+// Baseline's alone, and the open failed with "an untouched sandbox runs an unexpected
+// process".
+func TestBaselineSettledWaitsForTheMainProcessToExec(t *testing.T) {
+	main := []string{"sleep", "2147483647"}
+	before := append([]string{"/bin/sh", "-c", `printf %s "$1" >&2; shift; exec "$@"`, "sh", "plimsoll-session-main:00\n"}, main...)
+	cmdHex := func(argv []string) string { return hex.EncodeToString([]byte(strings.Join(argv, "\x00") + "\x00")) }
+	initP := Process{PID: 1, Start: "10", CmdHex: "2f677561726400"}
+	shell := Process{PID: 7, PPID: 1, Start: "12", Cmd: strings.Join(before, " "), CmdHex: cmdHex(before)}
+	asMain := func(p Process) Process {
+		p.Cmd, p.CmdHex = strings.Join(main, " "), cmdHex(main)
+		return p
+	}
+	listing := func(ptrace string, procs ...Process) []byte {
+		b, err := json.Marshal(Listing{Ptrace: ptrace, Procs: procs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	// lister answers each listing in turn, then the last one again.
+	lister := func(answers ...[]byte) (func(context.Context) ([]byte, error), *int) {
+		calls := 0
+		return func(context.Context) ([]byte, error) {
+			calls++
+			return answers[min(calls, len(answers))-1], nil
+		}, &calls
+	}
+	settled := func(answers ...[]byte) ([]string, int, error) {
+		list, calls := lister(answers...)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, keep, err := BaselineSettled(ctx, list, main, before, true)
+		return keep, *calls, err
+	}
+
+	keep, calls, err := settled(listing("1", initP, shell), listing("1", initP, asMain(shell)))
+	if err != nil || calls != 2 {
+		t.Fatalf("the early shape once, then the main process: %v after %d listings; want it accepted on the second", err, calls)
+	}
+	if want := []string{initP.Identity(), asMain(shell).Identity()}; strings.Join(keep, ",") != strings.Join(want, ",") {
+		t.Fatalf("keep = %v, want %v", keep, want)
+	}
+	if _, calls, err := settled(listing("1", initP, asMain(shell))); err != nil || calls != 1 {
+		t.Fatalf("a settled first listing: %v after %d listings", err, calls)
+	}
+
+	// Never more than Baseline accepts.
+	other := asMain(shell)
+	other.Start = "13" // the main process is not the shell that wrote the marker
+	if _, _, err := settled(listing("1", initP, shell), listing("1", initP, other)); err == nil {
+		t.Error("a main process other than the shell that wrote the marker was accepted")
+	}
+	moved := shell
+	moved.PID = 8
+	if _, _, err := settled(listing("1", initP, shell), listing("1", initP, moved), listing("1", initP, asMain(moved))); err == nil {
+		t.Error("a second shell in place of the first was waited for and accepted")
+	}
+	extra := Process{PID: 9, PPID: 1, Start: "14", Cmd: "x", CmdHex: "7800"}
+	if _, calls, err := settled(listing("1", initP, shell, extra), listing("1", initP, asMain(shell))); err == nil || calls != 1 {
+		t.Errorf("a listing with another process beside the shell: %v after %d listings; want it refused at once", err, calls)
+	}
+	if _, calls, err := settled(listing("0", initP, shell), listing("0", initP, asMain(shell))); err == nil || calls != 1 {
+		t.Errorf("ptrace_scope 0: %v after %d listings; want it refused at once", err, calls)
+	}
+	if _, _, err := settled(listing("1", initP, shell)); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a shell that never execs: %v; want the open's deadline", err)
 	}
 }
 

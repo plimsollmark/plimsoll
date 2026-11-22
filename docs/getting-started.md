@@ -66,11 +66,18 @@ That command makes three choices:
   to <dfn>*WebAssembly*</dfn> (a portable bytecode that runs inside a host program), inside
   the daemon itself. It needs no docker and costs nothing per run, and its tier is
   `process`: no wall at all against hostile code.
-- `PLIMSOLL_ADDR=127.0.0.1:8746` makes the daemon listen on your machine only. The
-  default, `:8746`, listens on every network interface.
+- `PLIMSOLL_ADDR=127.0.0.1:8746` makes the daemon listen on your machine only, which is
+  also what it does when the variable is unset; the command writes it out so it says where
+  the daemon listens. A daemon other machines call (one in a container, a pod or on a
+  server) sets it to an address they can reach, such as `0.0.0.0:8746` for every network
+  interface, and keeps authentication on.
 - `PLIMSOLL_CLIENTS_FILE` turns authentication on, and it <dfn>*fails closed*</dfn>:
   anything it cannot verify is refused, so a request without a valid token is turned
-  away before its body is read.
+  away before its body is read. If your group or other users of the machine can write
+  `clients.json` or a folder on its path, the daemon logs a warning naming
+  `PLIMSOLL_CLIENTS_FILE` and the permission bits, since they could add a caller of
+  their own; `chmod go-w` on what it names clears it, and with `PLIMSOLL_HARDENED=1`, the production
+  setting, the daemon refuses to start until it is cleared ([hardened-mode.md](hardened-mode.md#files-another-user-could-change)).
 
 Leave this terminal running. You should see:
 

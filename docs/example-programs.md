@@ -15,6 +15,16 @@ own modules, so their commands change directory first. The pull-request [receipt
 recipe needs docker, [gVisor (INTERNAL · glossary →)](trainers/glossary.html#gvisor) and the containerd image store, which stores the exact
 image descriptions it records. The TypeScript example uses npm from its own directory.
 
+Every program here that starts its own `plimsolld` builds it with `go build -buildvcs=false`, so the
+records of what ran that the pages publish state the daemon version `(devel)`, not the version and
+commit of the checkout it was built in. The pull-request recipe keeps the stamp in one case: built
+from the top of a plimsoll clone (not a worktree or a submodule), unchanged, whose checkout holds a
+release tag naming its commit, its daemon states that release, so the receipt names the plimsoll
+version that made it. The tag itself must be in the checkout: the recipe's workflow checks out only
+the commit it is set to use, with no tags, and then fetches the release tags that name that commit.
+A checkout without such a tag, and any other checkout, states `(devel)`, and so does a build whose
+stamp turns out to be anything but that release, which the recipe makes again without it.
+
 | Command | What it shows |
 |---|---|
 | `go run ./examples/minimal` | One snippet, its result, and the <dfn>*isolation tier*</dfn> the run reports: how strong the wall around it was. |

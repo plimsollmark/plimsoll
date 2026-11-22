@@ -18,7 +18,7 @@ import (
 // dockerFaults puts a docker CLI on PATH that runs the real one, except where a
 // trigger file in the returned directory makes it fail the way a daemon or another
 // operator can: a call's exec (the one whose last argument is "-", a snippet's node, or
-// "/runner.mjs") failing with the exit code the trigger holds (docker exec's own
+// the project runner's last argument, "run-project" today) failing with the exit code the trigger holds (docker exec's own
 // failures exit 1; docker run's exit 125), alone or after pausing the container; any
 // docker run failing the same way before the container's command starts, or hanging
 // (run-hang, a call's exec: call-exec-hang) without starting it for the seconds the
@@ -33,6 +33,9 @@ func dockerFaults(t *testing.T) (trigger func(name, content string), clear func(
 		t.Skip("docker not available")
 	}
 	bin, ctl := t.TempDir(), t.TempDir()
+	// A project call's exec ends in the runner's last argument (run-project today).
+	runner := sandbox.DockerProjectRunner(sandbox.DefaultDocker(""))
+	runnerLast := runner[len(runner)-1]
 	script := fmt.Sprintf(`#!/bin/sh
 real=%q
 ctl=%q
@@ -59,7 +62,7 @@ if [ "$sub" = run ] && [ -e "$ctl/run-fail" ]; then
   echo "docker: Error response from daemon: injected failure" >&2
   exit "$(cat "$ctl/run-fail")"
 fi
-if [ "$sub" = exec ] && { [ "$last" = - ] || [ "$last" = /runner.mjs ]; }; then
+if [ "$sub" = exec ] && { [ "$last" = - ] || [ "$last" = %q ]; }; then
   if [ -e "$ctl/call-exec-hang" ]; then
     exec sleep "$(cat "$ctl/call-exec-hang")"
   fi
@@ -93,7 +96,7 @@ if [ "$sub" = inspect ]; then
   if [ -e "$ctl/inspect-slow" ]; then sleep 3; fi
 fi
 exec "$real" "$@"
-`, real, ctl)
+`, real, ctl, runnerLast)
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

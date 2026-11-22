@@ -34,7 +34,8 @@ result and marks the claim as not held; the program then exits 3.
   from `make docker-images`), at the `kernel` tier or above, which the server requires by
   default. The committed recording was made with `SANDBOX_PROVIDER=docker`,
   `SANDBOX_DOCKER_RUNTIME=runsc` (gVisor), `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`
-  and `SANDBOX_MAX_SESSIONS=4`.
+  and `SANDBOX_MAX_SESSIONS=4`, from a plimsolld built with `go build -buildvcs=false`, so its run records state
+  the daemon version `(devel)` rather than the pseudo-version of whatever commit the build tree was at.
 - `-token-file`: a file holding the caller token, unless the daemon is open. The token goes into
   the server's environment only; the program never prints it, and refuses to write an output
   that contains it.

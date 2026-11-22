@@ -1,0 +1,3 @@
+# The repository's Go, Python and TypeScript code wraps at about 120 columns; so does this.
+max_width = 120
+use_small_heuristics = "Max"

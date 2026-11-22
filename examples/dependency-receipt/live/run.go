@@ -608,16 +608,16 @@ func preflight(ctx context.Context, c config) error {
 	if out, err := kubectl(ctx, "get", "namespace", namespace, "--ignore-not-found", "-o", "name"); err != nil || out != "" {
 		return fmt.Errorf("namespace %s already exists (a run that was kept, or is still going): delete it first (%v)", namespace, err)
 	}
-	runner, err := os.ReadFile(filepath.Join(c.repo, "docker", "runner.mjs"))
+	runner, err := os.ReadFile(filepath.Join(c.repo, "sandbox", "internal", "nativehelper", "program", "plimsoll-helper_amd64"))
 	if err != nil {
 		return err
 	}
-	inImage, err := run(ctx, "", nil, "docker", "run", "--rm", "--network", "none", "--entrypoint", "sha256sum", c.image, "/runner.mjs")
+	inImage, err := run(ctx, "", nil, "docker", "run", "--rm", "--network", "none", "--entrypoint", "sha256sum", c.image, runnerPath)
 	if err != nil {
 		return err
 	}
 	if sum := sha256.Sum256(runner); !strings.HasPrefix(inImage, hex.EncodeToString(sum[:])+" ") {
-		return fmt.Errorf("%s's /runner.mjs is not this tree's docker/runner.mjs: rebuild it from docker/agentsandbox.Dockerfile", c.image)
+		return fmt.Errorf("%s's project runner %s is not this tree's native helper: rebuild it from docker/agentsandbox.Dockerfile", c.image, runnerPath)
 	}
 	return nil
 }

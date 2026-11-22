@@ -44,14 +44,18 @@ func logOf(t *testing.T, n int, tier string, closed bool) []byte {
 		r := sandbox.RunRecord{Version: record.Version, RequestSHA256: hexOf(fmt.Sprint("req", i)), ResultSHA256: hexOf(fmt.Sprint("res", i)),
 			Provider: "docker", Isolation: tier, Environment: "docker-image:sha256:" + hexOf("image"),
 			Started: start.Add(time.Duration(i) * time.Second), Ended: start.Add(time.Duration(i)*time.Second + 250*time.Millisecond),
-			Session: session, Sequence: uint64(i), PreviousSHA256: prev}
+			Session: session, Sequence: uint64(i), PreviousSHA256: prev,
+			// A version 5 record with a sentence beside its tier, so the log's reader is
+			// shown to carry it into the digest (finding cyclonedx-21).
+			IsolationQualification: "Microsoft states that WSL is not a security sandbox for running untrusted code.", DaemonVersion: "v0.28.0"}
 		r.SHA256 = record.Digest(r)
 		prev = r.SHA256
 		must(enc.Encode(map[string]any{"kind": "record", "op": "run", "time_unix_ms": 2, "record": map[string]any{
 			"version": r.Version, "request_sha256": r.RequestSHA256, "result_sha256": r.ResultSHA256, "provider": r.Provider,
 			"isolation": r.Isolation, "environment": r.Environment, "software_identity": "", "software_rule_id": "", "policy": "",
 			"started_unix_ms": r.Started.UnixMilli(), "ended_unix_ms": r.Ended.UnixMilli(), "session": r.Session,
-			"sequence": r.Sequence, "previous_sha256": r.PreviousSHA256, "unanswered": "", "instance": "", "sha256": r.SHA256,
+			"sequence": r.Sequence, "previous_sha256": r.PreviousSHA256, "unanswered": "", "instance": "",
+			"isolation_qualification": r.IsolationQualification, "warm": false, "daemon_version": r.DaemonVersion, "sha256": r.SHA256,
 		}}))
 	}
 	if closed {

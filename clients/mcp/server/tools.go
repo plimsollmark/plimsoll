@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/plimsollmark/plimsoll/client"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -29,51 +30,58 @@ type runInput struct {
 	Trace    string      `json:"trace,omitempty" jsonschema:"Optional: an opaque ID tying this run to a log of yours, such as your coding session's ID; it is signed into the run's receipt. Letters, digits and . _ : - only, at most 64."`
 }
 
-// traceForm is the daemon's rule for a correlation id; one outside it would be dropped
-// there, leaving a run its caller meant to tag untagged, so it is refused here first.
-var traceForm = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+// traceForm is the daemon's rule for a correlation id (protocol.TraceIDPattern); one
+// outside it would be dropped there, leaving a run its caller meant to tag untagged, so it
+// is refused here first.
+var traceForm = regexp.MustCompile(protocol.TraceIDPattern)
 
 type openInput struct {
 	Kit string `json:"kit,omitempty"`
 }
 
 type runOutput struct {
-	Summary          string   `json:"summary" jsonschema:"The facts of this result in one sentence, for quoting."`
-	Language         string   `json:"language"`
-	ExitCode         int      `json:"exitCode"`
-	TimedOut         bool     `json:"timedOut"`
-	Stdout           string   `json:"stdout"`
-	Stderr           string   `json:"stderr"`
-	Truncated        bool     `json:"truncated" jsonschema:"stdout or stderr was cut, by the daemon's cap or this server's."`
-	StateKept        bool     `json:"stateKept" jsonschema:"This call's interpreter and sandbox were still running when it answered, so what it defined can be there for the next call with the same sandbox."`
-	FreshInterpreter bool     `json:"freshInterpreter,omitempty" jsonschema:"This call's interpreter had just started: nothing earlier calls defined in this language exists."`
-	FilesPersist     bool     `json:"filesPersist" jsonschema:"This call's sandbox was still running when it answered, so its files can be there for the next call."`
-	FreshSandbox     bool     `json:"freshSandbox,omitempty" jsonschema:"This call ran in a newly opened sandbox: no file an earlier call wrote is there."`
-	SandboxReplaced  string   `json:"sandboxReplaced,omitempty" jsonschema:"What became of this handle's earlier sandbox before this call, which then ran in a new one: ended, and why, or given up with its end unknown. Nothing from the earlier one is there."`
-	SandboxEnded     string   `json:"sandboxEnded,omitempty" jsonschema:"Why this call's sandbox ended as it answered: its files and state are gone, and the handle's next call starts a new sandbox."`
-	Isolation        string   `json:"isolation"`
-	SoftwareIdentity string   `json:"softwareIdentity" jsonschema:"The image the daemon says ran the code, or empty when it states none."`
-	RecordSHA256     string   `json:"recordSha256" jsonschema:"SHA-256 of the run record the client checked; get_record returns it."`
-	Receipt          *Receipt `json:"receipt,omitempty" jsonschema:"What became of the run's record: absent when no receipts are configured."`
-	Pictures         []string `json:"pictures,omitempty" jsonschema:"The titles of the images returned beside this result, in order."`
-	PictureNotes     []string `json:"pictureNotes,omitempty" jsonschema:"What became of output lines meant as pictures that gave no image."`
-	PictureLinks     []string `json:"pictureLinks,omitempty" jsonschema:"Where the user can open each picture, in the order of pictures."`
+	Summary          string `json:"summary" jsonschema:"The facts of this result in one sentence, for quoting."`
+	Language         string `json:"language"`
+	ExitCode         int    `json:"exitCode"`
+	TimedOut         bool   `json:"timedOut"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
+	Truncated        bool   `json:"truncated" jsonschema:"stdout or stderr was cut, by the daemon's cap or this server's."`
+	StateKept        bool   `json:"stateKept" jsonschema:"This call's interpreter and sandbox were still running when it answered, so what it defined can be there for the next call with the same sandbox."`
+	FreshInterpreter bool   `json:"freshInterpreter,omitempty" jsonschema:"This call's interpreter had just started: nothing earlier calls defined in this language exists."`
+	FilesPersist     bool   `json:"filesPersist" jsonschema:"This call's sandbox was still running when it answered, so its files can be there for the next call."`
+	FreshSandbox     bool   `json:"freshSandbox,omitempty" jsonschema:"This call ran in a newly opened sandbox: no file an earlier call wrote is there."`
+	SandboxReplaced  string `json:"sandboxReplaced,omitempty" jsonschema:"What became of this handle's earlier sandbox before this call, which then ran in a new one: ended, and why, or given up with its end unknown. Nothing from the earlier one is there."`
+	SandboxEnded     string `json:"sandboxEnded,omitempty" jsonschema:"Why this call's sandbox ended as it answered: its files and state are gone, and the handle's next call starts a new sandbox."`
+	Isolation        string `json:"isolation"`
+	// IsolationQualification is the sentence the daemon's provider states beside the tier,
+	// from the checked record, so a result never names the tier without it.
+	IsolationQualification string   `json:"isolationQualification,omitempty" jsonschema:"The sentence the daemon's provider requires beside the isolation tier (only WSL runs so far: Microsoft states that WSL is not a security sandbox for running untrusted code). Repeat it to the user wherever you repeat the tier."`
+	SoftwareIdentity       string   `json:"softwareIdentity" jsonschema:"The image the daemon says ran the code, or empty when it states none."`
+	RecordSHA256           string   `json:"recordSha256" jsonschema:"SHA-256 of the run record the client checked; get_record returns it."`
+	Receipt                *Receipt `json:"receipt,omitempty" jsonschema:"What became of the run's record: absent when no receipts are configured."`
+	Pictures               []string `json:"pictures,omitempty" jsonschema:"The titles of the images returned beside this result, in order."`
+	PictureNotes           []string `json:"pictureNotes,omitempty" jsonschema:"What became of output lines meant as pictures that gave no image."`
+	PictureLinks           []string `json:"pictureLinks,omitempty" jsonschema:"Where the user can open each picture, in the order of pictures."`
 
 	pics []Picture
 	// warm says a call without a handle ran in a sandbox the daemon kept ready (the
 	// answer's warm), which the summary states.
 	warm bool
+	// granted says the call carried the server's grant, which the summary states.
+	granted bool
 }
 
 func (o runOutput) attached() []Picture { return o.pics }
 
 type openOutput struct {
-	Summary   string   `json:"summary"`
-	Sandbox   string   `json:"sandbox"`
-	Languages []string `json:"languages"`
-	Isolation string   `json:"isolation"`
-	ExpiresAt string   `json:"expiresAt" jsonschema:"When the daemon ends the sandbox, RFC 3339 UTC; a call after it runs in a new one, with freshSandbox set."`
-	Kit       string   `json:"kit,omitempty" jsonschema:"The kit written into the sandbox with its first run_code call, and again into any sandbox that replaces it."`
+	Summary                string   `json:"summary"`
+	Sandbox                string   `json:"sandbox"`
+	Languages              []string `json:"languages"`
+	Isolation              string   `json:"isolation"`
+	IsolationQualification string   `json:"isolationQualification,omitempty" jsonschema:"The sentence the daemon's provider requires beside the isolation tier, when it states one. Repeat it wherever you repeat the tier."`
+	ExpiresAt              string   `json:"expiresAt" jsonschema:"When the daemon ends the sandbox, RFC 3339 UTC; a call after it runs in a new one, with freshSandbox set."`
+	Kit                    string   `json:"kit,omitempty" jsonschema:"The kit written into the sandbox with its first run_code call, and again into any sandbox that replaces it."`
 }
 
 type handleInput struct {
@@ -109,7 +117,11 @@ type recordJSON struct {
 	PreviousSHA256   string `json:"previousSha256"`
 	Unanswered       string `json:"unanswered"`
 	Instance         string `json:"instance"`
-	SHA256           string `json:"sha256"`
+	// From record version 5.
+	IsolationQualification string `json:"isolationQualification"`
+	Warm                   bool   `json:"warm"`
+	DaemonVersion          string `json:"daemonVersion"`
+	SHA256                 string `json:"sha256"`
 }
 
 type recordOutput struct {
@@ -210,17 +222,22 @@ func (s *Server) register() {
 		delete(openOutSchema.Properties, "kit")
 	}
 
+	network, api := "with no network access", ""
+	if s.plan != nil {
+		network = "with no network access except, without sandbox, the one web API described below,"
+		api = "\n\n" + s.plan.apiText(s.cfg.Languages)
+	}
 	addTool(s, &mcp.Tool{
 		Name:  "run_code",
 		Title: "Run code in plimsoll",
-		Description: fmt.Sprintf("Run %s in an isolated sandbox with no network access and return its exit code, stdout and stderr. ", joinNames(s.cfg.Languages)) +
+		Description: fmt.Sprintf("Run %s in an isolated sandbox %s and return its exit code, stdout and stderr. ", joinNames(s.cfg.Languages), network) +
 			"The value of the code's last expression is printed, as in a notebook, so the last line can simply name what you want to see. " +
 			"Without sandbox, the call uses a fresh sandbox and interpreter and nothing is kept. With sandbox set to a handle from open_sandbox, the call runs in that sandbox, " +
 			"which keeps an interpreter per language and its files between calls: stateKept and filesPersist say what can survive to the next call, freshInterpreter and freshSandbox say what did not survive to this one. " +
 			"Calls to one sandbox run one at a time, so send a call that needs an earlier call's effect only after that call has answered. " +
 			"To give the code data, such as another tool's output, pass it in files rather than pasting it into the code. " +
 			"A program that fails is a result with its exit code. A tool error says in ran whether anything ran: \"no\" is safe to retry after fixing the cause, \"maybe\" is not. " +
-			"Every result names the isolation tier the code ran behind and the run record's sha256." + runLimit(s.cfg.RunTimeout),
+			"Every result names the isolation tier the code ran behind and the run record's sha256." + runLimit(s.cfg.RunTimeout) + api,
 		InputSchema:  runSchema,
 		OutputSchema: runOutSchema,
 		Annotations:  &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
@@ -283,17 +300,17 @@ func (s *Server) receiptFor(rec *sandbox.RunRecord, err error) *Receipt {
 	case s.cfg.Recorder == nil:
 		return nil
 	case err != nil:
-		return &Receipt{Status: "failed", Reason: err.Error()}
+		return &Receipt{Status: "failed", Reason: shown(err)}
 	default:
 		return &Receipt{Status: "stored"}
 	}
 }
 
 // admitRun admits one call that runs code (run_code's, or an ExtendRun tool's): refused
-// when its receipts could not be kept or the server already holds maxOutstanding such
+// when its receipts could not be kept or the server already holds MaxOutstanding such
 // calls; release gives the place back.
-func (s *Server) admitRun() (release func(), f *failure) {
-	if f := s.full(); f != nil {
+func (s *Server) admitRun(ctx context.Context) (release func(), f *failure) {
+	if f := s.full(s.shareOfCall(ctx)); f != nil {
 		return nil, f
 	}
 	s.mu.Lock()
@@ -301,8 +318,8 @@ func (s *Server) admitRun() (release func(), f *failure) {
 	switch {
 	case s.stopped:
 		return nil, shuttingDown
-	case s.outstanding >= maxOutstanding:
-		return nil, refused(sandbox.RefusalCapacity, "this server already holds %d calls that run code; wait for their answers", maxOutstanding)
+	case s.outstanding >= MaxOutstanding:
+		return nil, refused(sandbox.RefusalCapacity, "this server already holds %d calls that run code; wait for their answers", MaxOutstanding)
 	}
 	s.outstanding++
 	return func() {
@@ -312,13 +329,14 @@ func (s *Server) admitRun() (release func(), f *failure) {
 	}, nil
 }
 
-// full refuses, before anything is sent, work whose receipts could not be kept.
-func (s *Server) full() *failure {
+// full refuses, before anything is sent, work whose receipts could not be kept: past the
+// directory's limit, or past the share of the receipts its calls count against.
+func (s *Server) full(share string) *failure {
 	if s.receipts == nil {
 		return nil
 	}
-	if err := s.receipts.Full(); err != nil {
-		return refused(sandbox.RefusalCapacity, "%v", err)
+	if err := s.receipts.Full(share); err != nil {
+		return refused(sandbox.RefusalCapacity, "%s", shown(err))
 	}
 	return nil
 }
@@ -433,12 +451,21 @@ func (s *Server) runCode(ctx context.Context, in runInput) (runOutput, *failure)
 	if files, f = s.withCallFiles(files, len(in.Code)); f != nil {
 		return runOutput{}, f
 	}
-	release, f := s.admitRun()
+	release, f := s.admitRun(ctx)
 	if f != nil {
 		return runOutput{}, f
 	}
 	defer release()
 	ctx = client.NewTraceContext(ctx, in.Trace)
+	// A call without a sandbox runs under the host's cancellation, as its tool call does: a
+	// user who stops it (Escape, notifications/cancelled, a dropped connection) stops the run,
+	// which is answered as one that may have run, and nothing kept is lost, since a fresh
+	// sandbox keeps nothing. A sandbox call is detached from it (runIn): cutting a session's
+	// call off gives up the session, and with it every file and state of earlier calls, so
+	// only the deadline, shutdown and a revoked grant end it (hunt-quality-49, 2026-11-20).
+	if in.Sandbox == "" && s.plan != nil {
+		return s.runGranted(ctx, lang, in.Code, files)
+	}
 	if in.Sandbox == "" {
 		return s.runFresh(ctx, lang, in.Code, files)
 	}
@@ -460,6 +487,7 @@ func (s *Server) output(ctx context.Context, lang sandbox.Language, exit int, ti
 	if rec != nil {
 		s.keep(ctx, rec)
 		out.RecordSHA256 = rec.SHA256
+		out.IsolationQualification = rec.IsolationQualification
 	}
 	return out
 }
@@ -472,6 +500,9 @@ func summarize(out *runOutput, sandboxHandle string) {
 	where := "It ran in a fresh sandbox; nothing is kept."
 	if out.warm {
 		where = "It ran in a sandbox of its own that the daemon had ready before the call and deleted after it; nothing is kept."
+	}
+	if out.granted {
+		where = "It ran in a fresh sandbox, with the API this server's grant allows; nothing is kept."
 	}
 	if sandboxHandle != "" {
 		where = "It ran in sandbox " + sandboxHandle
@@ -508,8 +539,17 @@ func summarize(out *runOutput, sandboxHandle string) {
 	if len(out.PictureNotes) > 0 {
 		cutNote += " Some picture lines gave no image; pictureNotes says why."
 	}
-	out.Summary = fmt.Sprintf("The %s code %s behind the %q isolation tier (%s). %s%s Run record sha256 %s; get_record returns the record.",
-		out.Language, how, out.Isolation, tierNote, where, cutNote, out.RecordSHA256)
+	out.Summary = fmt.Sprintf("The %s code %s behind the %q isolation tier (%s).%s %s%s Run record sha256 %s; get_record returns the record.",
+		out.Language, how, out.Isolation, tierNote, statesBeside(out.IsolationQualification), where, cutNote, out.RecordSHA256)
+}
+
+// statesBeside is the sentence a provider states beside its tier, as a summary carries it
+// right after the tier: "" when it states none.
+func statesBeside(q string) string {
+	if q == "" {
+		return ""
+	}
+	return " The daemon states beside that tier: " + q
 }
 
 // runFresh runs the code once, by itself, as a Run cell: the daemon runs it in a
@@ -534,7 +574,7 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 	} else if langs := s.offered(info.Environments.Project); !slices.Contains(langs, lang) {
 		return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon's image has no %s interpreter (it runs %s)", lang, clipRunes(fmt.Sprint(info.Environments.Project.Languages), 200))
 	}
-	r, err := s.remote.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Files: files,
+	r, err := s.clientsFor(s.shareOfCall(ctx)).remote.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Files: files,
 		Timeout: s.cfg.RunTimeout, MinimumIsolation: s.cfg.MinimumIsolation, Software: s.cfg.Software}, client.CellOptions{PreferWarm: true})
 	if !answered(err, r.Record) {
 		s.forgetDescribeOn(err)
@@ -550,8 +590,9 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 
 func (s *Server) getRecord(ctx context.Context, in recordInput) (recordOutput, *failure) {
 	s.mu.Lock()
-	r := s.records[recordKey(ctx, in.RecordSHA256)]
+	kr := s.records[recordKey(ctx, in.RecordSHA256)]
 	s.mu.Unlock()
+	r := kr.rec
 	if r == nil {
 		return recordOutput{}, refused(sandbox.RefusalRequest, "this server keeps no record %s: it keeps the last %d records it checked, in memory, until it restarts", in.RecordSHA256, KeptRecords)
 	}
@@ -559,7 +600,8 @@ func (s *Server) getRecord(ctx context.Context, in recordInput) (recordOutput, *
 		Version: r.Version, RequestSHA256: r.RequestSHA256, ResultSHA256: r.ResultSHA256, Provider: r.Provider, Isolation: r.Isolation,
 		Environment: r.Environment, SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID, Policy: r.Policy,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(), Session: r.Session, Sequence: r.Sequence,
-		PreviousSHA256: r.PreviousSHA256, Unanswered: r.Unanswered, Instance: r.Instance, SHA256: r.SHA256,
+		PreviousSHA256: r.PreviousSHA256, Unanswered: r.Unanswered, Instance: r.Instance,
+		IsolationQualification: r.IsolationQualification, Warm: r.Warm, DaemonVersion: r.DaemonVersion, SHA256: r.SHA256,
 	}
 	software := r.SoftwareIdentity
 	if software == "" {
@@ -570,13 +612,16 @@ func (s *Server) getRecord(ctx context.Context, in recordInput) (recordOutput, *
 	if r.Session != "" {
 		summary += fmt.Sprintf(", call %d of a session", r.Sequence)
 	}
-	summary += "."
+	if r.DaemonVersion != "" {
+		summary += ", by plimsoll " + r.DaemonVersion
+	}
+	summary += "." + statesBeside(r.IsolationQualification)
 	if r.Unanswered != "" {
 		summary += fmt.Sprintf(" The call ended without an answer (%s); it may have run.", r.Unanswered)
 	}
 	out := recordOutput{Summary: summary, Record: rec}
 	if s.receipts != nil {
-		out.Receipt = s.receipts.receiptOf(r.SHA256, nil)
+		out.Receipt = s.receipts.receiptAt(r.SHA256, kr.line)
 		if out.Receipt.Status == "stored" {
 			out.Summary += fmt.Sprintf(" Its signed line is %s line %d (key %s…; session %s); plimsoll-attest verify-entry checks that line on its own.", out.Receipt.File, out.Receipt.Line, prefix(out.Receipt.KeyID), out.Receipt.Session)
 		}
@@ -622,6 +667,15 @@ func (s *Server) serverInfo(ctx context.Context, _ struct{}) (infoOutput, *failu
 		if info.IsolationQualification != "" {
 			line += " It states beside that tier: " + info.IsolationQualification
 		}
+	}
+	if p := s.plan; p != nil {
+		// In the summary, as the qualification is: a field would change the output schema.
+		var langs []string
+		for _, l := range p.languages {
+			langs = append(langs, languageName(l))
+		}
+		line += fmt.Sprintf(" Without a sandbox, run_code carries grant profile %q, set when this server was installed: its %s code can call that profile's routes of one web API.",
+			p.profile, strings.Join(langs, " and "))
 	}
 	out.Summary = fmt.Sprintf("%s MCP server %s, tools %v, surface digest %s. %s", Name, Version, tools, out.SurfaceDigest, line)
 	return out, nil

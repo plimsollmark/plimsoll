@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // DockerCloud runs agent code in a Docker Cloud Sandbox: a Docker-managed microVM
@@ -270,16 +272,16 @@ func (d *DockerCloud) validateConfig() error {
 	if strings.TrimSpace(d.Username) == "" {
 		return errors.New("DOCKER_SBX_USERNAME is not set (the Docker account the token belongs to)")
 	}
-	if _, err := parseDockerCloudURL(d.authURL(), "SANDBOX_DOCKERCLOUD_AUTH_URL"); err != nil {
+	if _, err := parseDockerCloudURL(d.authURL(), settings.DockercloudAuthURL.Name); err != nil {
 		return err
 	}
-	if _, err := parseGuardURL(d.GuardURL, "SANDBOX_DOCKERCLOUD_GUARD_URL", dcGuardDefaultPath); err != nil {
+	if _, err := parseGuardURL(d.GuardURL, settings.DockercloudGuardURL.Name, dcGuardDefaultPath); err != nil {
 		return err
 	}
-	if _, err := parseDockerCloudURL(d.policyURL(), "SANDBOX_DOCKERCLOUD_POLICY_URL"); err != nil {
+	if _, err := parseDockerCloudURL(d.policyURL(), settings.DockercloudPolicyURL.Name); err != nil {
 		return err
 	}
-	if _, err := parseDockerCloudURL(d.apiURL(), "SANDBOX_DOCKERCLOUD_API_URL"); err != nil {
+	if _, err := parseDockerCloudURL(d.apiURL(), settings.DockercloudAPIURL.Name); err != nil {
 		return err
 	}
 	if d.rest() && strings.TrimSpace(d.GuardURL) != "" {
@@ -303,8 +305,8 @@ func (d *DockerCloud) validateConfig() error {
 	case image == "":
 		return errors.New("SANDBOX_DOCKERCLOUD_IMAGE is not set (the raw OCI image each sandbox boots), nor SANDBOX_DOCKERCLOUD_STORE_IMAGE")
 	}
-	if d.RequirePinnedImage && !isDigestPinned(image) {
-		return fmt.Errorf("SANDBOX_DOCKERCLOUD_IMAGE %q is not pinned to an immutable @sha256: digest (SANDBOX_REQUIRE_PINNED_IMAGES is on)", image)
+	if _, pinned := providerkit.PinnedDigest(image); d.RequirePinnedImage && !pinned {
+		return fmt.Errorf("SANDBOX_DOCKERCLOUD_IMAGE %q is not pinned to an immutable digest, %s (SANDBOX_REQUIRE_PINNED_IMAGES is on)", image, providerkit.PinForm)
 	}
 	return d.validateResourceConfig()
 }
@@ -330,11 +332,11 @@ func (d *DockerCloud) validateResourceConfig() error {
 // 2026-10-05); any letters, digits, '_' and '-' up to 128 are accepted, since the ID
 // is sent as a JSON string and never put in a URL or a host name.
 func parseStoreImage(s string) (id, digest string, err error) {
-	at := strings.Index(s, "@")
-	if at <= 0 || !isDigestPinned(s) || strings.Count(s, "@") != 1 {
-		return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE %q: want <image id>@sha256:<64 hex digits>", truncateForError(s))
+	digest, pinned := providerkit.PinnedDigest(s)
+	if !pinned {
+		return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE %q: want <image id>@sha256:<64 lower-case hex digits>", truncateForError(s))
 	}
-	id, digest = s[:at], strings.ToLower(s[at+1:])
+	id = s[:strings.Index(s, "@")]
 	if len(id) > 128 {
 		return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE: image ID longer than 128 characters")
 	}
@@ -361,10 +363,7 @@ func (d *DockerCloud) pinnedDigest() (string, bool) {
 		_, digest, err := parseStoreImage(s)
 		return digest, err == nil
 	}
-	if image := strings.TrimSpace(d.Image); isDigestPinned(image) {
-		return image[strings.LastIndex(image, "@")+1:], true
-	}
-	return "", false
+	return providerkit.PinnedDigest(strings.TrimSpace(d.Image))
 }
 
 // parseDockerCloudURL accepts an absolute HTTPS URL (HTTP only on loopback, for

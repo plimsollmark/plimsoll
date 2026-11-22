@@ -187,6 +187,46 @@ func TestReplayedSuccessIsDataLoss(t *testing.T) {
 	}
 }
 
+// Finding hunt-quality-92: a 200 answer, bound by its echo, whose body is not the answer
+// the call expects (bad protobuf, and under the JSON codec a field of the wrong type) is
+// DataLoss, unmarked, and never sandbox.ErrInvalidRequest, which would tell the caller to
+// fix a request that was fine. Unbound, it is DataLoss wrapping ErrAnswerNotBound.
+func TestAnAnswerTheClientCannotReadIsDataLoss(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, body string
+		json                    bool
+	}{
+		{"bad protobuf", "application/proto", "\xff\xff\xff", false},
+		{"a field of the wrong type", "application/json", `{"durationMs":{"not":"a number"}}`, true},
+	} {
+		for _, bound := range []bool{true, false} {
+			url := serveHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if bound {
+					w.Header().Set(protocol.RequestIDHeader, r.Header.Get(protocol.RequestIDHeader))
+				}
+				w.Header().Set("Content-Type", tc.contentType)
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			var opts []Option
+			if tc.json {
+				opts = append(opts, WithConnectOptions(connect.WithProtoJSON()))
+			}
+			_, err := newRemote(t, url, opts...).RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+			name := fmt.Sprintf("%s, bound %v", tc.name, bound)
+			if connect.CodeOf(err) != connect.CodeDataLoss || errors.Is(err, sandbox.ErrInvalidRequest) {
+				t.Errorf("%s: %v (code %v); want DataLoss and not ErrInvalidRequest", name, err, connect.CodeOf(err))
+			}
+			if _, marked := sandbox.NotDispatchedReason(err); marked {
+				t.Errorf("%s: marked not dispatched: %v", name, err)
+			}
+			if errors.Is(err, ErrAnswerNotBound) == bound {
+				t.Errorf("%s: ErrAnswerNotBound is %v", name, errors.Is(err, ErrAnswerNotBound))
+			}
+		}
+	}
+}
+
 // connect-go refuses a body over its read cap before any handler runs and attaches no
 // detail; the daemon's header says nothing ran (finding 3).
 func TestEarlyRefusalIsMarkedRequest(t *testing.T) {

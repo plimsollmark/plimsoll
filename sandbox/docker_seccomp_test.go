@@ -391,6 +391,144 @@ func TestVerifySeccompRefusesAWideVariantFile(t *testing.T) {
 	}
 }
 
+// TestShippedSeccompProfilesListOnlyNativeArchitectures: the shipped default and the sdk_env
+// variant derived from it list x86-64 and aarch64 with no sub-architecture and no flat
+// architectures list, so a call through the 32-bit entry (int 0x80) or x32 on x86-64, or
+// through 32-bit ARM on aarch64, is killed whole (TestDockerSeccompKillsEveryNonNativeEntry
+// makes those calls). Until 2026-11-19 the default listed SCMP_ARCH_X86, SCMP_ARCH_X32 and
+// SCMP_ARCH_ARM, and the 32-bit socketcall made a socket of any family (finding release-78).
+func TestShippedSeccompProfilesListOnlyNativeArchitectures(t *testing.T) {
+	t.Parallel()
+	def, err := os.ReadFile("../docker/seccomp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string][]byte{"the shipped default": def, "the derived sdk_env variant": derivedSeccompBytes(t)} {
+		var doc struct {
+			Architectures []string `json:"architectures"`
+			ArchMap       []struct {
+				Architecture     string   `json:"architecture"`
+				SubArchitectures []string `json:"subArchitectures"`
+			} `json:"archMap"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(doc.Architectures) != 0 {
+			t.Errorf("%s has a flat architectures list %v; docker adds every architecture in it", name, doc.Architectures)
+		}
+		var primaries []string
+		for _, a := range doc.ArchMap {
+			primaries = append(primaries, a.Architecture)
+			if len(a.SubArchitectures) != 0 {
+				t.Errorf("%s lists %v under %s: a call through those entries would reach the rules, and libseccomp writes the socket rule for the 32-bit socketcall without its family check", name, a.SubArchitectures, a.Architecture)
+			}
+		}
+		if !slices.Equal(primaries, []string{"SCMP_ARCH_X86_64", "SCMP_ARCH_AARCH64"}) {
+			t.Errorf("%s maps %v, want x86-64 and aarch64, the hosts it is written and measured for", name, primaries)
+		}
+		if err := checkSeccompEntries(raw); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// TestSeccompEntriesRefusesRulesAMultiplexerVoids: Preflight refuses a profile file, default
+// or variant, and the derivation refuses a default, that lists an architecture whose entry
+// multiplexes socket's or SysV IPC's calls (SCMP_ARCH_X86 first among them) beside an allow
+// rule comparing an argument of such a call: libseccomp writes that rule for socketcall or
+// ipc without the comparison, so it would not hold. The shipped profile as it was until
+// 2026-11-19 is the first case: a copy of it an operator made then is refused, not applied.
+// A listed architecture without a multiplexer (x32, 32-bit ARM), or one beside rules that
+// compare nothing on those calls, is the operator's choice and passes.
+func TestSeccompEntriesRefusesRulesAMultiplexerVoids(t *testing.T) {
+	t.Parallel()
+	shipped, err := os.ReadFile("../docker/seccomp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withArches := func(raw []byte, set func(doc map[string]any)) []byte {
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		set(doc)
+		out, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	archMap := func(x86, arm []any) func(map[string]any) {
+		return func(doc map[string]any) {
+			doc["archMap"] = []any{
+				map[string]any{"architecture": "SCMP_ARCH_X86_64", "subArchitectures": x86},
+				map[string]any{"architecture": "SCMP_ARCH_AARCH64", "subArchitectures": arm},
+			}
+		}
+	}
+	oldShipped := withArches(shipped, archMap([]any{"SCMP_ARCH_X86", "SCMP_ARCH_X32"}, []any{"SCMP_ARCH_ARM"}))
+	const ipcFiltered = `{"defaultAction":"SCMP_ACT_ERRNO","architectures":["SCMP_ARCH_X86_64","SCMP_ARCH_X86"],"syscalls":[{"names":["shmget"],"action":"SCMP_ACT_ALLOW","args":[{"index":2,"value":0,"op":"SCMP_CMP_EQ"}]}]}`
+	const s390Socket = `{"defaultAction":"SCMP_ACT_ERRNO","archMap":[{"architecture":"SCMP_ARCH_S390X","subArchitectures":["SCMP_ARCH_S390"]}],"syscalls":[{"name":"socket","action":"SCMP_ACT_ALLOW","args":[{"index":0,"value":1,"op":"SCMP_CMP_EQ"}]}]}`
+	for name, raw := range map[string][]byte{
+		"the shipped profile as it was until 2026-11-19": oldShipped,
+		"SCMP_ARCH_X86 alone":                            withArches(shipped, archMap([]any{"SCMP_ARCH_X86"}, []any{})),
+		"SCMP_ARCH_X86 in the flat list": withArches(shipped, func(doc map[string]any) {
+			delete(doc, "archMap")
+			doc["architectures"] = []any{"SCMP_ARCH_X86_64", "SCMP_ARCH_X86"}
+		}),
+		"SCMP_ARCH_X86 as an archMap entry of its own": withArches(shipped, func(doc map[string]any) {
+			doc["archMap"] = []any{map[string]any{"architecture": "SCMP_ARCH_X86", "subArchitectures": []any{}}}
+		}),
+		"a filtered ipc call beside SCMP_ARCH_X86":                []byte(ipcFiltered),
+		"a socket rule in the older singular name beside s390":    []byte(s390Socket),
+		"the derived variant with SCMP_ARCH_X86 added back to it": withArches(derivedSeccompBytes(t), archMap([]any{"SCMP_ARCH_X86"}, []any{})),
+	} {
+		err := checkSeccompEntries(raw)
+		if err == nil || !strings.Contains(err.Error(), "SCMP_ARCH_") || !strings.Contains(err.Error(), "does not hold") {
+			t.Errorf("%s: %v, want a refusal naming the architecture", name, err)
+		}
+	}
+	for name, raw := range map[string][]byte{
+		"the shipped profile":                    shipped,
+		"x32 and 32-bit ARM, no multiplexer":     withArches(shipped, archMap([]any{"SCMP_ARCH_X32"}, []any{"SCMP_ARCH_ARM"})),
+		"SCMP_ARCH_X86 beside unfiltered socket": []byte(`{"defaultAction":"SCMP_ACT_ERRNO","architectures":["SCMP_ARCH_X86"],"syscalls":[{"names":["socket","shmget"],"action":"SCMP_ACT_ALLOW"}]}`),
+		"SCMP_ARCH_X86 beside a refusing rule":   []byte(`{"defaultAction":"SCMP_ACT_ERRNO","architectures":["SCMP_ARCH_X86"],"syscalls":[{"names":["socket"],"action":"SCMP_ACT_ERRNO","args":[{"index":0,"value":38,"op":"SCMP_CMP_EQ"}]}]}`),
+		"SCMP_ARCH_X86 beside a filtered clone":  []byte(`{"defaultAction":"SCMP_ACT_ERRNO","architectures":["SCMP_ARCH_X86"],"syscalls":[{"names":["clone"],"action":"SCMP_ACT_ALLOW","args":[{"index":0,"value":2114060288,"op":"SCMP_CMP_MASKED_EQ"}]}]}`),
+	} {
+		if err := checkSeccompEntries(raw); err != nil {
+			t.Errorf("%s: %v, want it to pass", name, err)
+		}
+	}
+
+	// Where the check stands: Preflight's reading of a default file and of a variant file,
+	// and the derivation.
+	dir := t.TempDir()
+	oldPath := filepath.Join(t.TempDir(), "seccomp.json")
+	if err := os.WriteFile(oldPath, oldShipped, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, sdk := range []string{"", SeccompSDKDerived} {
+		if _, err := verifySeccomp(oldPath, sdk, dir); err == nil || !strings.Contains(err.Error(), "SCMP_ARCH_X86") {
+			t.Errorf("Preflight with the old shipped profile as the default (variant %q): %v, want a refusal", sdk, err)
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("a refused default left pinned copies behind: %v, %v", entries, err)
+	}
+	if _, err := deriveSDKSeccomp(oldShipped); err == nil || !strings.Contains(err.Error(), "SCMP_ARCH_X86") {
+		t.Errorf("deriving from the old shipped profile: %v, want a refusal", err)
+	}
+	def, _ := filepath.Abs("../docker/seccomp.json")
+	variant := filepath.Join(t.TempDir(), "variant.json")
+	if err := os.WriteFile(variant, withArches(derivedSeccompBytes(t), archMap([]any{"SCMP_ARCH_X86", "SCMP_ARCH_X32"}, []any{"SCMP_ARCH_ARM"})), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifySeccomp(def, variant, dir); err == nil || !strings.Contains(err.Error(), "SCMP_ARCH_X86") || !strings.Contains(err.Error(), SeccompSDKDerived) {
+		t.Errorf("Preflight with a variant file that lists SCMP_ARCH_X86: %v, want a refusal pointing at %q", err, SeccompSDKDerived)
+	}
+}
+
 // TestVerifySeccompPinsAndRefuses: the two settings are checked against each other at
 // Preflight, and a profile file is pinned by a copy named by its digest.
 func TestVerifySeccompPinsAndRefuses(t *testing.T) {
@@ -501,6 +639,29 @@ func TestSeccompForSelectsPerDispatch(t *testing.T) {
 	}
 }
 
+// TestDockerSessionStatesTheProfileItsContainerApplies: a session states, at open, the
+// one profile its container applies for its life, which every call's result names and
+// the record of a call that ended without an answer reads from it; never Describe's
+// statement, which names the sdk_env variant too when one is configured (finding
+// release-40), followed by the guest guard's word.
+func TestDockerSessionStatesTheProfileItsContainerApplies(t *testing.T) {
+	t.Parallel()
+	both := dockerSeccomp{defaultPath: "/pin/a.json", defaultID: "seccomp:sha256:a", sdkPath: "/pin/b.json", sdkID: "seccomp:sha256:b"}
+	for _, runtime := range []string{"", "runsc"} {
+		state := dockerExecutionState{seccomp: both, runtime: runtime, guardPolicy: guestGuardPolicy(fakeGuestGuardPath)}
+		s := &dockerSession{d: DefaultDocker(""), policy: state.sessionPolicy()}
+		want := "seccomp:sha256:a"
+		if runtime == "runsc" {
+			want = seccompPolicySkippedRunsc
+		}
+		// Then the guest guard every command in the container starts behind.
+		want += " " + guestGuardPolicy(fakeGuestGuardPath)
+		if got := s.Environments().Policy; got != want {
+			t.Errorf("runtime %q: the session states %q, want %q, the profile its container applies", runtime, got, want)
+		}
+	}
+}
+
 // TestGrantGuestEnvAndRunnerFollowSDKEnv: only a grant with sdk_env gets the forwarder's
 // address and the client's environment; a plain grant gets the socket alone and the
 // bare runner, so the default profile suffices for it.
@@ -516,7 +677,7 @@ func TestGrantGuestEnvAndRunnerFollowSDKEnv(t *testing.T) {
 	if len(env) != 3 || env[1] != HostAPIListenEnv+"="+hostAPIListen || env[2] != "OPENAI_BASE_URL=http://"+hostAPIListen+"/v1" {
 		t.Fatalf("sdk grant env = %q", env)
 	}
-	argv, err := dockerForwardingRunnerArgv("", "127.0.0.1:1")
+	argv, err := d.forwardingRunnerArgv("", "127.0.0.1:1")
 	if err != nil || !strings.Contains(strings.Join(argv, " "), "--eval") || !strings.Contains(strings.Join(argv, " "), " 127.0.0.1:1 ") {
 		t.Fatalf("forwarding runner argv = %q, %v", argv, err)
 	}

@@ -80,6 +80,14 @@ func TestReapRemovesConfigDirsDeadProcessesLeft(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// This version's directory also holds the guest guard's folder, with the guard file in it
+	// read and run only (writeGuestGuard's mode): it goes with the directory.
+	if err := os.Mkdir(filepath.Join(withSocket, "guest-guard"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(withSocket, "guest-guard", "guest-guard-0"), []byte("guard"), guestGuardFileMode); err != nil {
+		t.Fatal(err)
+	}
 	l, err := net.Listen("unix", filepath.Join(withSocket, "alive.sock"))
 	if err != nil {
 		t.Fatal(err)

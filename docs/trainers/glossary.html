@@ -244,6 +244,10 @@
         <dt>agent</dt>
         <dd>An AI model left alone with a job and a terminal: it writes code, runs it, reads what happened and tries again, like a new hire on a first day with a laptop and no manager.</dd>
       </div>
+      <div class="entry" id="agent-kit">
+        <dt>agent kit</dt>
+        <dd>A library for building an AI agent, such as LangChain, CrewAI or OpenAI's Agents SDK: it calls the model, makes the tool calls the model asks for and hands back their answers. plimsoll plugs into one as a code tool, a sandbox backend or an MCP server.</dd>
+      </div>
       <div class="entry" id="agent-sandbox">
         <dt>agent-sandbox</dt>
         <dd>A component of Kubernetes (a system for managing containers across machines) that lends a ready sandbox pod from a warm pool for one run; plimsoll checks the pod and its runtime before sending code, then deletes its claim.</dd>
@@ -299,6 +303,10 @@
       <div class="entry" id="checkpoint">
         <dt>checkpoint</dt>
         <dd>A saved snapshot of a model partway through training, like saving a game so you can compare how you played at different stages.</dd>
+      </div>
+      <div class="entry" id="checkpoint-store">
+        <dt>checkpoint store</dt>
+        <dd>Storage an application keeps for its sessions' checkpoints, with an atomic compare-and-set, which the Python client passes every call of a session through so two processes never send at once.</dd>
       </div>
       <div class="entry" id="circuit-breaker">
         <dt>circuit breaker</dt>
@@ -372,6 +380,10 @@
         <dt>escape</dt>
         <dd>A bug that lets code inside a sandbox act outside it.</dd>
       </div>
+      <div class="entry" id="explained-gap">
+        <dt>explained gap</dt>
+        <dd>A takeover of a session across one call whose answer never reached the process that sent it: the takeover names that call, and the daemon allows it only when its last record is that call.</dd>
+      </div>
       <div class="entry" id="fail-closed">
         <dt>fail closed</dt>
         <dd>To refuse, rather than allow, when a check cannot be completed or a required setting is missing.</dd>
@@ -411,6 +423,10 @@
       <div class="entry" id="guest">
         <dt>guest</dt>
         <dd>The code running inside a sandbox, seen from the host machine that runs it.</dd>
+      </div>
+      <div class="entry" id="guest-guard">
+        <dt>guest guard</dt>
+        <dd>A small program of plimsoll's that starts first in front of every program the docker provider starts in a sandbox and puts a seccomp filter on it, which refuses the code the requests that make a namespace or a mount of its own, and tracing; every program started after it keeps the filter.</dd>
       </div>
       <div class="entry" id="gvisor">
         <dt>gVisor</dt>
@@ -496,6 +512,10 @@
         <dt>noexec</dt>
         <dd>A mount option that stops the kernel from running any program stored on that filesystem.</dd>
       </div>
+      <div class="entry" id="non-dumpable">
+        <dt>non-dumpable</dt>
+        <dd>Said of a Linux process that other programs of the same user may not inspect: they can open none of its descriptors and read none of its memory. plimsoll makes its own programs in a docker sandbox so with a small library loaded before each starts.</dd>
+      </div>
       <div class="entry" id="nosuid">
         <dt>nosuid</dt>
         <dd>A mount option that stops a program on that filesystem from gaining extra privileges through its set-user-ID bit.</dd>
@@ -511,6 +531,10 @@
       <div class="entry" id="overfitting">
         <dt>overfitting</dt>
         <dd>Scoring well on the practice set by memorizing it instead of getting better at the job, like a student who memorized last year's quiz and fails this year's.</dd>
+      </div>
+      <div class="entry" id="ownership-generation">
+        <dt>ownership generation</dt>
+        <dd>A number a session starts with at 1 and that goes up by one each time another process takes the session over; every call and close carries it, and an older one is refused before anything runs.</dd>
       </div>
       <div class="entry" id="percentage-points">
         <dt>percentage points</dt>
@@ -631,6 +655,10 @@
       <div class="entry" id="session">
         <dt>session</dt>
         <dd>One sandbox kept open for many calls: the files a call writes are there for the next, a cleanup between calls ends what a call left running, and an interpreter kept for cells can carry its state from one call to the next.</dd>
+      </div>
+      <div class="entry" id="session-checkpoint">
+        <dt>session checkpoint</dt>
+        <dd>What an application saves after each call of a session so another process can take it over: the session's fingerprint, its ownership generation, its count of calls, its last record's digest and the policy it stated at open, and no secret.</dd>
       </div>
       <div class="entry" id="sha-256">
         <dt>SHA-256</dt>

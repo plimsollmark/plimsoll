@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -23,6 +25,8 @@ var updateAnswers = flag.Bool("update-answers", false, "rewrite protocol/testdat
 const answersFile = "../../protocol/testdata/answers.json"
 
 var faultID = regexp.MustCompile(`internal error [0-9a-f]{16}`)
+
+var contextID = regexp.MustCompile(`\(error [0-9a-f]{16};`)
 
 // answerCase is one daemon answer every client must read the same way: the HTTP status,
 // the body, whether the request ID's echo matches ("match", "missing" or "other"), the
@@ -113,6 +117,21 @@ func buildAnswerCases(t *testing.T) []answerCase {
 	// The fault's ID is fresh on every answer; the file keeps a fixed one.
 	b = faultID.ReplaceAllString(b, "internal error 0000000000000000")
 	add("an internal fault, which may have run", s, js, b, "match", "", "internal", "", "", false)
+	// A call canceled or out of time whose session also ended: the code is the context's,
+	// and the end travels beside it (finding release-89).
+	for _, c := range []struct {
+		name string
+		ctx  error
+		code string
+	}{{"a deadline that came with the session's end", context.DeadlineExceeded, "deadline_exceeded"}, {"a cancellation that came with the session's end", context.Canceled, "canceled"}} {
+		if !errors.As(mapSandboxErr(errors.Join(c.ctx, &sandbox.SessionEndedError{Reason: sandbox.SessionMainProcessEnded, Detail: "the main process exited", Public: true})), &ce) {
+			t.Fatal("a context error with a session's end did not map to a connect error")
+		}
+		s, b = written(t, ce)
+		// The ID of the detail kept for the log is fresh on every answer; the file keeps a fixed one.
+		b = contextID.ReplaceAllString(b, "(error 0000000000000000;")
+		add(c.name, s, js, b, "match", "", c.code, "", "main_process_ended", false)
+	}
 
 	// Answers no daemon of this version writes.
 	s, b = withDetail(t, connect.CodeResourceExhausted, "refused", "plimsoll.v1.NotDispatched", detailBytes(t, &plimsollv1.NotDispatched{Reason: 99}))
@@ -126,9 +145,40 @@ func buildAnswerCases(t *testing.T) []answerCase {
 	add("a session end with no reason", s, js, b, "match", "", "failed_precondition", "", "unknown", false)
 	s, b = withDetail(t, connect.CodeResourceExhausted, "refused", "plimsoll.v1.NotDispatched", []byte{0x08})
 	add("an undecodable refusal detail", s, js, b, "match", "", "resource_exhausted", "", "", false)
+	// A refusal detail whose base64 holds a stray character: "CAY" is capacity, and a
+	// reader that skips the "!" would mark a call nothing ran in (finding hunt-quality-93).
+	// The code is the HTTP status's and the body's alike, so the case holds the mark alone:
+	// on a 429, Go reads the status's code where the Python and TypeScript clients keep the
+	// body's, which is the rest of that finding.
+	s, b = withDetail(t, connect.CodeUnavailable, "refused", "plimsoll.v1.NotDispatched", nil)
+	if !strings.Contains(b, `"value":""`) {
+		t.Fatalf("the detail's value is not where the case puts its base64: %s", b)
+	}
+	b = strings.Replace(b, `"value":""`, `"value":"CAY!"`, 1)
+	add("a refusal detail whose base64 holds a stray character", s, js, b, "match", "", "unavailable", "", "", false)
 	s, b = written(t, connect.NewError(connect.CodeInvalidArgument, errors.New("malformed body")))
 	add("a refusal before the handler, marked by the header", s, js, b, "match", "request", "invalid_argument", "request", "", false)
 	add("a proxy's page, no mark", http.StatusBadGateway, "text/html", "<html><body>502 Bad Gateway</body></html>", "missing", "", "unavailable", "", "", true)
+	// A details list holding a JSON null is not a Connect error a client can read: the
+	// code is the HTTP status's, and neither the details nor the header mark is believed
+	// (finding release-88: the Go client panicked on it).
+	withNull := func(code connect.Code, typeName string, raw []byte) (int, string) {
+		s, b := withDetail(t, code, "refused", typeName, raw)
+		var m map[string]any
+		if err := json.Unmarshal([]byte(b), &m); err != nil {
+			t.Fatal(err)
+		}
+		m["details"] = append([]any{nil}, m["details"].([]any)...)
+		out, _ := json.Marshal(m)
+		return s, string(out)
+	}
+	add("a details list holding only null", http.StatusInternalServerError, js, `{"code":"internal","details":[null]}`, "match", "", "unknown", "", "", false)
+	s, b = withNull(connect.CodeResourceExhausted, "plimsoll.v1.NotDispatched", detailBytes(t, &plimsollv1.NotDispatched{Reason: plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY}))
+	add("a null before a refusal detail, marked by the header", s, js, b, "match", "capacity", "unavailable", "", "", false)
+	s, b = withNull(connect.CodeFailedPrecondition, "plimsoll.v1.SessionEnded", detailBytes(t, &plimsollv1.SessionEnded{Reason: plimsollv1.SessionEnd_SESSION_END_EXPIRED}))
+	add("a null before a session end", s, js, b, "match", "", "internal", "", "", false)
+	s, b = withNull(connect.CodeDeadlineExceeded, "plimsoll.v1.UnansweredCall", detailBytes(t, &plimsollv1.UnansweredCall{Record: &plimsollv1.RunRecord{Version: 5, Unanswered: "deadline_exceeded", Sequence: 1}}))
+	add("a null before an unanswered call's record", s, js, b, "match", "", "unavailable", "", "", false)
 	return cases
 }
 

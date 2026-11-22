@@ -1,6 +1,11 @@
 package rpc
 
-import "log/slog"
+import (
+	"log/slog"
+	"regexp"
+
+	"github.com/plimsollmark/plimsoll/protocol"
+)
 
 // Correlation ids. plimsoll's audit stream is metadata only BY CONSTRUCTION —
 // route templates, verbs, counts, timings, never a path or a body. That invariant
@@ -21,10 +26,12 @@ import "log/slog"
 // (never a silent truncation, which would produce a plausible-looking id that
 // joins to nothing).
 
-// maxTraceIDBytes bounds an accepted correlation id. It comfortably fits short
+// traceIDForm is the whole grammar of an accepted correlation id,
+// protocol.TraceIDPattern, which the clients check against too. Its bound of 64
+// characters (bytes, since every allowed character is ASCII) comfortably fits short
 // gateway ids, a 36-char UUID, and a 32-char OTel trace id while keeping a
 // cardinality-safe, greppable audit field.
-const maxTraceIDBytes = 64
+var traceIDForm = regexp.MustCompile(protocol.TraceIDPattern)
 
 // sanitizeTraceID returns the id to record and whether a non-empty id was
 // REJECTED. An absent id is the normal case for a caller that does not correlate:
@@ -42,13 +49,8 @@ func sanitizeTraceID(id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	if len(id) > maxTraceIDBytes {
+	if !traceIDForm.MatchString(id) {
 		return "", true
-	}
-	for i := 0; i < len(id); i++ {
-		if !traceIDByte(id[i]) {
-			return "", true
-		}
 	}
 	return id, false
 }
@@ -69,19 +71,5 @@ func traceAttrs(raw string) []slog.Attr {
 		return []slog.Attr{slog.String("trace_id", id)}
 	default:
 		return nil
-	}
-}
-
-// traceIDByte reports whether b is allowed in a correlation id. Byte-wise rather
-// than rune-wise on purpose: the charset is ASCII, so any multi-byte rune fails on
-// its first byte and no decoding of caller input is needed.
-func traceIDByte(b byte) bool {
-	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
-		return true
-	case b == '.', b == '_', b == ':', b == '-':
-		return true
-	default:
-		return false
 	}
 }

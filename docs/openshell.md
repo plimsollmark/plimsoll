@@ -53,14 +53,39 @@ gateway with the docker driver.
   session call, apart from the caller's request (bounded at 10 seconds), so a request
   that times out or hangs up cannot change the tier every other caller is checked
   against; when the gateway fails it, the run is refused before any of its code runs.
-- **An image with the runner.** `SANDBOX_OPENSHELL_IMAGE` must carry `node`, `sh`,
-  `/usr/bin/env` (plimsoll's own programs start under `env -i`), `/runner.mjs` and
-  `/usr/local/lib/plimsoll-runner-guard.so`, as `plimsoll/sandbox` does. The runner (`/runner.mjs`, the program that writes a project's files and runs its
-  steps) refuses a plan unless a child process running as the same user is denied access
-  to the runner's plan descriptor, its report descriptor and its memory (the descriptors
-  are the open files it reads the plan from and writes its report to). With
+- **An image with the runner.** `SANDBOX_OPENSHELL_IMAGE` must carry `node` (v22.14.0 or later, which the startup smoke test checks: [the image's node](guest-dependencies.md)), `sh`,
+  `/usr/bin/env` (plimsoll's own programs start under `env -i`) and the project runner,
+  plimsoll's native helper, at `/usr/local/libexec/plimsoll-helper`, as `plimsoll/sandbox` does.
+  The runner is the program that writes a project's files and runs its steps. It is one static
+  x86-64 program with no outside library, so it runs in any Linux image. The startup smoke test
+  reads it from inside a sandbox and refuses the image unless it is a regular file, owned by
+  root, writable by no one else, with no setuid or setgid bit, and byte for byte the helper this plimsolld was built with
+  (its SHA-256 is compiled into plimsolld); the refusal names what is wrong. The runner itself
+  refuses a plan unless a child process running as the same user is denied access to the
+  runner's plan descriptor, its report descriptor and its memory (the descriptors are the open
+  files it reads the plan from and writes its report to). With
   `SANDBOX_REQUIRE_PINNED_IMAGES=1` the image must be named by an `@sha256:` reference, a
   hash of its content.
+
+  **An image built for an earlier plimsoll is refused.** Until v0.28.0 the runner was a Node
+  program, `/runner.mjs`, loaded with the library `/usr/local/lib/plimsoll-runner-guard.so`;
+  neither is read by this provider now (the library stays in `plimsoll/sandbox`, where the
+  docker provider still loads it into its own node programs). To bring an image of your own up
+  to date, either build it `FROM` a `plimsoll/sandbox` built from the same release as your
+  plimsolld (`make docker-images`), or add the file, from the release's source tree, in your
+  image's recipe:
+
+  ```dockerfile
+  COPY --chown=root:root --chmod=0755 sandbox/internal/nativehelper/program/plimsoll-helper_amd64 /usr/local/libexec/plimsoll-helper
+  ```
+
+  and check it against the checksum file shipped beside it
+  (`sandbox/internal/nativehelper/program/plimsoll-helper.sha256`, the line for
+  `plimsoll-helper_amd64`). The file must be the one from the same release as plimsolld: a
+  helper from another release has other bytes and is refused. Only an x86-64 build exists, so
+  the sandboxes must run on x86-64: the startup test reads the sandbox's machine and refuses
+  any other by name ("the sandbox's machine is arm64"). plimsolld's own machine does not
+  matter, so a plimsolld on an ARM computer serves an x86-64 gateway.
 - **Agent policy proposals off.** A sandbox's policy is the set of rules it runs under. A
   sandbox whose effective settings let code inside it propose changes to its policy is
   refused: a gateway in automatic approval mode could apply one after plimsoll has checked

@@ -37,7 +37,12 @@ of the open-source release):
 The operator declares a <dfn>*withheld set*</dfn>: a JSON file of SHA-256 digests,
 named by `PLIMSOLL_WITHHELD_FILE`. plimsolld loads it at startup and refuses to start if
 the file is malformed (an unknown field, a bad digest, an unknown mode), since a set that
-loads with a typo scans for less than its author believes. The set holds digests, not
+loads with a typo scans for less than its author believes. It is read before the startup
+smoke test, and its permissions are judged as it is read: a set file that its group or
+every other user can write, or that sits in a directory they can write, could be emptied
+by another user of the machine. In hardened mode the daemon refuses to start on such a
+file; otherwise it logs one warning line naming `PLIMSOLL_WITHHELD_FILE` and the mode bits
+([the rule](hardened-mode.md#files-another-user-could-change)). The set holds digests, not
 values: the daemon keeps no withheld value, and its log lines and refusals name an entry by
 its label, never by what it holds. It does read each call's content, to compare it, and an
 audit-mode find leaves the run unchanged, so code that prints a value it was given returns

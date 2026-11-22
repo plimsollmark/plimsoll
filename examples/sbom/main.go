@@ -26,6 +26,12 @@ import (
 //go:embed page.html
 var pageHTML string
 
+// The receipt checker the page runs: the wire tables internal/wiretables writes, then
+// check.js, which reads them.
+//
+//go:embed tables.gen.js
+var receiptTablesJS string
+
 //go:embed check.js
 var receiptJS string
 
@@ -302,7 +308,7 @@ func execute(args []string, out io.Writer) error {
 		}
 		runs = append(runs, verdicts...)
 	}
-	data := pageData{Limits: limits, Pages: o.Pages, Floor: runs[0].Request.GetMinimumIsolation(), ReceiptScript: template.JS(receiptJS)}
+	data := pageData{Limits: limits, Pages: o.Pages, Floor: runs[0].Request.GetMinimumIsolation(), ReceiptScript: template.JS(receiptTablesJS + receiptJS)}
 	if data.Floor == "" {
 		data.Floor = "process"
 	}

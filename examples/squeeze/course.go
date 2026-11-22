@@ -86,6 +86,18 @@ func smokeSeeds(course string) []uint32 {
 }
 
 // flyStep is the command that flies controller.js on one cases file and prints the result.
+//
+// --disable-sigusr1 keeps the simulation's own debugger shut. fly.mjs is the trusted
+// process: it runs the controller as a child, a process of the same uid, and prints the
+// result the grade is read from. Node opens its debugger on SIGUSR1, on 127.0.0.1:9229,
+// and a controller can send its parent that signal: the source check in sim.mjs refuses
+// the word "process", not a controller that builds it from two pieces. A controller that
+// then reached the debugger could print a result of its own. This is the road finding
+// rust-native-helper-34 closed for the simulation image's trial runners; here the step
+// was plain `node fly.mjs` until 2026-11-20, when the widened scan of node starts
+// (sandbox/node_start_test.go, hunt-quality-64) found it. The option needs node 22.14 or
+// later, which plimsoll's own programs need too; an older node exits 9 on it and the
+// step fails with no result, which no grade takes for a pass.
 func flyStep(cases string) string {
-	return fmt.Sprintf("node fly.mjs controller.js %s --cpu-budget %d", cases, cpuBudgetSeconds)
+	return fmt.Sprintf("node --disable-sigusr1 fly.mjs controller.js %s --cpu-budget %d", cases, cpuBudgetSeconds)
 }

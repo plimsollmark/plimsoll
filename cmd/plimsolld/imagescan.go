@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 )
 
@@ -27,7 +28,7 @@ type imageArchives interface {
 // set's mode: one that is not refuses the start, since withheld material inside it would
 // not be found. An unset list means every such file is unknown.
 func scanImages(ctx context.Context, src imageArchives, set *withheld.Set) error {
-	knownPath := strings.TrimSpace(os.Getenv("PLIMSOLL_WITHHELD_KNOWN_FILE"))
+	knownPath := settings.WithheldKnownFile.Get(os.Getenv)
 	known, err := withheld.LoadKnown(knownPath)
 	if err != nil {
 		return fmt.Errorf("loading known-unreadable image files: %w", err)
@@ -54,7 +55,7 @@ func scanImages(ctx context.Context, src imageArchives, set *withheld.Set) error
 			unlisted = append(unlisted, fmt.Sprintf("image %s (%s): unlisted unreadable file %s (%s, %d bytes)", ref, id, withheld.CleanWhere(u.Where), u.Reason.Text(), u.Size))
 		}
 		if len(unknown) > 0 {
-			setPath := strings.TrimSpace(os.Getenv("PLIMSOLL_WITHHELD_FILE"))
+			setPath := settings.WithheldFile.Get(os.Getenv)
 			if setPath == "" {
 				setPath = "withheld.json"
 			}

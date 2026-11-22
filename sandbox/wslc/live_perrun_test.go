@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // The per-run mode's live tests, run by `make wslc-suite` with the others (live_test.go
@@ -147,6 +148,14 @@ func TestLivePerRunSmokeAndRun(t *testing.T) {
 	if res.ExitCode != 0 || strings.TrimSpace(string(res.Stdout)) != "per-run ok 61000" || res.Isolation != sandbox.IsolationContainer {
 		t.Fatalf("result: %+v", res)
 	}
+	// The record's environment names the image ID the run was started by: the ID image
+	// inspect read at startup, and the only image the run's own VM store lists (the
+	// template build refuses a store that lists any other), as a bill of materials
+	// restates it (record version 5, finding cyclonedx-13's fourth measurement).
+	if want := imageIdentity(ev.ImageID); res.EnvironmentIdentity != want || !providerkit.ValidDigest(ev.ImageID) {
+		t.Fatalf("the run states environment %q, want %q", res.EnvironmentIdentity, want)
+	}
+	t.Logf("the run's environment %s is the image ID image inspect read; repository digests %v", res.EnvironmentIdentity, ev.RepoDigests)
 	if err := p.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -269,6 +278,7 @@ func TestLivePerRunKilledDaemonLeavesNothingAfterRestart(t *testing.T) {
 	if victim == nil {
 		t.Fatal("no run's holder appeared")
 	}
+	// fixed-wait: 5 s stands for "the run is under way in its own session" before its holder is killed; not shown safe on a slow host
 	time.Sleep(5 * time.Second)
 	if err := victim.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)

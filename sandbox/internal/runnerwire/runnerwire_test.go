@@ -17,45 +17,46 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 )
 
 // testKey is a fixed report key for tests that build frames by hand.
 var testKey = bytes.Repeat([]byte{7}, KeySize)
 
-// frame builds the runner's report frame for body under key, as runner.mjs does.
+// frame builds the runner's report frame for body under key, as the runner does.
 func frame(key []byte, body string) string {
 	h := hmac.New(sha256.New, key)
 	h.Write([]byte(body))
 	return fmt.Sprintf("\n%s %d %s\n%s", Marker, len(body), hex.EncodeToString(h.Sum(nil)), body)
 }
 
-// runnerScript is the real in-sandbox runner the protocol is defined against.
-var runnerScript = filepath.Join("..", "..", "..", "docker", "runner.mjs")
-var runnerGuardSource = filepath.Join("..", "..", "..", "docker", "guard", "runner.c")
-
-func guardedRunnerCommand(t *testing.T, node, work string) *exec.Cmd {
+// runnerCommand starts the real project runner the protocol is defined against, the
+// native helper inside plimsolld (sandbox/internal/nativehelper), on this machine, with
+// work as its work directory; args follow its mode. It runs as this user, where it makes
+// itself non-dumpable and proves it before it reads a plan.
+func runnerCommand(t *testing.T, work string, args ...string) *exec.Cmd {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("the project runner guard uses Linux prctl")
+		t.Skip("the project runner is a Linux program")
 	}
 	if os.Geteuid() == 0 {
-		// The guard makes the runner non-dumpable, so a same-uid step cannot open its
-		// /proc descriptors or memory, and the runner proves that before reading a
-		// plan. Root keeps CAP_DAC_OVERRIDE and opens them anyway, so the runner
-		// correctly refuses every plan. In a sandbox it runs as the guest uid, where the
-		// docker suite's runner integrity tests prove the guard.
-		t.Skip("the runner guard cannot prove isolation for uid 0 (root keeps CAP_DAC_OVERRIDE); run the gate as a non-root user")
+		// The runner makes itself non-dumpable, so a same-uid step cannot open its /proc
+		// descriptors or memory, and proves that before reading a plan. Root keeps
+		// CAP_DAC_OVERRIDE and opens them anyway, so the runner correctly refuses every
+		// plan. In a sandbox it runs as the guest uid, where the docker suite proves it.
+		t.Skip("the runner cannot prove isolation for uid 0 (root keeps CAP_DAC_OVERRIDE); run the gate as a non-root user")
 	}
-	cc, err := exec.LookPath("cc")
+	prog, err := nativehelper.Program(runtime.GOARCH)
 	if err != nil {
-		t.Fatal("cc is required to verify the project runner guard")
+		t.Skip(err)
 	}
-	guard := filepath.Join(t.TempDir(), "runner-guard.so")
-	if out, err := exec.Command(cc, "-O2", "-fPIC", "-shared", "-o", guard, runnerGuardSource).CombinedOutput(); err != nil {
-		t.Fatalf("build runner guard: %v: %s", err, out)
+	bin := filepath.Join(t.TempDir(), "plimsoll-helper")
+	if err := os.WriteFile(bin, prog, 0o555); err != nil {
+		t.Fatal(err)
 	}
-	cmd := exec.Command(node, runnerScript)
-	cmd.Env = append(cmd.Environ(), "LD_PRELOAD="+guard, "PLIMSOLL_WORK="+work)
+	cmd := exec.Command(bin, append([]string{"run-project"}, args...)...)
+	cmd.Env = append(cmd.Environ(), "PLIMSOLL_WORK="+work)
 	return cmd
 }
 
@@ -63,16 +64,12 @@ func TestProjectRunnerRefusesPlanWithoutIsolation(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the project runner isolation check uses Linux procfs")
 	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
 	plan, err := (Plan{Steps: []string{"exit 0"}, ReportKey: testKey}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(node, runnerScript)
-	cmd.Env = append(cmd.Environ(), "PLIMSOLL_WORK="+t.TempDir())
+	// Its one test-only argument skips the non-dumpable call, so the proof must fail.
+	cmd := runnerCommand(t, t.TempDir(), nativehelper.TestOnlyStayDumpable)
 	cmd.Stdin = bytes.NewReader(plan)
 	out, err := cmd.Output()
 	if err != nil {
@@ -85,9 +82,8 @@ func TestProjectRunnerRefusesPlanWithoutIsolation(t *testing.T) {
 }
 
 func TestProjectRunnerAlwaysEmitsCompleteBoundedJSON(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed (the steps run node)")
 	}
 	work := t.TempDir()
 	plan := map[string]any{
@@ -99,7 +95,7 @@ func TestProjectRunnerAlwaysEmitsCompleteBoundedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := guardedRunnerCommand(t, node, work)
+	cmd := runnerCommand(t, work)
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -125,9 +121,8 @@ func TestProjectRunnerAlwaysEmitsCompleteBoundedJSON(t *testing.T) {
 // and requested artifacts that overflow the aggregate artifact budget must set
 // artifactsTruncated: machine-readable signals, not in-band markers.
 func TestProjectRunnerReportsTruncationFlags(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed (the steps run node)")
 	}
 	work := t.TempDir()
 	plan := map[string]any{
@@ -142,7 +137,7 @@ func TestProjectRunnerReportsTruncationFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := guardedRunnerCommand(t, node, work)
+	cmd := runnerCommand(t, work)
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -397,9 +392,8 @@ func TestDecodeKeepsOutputBytesAndRefusesTheOldForm(t *testing.T) {
 // complete (the round-4 review, 2026-10-08). Below the budget nothing is killed: 600 KiB
 // on each stream comes back whole, with the step's own exit (review, 2026-10-24).
 func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed (the steps run node)")
 	}
 	for _, c := range []struct {
 		kib       int
@@ -410,7 +404,7 @@ func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
 		{kib: 17 << 10, cut: true, exit: 153, out: 1 << 20},
 	} {
 		work := t.TempDir()
-		cmd := guardedRunnerCommand(t, node, work)
+		cmd := runnerCommand(t, work)
 		// exitCode, not process.exit: node exits once both writes have left it, where
 		// process.exit dropped stdout still queued behind a slow reader (CI, 2026-10-24).
 		step := fmt.Sprintf(`node -e 'const b="x".repeat(%d*1024); process.stdout.write(b); process.stderr.write(b); process.exitCode = 3'`, c.kib)
@@ -440,12 +434,8 @@ func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
 }
 
 func TestProjectRunnerGivesEachStepWhatIsLeftOfTheBudget(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
 	work := t.TempDir()
-	cmd := guardedRunnerCommand(t, node, work)
+	cmd := runnerCommand(t, work)
 	const budget = 3 * time.Second
 	plan, err := (Plan{Steps: []string{"sleep 2; echo first", "sleep 60"}, Budget: budget, ReportKey: testKey}).Encode()
 	if err != nil {
@@ -478,6 +468,42 @@ func TestProjectRunnerGivesEachStepWhatIsLeftOfTheBudget(t *testing.T) {
 	}
 }
 
+// A step reported flooded ends the plan even when its own shell exited 0 and a program it
+// left in the background is what passed the transfer budget: the shell is reaped by then,
+// so its status is 0, and the runner once stopped only on that status (finding release-97,
+// 2026-11-21). Every exec-based provider stops after a step whose exit is not 0.
+func TestProjectRunnerStopsAfterAFloodFromABackgroundProgram(t *testing.T) {
+	work := t.TempDir()
+	cmd := runnerCommand(t, work)
+	steps := []string{"(sleep 0.3; head -c 40000000 /dev/zero) & exit 0", "echo second > marker"}
+	plan, err := (Plan{Steps: steps, Budget: 60 * time.Second, ReportKey: testKey}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdin = bytes.NewReader(plan)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	report, found, err := Parse(string(out), testKey)
+	if !found || err != nil {
+		t.Fatalf("report: found=%v err=%v", found, err)
+	}
+	if len(report.Steps) == 0 {
+		t.Fatal("no steps reported")
+	}
+	if s := report.Steps[0]; s.ExitCode != 153 || !s.StdoutTruncated || !s.StderrTruncated || s.TimedOut {
+		t.Fatalf("first step: exit %d, cut %v and %v, timed out %v; want 153, both cut", s.ExitCode, s.StdoutTruncated, s.StderrTruncated, s.TimedOut)
+	}
+	_, statErr := os.Stat(filepath.Join(work, "marker"))
+	if len(report.Steps) != 1 || !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("%d steps reported, marker stat %v: the step after the flooded one ran", len(report.Steps), statErr)
+	}
+	if got, detail := report.Outcome(); got != Completed {
+		t.Fatalf("outcome %v (%q), want completed", got, detail)
+	}
+}
+
 // A failure after a step began is reported with the steps so far and read as the
 // runner's, never as a setup failure, which tells a caller that none of its code ran
 // (review, 2026-10-23); a failure before any step stays a setup
@@ -485,10 +511,6 @@ func TestProjectRunnerGivesEachStepWhatIsLeftOfTheBudget(t *testing.T) {
 // runner fail while capturing artifacts, after its steps, as an unreadable artifact
 // would, deterministically.
 func TestProjectRunnerTellsAFailureAfterStepsFromOneBefore(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not installed")
-	}
 	key := hex.EncodeToString(testKey)
 	for _, tc := range []struct {
 		name, plan string
@@ -498,7 +520,7 @@ func TestProjectRunnerTellsAFailureAfterStepsFromOneBefore(t *testing.T) {
 		{"after", `{"steps":["echo ran"],"budgetMs":30000,"artifacts":[5],"reportKey":"` + key + `"}`, RunnerFailed, 1},
 		{"before", `{"files":[{"path":"../out","content":"x"}],"steps":["echo ran"],"budgetMs":30000,"reportKey":"` + key + `"}`, SetupFailed, 0},
 	} {
-		cmd := guardedRunnerCommand(t, node, t.TempDir())
+		cmd := runnerCommand(t, t.TempDir())
 		cmd.Stdin = strings.NewReader(tc.plan)
 		out, err := cmd.Output()
 		if err != nil {

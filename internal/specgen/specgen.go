@@ -52,6 +52,68 @@ type Options struct {
 	// Global is the JS global the generic host client is exposed as (the grant's
 	// Global; the typed SDK attaches its named methods to it). Defaults to "host".
 	Global string
+	// Only, when not nil, is the profile's trimmed allow list: the routes the operator
+	// grants, each exactly as Allow emits it. The preamble, the description and Allow
+	// then name only the operations on those routes, so a model is never described a
+	// route the broker refuses. A route no generated operation has fails generation.
+	Only []sandbox.HostRoute
+}
+
+// ParseOnly reads an Only list as -emit allow writes it and a grants profile's allow
+// holds it: a JSON array of "METHOD /path" strings.
+func ParseOnly(data []byte) ([]sandbox.HostRoute, error) {
+	var lines []string
+	if err := json.Unmarshal(data, &lines); err != nil {
+		return nil, fmt.Errorf("specgen: the -only list is not a JSON array of \"METHOD /path\" strings: %w", err)
+	}
+	out := make([]sandbox.HostRoute, 0, len(lines))
+	for _, line := range lines {
+		method, path, ok := strings.Cut(strings.TrimSpace(line), " ")
+		r := sandbox.HostRoute{Method: method, Path: strings.TrimSpace(path)}
+		if !ok || method != strings.ToUpper(method) {
+			return nil, fmt.Errorf("specgen: -only entry %q is not \"METHOD /path\" with the method in capitals", line)
+		}
+		if err := sandbox.ValidateHostRoute(r); err != nil {
+			return nil, fmt.Errorf("specgen: -only entry %q: %w", line, err)
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// only keeps the operations whose route is in keep, and returns keep as the allow list.
+// Every route in keep must be one an operation was generated for.
+func only(ops []Operation, keep []sandbox.HostRoute) ([]Operation, []sandbox.HostRoute, error) {
+	want := map[sandbox.HostRoute]bool{}
+	for _, r := range keep {
+		want[r] = false
+	}
+	if len(want) == 0 {
+		return nil, nil, fmt.Errorf("specgen: the -only list names no route")
+	}
+	var kept []Operation
+	for _, op := range ops {
+		r := sandbox.HostRoute{Method: op.Method, Path: op.Route}
+		if _, ok := want[r]; ok {
+			want[r] = true
+			kept = append(kept, op)
+		}
+	}
+	var missing []string
+	for r, found := range want {
+		if !found {
+			missing = append(missing, r.Method+" "+r.Path)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, nil, fmt.Errorf("specgen: the -only list names %s, which no generated operation of the document has (each entry is a line of -emit allow)", strings.Join(missing, ", "))
+	}
+	allow := make([]sandbox.HostRoute, 0, len(want))
+	for r := range want {
+		allow = append(allow, r)
+	}
+	return kept, allow, nil
 }
 
 // Operation is one generated method: an OpenAPI operation reduced to what the three
@@ -448,6 +510,11 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 	}
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("specgen: spec declares paths but no supported operations (GET/PUT/POST/DELETE/PATCH)")
+	}
+	if opts.Only != nil {
+		if ops, allow, err = only(ops, opts.Only); err != nil {
+			return nil, err
+		}
 	}
 
 	sort.Slice(allow, func(i, j int) bool {

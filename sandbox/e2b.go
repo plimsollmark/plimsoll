@@ -24,8 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/boundary"
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -87,8 +90,15 @@ type E2B struct {
 	mu         sync.Mutex
 	instanceID string
 	langs      []Language // the languages the smoke test proved
-	leases     lease.Set
-	guards     guardRegistry // live per-run guard credentials (guard_registry.go)
+	// Two nodes, which a template may hold in two versions. stepNode is the version of
+	// the node a run's steps find through the template's own PATH, the guest's node, as
+	// the smoke test's step read it (process.version). sessionNode is what the smoke test
+	// learned of the node a session's own programs use, which is found through
+	// sessionkit.ControlPathClosed alone (readSessionNode).
+	stepNode    string
+	sessionNode e2bSessionNode
+	leases      lease.Set
+	guards      guardRegistry // live per-run guard credentials (guard_registry.go)
 }
 
 func (*E2B) Name() string { return "e2b" }
@@ -146,7 +156,7 @@ const e2bGuardDefaultPath = "/v1/e2b/guard"
 // to that name's own host (a guest announcing the guard's name to another address
 // reached the guard's host, measured the same day), and by the Host header on 80.
 func parseE2BGuardURL(raw string) (*guardEndpoint, error) {
-	g, err := parseGuardURL(raw, "E2B_GUARD_URL", e2bGuardDefaultPath)
+	g, err := parseGuardURL(raw, settings.E2BGuardURL.Name, e2bGuardDefaultPath)
 	if err != nil || g == nil {
 		return g, err
 	}
@@ -238,8 +248,10 @@ const vmSmokeProbe = `(async () => {
 // missing its toolchain, an unreachable control plane, or an egress policy not
 // actually in force fails startup here instead of failing (or silently
 // weakening) the first hostile run. It creates one real, billable sandbox, so
-// the daemon runs it once at startup — never on unauthenticated poll paths.
+// the daemon runs it once at startup — never on unauthenticated poll paths. Each claim
+// is recorded as its check passes, and the record must match e2bClaims (e2b_claims.go).
 func (e *E2B) SmokeTest(ctx context.Context) error {
+	proof := e2bClaims.Start()
 	if err := e.Preflight(ctx); err != nil {
 		return err
 	}
@@ -253,6 +265,22 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	if err := e.verifyResources(ctx, vm); err != nil {
 		return fmt.Errorf("e2b template smoke: %w", err)
 	}
+	// verifyResources holds each cap that is set to the control plane's answer.
+	if e.MaxMemoryMB > 0 {
+		proof.Proved(boundary.MemoryLimit, "SmokeTest")
+	} else {
+		proof.Skipped(boundary.MemoryLimit)
+	}
+	if e.MaxVCPU > 0 {
+		proof.Proved(boundary.CPULimit, "SmokeTest")
+	} else {
+		proof.Skipped(boundary.CPULimit)
+	}
+	if e.MaxDiskMB > 0 {
+		proof.Proved(boundary.WritableBounds, "SmokeTest")
+	} else {
+		proof.Skipped(boundary.WritableBounds)
+	}
 	// Stage probe + step script in ONE multipart request and run the probe through
 	// `sh <script>` with cwd set, the mechanics RunProject uses (a step adds the outer
 	// shell of stepArgv), so passing here means the template can actually serve project runs.
@@ -260,7 +288,7 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	const stepPath = "/tmp/plimsoll-smoke-step.sh"
 	files := []File{
 		{Path: pathpkg.Join(dir, "plimsoll-smoke.cjs"), Content: vmSmokeProbe},
-		{Path: stepPath, Content: "node plimsoll-smoke.cjs\n"},
+		{Path: stepPath, Content: sessionkit.GuestNode + " plimsoll-smoke.cjs\n"},
 	}
 	if err := e.writeFiles(ctx, vm, files); err != nil {
 		return fmt.Errorf("e2b template smoke: stage probe: %w", err)
@@ -285,12 +313,21 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	if report.Node == "" {
 		return errors.New("e2b template smoke: probe reported no node version")
 	}
+	// The version is kept, not checked here: a single run (a snippet, a project, this
+	// test) starts no node program of plimsoll's inside the machine, only the guest's own
+	// node (sessionkit.GuestNode) and sh, so a node too old for sessionkit.NodeSignalFlag
+	// serves it. A session's programs (e2b_session.js, the lister, the sweep, the relays)
+	// start with the flag, and take another node, the one on the closed PATH, which
+	// readSessionNode reads below; a session is refused by what that one is
+	// (e2b_session.go; findings rust-native-helper-35 and hunt-quality-53).
 	if report.Cwd != dir {
 		return fmt.Errorf("e2b template smoke: probe ran in %q, not the project dir %q — step cwd is not honored", report.Cwd, dir)
 	}
+	proof.Proved(boundary.RunPath, "SmokeTest")
 	if len(report.EgressOpen) > 0 {
 		return fmt.Errorf("e2b template smoke: egress is OPEN to %s — deny-all network policy is not in force", strings.Join(report.EgressOpen, ", "))
 	}
+	proof.Proved(boundary.NoEgress, "SmokeTest")
 	// The languages a project step or a session's cell can use: JavaScript, proved
 	// above, and each other language whose probe answers (LanguageSpecs).
 	langs := []Language{LanguageJavaScript}
@@ -301,10 +338,86 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 			}
 		}
 	}
+	proof.Proved(boundary.Languages, "SmokeTest")
+	sessionNode := e.readSessionNode(ctx, vm)
+	if err := proof.Done(); err != nil {
+		return err
+	}
 	e.mu.Lock()
 	e.langs = langs
+	e.stepNode = report.Node
+	e.sessionNode = sessionNode
 	e.mu.Unlock()
 	return nil
+}
+
+// smokeStepNode is the version of the steps' node (the guest's, found through the
+// template's own PATH) as the last startup check read it, "" before one has passed.
+func (e *E2B) smokeStepNode() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stepNode
+}
+
+// smokeSessionNode is what the last startup check learned of the node a session's own
+// programs use; the zero value before one has passed.
+func (e *E2B) smokeSessionNode() e2bSessionNode {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.sessionNode
+}
+
+// e2bSessionNode is what a startup check learned of the node a session's own programs
+// use: the one found through sessionkit.ControlPathClosed, never the steps' node, which
+// the template's own PATH may find somewhere else and in another version (E2B's base
+// template has its node under /usr/local alone). read is false when the check could not
+// tell (it did not run, the start failed, or the answer was not a release's version):
+// a session's open then finds out for itself, as it did before the check existed. With
+// read set, version is that node's process.version, and "" means the closed PATH holds
+// no node.
+type e2bSessionNode struct {
+	read    bool
+	version string
+}
+
+// e2bSessionNodeScript prints the version of the node that runs it.
+const e2bSessionNodeScript = `process.stdout.write(process.version)`
+
+// readSessionNode reads the version of the node a session's own programs use, started
+// the way a session's open starts it: as root, in the control folder, by name through
+// sessionkit.ControlPathClosed, with an empty environment (ControlArgvClosedByName). It
+// is a startup node (sessionkit.StartupNodeArgv): it carries no flag, since a node too
+// old for the flag would exit 9 before saying which it is, and no guest code runs in the
+// smoke test's machine. It never fails the smoke test: single runs do not use this node,
+// and a template without one serves them (hunt-quality-53: until 2026-11-20 a session
+// was refused early by the steps' node's version, so a template with an old node in
+// /usr/local and a new one in /usr/bin was refused every session for a node no session
+// uses, and one with a new node in /usr/local alone made a billed machine for each open
+// before refusing it).
+func (e *E2B) readSessionNode(ctx context.Context, vm e2bVM) e2bSessionNode {
+	argv, err := sessionkit.ControlArgvClosedByName(nil, sessionkit.StartupNodeArgv("-e", e2bSessionNodeScript)...)
+	if err != nil {
+		return e2bSessionNode{}
+	}
+	out, err := e.envdRun(ctx, vm, envdProcess{user: e2bRootUser, cmd: argv[0], args: argv[1:], cwd: e2bControlDir}, 256, 4096)
+	switch {
+	case err != nil:
+		return e2bSessionNode{}
+	case e2bNoControlNode(out.exited, out.exitCode, out.stderr):
+		return e2bSessionNode{read: true}
+	case out.exited && out.exitCode == 0 && !out.stdoutTruncated && sessionkit.NodeVersionRead(out.stdout):
+		return e2bSessionNode{read: true, version: strings.TrimSpace(out.stdout)}
+	}
+	return e2bSessionNode{}
+}
+
+// e2bNoControlNode reports whether a start of node by name through the closed PATH ended
+// because that PATH holds no node: env exits 127 and names the program it could not find
+// ("/usr/bin/env: 'node': No such file or directory"). A shell that could not find env
+// itself exits 127 too, and does not name node. The startup check and a session's open
+// both read it here, so they refuse the same templates.
+func e2bNoControlNode(exited bool, exitCode int, stderr string) bool {
+	return exited && exitCode == 127 && strings.Contains(stderr, "node")
 }
 
 // languages are the languages the smoke test proved, none before it has run.
@@ -384,10 +497,6 @@ func (e *E2B) maxOutput() int {
 	return 64 << 10
 }
 
-func (e *E2B) clampTimeout(req time.Duration, def, max time.Duration) time.Duration {
-	return clampRunTimeout(req, def, max)
-}
-
 // e2bGuestCABundle points Node at the guest's OS trust-store bundle. A guarded
 // E2B run reaches the guard over HTTPS that E2B's beta per-host network transform
 // terminates with an internal proxy CA; that CA is installed in the guest OS
@@ -426,7 +535,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (res Result, err e
 	if err := e.admit(req.MinimumIsolation, req.Software); err != nil {
 		return Result{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
 	}
-	timeout := e.clampTimeout(req.Timeout, e.DefaultTimeout, e.MaxTimeout)
+	timeout := clampRunTimeout(req.Timeout, e.DefaultTimeout, e.MaxTimeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	budget := remainingBudget(runCtx, timeout)
@@ -473,7 +582,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (res Result, err e
 	if req.Grant != nil {
 		runEnv = map[string]string{"NODE_EXTRA_CA_CERTS": e2bGuestCABundle}
 	}
-	out, err := e.runProcessWithEnv(runCtx, vm, "node", []string{snippetPath}, "", runEnv)
+	out, err := e.runProcessWithEnv(runCtx, vm, sessionkit.GuestNode, []string{snippetPath}, "", runEnv)
 	res = Result{
 		Stdout:          out.stdout,
 		Stderr:          out.stderr,
@@ -517,7 +626,7 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (res ProjectRe
 	if err := e.admit(req.MinimumIsolation, req.Software); err != nil {
 		return ProjectResult{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
 	}
-	timeout := e.clampTimeout(req.Timeout, e.DefaultTimeout, e.MaxTimeout)
+	timeout := clampRunTimeout(req.Timeout, e.DefaultTimeout, e.MaxTimeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	budget := remainingBudget(runCtx, timeout)
@@ -755,7 +864,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, opts e2bCreate)
 	// reaps this create while it is in flight; it is untracked on every path that
 	// returns no sandbox (a sandbox that exists anyway is then the reconciler's) and by
 	// kill on the others.
-	key := randID()
+	key := providerkit.RandHex(8)
 	e.leases.Track(key)
 	defer func() {
 		if err != nil {
@@ -1045,7 +1154,7 @@ func (e *E2B) instance() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.instanceID == "" {
-		e.instanceID = randID()
+		e.instanceID = providerkit.RandHex(8)
 	}
 	return e.instanceID
 }
@@ -1352,8 +1461,8 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 	defer resp.Body.Close()
 
 	var out procOutput
-	stdout := &cappedStream{max: outCap}
-	stderr := &cappedStream{max: errCap}
+	stdout := &providerkit.Capture{Limit: outCap}
+	stderr := &providerkit.Capture{Limit: errCap}
 	sawEnd := false
 	raw := 0 // the output's own bytes, both streams: the shared budget counts these
 	err = readConnectStream(resp.Body, func(msg []byte) error {
@@ -1363,8 +1472,8 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 		}
 		switch {
 		case ev.Event.Data != nil:
-			stdout.append(ev.Event.Data.Stdout)
-			stderr.append(ev.Event.Data.Stderr)
+			_, _ = stdout.Write(ev.Event.Data.Stdout)
+			_, _ = stderr.Write(ev.Event.Data.Stderr)
 			if raw += len(ev.Event.Data.Stdout) + len(ev.Event.Data.Stderr); raw > ProjectStepTransferBudget {
 				return errStreamOverBudget
 			}
@@ -1376,10 +1485,10 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 		}
 		return nil
 	})
-	out.stdout = stdout.b.String()
-	out.stderr = stderr.b.String()
-	out.stdoutTruncated = stdout.dropped
-	out.stderrTruncated = stderr.dropped
+	out.stdout = stdout.String()
+	out.stderr = stderr.String()
+	out.stdoutTruncated = stdout.Truncated()
+	out.stderrTruncated = stderr.Truncated()
 	if err != nil {
 		// The guest flooding its own output past the transfer budget is a failed
 		// USER run, not infrastructure: report it as a non-zero exit with truncated
@@ -1398,29 +1507,6 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 		return out, errors.New("envd stream ended before process completion")
 	}
 	return out, nil
-}
-
-// cappedStream accumulates at most max bytes, recording whether anything was
-// dropped so truncation is reported out-of-band rather than as an in-band marker.
-type cappedStream struct {
-	b       strings.Builder
-	max     int
-	dropped bool
-}
-
-func (c *cappedStream) append(data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	if c.b.Len() >= c.max {
-		c.dropped = true
-		return
-	}
-	if c.b.Len()+len(data) > c.max {
-		data = data[:c.max-c.b.Len()]
-		c.dropped = true
-	}
-	c.b.Write(data)
 }
 
 type procEvent struct {
@@ -1456,7 +1542,7 @@ const maxConnectFrameBytes = 8 << 20
 
 // maxStreamTransferBytes caps the TOTAL bytes read across a whole process stream.
 // The per-frame cap bounds one allocation, but a hostile process can emit an endless
-// series of in-bound frames; cappedStream stops STORING at maxOutput yet the reader
+// series of in-bound frames; the output Capture stops STORING at maxOutput yet the reader
 // would keep pulling and allocating frames until the deadline. Bounding cumulative
 // transfer makes a flood deterministic: once the run has produced far more than any
 // legitimate output, the stream is aborted rather than read indefinitely. Sized well

@@ -458,7 +458,7 @@ class Async(unittest.TestCase):
     def session_server(self) -> None:
         sid = "ab" * 16
         self.server.answers["OpenSession"] = (200, json.dumps(
-            {"sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}).encode())
+            {"generation": "1", "sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}).encode())
         # A call is held, then refused as the daemon refuses a call it never
         # dispatched: the session goes on, so a call queued behind it is sent next.
         self.server.answers["SessionRun"] = capacity_refusal()

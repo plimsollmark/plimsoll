@@ -25,9 +25,24 @@ type exchangeJSON struct {
 // before the field existed. TestExchangeFieldsAreTheFormatsOrLater fails when the
 // protocol gains a field without a line here (or a decision to make every published
 // bill again).
-var laterFields = [][]string{
-	{"request", "prefer_warm"}, // protocol 5: a Run cell may ask for a waiting pool member
-	{"response", "warm"},       // protocol 5: whether one ran it
+var laterFields = []laterField{
+	{[]string{"request", "prefer_warm"}, false}, // protocol 5: a Run cell may ask for a waiting pool member
+	{[]string{"response", "warm"}, false},       // protocol 5: whether one ran it
+	// Protocol 6, record version 5: the sentence beside the tier, the daemon's version, and
+	// the record's copies of them and of warm.
+	{[]string{"response", "isolation_qualification"}, ""},
+	{[]string{"response", "daemon_version"}, ""},
+	{[]string{"response", "record", "isolation_qualification"}, ""},
+	{[]string{"response", "record", "warm"}, false},
+	{[]string{"response", "record", "daemon_version"}, ""},
+}
+
+// laterField is a field's place in the exchange and the value EmitUnpopulated writes for it unset, by its kind: false
+// for a boolean, "" for a string, "0" for a 64-bit integer (written as text). A field holding any other value, a
+// sentence "0" included, is kept.
+type laterField struct {
+	path  []string
+	unset any
 }
 
 func exchangeBytes(s source) ([]byte, error) {
@@ -49,15 +64,14 @@ func exchangeBytes(s source) ([]byte, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
 	}
-	for _, path := range laterFields {
-		dropUnset(fields, path)
+	for _, f := range laterFields {
+		dropUnset(fields, f.path, f.unset)
 	}
 	return json.Marshal(fields)
 }
 
-// dropUnset deletes the member at path when it holds its field's zero value as
-// EmitUnpopulated writes it (false, 0, "0", "", an empty list or object, null).
-func dropUnset(v any, path []string) {
+// dropUnset deletes the member at path when it holds unset, its field's zero value as EmitUnpopulated writes it.
+func dropUnset(v any, path []string, unset any) {
 	for _, key := range path[:len(path)-1] {
 		m, ok := v.(map[string]any)
 		if !ok {
@@ -70,29 +84,8 @@ func dropUnset(v any, path []string) {
 		return
 	}
 	last := path[len(path)-1]
-	switch x := m[last].(type) {
-	case nil:
+	if x, ok := m[last]; ok && x == unset {
 		delete(m, last)
-	case bool:
-		if !x {
-			delete(m, last)
-		}
-	case float64:
-		if x == 0 {
-			delete(m, last)
-		}
-	case string:
-		if x == "" || x == "0" {
-			delete(m, last)
-		}
-	case []any:
-		if len(x) == 0 {
-			delete(m, last)
-		}
-	case map[string]any:
-		if len(x) == 0 {
-			delete(m, last)
-		}
 	}
 }
 

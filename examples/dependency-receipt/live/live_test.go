@@ -332,6 +332,20 @@ func TestSeeGroupsByCommand(t *testing.T) {
 	}
 }
 
+// The runner's group is described as the runner its own log shows: the Node runner in the
+// published run, the native helper in a run since 2026-11-21 (review finding
+// rust-native-helper-46).
+func TestRunnerSaysWhichRunner(t *testing.T) {
+	node := group{Kind: "runner", Processes: []proc{{PID: 16, Command: "node /runner.mjs"}}}
+	native := group{Kind: "runner", Processes: []proc{{PID: 16, Command: runnerPath + " run-project"}}}
+	if s := says(&runFacts{}, node); !strings.Contains(s, "node /runner.mjs") {
+		t.Errorf("the Node runner's group: %q", s)
+	}
+	if s := says(&runFacts{}, native); strings.Contains(s, "runner.mjs") || !strings.Contains(s, "the native helper ("+runnerPath+" run-project)") {
+		t.Errorf("the native helper's group: %q", s)
+	}
+}
+
 // The changed byte is the address's last digit, and an edit that does not fit the log is
 // refused rather than made.
 func TestOneByteEdit(t *testing.T) {

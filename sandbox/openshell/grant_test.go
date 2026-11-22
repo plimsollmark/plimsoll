@@ -25,6 +25,8 @@ import (
 
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // fakeForwarding adds CreateSshSession, RevokeSshSession and ForwardTcp to the fake
@@ -84,7 +86,7 @@ func (f *fakeGateway) CreateSshSession(_ context.Context, req *connect.Request[o
 	fw := f.forward
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
-	tok := "tok-" + randHex(6)
+	tok := "tok-" + providerkit.RandHex(6)
 	fw.tokens[tok] = &fakeToken{sandbox: req.Msg.GetSandbox()}
 	return connect.NewResponse(&openshellv1.CreateSshSessionResponse{Token: tok, SandboxId: req.Msg.GetSandbox() + "-id"}), nil
 }
@@ -181,7 +183,8 @@ func (f *fakeGateway) ForwardTcp(ctx context.Context, stream *connect.BidiStream
 // "need" lines, on a real port and socket.
 func (fw *fakeForwarding) relay(e *fakeExec) error {
 	cmd, _ := controlled(e.start.GetCommand())
-	port64, _ := strconv.ParseUint(cmd[3], 10, 32)
+	args := cmd[len(sessionkit.NodeArgv("-e", relayScript)):] // the port, then the socket
+	port64, _ := strconv.ParseUint(args[0], 10, 32)
 	up, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -195,7 +198,7 @@ func (fw *fakeForwarding) relay(e *fakeExec) error {
 	defer down.Close()
 	fw.mu.Lock()
 	fw.ports[uint32(port64)] = up.Addr().String()
-	fw.sockets[cmd[4]] = sock
+	fw.sockets[args[1]] = sock
 	fw.mu.Unlock()
 	var mu sync.Mutex
 	var idle []net.Conn
@@ -310,7 +313,7 @@ func getLines(sock, path string, n int) []string {
 func grantScript(fw *fakeForwarding, guest func(e *fakeExec) error) func(e *fakeExec) error {
 	return func(e *fakeExec) error {
 		cmd, clean := controlled(e.start.GetCommand())
-		if len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == relayScript {
+		if len(cmd) >= 4 && cmd[0] == "node" && cmd[1] == sessionkit.NodeSignalFlag && cmd[2] == "-e" && cmd[3] == relayScript {
 			if !clean || len(e.start.GetEnvironment()) > 0 {
 				return fmt.Errorf("the grant relay started with the exec's environment: %q", e.start.GetCommand())
 			}
@@ -434,6 +437,18 @@ func TestGrantedProjectPreloadsTheClient(t *testing.T) {
 	}
 }
 
+// openshell is one of sandbox.PythonGrantProviders, the providers whose granted project
+// steps all get the broker's socket: the runner starts with HOST_API_SOCKET in its own
+// environment (TestGrantedProjectPreloadsTheClient), and the project runner hands its
+// environment to every step, a Python one included. A client reads the list to decide
+// whether its tool's Python may call the API on this daemon. Not run on a live gateway.
+func TestOpenShellIsAPythonGrantProvider(t *testing.T) {
+	t.Parallel()
+	if !sandbox.PythonCarriesGrant(Name) {
+		t.Fatalf("sandbox.PythonGrantProviders %v leaves out %q", sandbox.PythonGrantProviders, Name)
+	}
+}
+
 // Every call is answered when the guest opens more connections at once than the
 // gateway allows the run (maxForwardConns), whether the answer is the upstream's or
 // plimsoll's own 429 for more than 16 host calls in flight (the broker's limit,
@@ -454,6 +469,7 @@ func TestGrantPoolServesMoreCallsThanItsConnectionCap(t *testing.T) {
 	var calls atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		// fixed-wait: the fake upstream's own answer time, long enough for the calls to overlap
 		time.Sleep(700 * time.Millisecond)
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
@@ -620,6 +636,7 @@ func TestGrantRunEndsWhenTheGuestStopsReading(t *testing.T) {
 				}
 			}
 		}()
+		// fixed-wait: the fake guest's own behavior: it stops reading for 2 s so the replies back up, which is the case under test
 		time.Sleep(2 * time.Second) // the replies back up
 		return e.exit(0)
 	})
@@ -717,6 +734,7 @@ func TestForwardPoolCapsDialsPerRun(t *testing.T) {
 	select {
 	case <-claimed:
 		t.Fatal("a third dial was claimed past a cap of two")
+	// fixed-wait: 200 ms with no third claim stands for "the cap holds it"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(200 * time.Millisecond):
 	}
 	// A failed dial gives its count back, so the waiting worker claims after the backoff.

@@ -61,7 +61,7 @@ and immediately when a relevant security advisory arrives. That review covers
 the gVisor bundle separately from updates to the GitHub Actions the CI uses.
 
 1. Read the target release notes and its `SHA512SUMS` in the
-   [EXTERNAL · source repo releases ↗](https://github.com/google/gvisor/releases).
+   [EXTERNAL · source repo releases ↗](https://github.com/gvisor/gvisor/releases).
 2. Update the release, both architecture hashes, and executable list in
    `docker/gvisor.versions`. Inspect both archives; do not merely copy a version.
 3. Run `--verify-only` on a native host for each supported architecture. Review
@@ -147,6 +147,31 @@ SANDBOX_DOCKER_RUNTIME=runsc go test ./sandbox -run 'Docker|RunProject' -count=1
   output. Size `SANDBOX_PIDS` with that overhead in mind. Inside the guest, `pids.max`
   is a file gVisor emulates and reads `max`, so the startup smoke test proves the limit
   on the host cgroup.
+- **A filter of plimsoll's own stands in for the host profile against folders of the code's own.**
+  No host <dfn>*seccomp*</dfn> profile (a filter on which requests a process may make)
+  applies under runsc ([seccomp.md](seccomp.md)), and gVisor's kernel lets an ordinary
+  process make a user namespace (a private view of the system in which it acts as
+  administrator) and mount a fresh <dfn>*tmpfs*</dfn> (a filesystem held in memory) in it.
+  Without anything in front of the code, that folder would carry no no-execute mark: measured
+  2026-11-19 with release-20260907.0, in a run and in a <dfn>*session*</dfn> (one sandbox kept
+  for many calls), a program copied into `/work` was refused (`/work` is mounted `noexec`) and
+  the same program copied into a tmpfs the code had mounted itself started. So every command
+  the docker provider starts, under runsc as under runc, starts behind the
+  <dfn>*guest guard*</dfn>, plimsoll's own seccomp filter, which gVisor applies like any filter
+  a program puts on itself: it refuses the namespace and the mount requests, so the code
+  cannot make such a folder, and the startup smoke test proves it from inside each image
+  ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
+- **No debugger works under the guest guard.** gVisor up to at least release-20261116.0 does not
+  look again at a request a tracing parent rewrites after the filter has passed it (gVisor
+  issue 16093, [EXTERNAL · source repo ↗](https://github.com/gvisor/gvisor/issues/16093)), so
+  a traced child's harmless request could be turned into a namespace request. Measured with
+  release-20260907.0 on 2026-11-20 and again with release-20261116.0 on 2026-11-21: behind a
+  filter that refuses `unshare`, a traced child's `getpid` rewritten into `unshare` gave the
+  child a new user namespace, where Linux refused the same rewrite. The guest guard
+  therefore refuses `ptrace` and `process_vm_writev` with "Operation not permitted": `gdb`,
+  `strace` and the like, which worked under runsc before the guest guard, no longer do, and neither
+  does the `unshare` command. `clone3` answers "Function not implemented" (it answered
+  "Invalid argument" before), on which C libraries fall back to `clone`.
 - gVisor adds work to every system call it intercepts, so its cost grows with how many
   a run makes. Measured through the docker provider on one machine (24 cores, Linux 6.6
   under WSL2, Docker 29.1.3, gVisor release-20260907.0, median of 20 runs, 2026-09-29):

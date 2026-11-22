@@ -51,7 +51,7 @@ class ScriptedModel(BaseLlm):
 
 class ADKTests(unittest.TestCase):
     def executor(self, **kwargs: Any) -> PlimsollCodeExecutor:
-        return PlimsollCodeExecutor(client=Client(setting("PLIMSOLL_ECHO_URL")),
+        return PlimsollCodeExecutor(client=Client(setting("PLIMSOLL_TOOL_ECHO_URL")),
                                     minimum_isolation="container", **kwargs)
 
     def test_base_contract_and_decoding_match_adk(self) -> None:
@@ -110,7 +110,7 @@ class ADKTests(unittest.TestCase):
 
     def test_isolation_and_unsupported_project_errors_keep_marks(self) -> None:
         for executor, error, reason in (
-            (PlimsollCodeExecutor(client=Client(setting("PLIMSOLL_ECHO_URL"))), InsufficientIsolationError, "isolation"),
+            (PlimsollCodeExecutor(client=Client(setting("PLIMSOLL_TOOL_ECHO_URL"))), InsufficientIsolationError, "isolation"),
             (PlimsollCodeExecutor(client=Client(setting("PLIMSOLL_WASM_URL")), minimum_isolation="process"), UnsupportedError, "unsupported")):
             self.refused(executor.execute_code(None, CodeExecutionInput(code="print(1)")), reason, error)
 
@@ -517,3 +517,15 @@ class ADKTests(unittest.TestCase):
         model, (results,) = self.run_turns(self.executor(code_block_delimiters=[]), ("TEXT:no code",), 1)
         self.assertIn("```tool_code\nprint(\"hello\")\n```", str(model.requests[0].config.system_instruction))
 
+
+class FrameworkShapeTests(unittest.TestCase):
+    """Each member the adapter defines over the framework's own (inherited, or declared by a protocol it is used
+    as) against the framework at the version this suite installs: kind, coroutine, the calls it takes
+    (tests/_framework_shapes.py)."""
+
+    def test_the_adapter_takes_the_calls_the_framework_makes(self) -> None:
+        import importlib
+
+        from tests._framework_shapes import problems
+
+        self.assertEqual(problems(importlib.import_module('plimsoll_client.adk')), [])

@@ -2,19 +2,27 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"connectrpc.com/connect"
+
 	"github.com/plimsollmark/plimsoll/attest"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -235,6 +243,15 @@ func TestVerifyExpect(t *testing.T) {
 	if err := verify([]string{"-pub", pub, "-expect-count", "3", path}, &out); !errors.Is(err, attest.ErrExpected) {
 		t.Fatalf("-expect-count 3: %v", err)
 	}
+	// A negative count is a mistake, not "no count": only the flag's own -1 means that.
+	for _, n := range []string{"-2", "-100"} {
+		if err := verify([]string{"-pub", pub, "-expect-count", n, path}, &out); err == nil || !strings.Contains(err.Error(), "0 or more") {
+			t.Errorf("-expect-count %s: %v, want refused", n, err)
+		}
+	}
+	if err := verify([]string{"-pub", pub, "-expect-count", "-1", path}, &out); err != nil {
+		t.Errorf("-expect-count -1, the flag's default: %v", err)
+	}
 }
 
 // Runs appending to one bundle at once take turns (a lock on the file), so the bundle
@@ -316,16 +333,158 @@ func TestRunChecksTheBundleBeforeItRuns(t *testing.T) {
 // (the daemon tells an environment refusal's detail only in its log, so the mark is all the
 // caller gets), and an unmarked error says the code may have run.
 func TestRunFailedSaysWhetherAnythingRan(t *testing.T) {
-	marked := runFailed(sandbox.NotDispatched(sandbox.RefusalEnvironment, errors.New("internal error 4c81")))
+	marked := runFailed(nil, nil, sandbox.NotDispatched(sandbox.RefusalEnvironment, errors.New("internal error 4c81")))
 	if !strings.Contains(marked.Error(), "refused before dispatch (reason environment), so nothing ran") {
 		t.Fatalf("a marked refusal: %v", marked)
 	}
 	if reason, ok := sandbox.NotDispatchedReason(marked); !ok || reason != sandbox.RefusalEnvironment {
 		t.Fatalf("the mark is kept on the returned error: %v %v", reason, ok)
 	}
-	unmarked := runFailed(errors.New("internal error 9f00"))
+	unmarked := runFailed(nil, nil, errors.New("internal error 9f00"))
 	if !strings.Contains(unmarked.Error(), "may have run") || strings.Contains(unmarked.Error(), "nothing ran") {
 		t.Fatalf("an unmarked error: %v", unmarked)
+	}
+}
+
+// An answer that came back with a record that failed its check is a run that happened: the
+// message says so, names the check (the floor included) and what the daemon stated, and
+// never says no record came back (hunt-quality-23). The errors are wrapped as
+// client.Remote returns them, DataLoss around the record package's sentinel.
+func TestRunFailedSaysWhichCheckARecordFailed(t *testing.T) {
+	req := &plimsollv1.RunRequest{Protocol: 6, MinimumIsolation: "vm", Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
+	resp := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "container", Record: &plimsollv1.RunRecord{Version: 9},
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{ExitCode: 3}}}
+	for name, c := range map[string]struct {
+		err  error
+		want string
+	}{
+		"below the floor": {sandbox.ErrIsolationEvidenceMismatch, `its isolation tier "container" is below the request's floor "vm"`},
+		"no record":       {record.ErrNoRecord, "it carries no run record"},
+		"another version": {record.ErrVersion, "its run record is version 9"},
+		"a mismatch":      {record.ErrMismatch, "its run record does not match the request sent and the answer received"},
+	} {
+		err := runFailed(req, resp, connect.NewError(connect.CodeDataLoss, c.err))
+		msg := err.Error()
+		if !strings.Contains(msg, "the code ran: the daemon answered that it ran on docker (container): exit 3") || !strings.Contains(msg, c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if strings.Contains(msg, "no record came back") || !strings.Contains(msg, "the bundle is unchanged") || !errors.Is(err, c.err) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// An error with no answer, or one this does not know, still says the code may have run.
+	if err := runFailed(req, nil, errors.New("connection reset")); !strings.Contains(err.Error(), "may have run") {
+		t.Errorf("a transport error: %v", err)
+	}
+	if err := runFailed(req, resp, errors.New("something else")); !strings.Contains(err.Error(), "may have run") {
+		t.Errorf("an unknown error with an answer: %v", err)
+	}
+}
+
+// hostileServer answers every run as a hostile daemon would: its sandbox and isolation
+// strings hold an escape sequence, a carriage return, a newline and a right-to-left
+// override, written to rewrite the operator's screen. stamped gives the answer a record
+// made for it, so it can pass the client's check; otherwise it carries none.
+type hostileServer struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+	sandbox, isolation string
+	stamped            bool
+}
+
+func (s hostileServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	resp := &plimsollv1.RunResponse{Sandbox: s.sandbox, Isolation: s.isolation,
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
+	if s.stamped {
+		resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg)}, resp)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// F8 and F11 of the security scan of 2026-11-20: what plimsoll-attest run
+// prints of a daemon's answer, on success and when the answer fails its check, shows the
+// daemon's control and format characters as visible escapes, never raw. The check here is
+// its own list of such characters, not the function under test.
+func TestRunPrintsADaemonsStringsAsEscapes(t *testing.T) {
+	raw := func(r rune) bool {
+		return r < 0x20 || r >= 0x7f && r <= 0x9f || r == 0x2028 || r == 0x2029 || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069
+	}
+	forged := "docker\x1b[2K\rran on docker (vm): exit 0\nrecord forged\u202e"
+	dir := t.TempDir()
+	prefixPath := filepath.Join(dir, "harness")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	reqPath := filepath.Join(dir, "request.json")
+	if err := os.WriteFile(reqPath, []byte(fmt.Sprintf(`{"protocol": %d, "javascript": {"code": "1"}}`, protocol.Number)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, srv := range map[string]hostileServer{
+		// Its digests match; its provider's name fails the record check's character rule
+		// (TestRunRefusesAProviderNameWithControlCharacters), and the refusal shows the name.
+		"an answer whose provider the check refuses": {sandbox: forged, isolation: "vm", stamped: true},
+		"an answer with no record":                   {sandbox: forged, isolation: "vm\x1b]0;title\x07"},
+		"a record that does not match":               {sandbox: forged, isolation: forged, stamped: true},
+	} {
+		mux := http.NewServeMux()
+		mux.Handle(rpc.NewHandler(srv))
+		server := httptest.NewServer(mux)
+		var out bytes.Buffer
+		err := run([]string{"-daemon", server.URL, "-key", prefixPath + ".key", "-bundle", filepath.Join(dir, name+".jsonl"), reqPath}, &out)
+		server.Close()
+		shown := out.String()
+		if err != nil {
+			shown += failure(err) + "\n" // what main prints
+		}
+		if i := strings.IndexFunc(strings.TrimSuffix(shown, "\n"), func(r rune) bool { return raw(r) && r != '\n' }); i >= 0 {
+			t.Errorf("%s: printed a raw control or format character at byte %d: %q", name, i, shown)
+		}
+		if !strings.Contains(shown, `docker\x1b[2K\x0dran on docker (vm): exit 0\x0arecord forged\u202e`) {
+			t.Errorf("%s: the daemon's words are not shown as escapes: %q", name, shown)
+		}
+	}
+}
+
+// An answer whose provider name holds a control or bidirectional format character is
+// refused by the record check (record.ValidText), DataLoss, and nothing is signed: the
+// name is shown to every reader of a bundle beside the tier, and the tier and the
+// qualification were already held to that rule. The name otherwise passes every check: the
+// record is stamped from the answer itself, so its digests match.
+func TestRunRefusesAProviderNameWithControlCharacters(t *testing.T) {
+	dir := t.TempDir()
+	prefixPath := filepath.Join(dir, "harness")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	reqPath := filepath.Join(dir, "request.json")
+	if err := os.WriteFile(reqPath, []byte(fmt.Sprintf(`{"protocol": %d, "javascript": {"code": "1"}}`, protocol.Number)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"docker\x1b[2Kvm", "docker\rvm", "docker\nvm", "docker\u202ecod", "docker\u009b", "docker\u2066x"} {
+		mux := http.NewServeMux()
+		mux.Handle(rpc.NewHandler(hostileServer{sandbox: name, isolation: "vm", stamped: true}))
+		server := httptest.NewServer(mux)
+		bundle := filepath.Join(dir, fmt.Sprintf("%x.jsonl", name))
+		var out bytes.Buffer
+		err := run([]string{"-daemon", server.URL, "-key", prefixPath + ".key", "-bundle", bundle, reqPath}, &out)
+		server.Close()
+		if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrMismatch) {
+			t.Errorf("provider %q: %v (code %v); want the record check's refusal, DataLoss", name, err, connect.CodeOf(err))
+		}
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Errorf("provider %q: marked not dispatched; the code ran", name)
+		}
+		if b, rerr := os.ReadFile(bundle); !errors.Is(rerr, os.ErrNotExist) {
+			t.Errorf("provider %q: the bundle holds %d bytes (%v); want nothing signed", name, len(b), rerr)
+		}
+	}
+	// The same server with an ordinary name is signed: the refusal is the name's alone.
+	mux := http.NewServeMux()
+	mux.Handle(rpc.NewHandler(hostileServer{sandbox: "docker", isolation: "vm", stamped: true}))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	var out bytes.Buffer
+	if err := run([]string{"-daemon", server.URL, "-key", prefixPath + ".key", "-bundle", filepath.Join(dir, "ordinary.jsonl"), reqPath}, &out); err != nil {
+		t.Fatalf("an ordinary provider name: %v", err)
 	}
 }
 
@@ -532,11 +691,224 @@ func TestVerifyEntryChecksOneLine(t *testing.T) {
 	if err := os.WriteFile(whole, bundle.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify([]string{"-pub", pub, whole}, &out); err != nil {
+	var said bytes.Buffer
+	if err := verify([]string{"-pub", pub, whole}, &said); err != nil {
 		t.Fatalf("the whole bundle: %v", err)
+	}
+	if s := said.String(); !strings.HasPrefix(s, "verified 3 entries") || strings.Contains(s, "NOT PROVEN") {
+		t.Errorf("verify on a bundle of single runs printed %q; want it to begin plainly \"verified\"", s)
 	}
 	if err := verifyEntry([]string{"-pub", pub, "-line", "3", whole}, &out); err == nil || !strings.Contains(err.Error(), "holds no call") {
 		t.Errorf("the checkpoint line: %v", err)
+	}
+}
+
+// A session whose close could not be collected: verify accepts the bundle and says the
+// session is not proven complete, and what that means; -require-close refuses it;
+// verify-entry checks the statement's line and names it the harness's word. A daemon's
+// close line is checked by verify-entry too.
+func TestVerifySaysASessionIsNotProvenComplete(t *testing.T) {
+	dir := t.TempDir()
+	prefixPath := filepath.Join(dir, "harness")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := loadSigner(prefixPath + ".key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := prefixPath + ".pub"
+	sessionOf := func(h *attest.Harness, id string, calls int) (string, string) {
+		t.Helper()
+		fp, prev := record.SessionFingerprint(id), ""
+		for i := 1; i <= calls; i++ {
+			req := &plimsollv1.RunRequest{Protocol: 1, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: fmt.Sprintf("step(%d)", i)}}}
+			resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: "vm",
+				Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("x")}}}
+			resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Session: fp, Sequence: uint64(i), PreviousSHA256: prev}, resp)
+			if err := h.Record(req, resp); err != nil {
+				t.Fatal(err)
+			}
+			prev = resp.GetRecord().GetRecordSha256()
+		}
+		return fp, prev
+	}
+	var bundle bytes.Buffer
+	h := attest.NewHarness(signer, &bundle)
+	fp, last := sessionOf(h, "session-a", 2)
+	// Session a's third call was sent and its answer lost: the statement names it.
+	lost := record.RunRequestDigest(&plimsollv1.RunRequest{Protocol: 1, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "step(3)"}}})
+	if err := h.RecordCloseNotCollected(fp, 2, last, lost, attest.CloseNotCollectedNotFound); err != nil {
+		t.Fatal(err)
+	}
+	fpB, lastB := sessionOf(h, "session-b", 1)
+	if err := h.RecordClose(fpB, 1, lastB); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "runs.jsonl")
+	if err := os.WriteFile(path, bundle.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := verify([]string{"-pub", pub, "-expect-count", "3", path}, &out); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if want := "verified, NOT PROVEN COMPLETE: 6 entries signed by key "; !strings.HasPrefix(out.String(), want) {
+		t.Errorf("verify printed %q; want it to begin %q", out.String(), want)
+	}
+	for _, want := range []string{
+		"session " + fp[:12] + "…, 2 calls (the session's first 2, none between them), NOT PROVEN COMPLETE: its close could not be collected (the daemon that answered the close said it has no such session for this caller); the harness signed that the client saw these 2 calls in this order, and the daemon's own count of the session's calls is unknown" +
+			"; and one more call was sent after them with no answer (request " + lost + "): it may have run;",
+		"session " + fpB[:12] + "…, 1 call, chain closed",
+		"\nnot proven complete means: these are the session's first 2 calls, in order, none removed and none between them; the daemon may have run more after the last " +
+			"(made by another holder of the session ID, by the worker that took the session over, or a call this program sent whose answer was lost), " +
+			"and only the daemon's count, which could not be collected, would show them; -require-close refuses such a bundle\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("verify printed %q; want it to say %q", out.String(), want)
+		}
+	}
+	if err := verify([]string{"-pub", pub, "-require-close", path}, &out); !errors.Is(err, attest.ErrNotProvenComplete) {
+		t.Fatalf("verify -require-close: %v; want ErrNotProvenComplete", err)
+	} else if want := "sessions [" + fp[:12] + "...] (-require-close)"; !strings.HasSuffix(err.Error(), want) || strings.Contains(err.Error(), "…") {
+		t.Errorf("verify -require-close says %q; want it to end %q, one ellipsis", err, want)
+	}
+	out.Reset()
+	if err := verifyEntry([]string{"-pub", pub, "-line", "3", path}, &out); err != nil {
+		t.Fatalf("verify-entry on the statement: %v", err)
+	}
+	if s := out.String(); !strings.Contains(s, "the harness's statement that session "+fp[:12]+"…'s close could not be collected (the daemon that answered the close said it has no such session for this caller), after 2 calls the client saw") ||
+		!strings.Contains(s, "; and one more call was sent after them with no answer (request "+lost+"): it may have run. It is the harness's word, not the daemon's") {
+		t.Errorf("verify-entry on the statement printed %q", s)
+	}
+	// The caller's own count and list may state the call sent with no answer or not: stated
+	// (-expect-unanswered, an "unanswered" line), it is matched against the statements; left
+	// out, it is shown. Counted or listed as a call that returned a record, it is missing
+	// (the security scan of 2026-11-20, F9).
+	files := 0
+	digestsFile := func(ds ...string) string {
+		files++
+		p := filepath.Join(dir, fmt.Sprintf("expect-%d.txt", files))
+		if err := os.WriteFile(p, []byte(strings.Join(ds, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	entries, err := attest.ReadBundle(bytes.NewReader(bundle.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held []string
+	for _, e := range entries {
+		if r, _, err := e.Messages(); err == nil && e.Request != nil {
+			held = append(held, record.RunRequestDigest(r))
+		}
+	}
+	for name, c := range map[string]struct {
+		args []string
+		ok   bool
+	}{
+		"-expect-count without the lost call":   {[]string{"-expect-count", "3"}, true},
+		"-expect-count with it":                 {[]string{"-expect-count", "4"}, false},
+		"-expect-count and -expect-unanswered":  {[]string{"-expect-count", "3", "-expect-unanswered", "1"}, true},
+		"-expect-unanswered alone":              {[]string{"-expect-unanswered", "1"}, true},
+		"-expect-unanswered none":               {[]string{"-expect-count", "3", "-expect-unanswered", "0"}, false},
+		"-expect-unanswered two":                {[]string{"-expect-unanswered", "2"}, false},
+		"-expect without the lost call":         {[]string{"-expect", digestsFile(held...)}, true},
+		"-expect with it as a record":           {[]string{"-expect", digestsFile(append(append([]string{}, held...), lost)...)}, false},
+		"-expect with it as unanswered":         {[]string{"-expect", digestsFile(append(append([]string{}, held...), "unanswered "+lost+" step-3")...)}, true},
+		"-expect with it as unanswered twice":   {[]string{"-expect", digestsFile(append(append([]string{}, held...), "unanswered "+lost, "unanswered "+lost)...)}, false},
+		"-expect with an empty unanswered line": {[]string{"-expect", digestsFile(append(append([]string{}, held...), "unanswered")...)}, false},
+	} {
+		out.Reset()
+		err := verify(append(append([]string{"-pub", pub}, c.args...), path), &out)
+		if (err == nil) != c.ok || (err != nil && !errors.Is(err, attest.ErrExpected)) {
+			t.Errorf("%s: %v; want ok %v", name, err, c.ok)
+		}
+		if err == nil && !strings.Contains(out.String(), "(request "+lost+"): it may have run") {
+			t.Errorf("%s: the output does not name the call sent with no answer: %q", name, out.String())
+		}
+	}
+	out.Reset()
+	if err := verifyEntry([]string{"-pub", pub, "-line", "5", path}, &out); err != nil || !strings.Contains(out.String(), "the daemon's close of session "+fpB[:12]+"…: its own count is 1 call,") {
+		t.Errorf("verify-entry on the daemon's close: %q, %v", out.String(), err)
+	}
+}
+
+// F10 of the security scan of 2026-11-20: a session ends with its close
+// not collected and one call sent with no answer, a checkpoint follows, then one more
+// recorded call and a checkpoint. A holder of the file cuts it back to the first
+// checkpoint. The caller's count of the calls that returned a record, and its list, must
+// both find the cut bundle short.
+func TestVerifyCountsACutBundleShort(t *testing.T) {
+	dir := t.TempDir()
+	prefixPath := filepath.Join(dir, "harness")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := loadSigner(prefixPath + ".key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := prefixPath + ".pub"
+	call := func(code string, session string, seq uint64) (*plimsollv1.RunRequest, *plimsollv1.RunResponse) {
+		req := &plimsollv1.RunRequest{Protocol: 1, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}}
+		resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: "vm",
+			Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("x")}}}
+		resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Session: session, Sequence: seq}, resp)
+		return req, resp
+	}
+	var bundle bytes.Buffer
+	h := attest.NewHarness(signer, &bundle)
+	fp := record.SessionFingerprint("session-a")
+	req1, resp1 := call("step(1)", fp, 1)
+	if err := h.Record(req1, resp1); err != nil {
+		t.Fatal(err)
+	}
+	lostReq, _ := call("step(2)", "", 0)
+	lost := record.RunRequestDigest(lostReq)
+	if err := h.RecordCloseNotCollected(fp, 1, resp1.GetRecord().GetRecordSha256(), lost, attest.CloseNotCollectedNotFound); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	cutAt := bundle.Len()
+	// The retry of the lost call, answered: the same request, so the same digest.
+	retryReq, retryResp := call("step(2)", "", 0)
+	if err := h.Record(retryReq, retryResp); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	whole := filepath.Join(dir, "whole.jsonl")
+	cut := filepath.Join(dir, "cut.jsonl")
+	if err := os.WriteFile(whole, bundle.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cut, bundle.Bytes()[:cutAt], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(dir, "expect.txt")
+	if err := os.WriteFile(list, []byte(record.RunRequestDigest(req1)+" step-1\n"+lost+" the retry\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marked := filepath.Join(dir, "expect-marked.txt")
+	if err := os.WriteFile(marked, []byte(record.RunRequestDigest(req1)+" step-1\nunanswered "+lost+" step-2, lost\n"+lost+" the retry\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	for _, args := range [][]string{{"-expect-count", "2"}, {"-expect-count", "2", "-expect-unanswered", "1"}, {"-expect", list}, {"-expect", marked}} {
+		if err := verify(append(append([]string{"-pub", pub}, args...), whole), &out); err != nil {
+			t.Errorf("verify %v of the whole bundle: %v", args, err)
+		}
+		if err := verify(append(append([]string{"-pub", pub}, args...), cut), &out); !errors.Is(err, attest.ErrExpected) {
+			t.Errorf("verify %v of the bundle cut back before the retry: %v; want ErrExpected", args, err)
+		}
 	}
 }
 
@@ -649,5 +1021,31 @@ func TestVerifyRecordReadsAPreLinkLine(t *testing.T) {
 	}
 	if err := verifyEntry([]string{"-pub", dir + "harness.pub", "-line", "1", dir + "bundle.jsonl"}, &out); err == nil {
 		t.Fatal("verify-entry must refuse a line with no link")
+	}
+}
+
+// Every kind of result a Run answer can carry gets a line of its own, never "no result":
+// the test walks the answer's result oneof, so a kind added later without an arm in
+// summary fails here (finding release-54: a cell run printed "no result").
+func TestSummaryNamesEveryResultKind(t *testing.T) {
+	oneof := (&plimsollv1.RunResponse{}).ProtoReflect().Descriptor().Oneofs().ByName("result")
+	if oneof == nil || oneof.Fields().Len() < 4 {
+		t.Fatalf("RunResponse's result oneof: %v", oneof)
+	}
+	for i := range oneof.Fields().Len() {
+		f := oneof.Fields().Get(i)
+		resp := &plimsollv1.RunResponse{}
+		m := resp.ProtoReflect()
+		m.Set(f, m.NewField(f))
+		if got := summary(resp); got == "no result" {
+			t.Errorf("a %s result is summarized as %q", f.Name(), got)
+		}
+	}
+	if got := summary(&plimsollv1.RunResponse{}); got != "no result" {
+		t.Errorf("an answer with no result: %q", got)
+	}
+	cell := &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Cell{Cell: &plimsollv1.CellResult{ExitCode: 3}}}
+	if got := summary(cell); got != "cell, exit 3" {
+		t.Errorf("a cell that exited 3: %q", got)
 	}
 }

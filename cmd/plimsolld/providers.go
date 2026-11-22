@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -23,17 +24,19 @@ type providerDescriptor struct {
 	// duplicate). Each registers from its own file, so that file's presence decides
 	// whether a build has the provider.
 	build func(getenv func(string) string) (sandbox.Provider, error)
-	// usage is a daemon-built provider's section of -h; it names every variable build
-	// reads. sandbox.Build's providers are described in usageProviders.
-	usage string
 	// hardenedEnvelope is the resource envelope hardened mode requires for the
 	// provider: every dimension it enforces and none its configuration rejects.
-	hardenedEnvelope []string
+	hardenedEnvelope []settings.Size
 	// hardenedEnvelopeAt adds, once the tier is proven (the pass after the smoke test),
 	// what the provider enforces only at that tier; nil adds nothing.
-	hardenedEnvelopeAt func(sandbox.IsolationClass) []string
+	hardenedEnvelopeAt func(sandbox.IsolationClass) []settings.Size
 	// pinnedImages makes hardened mode require SANDBOX_REQUIRE_PINNED_IMAGES=1.
 	pinnedImages bool
+	// guestGuard makes hardened mode require, once the smoke test has run, that the provider
+	// states plimsoll's guest guard proven in force (sandbox.GuestGuarded): the filter in front
+	// of every program it starts in a sandbox. Set for each provider whose commands start
+	// behind the guard (docker today; the guard's design, step 4, adds the others).
+	guestGuard bool
 	// hardened checks the provider's own hardened-mode rules (its immutable execution
 	// surface), calling fail, or bad with an unreadable setting, for each violation.
 	hardened func(getenv func(string) string, fail func(string, ...any), bad func(error))
@@ -57,8 +60,9 @@ type providerDescriptor struct {
 var providers = map[string]providerDescriptor{
 	"docker": {
 		hardenedEnvelope: hardenedEnvelopeFor["docker"],
+		guestGuard:       true,
 		hardened: func(getenv func(string) string, fail func(string, ...any), bad func(error)) {
-			pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+			pinned, err := settings.RequirePinnedImages.Get(getenv)
 			if err != nil {
 				bad(err)
 			} else if !pinned {
@@ -68,10 +72,10 @@ var providers = map[string]providerDescriptor{
 			// its own syscall interception (the host seccomp profile is deliberately not
 			// applied under runsc; see lockdownArgs). Only an operator explicitly
 			// signalling seccomp-off intent is rejected here.
-			if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP")) == "unconfined" {
+			if settings.DockerSeccomp.Get(getenv) == "unconfined" {
 				fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP=unconfined")
 			}
-			if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP_SDK")) == "unconfined" {
+			if settings.DockerSeccompSDK.Get(getenv) == "unconfined" {
 				fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP_SDK=unconfined")
 			}
 		},
@@ -90,15 +94,16 @@ var providers = map[string]providerDescriptor{
 			// applies: a mutable tag could be repushed under a running deployment. A
 			// store image (SANDBOX_DOCKERCLOUD_STORE_IMAGE) always carries its digest,
 			// checked against every sandbox's booted digest, so it needs no flag.
-			pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+			pinned, err := settings.RequirePinnedImages.Get(getenv)
 			if err != nil {
 				bad(err)
-			} else if !pinned && strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE")) == "" {
+			} else if !pinned && settings.DockercloudStoreImage.Get(getenv) == "" {
 				fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so SANDBOX_DOCKERCLOUD_IMAGE is an immutable @sha256 digest")
 			}
 			// A pin is only evidence where the API reports the digest each sandbox
-			// booted; the REST API, the default, reports none.
-			if api := strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_API")); api != "connect" {
+			// booted; the REST API reports none, so the API must be named, not left to
+			// the default (Connect, today).
+			if settings.DockercloudAPI.Get(getenv) != "connect" {
 				fail("hardened mode requires SANDBOX_DOCKERCLOUD_API=connect, named rather than left to the default: the REST API does not report which image a sandbox booted, so the pinned image cannot be proven")
 			}
 		},
@@ -122,7 +127,7 @@ var providers = map[string]providerDescriptor{
 			// E2B offers no digest pinning; an explicit template (never the implicit
 			// "base" default) is the strongest surface selection available. The startup
 			// SmokeTest then proves that template behaves.
-			if strings.TrimSpace(getenv("E2B_TEMPLATE")) == "" {
+			if settings.E2BTemplate.Get(getenv) == "" {
 				fail("hardened mode requires an explicit E2B_TEMPLATE (the implicit \"base\" default is not a pinned execution surface)")
 			}
 		},
@@ -158,8 +163,8 @@ func daemonProviderNames() []string {
 // descriptor is refused here, naming every provider this build has, since Build's own
 // refusal would list only its own.
 func buildProvider(getenv func(string) string) (sandbox.Provider, error) {
-	raw := getenv("SANDBOX_PROVIDER")
-	name := strings.ToLower(strings.TrimSpace(raw))
+	raw := settings.Provider.Raw(getenv)
+	name := settings.Provider.Get(getenv)
 	d, ok := providers[name]
 	switch {
 	case name == "":
@@ -173,29 +178,15 @@ func buildProvider(getenv func(string) string) (sandbox.Provider, error) {
 	return sandbox.Build(getenv)
 }
 
-// helpText is what -h prints: the fixed usage text around the two parts that depend on
-// the build, the SANDBOX_PROVIDER line naming every provider it has and the sections
-// of the daemon-built ones.
+// helpText is what -h prints: the table of settings (internal/settings), with every
+// provider this build has in the SANDBOX_PROVIDER line and a section for each
+// daemon-built provider it has.
 func helpText() string {
-	var b strings.Builder
-	b.WriteString(usageHead)
-	fmt.Fprintf(&b, "  SANDBOX_PROVIDER           %s | (unset = disabled)\n",
-		strings.Join(append(sandbox.ProviderNames(), daemonProviderNames()...), " | "))
-	b.WriteString(usageProviders)
-	b.WriteString("  DOCKER_DEFAULT_PLATFORM      Docker platform selected for image inspection and runs (for example linux/amd64)\n")
-	for _, name := range daemonProviderNames() {
-		b.WriteString(providers[name].usage)
-	}
-	b.WriteString(`  PLIMSOLL_WITHHELD_KNOWN_FILE
-                             JSON lists of unreadable image files, keyed by verified
-                             content ID, path, reason and whole size. Create/update:
-                             plimsoll-withheld known-unreadable -set SET -known FILE IMAGE
-                             With a withheld set and docker, any unlisted unreadable
-                             file refuses startup, including with audit-only sets.
-                             Unset means none are known; malformed or missing FILE
-                             refuses startup. Rebuilt images need new lists. Listing
-                             unread bytes acknowledges a gap, not that they are clean.
-`)
-	b.WriteString(usageLimits)
-	return b.String()
+	return settings.Help(append(sandbox.ProviderNames(), daemonProviderNames()...), hasProvider)
+}
+
+// hasProvider reports whether this build can build the named provider.
+func hasProvider(name string) bool {
+	_, ok := providers[name]
+	return ok
 }

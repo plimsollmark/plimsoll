@@ -1,0 +1,6 @@
+# The smolagents version this executor's tests run against. The lock holds Pillow because
+# smolagents declares it and imports it when it loads; the tests import neither Pillow nor
+# NumPy, and the executor's own final_answer needs neither in the sandbox. Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+smolagents==1.26.0

@@ -209,5 +209,15 @@ class PlimsollBashHarnessTest(unittest.TestCase):
         self.assertEqual(program.BASH_TOOL, core.BASH_TOOL)
 
 
+class StandInShapeTests(unittest.TestCase):
+    def test_host_runtime_has_the_shape_of_verifiers_runtime(self) -> None:
+        # The harness calls the stand-in as it calls verifiers' Runtime (tests/_framework_shapes.py).
+        from verifiers.v1.runtimes.runtime import Runtime
+
+        from tests._framework_shapes import fake_problems
+
+        self.assertEqual(fake_problems(HostRuntime, Runtime, test_only=["file"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

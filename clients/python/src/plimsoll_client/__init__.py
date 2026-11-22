@@ -12,16 +12,27 @@ chain of records is followed call by call, and refusals come back as typed error
 that say whether anything ran. See README.md beside this package.
 """
 
-from ._record import VERSION as RECORD_VERSION
+from ._tables import RECORD_VERSION
 from ._transport import MAX_RESPONSE_BYTES, CancelHandle
 from ._version import __version__
 from .aio import AsyncClient, AsyncSession
+from .checkpoint import (
+    CheckpointConflictError,
+    CheckpointStore,
+    CheckpointStoreError,
+    CheckpointUnavailableError,
+    MemoryCheckpointStore,
+    SessionCheckpoint,
+    StoredCheckpoint,
+)
 from .client import PROTOCOL, Client, Session
-from .workspace import ExecOutcome, Workspace, WorkspacePathError, WorkspaceTooLargeError
+from .workspace import ExecOutcome, Workspace, WorkspaceCallError, WorkspaceChangedError, WorkspacePathError, WorkspaceTooLargeError
 from .errors import (
     AnswerNotBoundError,
     AtCapacityError,
+    CallAlreadySentError,
     ChainError,
+    CheckpointMismatchError,
     DataLossError,
     DisabledError,
     InsecureHTTPError,
@@ -43,8 +54,11 @@ from .errors import (
     SessionEndedError,
     SoftwareEvidenceMismatchError,
     SoftwareMismatchError,
+    StaleOwnerError,
     TransportError,
     UnsupportedError,
+    RETRY_REASONS,
+    retry_on,
 )
 from .types import (
     CellResult,
@@ -76,10 +90,19 @@ __all__ = [
     "Session",
     "Workspace",
     "ExecOutcome",
+    "WorkspaceChangedError",
     "WorkspacePathError",
+    "WorkspaceCallError",
     "WorkspaceTooLargeError",
     "AsyncClient",
     "AsyncSession",
+    "SessionCheckpoint",
+    "StoredCheckpoint",
+    "CheckpointStore",
+    "MemoryCheckpointStore",
+    "CheckpointStoreError",
+    "CheckpointConflictError",
+    "CheckpointUnavailableError",
     "CancelHandle",
     "SoftwareRule",
     "meets",
@@ -109,6 +132,9 @@ __all__ = [
     "ProtocolMismatchError",
     "AtCapacityError",
     "SessionEndedError",
+    "StaleOwnerError",
+    "CheckpointMismatchError",
+    "CallAlreadySentError",
     "RequestCanceledError",
     "TransportError",
     "RequestTimeoutError",
@@ -123,4 +149,6 @@ __all__ = [
     "IsolationEvidenceMismatchError",
     "SoftwareEvidenceMismatchError",
     "ResultKindMismatchError",
+    "RETRY_REASONS",
+    "retry_on",
 ]

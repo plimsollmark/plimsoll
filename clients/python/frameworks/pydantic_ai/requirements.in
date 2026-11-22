@@ -1,0 +1,14 @@
+# The PydanticAI versions this backend's tests run against: pydantic-ai-slim (the workspace
+# protocols, the Agent, TestModel and FunctionModel, and the conformance suite
+# pydantic_ai.workspaces.conformance), pydantic-ai-harness with its coder extra (the FileSystem and
+# Coder capabilities the agent tests attach; Coder imports json-repair, which the extra brings, with
+# ripgrep's packaged rg for a local workspace, which no test here uses), and pytest, which the
+# conformance suite needs. Both PydanticAI packages are pinned exactly, here and in
+# pydantic-ai-plimsoll (a test checks the two agree): upstream's guide says new or stricter
+# conformance rules may come in minor releases, and pydantic-ai-harness requires one exact
+# pydantic-ai-slim. Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+pydantic-ai-slim==2.70.0
+pydantic-ai-harness[coder]==0.70.0
+pytest==9.2.0

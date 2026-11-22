@@ -5,7 +5,7 @@
 <p class="eyebrow">plimsoll · owner approval</p>
 {{if .TX.Enrollment}}
 <h1>Enroll an owner passkey</h1><p>A passkey lets your device prove it is yours with its PIN, fingerprint or face check. Its private key stays with your authenticator.</p>
-<div class="card"><label for="enrollCode">One-time code from the local operator</label><input id="enrollCode" type="password" autocomplete="off" spellcheck="false"><button id="authenticate" type="button">Create a passkey</button></div>
+<div class="card"><label for="enrollCode">One-time code from the local operator</label><input id="enrollCode" type="text" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false"><p id="codeCount" class="muted" role="status" aria-live="polite">The code is 50 characters and starts with enroll_. This field holds 0.</p><button id="authenticate" type="button">Create a passkey</button></div>
 <p class="muted">This code opens one enrollment attempt and expires after five minutes, so an old setup window cannot stay usable. If you cancel, request a fresh code locally. Enroll a second passkey as a backup. Creating a passkey does not enable code execution or approve a connector.</p>
 {{else}}
 <h1>Connect an AI application</h1><p>You are granting continuing permission to run code in your plimsoll sandboxes.</p>
@@ -23,16 +23,23 @@ const main=document.querySelector('main'),button=document.getElementById('authen
 const enrollment=main.dataset.enrollment==='true';
 const decode=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const encode=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-async function send(path,extra){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tx:main.dataset.tx,csrf:main.dataset.csrf,...extra})});if(!response.ok)throw Error('The request was refused. Start a fresh connection or enrollment.');return response.json();}
+// The code field is plain text on purpose: a password field is filled in by a browser's password manager with
+// whatever it has saved for this address, unseen, and the pasted code then lands beside it. Spaces and line breaks
+// picked up while copying from a terminal are dropped, and the count shows what the field really holds.
+const codeField=document.getElementById('enrollCode'),codeCount=document.getElementById('codeCount');
+const enrollCode=()=>codeField.value.replace(/\s+/g,'');
+if(codeField){const count=()=>{codeCount.textContent='The code is 50 characters and starts with enroll_. This field holds '+enrollCode().length+'.';};codeField.addEventListener('input',count);count();}
+async function send(path,extra){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tx:main.dataset.tx,csrf:main.dataset.csrf,...extra})});if(!response.ok)throw Error(enrollment?'The request was refused. The code is wrong, used or older than five minutes, or this page is older than five minutes or was opened before the server last started. Reload this page, get a fresh code locally, and try once more.':'The request was refused. Start a fresh connection or enrollment.');return response.json();}
 button.addEventListener('click',async()=>{button.disabled=true;status.textContent='Waiting for your device approval…';try{
 const prefix=enrollment?'/owner/enroll':'/owner/login';
-const options=await send(prefix+'/options',enrollment?{code:document.getElementById('enrollCode').value}:{});
+if(enrollment&&enrollCode().length!==50)throw Error('The code must be 50 characters and this field holds '+enrollCode().length+'. Clear the field and paste the code again.');
+const options=await send(prefix+'/options',enrollment?{code:enrollCode()}:{});
 const p=options.publicKey;p.challenge=decode(p.challenge);if(p.user)p.user.id=decode(p.user.id);for(const name of ['allowCredentials','excludeCredentials'])if(p[name])p[name]=p[name].map(c=>({...c,id:decode(c.id)}));
 const credential=enrollment?await navigator.credentials.create({publicKey:p}):await navigator.credentials.get({publicKey:p});
 if(!credential)throw Error('No passkey was returned.');const r=credential.response;
 const response={clientDataJSON:encode(r.clientDataJSON)};
 if(enrollment){response.attestationObject=encode(r.attestationObject);response.transports=r.getTransports?r.getTransports():[];}else{response.authenticatorData=encode(r.authenticatorData);response.signature=encode(r.signature);response.userHandle=r.userHandle?encode(r.userHandle):null;}
 await send(prefix+'/finish',{session:options.session,credential:{id:credential.id,rawId:encode(credential.rawId),type:credential.type,response,clientExtensionResults:credential.getClientExtensionResults(),authenticatorAttachment:credential.authenticatorAttachment}});
-if(enrollment){document.getElementById('enrollCode').value='';status.textContent='Passkey enrolled. Ask the local operator to enable the service, or enroll a backup passkey.';}else{document.getElementById('approve').disabled=false;status.textContent='Passkey verified. Review the permissions, then approve or deny this connection.';}
+if(enrollment){codeField.value='';codeField.dispatchEvent(new Event('input'));status.textContent='Passkey enrolled. Ask the local operator to enable the service, or enroll a backup passkey.';}else{document.getElementById('approve').disabled=false;status.textContent='Passkey verified. Review the permissions, then approve or deny this connection.';}
 }catch(e){status.textContent=e.message;button.disabled=false;}});
 </script></body></html>

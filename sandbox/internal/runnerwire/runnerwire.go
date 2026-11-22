@@ -1,7 +1,7 @@
 // Package runnerwire is the host side of the in-sandbox project runner protocol
-// (docker/runner.mjs): the JSON plan a provider writes to the runner's stdin, the
+// (the native helper's run-project mode, sandbox/internal/nativehelper): the JSON plan a provider writes to the runner's stdin, the
 // authenticated frame that carries the runner's report on its stdout, and the
-// decoding and classification of that report. Every provider that runs runner.mjs
+// decoding and classification of that report. Every provider that runs the runner
 // goes through this package, so a plan and a report mean the same thing on each of
 // them.
 //
@@ -37,7 +37,7 @@ import (
 //
 //	\n<Marker> <body length in bytes> <hex HMAC-SHA256 of the body>\n<body>
 //
-// It must match MARKER in docker/runner.mjs. V3 came with Plan.Env (review F5): a
+// It must match MARKER in the runner (nativehelper/program/src/runner.rs). V3 came with Plan.Env (review F5): a
 // runner from before it would ignore the image's environment the plan hands its
 // steps, so it writes no report this side accepts, and the startup smoke test
 // refuses its image instead of running steps without that environment.
@@ -268,7 +268,7 @@ func decode(body []byte) (Report, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&parsed); err != nil {
-		return Report{}, fmt.Errorf("runner report (an image whose /runner.mjs predates this plimsoll fails here): %w", err)
+		return Report{}, fmt.Errorf("runner report (an image whose runner predates this plimsoll fails here): %w", err)
 	}
 	if parsed.StepsBegan && parsed.Error == "" {
 		return Report{}, errors.New("runner report: steps began is stated only with a failure")

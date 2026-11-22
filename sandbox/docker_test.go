@@ -6,14 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // dockerRequired reports whether the caller asked for docker coverage to be
@@ -52,8 +57,31 @@ var dockerHeavy = make(chan struct{}, 3)
 // Call it after t.Parallel, so the wait happens in the parallel phase.
 func heavyDockerTest(t *testing.T) {
 	t.Helper()
+	heavyDockerPlace(t)
+}
+
+// heavyDockerPlace waits for one of those places and returns its release, for a test that
+// is heavy for a part of its run only. The session conformance suite is the case: its
+// smoke test starts several containers, and then each of its cases takes an ordinary
+// parallel slot with one session of its own, like any other docker test, while the test
+// itself holds no slot (a test waiting on parallel subtests gives its slot up). Held for
+// the whole run (152 s on 2026-10-29, 212 s on 2026-11-20), the place left two for every
+// other heavy test, and a test waiting for a place holds a parallel slot doing nothing.
+// The release may be called once or more, and runs at the test's end in any case, so a
+// test that fails before its own release still gives the place back.
+func heavyDockerPlace(t *testing.T) (release func()) {
+	t.Helper()
+	asked := time.Now()
 	dockerHeavy <- struct{}{}
-	t.Cleanup(func() { <-dockerHeavy })
+	// A wait is logged, since it is a parallel slot held for nothing and is counted in the
+	// test's own time: the sum over a run's log says what the places cost that run.
+	if waited := time.Since(asked); waited > time.Second {
+		t.Logf("%s: waited %.1fs for a heavy place", t.Name(), waited.Seconds())
+	}
+	var once sync.Once
+	release = func() { once.Do(func() { <-dockerHeavy }) }
+	t.Cleanup(release)
+	return release
 }
 
 func requireDocker(t *testing.T) {
@@ -74,7 +102,95 @@ func testDocker() *DockerSandbox {
 	d := DefaultDocker("")
 	d.Runtime = os.Getenv("SANDBOX_DOCKER_RUNTIME")
 	d.Seccomp = os.Getenv("SANDBOX_DOCKER_SECCOMP") // exercise the whole suite under a profile
+	// SANDBOX_TEST_PROJECT_IMAGE, unset by default, names another project image, so a branch that
+	// changes docker/ can run these tests against an image built under a tag of its own
+	// (plimsoll-wip/<step>-sandbox:dev) instead of retagging plimsoll/sandbox:latest, which every
+	// worktree's docker suite on this machine shares and checks against its own tree's inputs label.
+	if image := os.Getenv("SANDBOX_TEST_PROJECT_IMAGE"); image != "" {
+		d.ProjectImage = image
+	}
+	return drainAtExit(d)
+}
+
+// drainedAtExit is every docker sandbox the tests built through testDocker or
+// DrainAtExit, with the function that asked for it, which TestMain drains once the tests
+// have run.
+var drainedAtExit struct {
+	sync.Mutex
+	all []trackedDocker
+}
+
+type trackedDocker struct {
+	d  *DockerSandbox
+	by string // the function that built it: testDocker's or DrainAtExit's caller's caller
+}
+
+// drainAtExit has TestMain drain d after every test has run, and returns it. A session's
+// Close returns before its container is removed (the removal runs in a goroutine and begins
+// with a docker inspect, unpauseForRemoval, before its rm -f; Done closes once it is
+// confirmed), so a test that closes a session in a cleanup and is the last to end leaves a
+// running container when the binary exits under it. Three docker suite runs of three failed
+// so on 2026-11-21; the one whose log was read ended on TestDockerGuardWindowRelay/unconfined,
+// and its session (the Python image, a 10-minute lifetime, opened 71 s before the end) was the
+// one left. Measured the same day: a program
+// that exits right after Close left its container in 5 runs of 5; one that waits for Done,
+// or drains the sandbox, left none in 5 each. Drain waits for every removal under way.
+func drainAtExit(d *DockerSandbox) *DockerSandbox {
+	by := "unknown"
+	if pc, _, _, ok := runtime.Caller(2); ok {
+		if f := runtime.FuncForPC(pc); f != nil {
+			by = strings.TrimPrefix(f.Name(), "github.com/plimsollmark/plimsoll/")
+		}
+	}
+	drainedAtExit.Lock()
+	drainedAtExit.all = append(drainedAtExit.all, trackedDocker{d, by})
+	drainedAtExit.Unlock()
 	return d
+}
+
+// drainTestSandboxes drains every sandbox drainAtExit recorded, side by side, within bound.
+// It fails on a session a test left open (a test must close what it opens; the drain ends
+// it, so its container is not left either) and on a sandbox that could not be drained, and
+// names, on out, each session container whose removal was still under way when the tests
+// ended: the drain waits for those, and they are not a test's fault (Close does not wait).
+func drainTestSandboxes(bound time.Duration, out io.Writer) error {
+	drainedAtExit.Lock()
+	all := drainedAtExit.all
+	drainedAtExit.all = nil
+	drainedAtExit.Unlock()
+	var errs []error
+	instances := map[string]string{}
+	for _, td := range all {
+		for _, l := range td.d.sessions.Open() {
+			errs = append(errs, fmt.Errorf("session %s of the docker sandbox built by %s was still open when the tests ended: the test that opened it must close it", l.Name, td.by))
+		}
+		instances[td.d.instance()] = td.by
+	}
+	if _, err := exec.LookPath("docker"); err == nil && !testing.Short() && len(all) > 0 {
+		if list, err := exec.Command("docker", "ps", "-a", "--filter", "label="+dockerSessionLabel,
+			"--format", `{{.Names}} {{.Label "io.plimsoll.instance"}}`).Output(); err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(list)), "\n") {
+				if name, inst, ok := strings.Cut(line, " "); ok {
+					if by, mine := instances[inst]; mine {
+						fmt.Fprintf(out, "drain at exit: session container %s (sandbox built by %s) was still on the host when the tests ended; waiting for its removal\n", name, by)
+					}
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	drained := make([]error, len(all))
+	var wg sync.WaitGroup
+	for i, td := range all {
+		wg.Go(func() {
+			if err := td.d.Drain(ctx); err != nil {
+				drained[i] = fmt.Errorf("the docker sandbox built by %s could not be drained: %w", td.by, err)
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(append(errs, drained...)...)
 }
 
 // TestDockerLockdownAppliesSeccomp verifies a configured seccomp profile is pinned on
@@ -269,26 +385,6 @@ func seccompDenialTable(t *testing.T) (names []string, cloneRow, socketRow bool)
 	return names, cloneRow, socketRow
 }
 
-func TestIsDigestPinned(t *testing.T) {
-	pinned := "node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	for _, tc := range []struct {
-		img  string
-		want bool
-	}{
-		{pinned, true},
-		{"node:22-alpine", false},
-		{"plimsoll/sandbox:latest", false},
-		{"node@sha256:short", false},
-		{"@sha256:" + strings.Repeat("a", 40), false}, // no repository before the digest
-		{"node@sha256:" + strings.Repeat("z", 64), false},
-		{pinned + "suffix", false},
-	} {
-		if got := isDigestPinned(tc.img); got != tc.want {
-			t.Errorf("isDigestPinned(%q) = %v, want %v", tc.img, got, tc.want)
-		}
-	}
-}
-
 func TestDockerRequirePinnedImagesPreflight(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -298,6 +394,12 @@ func TestDockerRequirePinnedImagesPreflight(t *testing.T) {
 	d.RequirePinnedImages = true
 	if err := d.Preflight(context.Background()); err == nil || !strings.Contains(err.Error(), "not pinned") {
 		t.Fatalf("err = %v, want a not-pinned rejection", err)
+	}
+	// The OCI form is lower case; docker itself refuses upper case at run time.
+	d.Image = "node" + "@sha256:" + strings.Repeat("AB", 32)
+	d.ProjectImage = d.Image
+	if err := d.Preflight(context.Background()); err == nil || !strings.Contains(err.Error(), "lower-case") {
+		t.Fatalf("err = %v, want an upper-case digest refused as not pinned", err)
 	}
 }
 
@@ -324,7 +426,7 @@ func TestDockerHostIsRemote(t *testing.T) {
 func TestDockerRejectsRemoteActiveContext(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
-	if err := os.WriteFile(docker, []byte("#!/bin/sh\n[ \"$1\" = --config ] && shift 2\necho tcp://10.0.0.9:2375\n"), 0o755); err != nil {
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n"+fakeDockerPlatform+"echo tcp://10.0.0.9:2375\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -335,10 +437,17 @@ func TestDockerRejectsRemoteActiveContext(t *testing.T) {
 	}
 }
 
+// fakeDockerPlatform is the part of a stand-in docker daemon that answers for its platform, as
+// a real one does: docker version with linux on this machine, the guest guard's (Preflight
+// refuses a daemon that does not say, finding guest-guard-22), and docker info's driver status
+// with the classic image store's empty list. The stand-ins' images say the same platform.
+const fakeDockerPlatform = "if [ \"$1\" = --host ] && [ \"$3\" = version ]; then echo linux/" + runtime.GOARCH + "; exit 0; fi\n" +
+	"if [ \"$1\" = --host ] && [ \"$3\" = info ] && [ \"$5\" = '{{json .DriverStatus}}' ]; then echo '[]'; exit 0; fi\n"
+
 func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
-	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" + fakeDockerPlatform + "if [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe0000000000000000000000000000000000000000000000000000000000\",\"Os\":\"linux\",\"Architecture\":\"" + runtime.GOARCH + "\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +474,7 @@ func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 
 	// A runtime key named runsc is not enough: it must resolve to a runsc
 	// executable, or the kernel-isolation claim is just trusting a label.
-	badRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	badRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" + fakeDockerPlatform + "if [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe0000000000000000000000000000000000000000000000000000000000\",\"Os\":\"linux\",\"Architecture\":\"" + runtime.GOARCH + "\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(badRunsc), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +487,7 @@ func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 		t.Fatalf("unverified runsc isolation = %v, want conservative container", got)
 	}
 
-	goodRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	goodRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" + fakeDockerPlatform + "if [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe0000000000000000000000000000000000000000000000000000000000\",\"Os\":\"linux\",\"Architecture\":\"" + runtime.GOARCH + "\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(goodRunsc), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -398,10 +507,10 @@ func TestDockerPreflightKeepsPinnedEndpointAndFailsClosed(t *testing.T) {
 	logFile := filepath.Join(bin, "hosts")
 	// The paths are written into the script: the docker CLI gets PATH and nothing
 	// else from plimsoll (docker_cli.go), so a variable set here would not reach it.
-	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" +
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" + fakeDockerPlatform + "" +
 		"if [ \"$1\" = context ]; then IFS= read -r endpoint < '" + contextFile + "'; echo \"$endpoint\"; exit 0; fi\n" +
 		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo \"$2\" >> '" + logFile + "'; if [ -f '" + failFile + "' ]; then exit 1; fi; echo '{\"runsc\":{\"path\":\"runsc\"}}'; exit 0; fi\n" +
-		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\n" +
+		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe0000000000000000000000000000000000000000000000000000000000\",\"Os\":\"linux\",\"Architecture\":\"" + runtime.GOARCH + "\",\"Config\":{}}'; exit 0; fi\n" +
 		"exit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -531,6 +640,7 @@ func TestDockerPreflightWaitsForInFlightProbe(t *testing.T) {
 
 	d.preflightMu.Lock()
 	go func() {
+		// fixed-wait: the stand-in check's own duration (80 ms), so the waiter has to wait rather than find it done
 		time.Sleep(80 * time.Millisecond)
 		// Publish BEFORE releasing, exactly as a real probe does, so the waiter
 		// sees a ready provider without ever taking the lock.
@@ -604,6 +714,7 @@ func TestDockerDirectRunsEnforceSnapshottedMinimumIsolation(t *testing.T) {
 	d.daemonHost = "unix:///run/docker.sock"
 	d.verifiedRuntime = ""
 	d.verifiedGuestUID = d.guestUID()
+	d.verifiedGuard = fakeGuestGuardPath // a faked Preflight: the guard file it would have written
 	d.verifiedImageIDs = map[string]string{
 		d.Image:        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		d.ProjectImage: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
@@ -917,9 +1028,9 @@ func TestDockerPreflightIgnoresTheCallersCancellation(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
 	slow := filepath.Join(bin, "slow")
-	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\n" +
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" + fakeDockerPlatform + "if [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\n" +
 		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then if [ -f '" + slow + "' ]; then /bin/sleep 1; fi; echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\n" +
-		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe0000000000000000000000000000000000000000000000000000000000\",\"Os\":\"linux\",\"Architecture\":\"" + runtime.GOARCH + "\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -980,8 +1091,13 @@ func TestDockerContainerGoneByExactName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "crsbx-gonetest-" + randID()
-	args, err := dockerArgs(state.host, "run", "-d", "--rm", "--name", name, "--entrypoint", "sleep", state.imageID, "60")
+	name := "crsbx-gonetest-" + providerkit.RandHex(8)
+	// Started as every container command is, behind the guest guard: dockerCommand refuses any other.
+	tail, err := launch(state.guard, state.imageID, []string{"/bin/sleep", "60"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := dockerArgs(state.host, append([]string{"run", "-d", "--rm", dockerNoInit, "--name", name}, tail...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

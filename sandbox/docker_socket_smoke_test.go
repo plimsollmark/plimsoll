@@ -74,7 +74,7 @@ func TestDockerSmokeSocketProbeFailsClosed(t *testing.T) {
 	if err := os.WriteFile(notASocket, nil, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	err = d.smokeProbe(ctx, state, state.imageID, false, false, notASocket)
+	err = d.smokeProbe(ctx, state, state.imageID, false, false, notASocket, dockerClaims.Start())
 	if err == nil || !strings.Contains(err.Error(), "--host-uds=open") || !strings.Contains(err.Error(), containerSocketPath) {
 		t.Fatalf("probe against a non-socket returned %v; want a readiness error naming the socket path and the runsc fix", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,11 +37,15 @@ type stub struct {
 	floors      []string // minimum_isolation of every Run and OpenSession that reached it
 	ranIn       string   // the environment its records state, when not what Describe says
 	ranSoftware string   // selected software, when different from Describe
+	ranOn       string   // the provider its records state, when not what Describe says
 	// describeHook, when set, answers Describe instead of describe, and may block.
 	describeHook func() *plimsollv1.DescribeResponse
+	describes    atomic.Int32               // Describe calls that reached it
+	openRules    []*plimsollv1.SoftwareRule // the software rule of every OpenSession that reached it
 }
 
 func (s *stub) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
+	s.describes.Add(1)
 	if s.describeHook != nil {
 		return connect.NewResponse(s.describeHook()), nil
 	}
@@ -73,6 +78,10 @@ func (s *stub) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest
 		software = described.GetSoftwareIdentity()
 	}
 	resp.Environment, resp.SoftwareIdentity = env, software
+	// And the provider its Describe states, unless ranOn scripts another.
+	if resp.Sandbox = s.ranOn; resp.Sandbox == "" {
+		resp.Sandbox = s.describe.GetSandbox()
+	}
 	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareMode(req.Msg.GetSoftwareRule().GetMode()), Identities: req.Msg.GetSoftwareRule().GetIdentities()}
 	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg), SoftwareRuleID: rule.ID()}, resp)
 	return connect.NewResponse(resp), nil
@@ -80,13 +89,18 @@ func (s *stub) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest
 
 func (s *stub) OpenSession(_ context.Context, req *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
 	s.floors = append(s.floors, req.Msg.GetMinimumIsolation())
+	s.openRules = append(s.openRules, req.Msg.GetSoftwareRule())
 	if s.openErr != nil {
 		return nil, s.openErr
 	}
 	id := strings.Repeat("a", 32)
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{
-		SessionId: id, Session: record.SessionFingerprint(id), Sandbox: s.describe.GetSandbox(),
+	// A daemon echoes the floor and software rule the open sent, which the client holds it
+	// to, and states the software its session environment selected.
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{Generation: 1,
+		SoftwareIdentity: s.describe.GetSessionEnvironment().GetSoftwareIdentity(),
+		SessionId:        id, Session: record.SessionFingerprint(id), Sandbox: s.describe.GetSandbox(),
 		Isolation: s.describe.GetIsolation(), ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli(),
+		MinimumIsolation: req.Msg.GetMinimumIsolation(), SoftwareRule: req.Msg.GetSoftwareRule(),
 	}), nil
 }
 
@@ -421,38 +435,17 @@ func TestADescriptionIsRefreshed(t *testing.T) {
 	}
 }
 
-// A slow Refresh that finishes after an on-demand Describe does not put its older
-// answer back (review F12): the pool keeps the answer asked for last.
-func TestASlowRefreshKeepsTheNewerDescription(t *testing.T) {
-	asked, release := make(chan struct{}), make(chan struct{})
-	var calls atomic.Int32
-	st := &stub{name: "b", answer: ok("1\n")}
-	st.describeHook = func() *plimsollv1.DescribeResponse {
-		if calls.Add(1) == 1 { // Refresh's: asked first, answers last, with the older tier
-			close(asked)
-			<-release
-			return describeAs("docker", "container")
-		}
-		return describeAs("docker", "vm")
-	}
-	backend := serve(t, st)
-	p, err := New([]Backend{backend}, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	refreshed := make(chan error, 1)
-	go func() { refreshed <- p.Refresh(context.Background()) }()
-	<-asked
-	info, err := p.Describe(context.Background(), backend.Name)
-	if err != nil || info.Isolation != sandbox.IsolationVM {
-		t.Fatalf("the on-demand description: %+v, %v", info, err)
-	}
-	close(release)
-	if err := <-refreshed; err != nil {
-		t.Fatal(err)
-	}
-	if info, err := p.Describe(context.Background(), backend.Name); err != nil || info.Isolation != sandbox.IsolationVM {
-		t.Fatalf("after the slow refresh: %+v, %v; want the newer vm description kept", info, err)
+// An answer asked for earlier does not replace one asked for later (review F12: a slow
+// Refresh that finished after an on-demand Describe put its older answer back). Since
+// hunt-quality-49 one describe per backend is in progress at a time, so the two can no
+// longer overlap through the pool's methods; store keeps the rule, tested here directly.
+func TestAnOlderAnswerDoesNotReplaceANewerOne(t *testing.T) {
+	p := pool(t, &stub{name: "b", describe: describeAs("docker", "vm"), answer: ok("")})
+	now := time.Now()
+	p.store("b", seen{info: client.Info{Isolation: sandbox.IsolationVM}, at: now})
+	p.store("b", seen{info: client.Info{Isolation: sandbox.IsolationContainer}, at: now.Add(-time.Second)})
+	if got := p.seen["b"].info.Isolation; got != sandbox.IsolationVM {
+		t.Fatalf("kept %v, want the answer asked for later (vm)", got)
 	}
 }
 
@@ -527,6 +520,47 @@ func TestEnvironmentRequirementIsCheckedAgainstTheRun(t *testing.T) {
 	}
 	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Environment: "docker-image:1", Backend: "spare"}); err != nil {
 		t.Fatalf("a run whose record states the required environment: %v", err)
+	}
+}
+
+// TestProviderRequirementIsCheckedAgainstTheRun is the provider's twin of the environment
+// test: a backend described as docker (the description cached up to a minute) that runs
+// the request on e2b, as a daemon restarted with another provider would, is not a
+// success and is not retried, because the run happened (hunt-security-27). Each of the
+// three run kinds is checked: a snippet, a project and a module run.
+func TestProviderRequirementIsCheckedAgainstTheRun(t *testing.T) {
+	modules := func(d *plimsollv1.DescribeResponse) {
+		d.SupportsModule = true
+		d.ModuleEnvironment = &plimsollv1.PayloadEnvironment{Identity: "docker-sim:1"}
+	}
+	moved := &stub{name: "moved", describe: describeAs("docker", "kernel", modules), answer: ok("x"), ranOn: "e2b"}
+	spare := &stub{name: "spare", describe: describeAs("docker", "kernel", modules), answer: ok("x")}
+	p := pool(t, moved, spare)
+	ctx := context.Background()
+	_, choice, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Provider: "docker"})
+	if !errors.Is(err, ErrProviderMismatch) {
+		t.Fatalf("a run whose record states e2b under a docker requirement: %v", err)
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); marked || spare.runs != 0 || choice.Backend != "moved" {
+		t.Fatalf("the mismatch was treated as not dispatched (marked %v, spare ran %d, choice %+v)", marked, spare.runs, choice)
+	}
+	if _, _, err := p.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"}}, Requirement{Provider: "docker", Backend: "moved"}); !errors.Is(err, ErrProviderMismatch) {
+		t.Fatalf("a project run: %v", err)
+	}
+	module := sandbox.ModuleRequest{Model: "m", Rows: [][]float64{{1}}, EndTime: 1, Step: 0.5}
+	runsBefore := spare.runs
+	_, choice, err = p.RunModule(ctx, module, Requirement{Provider: "docker"})
+	if !errors.Is(err, ErrProviderMismatch) {
+		t.Fatalf("a module run whose record states e2b under a docker requirement: %v", err)
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); marked || spare.runs != runsBefore || choice.Backend != "moved" {
+		t.Fatalf("the module mismatch was treated as not dispatched (marked %v, spare ran %d, choice %+v)", marked, spare.runs-runsBefore, choice)
+	}
+	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Provider: "docker", Backend: "spare"}); err != nil {
+		t.Fatalf("a run whose record states the required provider: %v", err)
+	}
+	if _, _, err := p.RunModule(ctx, module, Requirement{Provider: "docker", Backend: "spare"}); err != nil {
+		t.Fatalf("a module run whose record states the required provider: %v", err)
 	}
 }
 
@@ -664,5 +698,301 @@ func TestABackendOnAnotherProtocolIsUnfit(t *testing.T) {
 	info.Protocol = client.Protocol
 	if why := unfit(info, kindProject, Requirement{}); why != "" {
 		t.Fatalf("unfit = %q on the pool's own protocol, want fit", why)
+	}
+}
+
+// The checks below each had no test that failed when the check was deleted (hunt
+// round of 2026-11-20, finding hunt-quality-48); each test here fails without its check.
+
+// OpenSession sends the session's software rule to the daemon. The client holds the
+// daemon to the rule the open sent, so a rule placement chose by but never sent is a
+// rule nobody checks.
+func TestOpenSessionSendsTheSoftwareRuleToTheDaemon(t *testing.T) {
+	id := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("c", 64)
+	s := &stub{name: "sessions", describe: describeAs("docker", "kernel", func(d *plimsollv1.DescribeResponse) {
+		d.SupportsSessions = true
+		d.SessionEnvironment = &plimsollv1.PayloadEnvironment{Identity: "docker-image:project", SoftwareIdentity: id}
+	}), answer: ok("")}
+	p := pool(t, s)
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{id}}
+	sess, _, err := p.OpenSession(context.Background(), client.SessionOptions{}, Requirement{Software: rule})
+	if err != nil || sess == nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(s.openRules) != 1 {
+		t.Fatalf("%d opens reached the daemon, want 1", len(s.openRules))
+	}
+	sent := sandbox.SoftwareRule{Mode: sandbox.SoftwareMode(s.openRules[0].GetMode()), Identities: s.openRules[0].GetIdentities()}
+	if sent.ID() != rule.ID() {
+		t.Fatalf("the open sent the rule %q, want the requirement's %q", sent.ID(), rule.ID())
+	}
+}
+
+// Requirement.Backend uses that backend only: the others are neither described nor
+// sent the request, and a refusal names only the pinned one.
+func TestABackendRequirementPinsOneBackend(t *testing.T) {
+	first := &stub{name: "first", describe: describeAs("e2b", "vm"), answer: ok("first\n")}
+	second := &stub{name: "second", describe: describeAs("docker", "container"), answer: ok("second\n")}
+	p := pool(t, first, second)
+	ctx := context.Background()
+	res, choice, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Backend: "second"})
+	if err != nil || choice.Backend != "second" || res.Stdout != "second\n" || first.runs != 0 {
+		t.Fatalf("res %+v choice %+v err %v, first ran %d", res, choice, err, first.runs)
+	}
+	if n := first.describes.Load(); n != 0 {
+		t.Fatalf("a backend the requirement did not name was described %d times", n)
+	}
+	_, _, err = p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Backend: "second", MinimumIsolation: sandbox.IsolationVM})
+	if !errors.Is(err, ErrNoBackend) || first.runs != 0 {
+		t.Fatalf("a pinned backend below the floor: err %v, first ran %d", err, first.runs)
+	}
+	if strings.Contains(err.Error(), "first") || !strings.Contains(err.Error(), "second: isolation") {
+		t.Fatalf("the refusal %q should name only the pinned backend's reason", err)
+	}
+}
+
+// A project with a grant goes only where project grants are stated, even when the
+// backend states snippet grants.
+func TestAProjectGrantNeedsProjectGrants(t *testing.T) {
+	snippetsOnly := &stub{name: "snippets-only", describe: describeAs("docker", "vm", func(d *plimsollv1.DescribeResponse) {
+		d.SupportsProjectGrants = false
+	}), answer: ok("")}
+	both := &stub{name: "both", describe: describeAs("docker", "vm"), answer: ok("")}
+	p := pool(t, snippetsOnly, both)
+	_, choice, err := p.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}}, Requirement{GrantProfile: true})
+	if err != nil || choice.Backend != "both" || snippetsOnly.runs != 0 {
+		t.Fatalf("choice %+v err %v, snippets-only ran %d", choice, err, snippetsOnly.runs)
+	}
+}
+
+// A snippet with a grant goes only where snippet grants are stated, even when the
+// backend states project grants.
+func TestASnippetGrantNeedsSnippetGrants(t *testing.T) {
+	projectsOnly := &stub{name: "projects-only", describe: describeAs("docker", "vm", func(d *plimsollv1.DescribeResponse) {
+		d.SupportsJavascriptGrants = false
+	}), answer: ok("")}
+	both := &stub{name: "both", describe: describeAs("docker", "vm"), answer: ok("")}
+	p := pool(t, projectsOnly, both)
+	_, choice, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}, Requirement{GrantProfile: true})
+	if err != nil || choice.Backend != "both" || projectsOnly.runs != 0 {
+		t.Fatalf("choice %+v err %v, projects-only ran %d", choice, err, projectsOnly.runs)
+	}
+}
+
+// A session whose calls carry a grant opens only where each kind of call that carries
+// one is granted: a backend granting only the other kind is passed over (hunt-quality-48
+// for the filter, -49 for requiring the kind rather than either kind).
+func TestASessionGrantNeedsGrants(t *testing.T) {
+	sessions := func(d *plimsollv1.DescribeResponse) { d.SupportsSessions = true }
+	snippets := &stub{name: "snippet-grants", describe: describeAs("docker", "vm", sessions, func(d *plimsollv1.DescribeResponse) {
+		d.SupportsProjectGrants = false
+	}), answer: ok("")}
+	projects := &stub{name: "project-grants", describe: describeAs("docker", "vm", sessions, func(d *plimsollv1.DescribeResponse) {
+		d.SupportsJavascriptGrants = false
+	}), answer: ok("")}
+	p := pool(t, snippets, projects)
+	ctx := context.Background()
+	for want, grants := range map[string]SessionGrants{
+		"snippet-grants": {Snippets: true},
+		"project-grants": {Projects: true},
+	} {
+		_, choice, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{SessionGrants: grants})
+		if err != nil || choice.Backend != want {
+			t.Fatalf("%+v: choice %+v err %v, want %s", grants, choice, err, want)
+		}
+	}
+	if _, _, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{SessionGrants: SessionGrants{Snippets: true, Projects: true}}); !errors.Is(err, ErrNoBackend) {
+		t.Fatalf("both kinds, where no backend grants both: %v", err)
+	}
+	opens := len(snippets.openRules) + len(projects.openRules)
+	// GrantProfile does not say which kind a session's calls are, so a session refuses
+	// it, and a single run refuses SessionGrants.
+	_, _, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{GrantProfile: true})
+	if reason, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, sandbox.ErrInvalidRequest) || !marked || reason != sandbox.RefusalRequest {
+		t.Fatalf("GrantProfile on a session: %v", err)
+	}
+	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{SessionGrants: SessionGrants{Snippets: true}}); !errors.Is(err, sandbox.ErrInvalidRequest) {
+		t.Fatalf("SessionGrants on a single run: %v", err)
+	}
+	if n := len(snippets.openRules) + len(projects.openRules); n != opens || snippets.runs+projects.runs != 0 {
+		t.Fatalf("a refused requirement reached a daemon (%d opens, %d runs)", n-opens, snippets.runs+projects.runs)
+	}
+}
+
+// A Backend name no backend in the pool has is refused with that name, not with an
+// empty list of reasons (hunt-quality-49).
+func TestABackendNameNotInThePoolIsNamed(t *testing.T) {
+	p := pool(t, &stub{name: "a", describe: describeAs("docker", "vm"), answer: ok("")})
+	_, _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}, Requirement{Backend: "nope"})
+	if _, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, ErrNoBackend) || !marked || !strings.Contains(err.Error(), `named "nope"`) {
+		t.Fatalf("err %v, want ErrNoBackend naming \"nope\"", err)
+	}
+}
+
+// Refresh bounds each daemon's describe by describeBudget, as an on-demand describe is
+// bounded: one hung daemon used to hold Refresh to its caller's whole deadline
+// (hunt-quality-49).
+func TestRefreshIsBoundedPerDaemon(t *testing.T) {
+	release := make(chan struct{})
+	hung := &stub{name: "hung", describeHook: func() *plimsollv1.DescribeResponse {
+		<-release
+		return describeAs("docker", "vm")
+	}}
+	healthy := &stub{name: "healthy", describe: describeAs("docker", "vm"), answer: ok("")}
+	p := pool(t, hung, healthy)
+	t.Cleanup(func() { close(release) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := p.Refresh(ctx)
+	if took := time.Since(start); took > describeBudget+3*time.Second {
+		t.Fatalf("Refresh took %v with one hung daemon, want under %v", took, describeBudget+3*time.Second)
+	}
+	if err == nil || !strings.Contains(err.Error(), "describing hung") {
+		t.Fatalf("Refresh: %v, want the hung daemon's failure", err)
+	}
+	if info, err := p.Describe(ctx, "healthy"); err != nil || info.Isolation != sandbox.IsolationVM || healthy.describes.Load() != 1 {
+		t.Fatalf("the healthy daemon: %+v, %v, described %d times; want Refresh's answer kept", info, err, healthy.describes.Load())
+	}
+}
+
+// Requests that find one backend stale, and a Refresh beside them, wait on one
+// describe instead of each asking the daemon (hunt-quality-49). The daemon's answer is
+// held until the pool itself reports every caller on that one describe (flight.waiters),
+// so no caller can arrive after the answer and pass by reading the stored one: until
+// 2026-11-20 the test rested on a 200 ms pause for that, and on a loaded machine could
+// pass with the sharing removed (hunt-quality-66). A second describe that reaches the
+// daemon while the first is held fails it at once.
+func TestOneDescribeInFlightPerBackend(t *testing.T) {
+	asked, second, held := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(held) })
+	defer release() // a failure below must not leave the stub's handlers held
+	st := &stub{name: "b", answer: ok("")}
+	var arrivals atomic.Int32
+	st.describeHook = func() *plimsollv1.DescribeResponse {
+		switch arrivals.Add(1) {
+		case 1:
+			close(asked)
+		case 2:
+			close(second)
+		}
+		<-held
+		return describeAs("docker", "vm")
+	}
+	p := pool(t, st)
+	const callers = 5
+	errs := make(chan error, callers+1)
+	for range callers {
+		go func() {
+			info, err := p.Describe(context.Background(), "b")
+			if err == nil && info.Isolation != sandbox.IsolationVM {
+				err = errors.New("described as " + info.Isolation.String())
+			}
+			errs <- err
+		}()
+	}
+	<-asked
+	go func() { errs <- p.Refresh(context.Background()) }()
+	sharing := func() int {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if f := p.inflight["b"]; f != nil {
+			return f.waiters
+		}
+		return 0
+	}
+	// A wait on the pool's own count, not a pause: it ends when the count is reached, and
+	// the limit only bounds a failure.
+	limit := time.Now().Add(30 * time.Second)
+	for sharing() != callers+1 {
+		select {
+		case <-second:
+			t.Fatal("a second describe reached the daemon while the first was in flight")
+		case <-time.After(time.Millisecond):
+		}
+		if time.Now().After(limit) {
+			t.Fatalf("%d callers share the describe in flight, want all %d and the Refresh", sharing(), callers)
+		}
+	}
+	release() // the one describe answers; every caller is already waiting on it
+	for range callers + 1 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := st.describes.Load(); n != 1 {
+		t.Fatalf("the daemon was described %d times for %d callers and a Refresh, want once", n, callers)
+	}
+}
+
+// send stops once the caller's context has ended: a retryable refusal is not passed
+// on to the next backend for a caller who is no longer waiting, and the refusal that
+// ended it is the caller's error.
+func TestSendStopsOnceTheCallersContextHasEnded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	refused := sandbox.NotDispatched(sandbox.RefusalCapacity, sandbox.ErrAtCapacity)
+	var sent []string
+	_, choice, err := send(ctx, []Backend{{Name: "a"}, {Name: "b"}}, func(_ context.Context, b Backend) (int, error) {
+		sent = append(sent, b.Name)
+		cancel() // the caller gives up while the first backend answers
+		return 0, refused
+	})
+	if !slices.Equal(sent, []string{"a"}) || choice.Backend != "a" || len(choice.Retried) != 0 || !errors.Is(err, sandbox.ErrAtCapacity) {
+		t.Fatalf("sent to %q, choice %+v, err %v; want only a, and its refusal", sent, choice, err)
+	}
+}
+
+// Refresh stores what it learned: a request inside the time-to-live uses that answer
+// and does not ask the daemon again.
+func TestRefreshStoresWhatItLearned(t *testing.T) {
+	s := &stub{name: "b", describe: describeAs("docker", "vm"), answer: ok("")}
+	backend := serve(t, s)
+	p, err := New([]Backend{backend}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.describe = describeAs("docker", "container") // what a second Describe would say
+	info, err := p.Describe(context.Background(), backend.Name)
+	if err != nil || info.Isolation != sandbox.IsolationVM {
+		t.Fatalf("after Refresh: %+v, %v; want Refresh's vm answer", info, err)
+	}
+	if n := s.describes.Load(); n != 1 {
+		t.Fatalf("the daemon was described %d times, want once (by Refresh)", n)
+	}
+}
+
+// One caller's ended context does not shut a backend for every caller: a caller whose
+// deadline passes during an on-demand Describe gets its own context error, and the next
+// caller, with no deadline, is placed (hunt-quality-41, 2026-11-20). The describe went
+// on without the first caller and stored the daemon's real answer.
+func TestOneCallersEndedContextDoesNotShutABackend(t *testing.T) {
+	slow := &stub{name: "slow", answer: ok("placed\n")}
+	slow.describeHook = func() *plimsollv1.DescribeResponse {
+		time.Sleep(200 * time.Millisecond)
+		return describeAs("docker", "vm")
+	}
+	p := pool(t, slow)
+	short, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, err := p.RunJavaScript(short, sandbox.Request{Code: "1"}, Requirement{})
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNoBackend) {
+		t.Fatalf("the caller whose deadline passed: %v; want its own context.DeadlineExceeded, not ErrNoBackend", err)
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); !marked {
+		t.Fatalf("nothing was sent, but the error is not marked not dispatched: %v", err)
+	}
+	// The next caller comes after the first describe has had time to answer, inside
+	// failedTTL, so it reads what that describe stored.
+	time.Sleep(400 * time.Millisecond)
+	res, choice, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}, Requirement{})
+	if err != nil || choice.Backend != "slow" || res.Stdout != "placed\n" {
+		t.Fatalf("the next caller: res %+v choice %+v err %v; want it placed", res, choice, err)
+	}
+	if n := slow.describes.Load(); n != 1 {
+		t.Fatalf("the daemon was described %d times, want once: the first describe's answer kept", n)
 	}
 }

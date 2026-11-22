@@ -1,12 +1,20 @@
-# Google ADK code execution through plimsoll
+# Google ADK through plimsoll: the code executor and the environment
 
-Google's Agent Development Kit (ADK) lets an agent execute Python blocks through a
-`BaseCodeExecutor`. `plimsoll_client.adk.PlimsollCodeExecutor` sends those blocks to
-a plimsoll daemon instead of executing on the agent's host. It uses the shared
-checked Python client, one fresh sandbox per block, with kernel isolation required
-by default. It ships in `plimsoll-client` 0.20.0 and later as the `adk` extra.
+Google's Agent Development Kit (ADK) can run an agent's code in two ways, and
+`plimsoll_client.adk` fills both with plimsoll instead of the agent's own host:
 
-Recorded calls through this executor, from a CSV sum to a refused floor, replay on its
+- **A code executor** (`BaseCodeExecutor`): the model writes a Python block and ADK runs it.
+  `PlimsollCodeExecutor` runs each block in a new sandbox, with kernel isolation required by
+  default. It ships in `plimsoll-client` 0.20.0 and later as the `adk` extra.
+  [Below](#the-code-executor).
+- **An environment** (`BaseEnvironment`): a place with a working directory where the agent
+  runs shell commands and reads and writes files, through ADK's own `EnvironmentToolset`.
+  `PlimsollEnvironment` keeps one plimsoll [session (INTERNAL · documentation →)](sessions.md)
+  (one sandbox kept for many calls) for the agent. It is in `plimsoll-client` from
+  0.28.0, and is tested with, and its extra installs, exactly ADK 2.14.1 (2.14.0
+  made ADK's environment interface stable). [Next](#a-kept-sandbox-with-a-shell-and-files).
+
+Recorded calls through the executor, from a CSV sum to a refused floor, replay on its
 integration page: [see a run, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/integrations/google-adk/index.html).
 
 Install it into your Python virtual environment, from PyPI or from the repository root:
@@ -17,7 +25,136 @@ pip install './clients/python[adk]'
 ```
 
 The base client remains dependency-free. Only the `adk` extra and importing this
-optional module require ADK. Verification pins Google ADK 2.11.0.
+optional module require ADK. Verification pins Google ADK 2.14.1.
+
+## A kept sandbox with a shell and files
+
+```python
+import os
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.tools.environment import EnvironmentToolset
+from plimsoll_client import Client
+from plimsoll_client.adk import PlimsollEnvironment, PlimsollEnvironmentGuard
+
+environment = PlimsollEnvironment(
+    Client(os.environ["PLIMSOLL_URL"], token=os.environ.get("PLIMSOLL_TOKEN")),
+    minimum_isolation="kernel",
+)
+agent = Agent(name="worker", model=your_existing_model,
+              tools=[EnvironmentToolset(environment=environment)])
+async with Runner(agent=agent, app_name="worker", session_service=your_session_service,
+                  plugins=[PlimsollEnvironmentGuard()]) as runner:
+    ...  # runner.run_async(...) as usual; leaving the block closes the session
+```
+
+The agent gets ADK's own four tools, `Execute`, `ReadFile`, `EditFile` and `WriteFile`, and
+each command and each file read or write is one call of the session: behind the isolation
+floor the session was opened at, with a checked run record, and with no network.
+[`examples/adk_environment.py`](../clients/python/examples/adk_environment.py)
+is the same with a scripted stand-in model, so it runs without a model service.
+
+**What happens when.** Making the environment touches nothing. When the agent first runs,
+ADK's toolset calls `initialize()`: the environment asks the daemon whether it offers
+sessions (refused, marked not dispatched, reason `unsupported`, when it does not), opens one
+at `minimum_isolation`, and learns the work directory (`/work` on docker), which ADK names
+to the model. An open whose await is cancelled closes the session it made, so it does not
+hold a place on the daemon, and a `close()` made while an open is on its way waits for that open
+and closes the session it made. `Runner.close()`, which the `async with` above calls, closes the toolset, and
+that closes the session: the sandbox and its files are gone. `initialize()` after that opens
+a new, empty sandbox, as ADK's own lifecycle has it. `lifetime=`, `idle_timeout=`, `owner=`
+and `trace_id=` go with the open as for `Client.open_session`.
+
+**If the agent ends without closing**, nothing in your process closes the session. The
+daemon does: after its idle limit (5 minutes by default) it suspends the session (on docker
+the sandbox is paused and keeps its place), and at the session's lifetime (30 minutes by
+default) it closes it and deletes the sandbox. Close the Runner, or open with a short
+`lifetime=`.
+
+**Commands.** Each command runs in a new `sh` in the work directory, as in ADK's own local,
+E2B and Daytona environments: the files persist from one command to the next, a `cd` or an
+`export` does not, which is also what ADK's instruction to the model says (chain dependent
+commands with `&&` in one `Execute`). A non-zero exit is a result, not an error. ADK's
+`Execute` tool gives every command 30 seconds; `execute(timeout=None)`, when you call it
+yourself, gets the daemon's longest budget, and a budget of zero or less is a timed-out result
+with nothing sent, as `LocalEnvironment` gives. When the daemon cut a stream at its output
+limit, a line starting `plimsoll:` at the end of `stderr` says so, since ADK's result has no
+field for it. `env_vars=` adds variables to every command: they enter the sandbox, so never a
+credential.
+
+**Paths.** Relative to the work directory, or absolute anywhere in the sandbox (the sandbox
+is the boundary, as for ADK's E2B and Daytona environments). A path that climbs out of the
+work directory with `..`, and the workspace's own `.plimsoll-shell` directory, are refused
+before anything is sent. Files of any bytes are read and written, 8 MiB a call, and a file
+is read whole up to 64 MiB: a longer one is a `WorkspaceTooLargeError`, refused after its first
+piece, since a sandbox can make a file of any size for nothing (a sparse file) and a read ends in
+your process's memory. A file longer than one call which changes size while it is read (ADK may run an `Execute` beside
+a `ReadFile`) is a `WorkspaceChangedError`, an `OSError`, never a cut copy.
+A missing file is `FileNotFoundError`, a directory `IsADirectoryError`, a file the sandbox's
+user cannot read `PermissionError`, as ADK's tools expect.
+
+**What plimsoll states, per call.** `environment.calls` holds a `PlimsollCall` for every call
+the environment made: the method that made it, the ADK tool call it served (with the guard),
+whether it was dispatched (`yes`, `no` with the refusal's reason, or `unknown` when no answer
+came back and it may have run), the outcome, the tier and the sentence the provider states
+beside it, and the checked `RunRecord` with its SHA-256. It holds no output, command or path.
+`await environment.execute(...)` called directly returns a `PlimsollExecutionResult`, ADK's
+`ExecutionResult` with that call in `plimsoll` and the complete `ProjectResult` in `execution`.
+
+**Register `PlimsollEnvironmentGuard` first.** It is an ADK plugin, and for each tool call it:
+
+- ties each plimsoll call to the ADK tool call, and sends the tool call's ID to the daemon as
+  plimsoll's trace ID, so the daemon's audit line joins ADK's span and the session's event;
+- labels ADK's `execute_tool` span with plimsoll's trusted labels, one value per plimsoll call:
+  `plimsoll_record_sha256`, `plimsoll_isolation`, `plimsoll_isolation_qualification`,
+  `plimsoll_dispatched`, `plimsoll_refused`, `plimsoll_outcome` and `plimsoll_calls`, the
+  keys the LangChain tool puts on a LangSmith run. Each value is checked against its closed
+  set and is empty when it does not pass, so nothing the code wrote reaches the trace this way;
+- stops the agent after a tool call one of whose plimsoll calls may have run without a
+  complete answer (no answer at all, or a runner that failed after a step began). It raises
+  `PlimsollEnvironmentError`, which ADK wraps in `RuntimeError`, and the run ends;
+- keeps one sandbox to one user: the first ADK app and user whose tool call reaches the
+  environment hold it until it closes, and another user's tool call is refused before
+  anything is sent (marked not dispatched, reason `permission`). One session is one trust
+  domain: everything one call does is there for every later call. One user's several
+  conversations share it.
+
+**Why the stop matters.** ADK does not rerun a failed tool by itself. But its environment
+tools hand any error of the environment to the model as an ordinary failed result, and a
+model told a command failed tends to run it again; ADK's `ReflectAndRetryToolPlugin`, when
+you register it, asks the model to, for any error a tool raises. A command that already ran
+would then run twice. A refusal before anything ran (the floor, a daemon at capacity) is left
+to the model and to the retry plugin, since nothing ran. If you handle tool errors yourself,
+`plimsoll_client.retry_on(error)` says which may be tried again:
+
+```python
+from plimsoll_client import retry_on
+
+def on_tool_error(tool, args, tool_context, error):
+    if retry_on(error):  # nothing ran, and another try may pass
+        return {"status": "error", "error": f"{error}; nothing ran, you may try again"}
+    return None  # anything else ends the run, so nothing runs twice
+```
+
+**What it does not do.** No process stays running between commands (the session's sweep
+ends it with its call). ADK may run several `Execute` calls at once; one session runs one
+call at a time, so they run one after another. No network. The shell is BusyBox `sh` on
+plimsoll's docker images, not bash. When the session has ended (its lifetime, the daemon),
+every later call raises `SessionEndedError`, marked not dispatched: the environment never
+opens a new sandbox in its place, as ADK's E2B environment does, because the agent would
+take an empty sandbox for the one with its files. After a call that may have run without an
+answer, the client sends nothing more on that session. Do not share one environment between an
+agent and an agent it wraps with `AgentTool`: ADK runs the wrapped agent in a nested Runner
+that closes that agent's toolsets when it finishes, and a toolset's close closes its
+environment, so the session is closed under the agent that wraps it (ADK's own guide warns of
+this for any two toolsets that share one environment). Give the wrapped agent an environment of
+its own; its sandbox is gone when it finishes. ADK's main branch after 2.14.1 (read at commit 691ecbee)
+passes every environment method the calling run's context and first calls `initialize()` at
+the first tool call; `PlimsollEnvironment` accepts that context already, and on that version
+the first request to the model does not yet name the work directory. ADK for TypeScript, Go
+and Java is not covered.
+
+## The code executor
 
 ```python
 import os
@@ -51,14 +188,14 @@ runner = Runner(
 
 `your_session_service` is the session service your application configures; in
 production, pass your own artifact service in place of the in-memory one.
-ADK 2.11 saves every code execution result through the Runner's artifact service, and
+ADK 2.14 saves every code execution result through the Runner's artifact service, and
 without one it raises `ValueError: Artifact service is not initialized.` after the block
 has run. The guard refuses a Runner with no artifact service whose agents (sub-agents and
 agents wrapped as tools with `AgentTool` included) use a `PlimsollCodeExecutor`, in
 ordinary and live runs, before any model or code request (`UnsupportedError`, marked
 `not_dispatched="unsupported"`, inside ADK's `RuntimeError`).
 
-Keep `RunConfig.support_cfc` false. In ADK 2.11.0, compositional function calling
+Keep `RunConfig.support_cfc` false. In ADK 2.14.1, compositional function calling
 (planning several tool calls together) with `support_cfc=True` replaces a root
 agent's custom executor with Gemini's built-in code execution. That route sends no
 code to plimsoll and provides neither its isolation floor nor its checked run record.
@@ -76,7 +213,7 @@ applications that construct model requests outside Runner must enforce the same 
 does not select a model provider or call a model API. ADK's standard code-block flow
 supports Python; this executor does not add JavaScript to that flow.
 
-The guard also tells the model how to run code. ADK 2.11 adds its own instruction (a
+The guard also tells the model how to run code. ADK 2.14 adds its own instruction (a
 fenced block, no native `executable_code` parts) only when `optimize_data_file` is on,
 which this executor refuses, so without it the model would get no word on the fence or on
 the fresh sandbox, and Gemini may answer with a native code part the API rejects. The guard
@@ -108,7 +245,7 @@ that event does not automatically include the extra metadata. A checked record
 detects inconsistent data; it does not independently attest a remote daemon.
 
 The executor deliberately refuses `stateful=True`. Variables, imports and files
-from one call are absent from the next. ADK 2.11 checks `error_retry_attempts` before
+from one call are absent from the next. ADK 2.14 checks `error_retry_attempts` before
 the initial execution, so zero would disable execution and is refused. The default
 is ADK's own two attempts, allowing the model to correct a failed block. Applications
 can set `error_retry_attempts` to any integer of one or more. Each corrected block
@@ -183,6 +320,18 @@ That example requires a locally installed client (the installation command above
 or `PYTHONPATH=clients/python/src` when running from the source checkout. It refuses
 cloud providers and verifies the returned value, artifact bytes and kernel floor.
 
+The same suite holds the environment's cases (`frameworks/adk/test_adk_environment.py`): the
+contract over a stand-in session that counts every call it is handed, ADK's file tools giving
+the same answers over `PlimsollEnvironment` as over ADK's `LocalEnvironment`, a scripted agent
+through ADK's Runner with its records and span labels, and the retry case with and without the
+guard. On a real Docker session, ADK's own tools, toolset and Runner, and the same command
+script on `LocalEnvironment` (harmless commands only, in a temporary directory):
+
+```sh
+env -u E2B_API_KEY -u DOCKER_SBX_TOKEN go test ./clients/python -run '^TestADKEnvironmentDocker$' -count=1 -v
+```
+
+- [ADK environment toolset (EXTERNAL · official docs ↗)](https://adk.dev/integrations/environment-toolset/)
 - [ADK code execution (EXTERNAL · official docs ↗)](https://adk.dev/integrations/code-execution/)
 - [ADK plugins (EXTERNAL · official docs ↗)](https://adk.dev/plugins/)
 - [Dependency images (INTERNAL · documentation →)](guest-dependencies.md)

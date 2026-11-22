@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,9 +43,11 @@ import (
 const (
 	// maxQueuedPerSandbox is how many calls one sandbox holds, running and waiting.
 	maxQueuedPerSandbox = 4
-	// maxOutstanding is how many calls that run code (run_code, ExtendRun tools) this
-	// server holds at once.
-	maxOutstanding = 16
+	// MaxOutstanding is how many calls that run code (run_code, ExtendRun tools) this
+	// server holds at once. The remote transport sizes its own tool-call slots and its
+	// meters from it (remotehttp, toolSlots): it is exported so that number is this one,
+	// not a second 16 that a comment says is the same (hunt-quality-58).
+	MaxOutstanding = 16
 )
 
 // retireBudget bounds a background close of a session this server dropped (a
@@ -312,7 +315,7 @@ func (s *Server) receiptsOf(ctx context.Context, b *box) (string, string) {
 
 // openSession opens a checked session: the floor and software rule are checked on
 // the open and on every call, and the daemon is asked for a bounded lifetime.
-func (s *Server) openSession(ctx context.Context) (*client.Session, []sandbox.Language, *failure) {
+func (s *Server) openSession(ctx context.Context, share string) (*client.Session, []sandbox.Language, *failure) {
 	info, err := s.describe(ctx)
 	if err != nil {
 		return nil, nil, s.failed(ctx, err)
@@ -324,7 +327,7 @@ func (s *Server) openSession(ctx context.Context) (*client.Session, []sandbox.La
 	if len(langs) == 0 {
 		return nil, nil, refused(sandbox.RefusalUnsupported, "a sandbox here runs %s, none of the %s this server offers", clipRunes(fmt.Sprint(info.SessionEnvironment.Languages), 200), joinNames(s.cfg.Languages))
 	}
-	sess, err := s.remote.OpenSession(ctx, client.SessionOptions{
+	sess, err := s.clientsFor(share).remote.OpenSession(ctx, client.SessionOptions{
 		MinimumIsolation: s.cfg.MinimumIsolation,
 		Software:         s.cfg.Software,
 		Lifetime:         s.cfg.SessionLifetime,
@@ -353,7 +356,7 @@ func (s *Server) openSandbox(ctx context.Context, in openInput) (openOutput, *fa
 			return openOutput{}, refused(sandbox.RefusalRequest, "this server has no kit %q", in.Kit)
 		}
 	}
-	if f := s.full(); f != nil {
+	if f := s.full(s.shareOfCall(ctx)); f != nil {
 		return openOutput{}, f
 	}
 	// The daemon's cap on one owner's sandboxes, which it enforces by closing one.
@@ -459,7 +462,7 @@ func (s *Server) openSandbox(ctx context.Context, in openInput) (openOutput, *fa
 	s.openingGrant[g]++
 	s.mu.Unlock()
 
-	sess, langs, f := s.openSession(ctx)
+	sess, langs, f := s.openSession(ctx, group)
 
 	s.mu.Lock()
 	s.opening--
@@ -491,8 +494,8 @@ func (s *Server) openSandbox(ctx context.Context, in openInput) (openOutput, *fa
 	s.boxes[b.handle] = b
 	s.mu.Unlock()
 
-	out := openOutput{Sandbox: b.handle, Languages: names(langs), Isolation: sess.Isolation().String(), ExpiresAt: timeString(sess.ExpiresAt())}
-	out.Summary = fmt.Sprintf("Opened sandbox %s at the %q isolation tier; pass it as run_code's sandbox. It runs %s, until %s.", b.handle, out.Isolation, joinNames(langs), out.ExpiresAt)
+	out := openOutput{Sandbox: b.handle, Languages: names(langs), Isolation: sess.Isolation().String(), IsolationQualification: sess.IsolationQualification(), ExpiresAt: timeString(sess.ExpiresAt())}
+	out.Summary = fmt.Sprintf("Opened sandbox %s at the %q isolation tier.%s Pass it as run_code's sandbox. It runs %s, until %s.", b.handle, out.Isolation, statesBeside(out.IsolationQualification), joinNames(langs), out.ExpiresAt)
 	if k != nil {
 		out.Kit = k.Name
 		out.Summary += fmt.Sprintf(" Kit %s is written into it with the first run_code call.", k.Name)
@@ -576,6 +579,44 @@ func (s *Server) closeSandbox(ctx context.Context, in handleInput) (closeOutput,
 // daemon's answer, the record's check and its keeping.
 const runAnswerMargin = 5 * time.Second
 
+// runTimeoutGap is how far Config holds the run timeout under the call timeout: the
+// margin above and time to open a sandbox. The margin is half of it, a judgment, not a
+// measurement.
+const runTimeoutGap = 2 * runAnswerMargin
+
+// A call that spent none of its time has at least the run budget and runTimeoutGap left,
+// so timeLeft never refuses it: that holds only while the gap is at least the margin, and
+// a gap under it does not compile.
+const _ = uint64(runTimeoutGap - runAnswerMargin)
+
+// spaced writes a whole number of seconds as the README and the refusals do ("10 s").
+func spaced(d time.Duration) string {
+	return strconv.FormatInt(int64(d/time.Second), 10) + " s"
+}
+
+// timeLeft refuses, before anything is sent, a dispatch that has too little of the call's
+// deadline left for the run budget and its answer. A run cut off by the call's deadline
+// comes back with no record, and the session is given up as untrusted with everything in
+// it. It is checked right before every dispatch of a sandbox call: it once was checked
+// only for a call that waited for its turn, and before the loop, so a call that opened a
+// replacement for an ended sandbox ran short after a slow open and was reported as one
+// that may have run (review, 2026-10-26; hunt-quality-44, 2026-11-20). spent names what
+// used the call's time (the wait for its turn, a reopen), for the refusal to say; a call
+// that spent none has its whole deadline, which Config holds at least runTimeoutGap over
+// the run budget, so it is not refused here.
+func (s *Server) timeLeft(deadline time.Time, spent []string) *failure {
+	left := time.Until(deadline)
+	if len(spent) == 0 || left >= s.cfg.RunTimeout+runAnswerMargin {
+		return nil
+	}
+	after := ""
+	if len(spent) > 0 {
+		after = " after " + strings.Join(spent, " and ")
+	}
+	return refused(sandbox.RefusalCapacity, "%s remain of this server's %s call deadline%s, under the %s run budget plus %s for the answer, so the code was not sent, rather than be cut off mid-run; call again",
+		left.Round(time.Second), s.cfg.CallTimeout, after, s.cfg.RunTimeout, runAnswerMargin)
+}
+
 func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language, code string, files []sandbox.File) (runOutput, *failure) {
 	s.mu.Lock()
 	b := s.boxes[handle]
@@ -626,19 +667,14 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 	case ctx.Err() != nil:
 		return runOutput{}, refused(sandbox.RefusalCapacity, "the call ended (canceled, or at this server's deadline) while it waited for sandbox %s's turn", handle)
 	}
-	// A call that waited for its turn has only what is left of the call's deadline, and
-	// used to run under the whole run budget inside it, so the deadline cut the run off
-	// mid-way: a transport error with no record, the session given up as untrusted and its
-	// sandbox deleted, everything in it lost. Now it is refused before anything is sent
-	// when what is left is under the budget. A call that did not wait has the whole
-	// deadline, which Config sizes for the run (review, 2026-10-26).
+	// What used the call's time before its dispatch, for timeLeft to name.
+	var spent []string
+	if waited {
+		spent = append(spent, fmt.Sprintf("waiting %s for sandbox %s's turn", time.Since(waitStart).Round(time.Second), handle))
+	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(s.cfg.CallTimeout)
-	}
-	if left := time.Until(deadline); waited && left < s.cfg.RunTimeout+runAnswerMargin {
-		return runOutput{}, refused(sandbox.RefusalCapacity, "the call waited %s for sandbox %s's turn and %s remain of this server's %s call deadline, under the %s run budget plus %s for the answer; call again",
-			time.Since(waitStart).Round(time.Second), handle, left.Round(time.Second), s.cfg.CallTimeout, s.cfg.RunTimeout, runAnswerMargin)
 	}
 	// The run itself goes under a context of this server's own: the host's cancellation
 	// (a user's Escape, notifications/cancelled, a dropped connection) used to cut a run
@@ -652,8 +688,11 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 		defer context.AfterFunc(grant.ctx, cancelRun)()
 	}
 
+	reopened := false
 	for attempt := 0; ; attempt++ {
 		if b.sess == nil {
+			reopened = true
+			openStart := time.Now()
 			// A sandbox is replaced after the daemon ended the last one, so read what
 			// the daemon states again: it may have restarted with other languages.
 			s.forgetDescribe()
@@ -661,13 +700,14 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 				f.SandboxUsable = ptr(false)
 				return runOutput{}, f
 			}
-			sess, langs, f := s.openSession(ctx)
+			sess, langs, f := s.openSession(ctx, b.group)
 			if f != nil {
 				f.SandboxUsable = ptr(false)
 				return runOutput{}, f
 			}
 			b.sess, b.langs, b.first = sess, langs, true
 			b.kitDue = b.kit != nil
+			spent = append(spent, fmt.Sprintf("opening a new sandbox for it, since the daemon had ended its last one, which took %s", time.Since(openStart).Round(time.Second)))
 		}
 		use := lang
 		if use == "" {
@@ -684,7 +724,16 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 			}
 		}
 		req := sandbox.CellRequest{Language: use, Code: code, Files: callFiles, Timeout: s.cfg.RunTimeout, MinimumIsolation: s.cfg.MinimumIsolation, Software: s.cfg.Software}
-		if f := s.full(); f != nil { // the quota again, at dispatch, for a call that waited
+		if f := s.full(b.group); f != nil { // the quota again, at dispatch, for a call that waited
+			return runOutput{}, f
+		}
+		if f := s.timeLeft(deadline, spent); f != nil {
+			if reopened {
+				// The sandbox the handle had is gone; the one opened for this call stays the
+				// handle's, and its next call runs there, told it is new.
+				f.Summary += fmt.Sprintf(" Sandbox %s's earlier sandbox had ended, its files and interpreter state with it; the new one opened for this call is kept, and the handle's next run_code runs there.", handle)
+			}
+			f.SandboxUsable = ptr(!reopened)
 			return runOutput{}, f
 		}
 		r, err := b.sess.RunCell(runCtx, req)

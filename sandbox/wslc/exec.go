@@ -1,7 +1,6 @@
 package wslc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // WARNING: read this before changing how this provider starts a process.
@@ -25,24 +27,29 @@ import (
 //     told otherwise, and plimsolld's holds caller tokens and provider keys. Interop
 //     translates into the Windows process only the variables WSLENV lists (the Windows
 //     side builds the new process's environment from the Windows user's own plus those:
-//     BuildEnvironment in WSL's src/windows/common/interop.cpp). hostCommand gives the
+//     BuildEnvironment in WSL's src/windows/common/interop.cpp). startHost gives the
 //     process PATH and nothing else, so WSLENV is unset and no variable of plimsolld's
-//     is translated. Interop still finds its server without WSL_INTEROP: init walks up
-//     the parent processes for an interop socket (UtilConnectToInteropServer in
-//     src/linux/init/util.cpp).
+//     is translated (a session call's environment travels in its arguments instead:
+//     sessionexec.go says why). Interop still finds its server without WSL_INTEROP:
+//     init walks up the parent processes for an interop socket
+//     (UtilConnectToInteropServer in src/linux/init/util.cpp).
 //  2. The command line. Interop sends each argument separately and the Windows side
 //     joins them into one command line with the C runtime's quoting rules
-//     (FormatCommandLine, same file), which wslc.exe splits again. The rules round-trip
-//     on paper, but a space, a quote, a backslash or a byte that is not ASCII is where a
-//     mismatch between two parsers would change what runs. So every argument is checked
-//     against safeArg before anything starts: only fixed flags, checked IDs, checked
-//     paths and a base64 PowerShell script built from fixed text and checked paths ever
-//     go in argv. Everything a caller controls (files, steps, the environment the steps
-//     get) travels in the runner's plan over stdin.
+//     (FormatCommandLine, same file), which wslc.exe splits again. Every argument that
+//     wslc.exe itself reads (its flags, IDs, paths, a base64 PowerShell script built from
+//     fixed text and checked paths) is checked against safeArg before anything starts.
+//     The one exception is a session call's command and environment (hostCall's
+//     forwarded): the arguments after the container's name, which wslc.exe hands to the
+//     container unread. They may hold any valid UTF-8 without NUL (checkForwarded):
+//     measured 2026-11-21 to arrive byte for byte, quotes, backslashes, empty strings,
+//     newlines and non-ASCII included, where invalid UTF-8 arrives as U+FFFD; and the
+//     whole command line is held to Windows' 32,767-character limit before it starts
+//     (windowsCommandLineLen). A run's files, steps and environment still travel in the
+//     runner's plan over stdin.
 //
 // TestProcessesStartOnlyThroughHostCommand fails the build if this package starts a
-// process any other way, and TestRunArgvIsInteropSafe and TestPerRunArgvIsInteropSafe
-// hold every argument the run paths build to safeArg.
+// process any other way than startHost, and TestRunArgvIsInteropSafe and
+// TestPerRunArgvIsInteropSafe hold every argument the run paths build to safeArg.
 
 // safeArg is every byte an argument to wslc.exe may hold: letters, digits and . _ : /
 // = , @ + -. No space, quote, backslash, percent sign, shell or command-line
@@ -68,14 +75,44 @@ func hostEnv() []string {
 	return []string{"PATH=" + os.Getenv("PATH")}
 }
 
-// hostCommand is the one way this package starts a process (wslc.exe, powershell.exe or
-// mkfs.ext4 at path) with args, PATH as its whole environment. An argument outside
-// safeArg makes the command fail at Start, Run or Output with errUnsafeArg, before any
-// process exists.
+// hostCommand starts a process (wslc.exe, powershell.exe or mkfs.ext4 at path) with args,
+// each checked against safeArg, and PATH as its whole environment.
 func hostCommand(ctx context.Context, path string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, path, args...)
+	return startHost(ctx, path, hostCall{args: args})
+}
+
+// hostCall is what one process start may carry: args, read by the program itself, each
+// in safeArg; and forwarded, appended after args, which wslc.exe hands on unread to the
+// command it starts in a container (the last of args is then the container's name), each
+// passing checkForwarded.
+type hostCall struct {
+	args      []string
+	forwarded []string
+}
+
+// check refuses a call whose start could change what reaches the program: an argument
+// outside its rules, or a command line past Windows' limit.
+func (c hostCall) check(path string) error {
+	if err := checkArgs(c.args); err != nil {
+		return err
+	}
+	for i, a := range c.forwarded {
+		if err := checkForwarded(a); err != nil {
+			return fmt.Errorf("%w (forwarded argument %d)", err, i)
+		}
+	}
+	if n := windowsCommandLineLen(path, slices.Concat(c.args, c.forwarded)); n > maxCommandLine {
+		return fmt.Errorf("%w: %d characters, the limit is %d", errCommandLineTooLong, n, maxCommandLine)
+	}
+	return nil
+}
+
+// startHost is the one way this package starts a process. A call that check refuses
+// fails at Start, Run or Output with check's error, before any process exists.
+func startHost(ctx context.Context, path string, c hostCall) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, path, slices.Concat(c.args, c.forwarded)...)
 	cmd.Env = hostEnv()
-	if err := checkArgs(args); err != nil {
+	if err := c.check(path); err != nil {
 		cmd.Err = err
 	}
 	// A Windows process started through interop is not in this process's group, so a
@@ -92,33 +129,6 @@ const outputCap = 1 << 20
 // errorCap bounds the stderr kept for an error from a command that ran no guest code.
 const errorCap = 16 << 10
 
-// cappedBuffer keeps the first limit bytes written to it and drops the rest,
-// remembering that it did.
-type cappedBuffer struct {
-	buf     bytes.Buffer
-	limit   int
-	dropped bool
-}
-
-func (c *cappedBuffer) Write(p []byte) (int, error) {
-	room := c.limit - c.buf.Len()
-	if room <= 0 {
-		c.dropped = c.dropped || len(p) > 0
-		return len(p), nil
-	}
-	if len(p) > room {
-		c.buf.Write(p[:room])
-		c.dropped = true
-		return len(p), nil
-	}
-	c.buf.Write(p)
-	return len(p), nil
-}
-
-func (c *cappedBuffer) String() string  { return c.buf.String() }
-func (c *cappedBuffer) Bytes() []byte   { return c.buf.Bytes() }
-func (c *cappedBuffer) Truncated() bool { return c.dropped }
-
 // output runs a wslc command that starts no guest code and returns its stdout,
 // refusing an answer past outputCap rather than parsing part of one. A failure carries
 // wslc's own stderr, bounded: nothing of a guest's can be in it.
@@ -131,8 +141,8 @@ func (p *Provider) output(ctx context.Context, args ...string) ([]byte, error) {
 func (p *Provider) outputWithStdin(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	cmd := hostCommand(ctx, p.cfg.Path, args...)
 	cmd.Stdin = stdin
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = outputCap, errorCap
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = outputCap, errorCap
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("wslc %s: %w: %s", strings.Join(args[:min(2, len(args))], " "), err, strings.TrimSpace(stderr.String()))

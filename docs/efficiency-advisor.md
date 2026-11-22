@@ -39,7 +39,9 @@ configured. Findings are filled in from trusted inputs only: route templates fro
 profile, plus counts and timings. No text the guest controls is ever copied into one, so
 a finding cannot carry a <dfn>*prompt injection*</dfn> (instructions planted for whatever model reads
 it) or become a hidden channel for data. This is the same rule as plimsoll's ordinary
-audit log, which writes one line per run: metadata yes, code and credentials never. One
+audit log, which writes one line per run, and at most one line per caller every 30 seconds
+for calls refused before they ran ([callers.md](callers.md)): metadata yes, code and
+credentials never, and on a refusal's line no text the caller sent. One
 exception there: the audit line's `outcome_detail` can carry a project file path supplied
 by the authenticated caller, which is that caller's own input rather than guest content.
 

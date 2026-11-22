@@ -149,7 +149,8 @@ func main() {
 	}
 	atExit(func() { os.RemoveAll(scratch) })
 	binary := filepath.Join(scratch, "plimsolld")
-	if b, err := exec.Command("go", "build", "-o", binary, "./cmd/plimsolld").CombinedOutput(); err != nil {
+	// Without the version control stamp, as every evidence program builds plimsolld: its records state (devel).
+	if b, err := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/plimsolld").CombinedOutput(); err != nil {
 		die("build plimsolld: %v\n%s", err, b)
 	}
 	token := randomHex(32)

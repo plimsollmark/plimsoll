@@ -1,6 +1,9 @@
 package openshell
 
-import "github.com/plimsollmark/plimsoll/sandbox"
+import (
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/sandbox"
+)
 
 // FromEnv builds the provider from the environment, as sandbox.Build builds the
 // providers it knows: the gateway and its mutual TLS files from the
@@ -14,16 +17,16 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 	if err != nil {
 		return sandbox.Provider{}, err
 	}
-	pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+	pinned, err := settings.RequirePinnedImages.Get(getenv)
 	if err != nil {
 		return sandbox.Provider{}, err
 	}
 	p, err := New(Config{
-		GatewayURL:         getenv("SANDBOX_OPENSHELL_GATEWAY_URL"),
-		CAFile:             getenv("SANDBOX_OPENSHELL_CA_FILE"),
-		CertFile:           getenv("SANDBOX_OPENSHELL_CERT_FILE"),
-		KeyFile:            getenv("SANDBOX_OPENSHELL_KEY_FILE"),
-		Image:              getenv("SANDBOX_OPENSHELL_IMAGE"),
+		GatewayURL:         settings.OpenshellGatewayURL.Get(getenv),
+		CAFile:             settings.OpenshellCAFile.Get(getenv),
+		CertFile:           settings.OpenshellCertFile.Get(getenv),
+		KeyFile:            settings.OpenshellKeyFile.Get(getenv),
+		Image:              settings.OpenshellImage.Get(getenv),
 		RequirePinnedImage: pinned,
 		MemoryMB:           res.MemoryMB,
 		CPUs:               res.CPUs,

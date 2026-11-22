@@ -106,6 +106,14 @@ type SandboxService struct {
 	runsTotal  atomic.Int64
 	runsFailed atomic.Int64
 
+	// closeFailures and closeGaveUp count the tries of a close the daemon made by itself
+	// that failed with the session still open, and such closes that gave up
+	// (sessionclose.go), for /metrics.
+	closeFailures, closeGaveUp atomic.Int64
+	// closeRetry is how such a failed close is tried again; zero = sessionCloseRetry.
+	// Tests set it.
+	closeRetry closeRetry
+
 	// hostCalls aggregates per-run CallTraces into labeled host-API call/latency
 	// metrics (Prospector Phase 0). The zero value is ready to use.
 	hostCalls hostCallStats
@@ -113,6 +121,10 @@ type SandboxService struct {
 	// adviceStats aggregates per-run efficiency findings into labeled advice/waste
 	// metrics (Prospector Phase 4). The zero value is ready to use.
 	adviceStats adviceStats
+
+	// refusals writes one rate-limited line per caller for calls refused before they
+	// ran (refusals.go). The zero value is ready to use.
+	refusals refusalLog
 }
 
 // RunCounts returns cumulative run totals for metrics: total dispatched to the
@@ -131,10 +143,8 @@ func (s *SandboxService) logger() *slog.Logger {
 // auditCaller returns the principal's UserID for audit logs, or "anon" in open dev
 // mode / when unauthenticated. Never logs the token itself.
 func auditCaller(ctx context.Context) string {
-	if p, ok := PrincipalFrom(ctx); ok && p.UserID != "" {
-		return p.UserID
-	}
-	return "anon"
+	p, _ := PrincipalFrom(ctx)
+	return auditCallerOf(p)
 }
 
 // mintingSubject returns the authenticated principal's identity for per-session
@@ -333,6 +343,11 @@ type target struct {
 	// sandbox was opened with, which every call runs on.
 	session bool
 	attrs   []slog.Attr // added to the audit line (a session's fingerprint and call number)
+	// qualification is the sentence the provider states beside tier, which the answer
+	// and its record carry (a session's, as stated at open); qualificationErr refuses
+	// every call, before anything runs, when the provider's cannot be recorded.
+	qualification    string
+	qualificationErr error
 }
 
 // runTarget is the provider, admitted through the limiter.
@@ -341,15 +356,18 @@ func (s *SandboxService) runTarget() target {
 	if d, ok := s.Sandbox.(sandbox.Describer); ok {
 		software = d.Environments()
 	}
+	qualification, qerr := s.qualification()
 	return target{
-		provider: s.Sandbox.Name(),
-		tier:     s.Sandbox.IsolationClass(),
-		admit:    s.limit,
-		js:       s.Sandbox.RunJavaScript,
-		project:  s.Sandbox.RunProject,
-		module:   s.Sandbox.RunModule,
-		teardown: sandbox.MeteredTeardown(s.Sandbox),
-		software: software,
+		qualification:    qualification,
+		qualificationErr: qerr,
+		provider:         s.Sandbox.Name(),
+		tier:             s.Sandbox.IsolationClass(),
+		admit:            s.limit,
+		js:               s.Sandbox.RunJavaScript,
+		project:          s.Sandbox.RunProject,
+		module:           s.Sandbox.RunModule,
+		teardown:         sandbox.MeteredTeardown(s.Sandbox),
+		software:         software,
 	}
 }
 
@@ -444,25 +462,22 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 	if err != nil {
 		return nil, err
 	}
-	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{}, env.software, s.recordPolicy(k))
+	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{}, env.software, recordPolicy(k, s.policy()))
 	return connect.NewResponse(resp), nil
 }
 
 // recordPolicy is the policy a run's record names: the one the provider states for
-// that run (docker names the seccomp profile the run applied), or the provider's one
-// policy when it states none per run.
-func (s *SandboxService) recordPolicy(k kind) string {
+// that run (docker names the seccomp profile the run applied), or stated when it states
+// none per run. A single run's stated is the provider's one policy; a session call's is
+// the one its session stated at open, never the provider's, which on docker names two
+// profiles when the sdk_env variant is configured.
+func recordPolicy(k kind, stated string) string {
 	if p := k.ran().policy; p != "" {
 		return p
 	}
-	return s.policy()
+	return stated
 }
 
-// runRecord states a finished run for the caller's harness to check and sign: the
-// request digest over what the caller sent, the result digest over the response
-// as it will be sent, the evidence, and the times. link carries a session call's
-// chain fields and is zero for a single run. The daemon holds no key, so this is
-// hashing only.
 // recordEnd is the end a record states: its start on the wall clock plus the time
 // that passed on the monotonic clock, never a second wall-clock reading. The wall
 // clock can be stepped during a run (NTP, a virtual machine resyncing its time), and
@@ -472,6 +487,11 @@ func recordEnd(started, ended time.Time) time.Time {
 	return started.Add(max(ended.Sub(started), 0))
 }
 
+// runRecord states a finished run for the caller's harness to check and sign: the
+// request digest over what the caller sent, the result digest over the response
+// as it will be sent, the evidence, and the times. link carries a session call's
+// chain fields and is zero for a single run. The daemon holds no key, so this is
+// hashing only.
 func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule, policy string) *plimsollv1.RunRecord {
 	return record.Stamp(sandbox.RunRecord{
 		RequestSHA256:  requestDigest,
@@ -708,12 +728,6 @@ func sandboxErrCode(err error) connect.Code {
 	}
 }
 
-// wireString repairs a provider-produced string before assigning it to a
-// protobuf string field. Guest stdout/stderr travel as bytes, but the remaining
-// string fields can still carry guest-influenced content (a command echoed back
-// by the runner, an outcome detail built from stderr); protobuf strings require
-// valid UTF-8, and without this guard a completed run could fail during response
-// serialization and disappear as an unstructured transport error.
 // publicEndDetail is what a caller is told of a session's end: the detail when its provider
 // marked it public (words it composed itself: a limit, a container's state), else an error ID,
 // with the detail itself in the daemon's log under it. A raw error can name the docker
@@ -731,9 +745,19 @@ func publicEndDetail(se *sandbox.SessionEndedError) string {
 	return fmt.Sprintf("the daemon's log holds its detail (error %s)", id)
 }
 
+// wireString repairs a provider-produced string before assigning it to a
+// protobuf string field. Guest stdout/stderr travel as bytes, but the remaining
+// string fields can still carry guest-influenced content (a command echoed back
+// by the runner, an outcome detail built from stderr); protobuf strings require
+// valid UTF-8, and without this guard a completed run could fail during response
+// serialization and disappear as an unstructured transport error.
 func wireString(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
 }
+
+// hostCredentialAlert is the audit line's words for a run in which an answer held the
+// credential: a fixed sentence of plimsoll's, never anything of the run's.
+const hostCredentialAlert = "an answer held the run's credential, so the broker withheld it and ended the grant: possibly code guessing the credential through a route that reflects what it sends, or a route that echoes the credential"
 
 // hostCallAttrs is the bounded, metadata-only summary of a run's brokered host.*
 // calls for its audit line (never paths, bodies, or credentials); nothing when the
@@ -751,6 +775,21 @@ func hostCallAttrs(t *sandbox.CallTrace) []slog.Attr {
 	}
 	if t.Shed > 0 {
 		attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
+	}
+	// An answer that held the run's credential: the broker withheld it and ended the
+	// run's grant. Either code in the sandbox had an allowed route reflect guesses of the
+	// credential, or the route echoes it; the line names the first as possible, in
+	// plimsoll's own words (finding hunt-security-32). The count tells the operator which
+	// runs met one; the rows name the route.
+	matched := 0
+	for _, c := range t.Calls {
+		if c.CredentialMatched {
+			matched++
+		}
+	}
+	if matched > 0 {
+		attrs = append(attrs, slog.Int("host_calls_credential_matched", matched),
+			slog.String("host_credential_alert", hostCredentialAlert))
 	}
 	return attrs
 }

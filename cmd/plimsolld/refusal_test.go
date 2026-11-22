@@ -45,7 +45,7 @@ func TestRefusalsAnswerBeforeAHeldBackBody(t *testing.T) {
 	// LimitHTTPConcurrency, where Connect is about to read the body.
 	entered := make(chan struct{}, 4)
 	mux := http.NewServeMux()
-	mux.Handle(path, guardRPC(verifier, 1, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle(path, guardRPC(verifier, svc, 1, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		entered <- struct{}{}
 		connectHandler.ServeHTTP(w, r)
 	})))

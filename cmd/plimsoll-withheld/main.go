@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/printable"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 )
 
@@ -111,7 +112,13 @@ func (l *listFlag) Set(v string) error {
 func main() {
 	code, err := run(os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "plimsoll-withheld:", err)
+		// An error can carry a file's name or content, an image's or a set's words: none may
+		// rewrite the operator's screen.
+		fmt.Fprintln(os.Stderr, "plimsoll-withheld:", printable.Text(err.Error()))
+		var u usageError
+		if errors.As(err, &u) {
+			fmt.Fprint(os.Stderr, "\n"+usage)
+		}
 		if code == 0 {
 			code = 2
 		}
@@ -121,7 +128,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, errors.New("a command is required\n\n" + usage)
+		return 2, usageError("a command is required")
 	}
 	switch args[0] {
 	case "build":
@@ -140,8 +147,14 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		fmt.Fprint(stdout, usage)
 		return 0, nil
 	}
-	return 2, fmt.Errorf("unknown command %q\n\n%s", args[0], usage)
+	return 2, usageError(fmt.Sprintf("unknown command %q", args[0]))
 }
+
+// usageError is an error main follows with the usage text, which it prints apart, since
+// an error's own text is printed with its line breaks escaped.
+type usageError string
+
+func (e usageError) Error() string { return string(e) }
 
 type setFile struct {
 	Version       int      `json:"version"`
@@ -193,7 +206,7 @@ func build(args []string, stdout, stderr io.Writer) error {
 				if e.Kind == withheld.KindValue {
 					same = "the same value (in any letter case) as"
 				}
-				fmt.Fprintf(stderr, "plimsoll-withheld: %s is %s %s; kept once\n", e.Label, same, first)
+				fmt.Fprintln(stderr, printable.Text(fmt.Sprintf("plimsoll-withheld: %s is %s %s; kept once", e.Label, same, first)))
 			}
 			return
 		}
@@ -280,7 +293,7 @@ func build(args []string, stdout, stderr io.Writer) error {
 	if _, err := withheld.Parse(raw); err != nil {
 		return err
 	}
-	_, err = stdout.Write(raw)
+	_, err = stdout.Write(printable.JSON(raw))
 	return err
 }
 
@@ -356,19 +369,19 @@ func scan(args []string, stdout, stderr io.Writer) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		_, err = stdout.Write(raw)
+		_, err = stdout.Write(printable.JSON(raw))
 		return code, err
 	}
 	for _, f := range res.Found {
-		fmt.Fprintf(stdout, "%s (%s): %s\n", f.Label, f.Mode, strings.Join(f.Where, ", "))
+		fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("%s (%s): %s", f.Label, f.Mode, strings.Join(f.Where, ", "))))
 	}
 	for _, in := range res.Incomplete {
-		fmt.Fprintf(stdout, "incomplete: %s: %s\n", in.Where, in.Bound.Text())
+		fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("incomplete: %s: %s", in.Where, in.Bound.Text())))
 	}
 	if code != 0 {
 		return code, nil
 	}
-	fmt.Fprintf(stdout, "clean: %d files against set %s\n", len(parts)/2, set.Digest())
+	fmt.Fprintf(stdout, "clean: %d files against set %s\n", len(parts)/2, printable.Text(set.Digest()))
 	return 0, nil
 }
 
@@ -543,24 +556,24 @@ func scanImage(args []string, stdout, stderr io.Writer) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		_, err = stdout.Write(raw)
+		_, err = stdout.Write(printable.JSON(raw))
 		return code, err
 	}
 	for _, f := range res.Found {
-		fmt.Fprintf(stdout, "%s (%s): %s\n", f.Label, f.Mode, strings.Join(f.Where, ", "))
+		fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("%s (%s): %s", f.Label, f.Mode, strings.Join(f.Where, ", "))))
 	}
 	for _, in := range res.Incomplete {
-		fmt.Fprintf(stdout, "incomplete: %s: %s\n", in.Where, in.Bound.Text())
+		fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("incomplete: %s: %s", in.Where, in.Bound.Text())))
 	}
 	switch {
 	case len(res.Found) > 0:
-		fmt.Fprintf(stdout, "found: %d entries in %d files, %d layers of %s against set %s\n", len(res.Found), res.Files, res.Layers, what, set.Digest())
+		fmt.Fprintf(stdout, "found: %d entries in %d files, %d layers of %s against set %s\n", len(res.Found), res.Files, res.Layers, printable.Text(what), printable.Text(set.Digest()))
 		return 1, nil
 	case len(res.Incomplete) > 0:
-		fmt.Fprintf(stdout, "nothing found, %d of %d files not read whole, %d layers of %s against set %s\n", len(res.Incomplete), res.Files, res.Layers, what, set.Digest())
+		fmt.Fprintf(stdout, "nothing found, %d of %d files not read whole, %d layers of %s against set %s\n", len(res.Incomplete), res.Files, res.Layers, printable.Text(what), printable.Text(set.Digest()))
 		return 3, nil
 	}
-	fmt.Fprintf(stdout, "clean: %d files in %d layers of %s against set %s\n", res.Files, res.Layers, what, set.Digest())
+	fmt.Fprintf(stdout, "clean: %d files in %d layers of %s against set %s\n", res.Files, res.Layers, printable.Text(what), printable.Text(set.Digest()))
 	return 0, nil
 }
 
@@ -579,7 +592,7 @@ func eachFile(root string, stderr io.Writer, fn func(path, name string, content 
 			return nil
 		}
 		if !d.Type().IsRegular() {
-			fmt.Fprintf(stderr, "plimsoll-withheld: %s is not a regular file (%s); skipped\n", withheld.CleanWhere(path), d.Type())
+			fmt.Fprintf(stderr, "plimsoll-withheld: %s is not a regular file (%s); skipped\n", withheld.CleanWhere(path), printable.Text(d.Type().String()))
 			return nil
 		}
 		content, err := os.ReadFile(path)

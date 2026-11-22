@@ -16,7 +16,9 @@ import (
 
 // The fixtures are runsc release-20260907.0 boot logs from kind (the gvisor-receipt runtime
 // class: --debug --strace with Syscalls(), --strace-log-size=16, the JSON format), one per
-// fixture package installed offline with npm and then imported.
+// fixture package installed offline with npm and then imported (fixtures/capture.sh). The
+// one named for release-20261116.0 is the canary under that release, captured with the same
+// options by `runsc --rootless run` with no network (fixtures/capture-runsc.sh).
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	f, err := os.Open("testdata/" + name + ".boot.json.gz")
@@ -83,10 +85,27 @@ func programs(tr *Trace) map[string]*Process {
 }
 
 func TestFixtures(t *testing.T) {
-	for _, name := range []string{"quiet", "builds", "canary", "network", "child"} {
-		tr := read(t, fixture(t, name))
-		if tr.Runsc != "release-20260907.0" || len(tr.Unclear) != 0 {
-			t.Errorf("%s: runsc %q, unclear %+v", name, tr.Runsc, tr.Unclear)
+	type fx struct {
+		file, name, runsc string
+		// proc is what the canary's open for writing in /proc returned: gVisor's answer,
+		// which differs between releases and between the kind and rootless paths.
+		proc string
+	}
+	fixtures := []fx{
+		{"quiet", "quiet", "release-20260907.0", ""},
+		{"builds", "builds", "release-20260907.0", ""},
+		{"canary", "canary", "release-20260907.0", "errno=1 (operation not permitted)"},
+		{"network", "network", "release-20260907.0", ""},
+		{"child", "child", "release-20260907.0", ""},
+		// Captured rootless with fixtures/capture-runsc.sh, to check the reader against the
+		// release before it joined Supported.
+		{"canary-release-20261116.0", "canary", "release-20261116.0", "errno=2 (no such file or directory)"},
+	}
+	for _, f := range fixtures {
+		name := f.name
+		tr := read(t, fixture(t, f.file))
+		if tr.Runsc != f.runsc || len(tr.Unclear) != 0 {
+			t.Errorf("%s: runsc %q, unclear %+v", f.file, tr.Runsc, tr.Unclear)
 		}
 		progs := programs(tr)
 		npm := progs["node /usr/local/bin/npm install --offline --cache /cache --no-audit --no-fund /fixtures/plimsoll-fixture-"+name+"-1.0.0.tgz"]
@@ -122,7 +141,7 @@ func TestFixtures(t *testing.T) {
 			if want := []string{"/root/.canary", "/etc/canary-target"}; !slices.Equal(written, want) {
 				t.Errorf("canary wrote outside\n got %q\nwant %q", written, want)
 			}
-			want := []string{"/root/.canary ok", "/tmp/canary-dir/link reached /etc/canary-target ok", "/proc/canary errno=1 (operation not permitted)"}
+			want := []string{"/root/.canary ok", "/tmp/canary-dir/link reached /etc/canary-target ok", "/proc/canary " + f.proc}
 			if !slices.Equal(opened, want) {
 				t.Errorf("canary opened outside\n got %q\nwant %q", opened, want)
 			}

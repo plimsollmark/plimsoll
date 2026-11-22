@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // The per-run mode keeps its disks on a Windows drive, because a WSLC session's storage
@@ -145,8 +147,8 @@ func (p *Provider) powershell(ctx context.Context, script string) (string, error
 	if mp, ok := p.drives["C"]; ok {
 		cmd.Dir = mp
 	}
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = outputCap, errorCap
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = outputCap, errorCap
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("powershell.exe: %w: %s", err, strings.TrimSpace(stderr.String()))

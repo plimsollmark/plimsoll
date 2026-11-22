@@ -86,8 +86,8 @@ the hashes before accepting an answer.
 | Job | What Plimsoll supplies | Go deeper |
 |---|---|---|
 | Run code | JavaScript snippets, projects containing files and ordered build/test/run steps, and compiled simulation modules on Docker. | [INTERNAL · payloads and examples →](docs/example-programs.md) |
-| Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim, and a single call that asks for one (`prefer_warm`) runs in a waiting sandbox that is deleted after it. | [INTERNAL · sessions and pools →](docs/sessions.md), [INTERNAL · one call timed, warm and fresh →](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html) |
-| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. Standard client libraries, such as the OpenAI and Anthropic SDKs, reach a granted API at a local address inside the sandbox, with streamed answers and uploads of up to 512 MiB a route. A grant to a chat API also reaches whatever that API's own server-side tools fetch from the internet; the guide says how to turn them off. | [INTERNAL · capability grants →](docs/capability-grants.md), [INTERNAL · both SDKs under a grant →](https://plimsollmark.github.io/plimsoll/examples/sdk-grants/index.html), [INTERNAL · agent memory through a grant →](https://plimsollmark.github.io/plimsoll/examples/memory-grant/index.html) |
+| Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim, and a single call that asks for one (`prefer_warm`) runs in a waiting sandbox that is deleted after it. A second worker can pick up a live session after the first one dies: it takes the session over with the session's saved checkpoint and the same token, a call the first worker sent but never heard back from is accounted for by its run record, and every later call of the first worker is refused before it runs. | [INTERNAL · sessions and pools →](docs/sessions.md), [INTERNAL · carrying a session on from another process →](clients/python/README.md#carrying-a-session-on-from-another-process), [INTERNAL · a worker killed mid-command, its session taken over →](clients/python/examples/pydantic_ai_crash.py), [INTERNAL · one call timed, warm and fresh →](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html) |
+| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential, so the guest's environment, files and requests never hold it, and an API answer that holds an exact copy of it is withheld from the code and ends the run's grant (a route that echoes its request is still one not to allow). Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. Standard client libraries, such as the OpenAI and Anthropic SDKs, reach a granted API at a local address inside the sandbox, with streamed answers and uploads of up to 512 MiB a route. A grant to a chat API also reaches whatever that API's own server-side tools fetch from the internet; the guide says how to turn them off. | [INTERNAL · capability grants →](docs/capability-grants.md), [INTERNAL · both SDKs under a grant →](https://plimsollmark.github.io/plimsoll/examples/sdk-grants/index.html), [INTERNAL · agent memory through a grant →](https://plimsollmark.github.io/plimsoll/examples/memory-grant/index.html) |
 | Keep answer keys out of a run | The ship scan checks every file a call carries, and the archives it can read inside them, against the files, source lines and values the operator withholds, such as an evaluation's answer keys and sealed tests. Each entry either refuses a match before any of the call's code runs or only logs it, as the operator sets it. The scan does not see files already in the image, what a grant fetches, or material hidden on purpose, such as an archive encoded twice; the guide lists its limits. | [INTERNAL · ship scan →](docs/ship-scan.md), [INTERNAL · five calls, refused and logged →](https://plimsollmark.github.io/plimsoll/examples/ship-scan/index.html) |
 | Choose where code runs | Require an isolation tier on each request. A placement library selects among servers and retries elsewhere only on a request-bound refusal that says execution was not <dfn>*dispatched*</dfn>, never handed to the provider to run. | [INTERNAL · placement and retries →](docs/placement.md) |
 | Check, sign and replay | Checked run records, linked session records, signed bundles and separately signed statements. The signing tool runs outside the server; the server holds no <dfn>*signing key*</dfn>, the private key that makes signatures. | [INTERNAL · records and signing →](docs/run-records.md) |
@@ -102,10 +102,14 @@ reports what its configured backend supports.
 A signed <dfn>*receipt*</dfn> is like a stamped delivery slip: it identifies the contents and
 what the signer said about them. It does not independently repeat the inspection.
 
-- **Match a run to its sandbox.** Record version 4 includes sandbox instance
+- **Match a run to its sandbox.** Run records include the sandbox instance
   identity; Kubernetes supplies the pod's unique ID, so an outside observation log
-  can be joined to the run. New live calls use protocol 5. Upgrade server and
-  clients together; stored-record verifiers also read published versions 1 through 4.
+  can be joined to the run. Record version 5 also states the sentence a provider
+  requires beside its tier (WSL's: Microsoft states that WSL is not a security
+  sandbox), whether a waiting sandbox ran the call, and the daemon's version; the
+  daemon only states them, and a program outside it signs the record. New live
+  calls use protocol 7. Upgrade server and clients together; stored-record verifiers
+  also read published versions 1 through 4.
 - **Check test results against the code revision they tested.** The pull-request
   recipe produces signed <dfn>*in-toto*</dfn> statements, a standard layout for signed claims;
   JUnit test reports; and Cobertura coverage reports showing which code the tests
@@ -214,40 +218,49 @@ rechecks every record. [INTERNAL · verifiers on plimsoll →](https://plimsollm
 
 ## Connect an agent
 
-Use the clients directly, add a framework tool, or connect through **<dfn>*MCP*</dfn> (Model
-Context Protocol)**, the standard interface through which an agent calls tools.
-SDK means software development kit; ADK means Google's Agent Development Kit.
+<!-- agent kits story: generated from the integration pages' data; edit that, not this text -->
+Whatever kit your agent is built with, the moment it runs code it wrote, plimsoll does the same four things. It runs the code behind an [isolation tier](docs/trainers/glossary.html#isolation-tier) it states, refuses when the tier you asked for is not there, says plainly when nothing ran (the one case where a retry is safe), and hands back a record of the run that you can sign for someone else to check later. The kits differ only in how they plug in, as a code tool the model calls, as a sandbox backend that holds the agent's files and shell, or through [MCP](docs/trainers/glossary.html#mcp), and the answer underneath is the same. [INTERNAL · the four things in every kit, and the three ways in →](docs/agent-kits.md)
+<!-- end of the agent kits story -->
+
+An <dfn>*agent kit*</dfn> is a library for building an AI agent, a program in which a language
+model picks each next step, such as running code it wrote. SDK means software development kit;
+ADK means Google's Agent Development Kit. <dfn>*Trigger.dev*</dfn> is a hosted job runner for
+TypeScript, and its add-on gives a chat task running there the same code tool as the AI SDK's.
+
+<!-- agent kits table: generated from the integration pages' data; edit that, not these rows -->
+| How it plugs in | Kit | Package or extra | Guide | See a run |
+|---|---|---|---|---|
+| Code tool | Vercel AI SDK | `@plimsollmark/client/ai-sdk` | [Vercel AI SDK guide (INTERNAL · documentation →)](docs/ai-sdk.md) | [Vercel AI SDK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/vercel-ai-sdk/index.html) |
+| Code tool | Mastra | `@plimsollmark/client/mastra` | [TypeScript client guide, Mastra (INTERNAL · documentation →)](clients/typescript/README.md#mastra) | [Mastra page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html) |
+| Code tool | [Trigger.dev](docs/trainers/glossary.html#trigger-dev) | `@plimsollmark/client/trigger` | [Trigger.dev guide (INTERNAL · documentation →)](docs/trigger-dev.md) | [Trigger.dev page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/trigger-dev/index.html) |
+| Code tool | Google ADK | `plimsoll-client[adk]` | [Google ADK guide (INTERNAL · documentation →)](docs/google-adk.md) | [Google ADK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/google-adk/index.html) |
+| Code tool | Agno | `plimsoll-client[agno]` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [Agno page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/agno/index.html) |
+| Code tool | CrewAI | `crewai-plimsoll` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [CrewAI page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/crewai/index.html) |
+| Code tool | LangChain | `plimsoll-client[langchain]` | [Python client guide, LangChain tool and Deep Agents backend (INTERNAL · documentation →)](clients/python/README.md#langchain-tool-and-deep-agents-backend) | [LangChain page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/langchain/index.html) |
+| Code tool | smolagents | `smolagents-plimsoll` | [Python client guide, smolagents executor (INTERNAL · documentation →)](clients/python/README.md#smolagents-executor) | no page yet |
+| Sandbox backend | OpenAI Agents SDK | `plimsoll-client[openai-agents]` | [Python client guide, OpenAI Agents SDK (INTERNAL · documentation →)](clients/python/README.md#openai-agents-sdk-sandbox-provider) | no page yet |
+| Sandbox backend | Deep Agents (LangChain) | `plimsoll-client[deepagents]` | [Python client guide, LangChain tool and Deep Agents backend (INTERNAL · documentation →)](clients/python/README.md#langchain-tool-and-deep-agents-backend) | no page yet |
+| Sandbox backend | Google ADK environment | `plimsoll-client[adk]` | [Google ADK guide, the environment (INTERNAL · documentation →)](docs/google-adk.md#a-kept-sandbox-with-a-shell-and-files) | no page yet |
+| Sandbox backend | Microsoft Agent Framework | `agent-framework-plimsoll` | [Python client guide, Microsoft Agent Framework shell tool and code tool (INTERNAL · documentation →)](clients/python/README.md#microsoft-agent-framework-shell-tool-and-code-tool) | no page yet |
+| Sandbox backend | PydanticAI | `pydantic-ai-plimsoll` (next release) | [Python client guide, PydanticAI workspace (INTERNAL · documentation →)](clients/python/README.md#pydanticai-workspace) | no page yet |
+| Sandbox backend | Claude Managed Agents | `plimsoll-client[anthropic]` | [Python client guide, Claude Managed Agents worker (INTERNAL · documentation →)](clients/python/README.md#claude-managed-agents-self-hosted-worker) | no page yet |
+| MCP | Claude Code, Codex, Claude Desktop and other MCP clients | `clients/mcp` | [MCP server setup, with the Reflection Mirror recipe (INTERNAL · documentation →)](clients/mcp/README.md#setup) | no page yet |
+<!-- end of the agent kits table -->
+
+For a complete Trigger.dev chat task, use the
+[EXTERNAL · deployable starter repo ↗](https://github.com/plimsollmark/plimsoll-trigger-starter).
+It includes a check that two <dfn>*cells*</dfn>, pieces of code run in one kept
+interpreter, share it through a real server, without making a model call.
+
+Not through a kit:
 
 | Connection | Start here |
 |---|---|
 | Go package or remote client | [INTERNAL · embedding and server quickstart →](docs/getting-started.md) |
 | Python client | [INTERNAL · install and use →](clients/python/README.md) |
 | TypeScript client | [INTERNAL · install and use →](clients/typescript/README.md) |
-| MCP for coding agents | [INTERNAL · build and configure the MCP server →](clients/mcp/README.md#setup). Includes the Reflection Mirror connection recipe. |
 | Python shell-and-files workspace | [INTERNAL · workspace interface →](clients/python/README.md#agent-workspace) |
-| Claude Managed Agents | [INTERNAL · self-hosted worker adapter →](clients/python/README.md#claude-managed-agents-self-hosted-worker) |
-| OpenAI Agents SDK | [INTERNAL · sandbox provider adapter →](clients/python/README.md#openai-agents-sdk-sandbox-provider) |
 | Prime Intellect verifiers environments | [INTERNAL · verifiers runtime →](clients/python/README.md#verifiers-runtime) |
-
-These framework adapters give an agent a code-execution tool or executor. The guides
-explain provider requirements and whether files and interpreter state persist.
-<dfn>*Trigger.dev*</dfn>, one of them, is a hosted job runner for TypeScript.
-
-<!-- integrations table: generated from the integration pages' data; edit that, not these rows -->
-| Framework | Package or extra | Guide | See a run |
-|---|---|---|---|
-| Vercel AI SDK | `@plimsollmark/client/ai-sdk` | [Vercel AI SDK guide (INTERNAL · documentation →)](docs/ai-sdk.md) | [Vercel AI SDK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/vercel-ai-sdk/index.html) |
-| Google ADK | `plimsoll-client[adk]` | [Google ADK guide (INTERNAL · documentation →)](docs/google-adk.md) | [Google ADK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/google-adk/index.html) |
-| Agno | `plimsoll-client[agno]` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [Agno page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/agno/index.html) |
-| CrewAI | `crewai-plimsoll` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [CrewAI page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/crewai/index.html) |
-| [Trigger.dev](docs/trainers/glossary.html#trigger-dev) | `@plimsollmark/client/trigger` | [Trigger.dev guide (INTERNAL · documentation →)](docs/trigger-dev.md) | [Trigger.dev page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/trigger-dev/index.html) |
-| Mastra | `@plimsollmark/client/mastra` | [TypeScript client guide, Mastra (INTERNAL · documentation →)](clients/typescript/README.md#mastra) | [Mastra page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html) |
-<!-- end of the integrations table -->
-
-For a complete Trigger.dev chat task, use the
-[EXTERNAL · deployable starter repo ↗](https://github.com/plimsollmark/plimsoll-trigger-starter).
-It includes a check that two <dfn>*cells*</dfn>, pieces of code run in one kept
-interpreter, share it through a real server, without making a model call.
 
 ## Limits and project status
 

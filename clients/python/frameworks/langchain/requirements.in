@@ -1,0 +1,7 @@
+# The LangChain version this adapter's tests run against, with LangChain's standard tool
+# tests (langchain-tests, a pytest suite). No deepagents here: the tool must work with
+# langchain-core alone. Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+langchain-core==1.8.0
+langchain-tests==1.1.9

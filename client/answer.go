@@ -7,9 +7,11 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"sync"
 
 	"connectrpc.com/connect"
@@ -38,6 +40,7 @@ type exchange struct {
 	unsent   bool
 	echo     []string
 	mark     string
+	status   int
 	// dialed and wrote are what httptrace showed of every attempt the HTTP client made
 	// with this call's context: a connection sought, and request headers written.
 	dialed bool
@@ -101,6 +104,7 @@ func (b bindingHTTPClient) Do(r *http.Request) (*http.Response, error) {
 			ex.answered = true
 			ex.echo = resp.Header.Values(protocol.RequestIDHeader)
 			ex.mark = resp.Header.Get(protocol.NotDispatchedHeader)
+			ex.status = resp.StatusCode
 		} else {
 			// A transport that reports no attempt through httptrace proves nothing, so
 			// its failure reads "may have run".
@@ -132,7 +136,7 @@ func failedBeforeSending(err error) bool {
 
 func (ex *exchange) settle(resp connect.AnyResponse, err error) (connect.AnyResponse, error) {
 	ex.mu.Lock()
-	answered, bound, mark := ex.answered, len(ex.echo) == 1 && ex.echo[0] == ex.id, ex.mark
+	answered, bound, mark, status := ex.answered, len(ex.echo) == 1 && ex.echo[0] == ex.id, ex.mark, ex.status
 	unsent := ex.unsent
 	ex.mu.Unlock()
 	if err == nil {
@@ -142,6 +146,23 @@ func (ex *exchange) settle(resp connect.AnyResponse, err error) (connect.AnyResp
 			return nil, connect.NewError(connect.CodeDataLoss, &unboundError{message: "the call may have run"})
 		}
 		return resp, nil
+	}
+	if answered && status == http.StatusOK {
+		if code := connect.CodeOf(err); code != connect.CodeCanceled && code != connect.CodeDeadlineExceeded {
+			// A Connect error answer is never a 200, so an error on one is this client's own
+			// failure to read the daemon's answer (connect-go reads a body it cannot unmarshal
+			// as InvalidArgument, which would tell the caller its request was bad). The call
+			// may have run, so nothing marks it (finding hunt-quality-92).
+			message := err.Error()
+			var ce *connect.Error
+			if errors.As(err, &ce) {
+				message = ce.Message()
+			}
+			if !bound {
+				return nil, connect.NewError(connect.CodeDataLoss, &unboundError{message: "the answer could not be read: " + message})
+			}
+			return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: %s", errUnreadableAnswer, message))
+		}
 	}
 	if !answered {
 		if !unsent {
@@ -157,6 +178,14 @@ func (ex *exchange) settle(resp connect.AnyResponse, err error) (connect.AnyResp
 		return nil, connect.NewError(connect.CodeOf(err), &unboundError{message: message})
 	}
 	var ce *connect.Error
+	if errors.As(err, &ce) && slices.Contains(ce.Details(), nil) {
+		// connect-go reads a JSON null in an error's details list as a nil detail, whose
+		// Value panics (finding release-88). An answer that holds one is not a Connect
+		// error this client can read, so it is read as connect-go reads any unreadable
+		// error body (the code from the HTTP status), and nothing in it is believed: no
+		// detail, no header mark, so the call reads "may have run".
+		return nil, connect.NewError(codeForHTTPStatus(status), fmt.Errorf("%w (HTTP status %d)", errNullDetail, status))
+	}
 	if mark != "" && errors.As(err, &ce) {
 		if _, marked := notDispatchedDetail(ce); !marked {
 			if reason, ok := refusalWireByName(mark); ok {
@@ -167,6 +196,32 @@ func (ex *exchange) settle(resp connect.AnyResponse, err error) (connect.AnyResp
 		}
 	}
 	return resp, err
+}
+
+// errUnreadableAnswer is the error of a daemon's 200 answer this client could not read.
+var errUnreadableAnswer = errors.New("client: the daemon's answer could not be read, and the call may have run")
+
+// errNullDetail is the error of an answer whose details list holds a JSON null.
+var errNullDetail = errors.New("client: the answer's error details hold a null, so nothing it says about the call is believed")
+
+// codeForHTTPStatus is connect-go's code for an error answer without a readable Connect
+// error body (its unexported httpToCode, v1.20.0 protocol.go), so an answer this client
+// refuses to read reads as one connect-go could not read.
+func codeForHTTPStatus(status int) connect.Code {
+	switch status {
+	case 400:
+		return connect.CodeInternal
+	case 401:
+		return connect.CodeUnauthenticated
+	case 403:
+		return connect.CodePermissionDenied
+	case 404:
+		return connect.CodeUnimplemented
+	case 429, 502, 503, 504:
+		return connect.CodeUnavailable
+	default:
+		return connect.CodeUnknown
+	}
 }
 
 type unboundError struct{ message string }

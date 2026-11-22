@@ -20,17 +20,21 @@ import (
 // the true output width known only to the module, by the worker before it runs a
 // single row) rather than truncated.
 const (
-	MaxModuleRows        = 100_000
-	MaxModuleRowWidth    = 64
-	MaxModuleSteps       = 1_000_000
-	MaxModuleResultBytes = 8 << 20 // the runner's aggregate artifact budget
-	moduleResultHeader   = 20      // "PLSM", version, rows, width, params (uint32 each)
-	moduleResultVersion  = 1
+	MaxModuleRows           = 100_000
+	MaxModuleRowWidth       = 64
+	MaxModuleSteps          = 1_000_000
+	MaxModuleResultBytes    = 8 << 20 // the runner's aggregate artifact budget
+	ModuleResultHeaderBytes = 20      // "PLSM", version, rows, width, params (uint32 each)
+	moduleResultVersion     = 1
 )
 
-// moduleIDPattern is the whole grammar of a model id: a filename stem with no
+// ModuleIDPattern is the whole grammar of a model id: a filename stem with no
 // separator, so the provider's mapping to /models/<id>.so cannot leave /models.
-var moduleIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+// internal/wiretables writes it, the limits above and ModuleResultHeaderBytes into the
+// Python client, which refuses a module request before sending it.
+const ModuleIDPattern = `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`
+
+var moduleIDForm = regexp.MustCompile(ModuleIDPattern)
 
 // ModuleRequest runs Model once per row of Rows, each instance stepping from 0
 // to EndTime with communication step Step. Every row has the same width, which
@@ -108,8 +112,8 @@ func validateModuleRequest(req ModuleRequest) error {
 	if err := validateMinimumIsolation(req.MinimumIsolation); err != nil {
 		return err
 	}
-	if !moduleIDPattern.MatchString(req.Model) {
-		return fmt.Errorf("%w: model must match %s", ErrInvalidRequest, moduleIDPattern)
+	if !moduleIDForm.MatchString(req.Model) {
+		return fmt.Errorf("%w: model must match %s", ErrInvalidRequest, moduleIDForm)
 	}
 	if len(req.Rows) == 0 {
 		return fmt.Errorf("%w: at least one row is required", ErrInvalidRequest)
@@ -141,7 +145,7 @@ func validateModuleRequest(req ModuleRequest) error {
 		return fmt.Errorf("%w: end_time/step exceeds %d steps", ErrInvalidRequest, MaxModuleSteps)
 	}
 	// Necessary condition at width 1; the worker checks the true width.
-	worst := moduleResultHeader + int64(len(req.Rows))*(4+8*int64(req.MaxSteps()))
+	worst := ModuleResultHeaderBytes + int64(len(req.Rows))*(4+8*int64(req.MaxSteps()))
 	if worst > MaxModuleResultBytes {
 		return fmt.Errorf("%w: results could reach at least %d bytes for %d rows of up to %d steps, over the %d byte budget; send fewer rows or a shorter horizon",
 			ErrInvalidRequest, worst, len(req.Rows), req.MaxSteps(), MaxModuleResultBytes)
@@ -163,7 +167,7 @@ const maxModuleOutputWidth = 1 << 20
 // cannot be mistaken for this one's. Every length is checked against the bytes
 // present before it is used: the record comes from inside the sandbox.
 func DecodeModuleResults(b []byte, rows, params int) ([]ModuleRun, int, error) {
-	if len(b) < moduleResultHeader {
+	if len(b) < ModuleResultHeaderBytes {
 		return nil, 0, fmt.Errorf("result record is %d bytes, shorter than its header", len(b))
 	}
 	if string(b[:4]) != "PLSM" {
@@ -183,7 +187,7 @@ func DecodeModuleResults(b []byte, rows, params int) ([]ModuleRun, int, error) {
 		return nil, 0, fmt.Errorf("result record width %d is out of range", width)
 	}
 	runs := make([]ModuleRun, 0, rows)
-	off := moduleResultHeader
+	off := ModuleResultHeaderBytes
 	for i := 0; i < rows; i++ {
 		if len(b)-off < 4 {
 			return nil, 0, fmt.Errorf("result record ends inside row %d's status", i)

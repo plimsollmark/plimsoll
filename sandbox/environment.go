@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // PayloadEnvironment is what a provider states about where one payload kind runs.
@@ -52,10 +54,23 @@ type Describer interface {
 	Environments() Environments
 }
 
+// GuestGuarded is the optional interface through which a provider states whether its last
+// startup smoke test proved plimsoll's guest guard in force (the filter in front of every program
+// plimsoll starts in a sandbox, which refuses the requests that make a namespace or a mount,
+// clone3 and tracing: docs/seccomp.md), and the guest guard's word in its policy. Hardened mode
+// refuses to serve a provider that must state it and has not proved it (plimsolld's provider
+// table). Informational otherwise, like the tier.
+type GuestGuarded interface {
+	GuestGuard() (policy string, proven bool)
+}
+
 // Qualifier is the optional interface through which a provider states the sentence that
 // goes with its tier wherever the tier is stated. Describe reports it as
-// isolation_qualification; a provider that does not implement it, or returns "", has none.
-// Informational, like the tier: it is not part of a run record.
+// isolation_qualification, and every run's answer and its record (version 5) state it
+// beside that run's tier; a provider that does not implement it, or returns "", has none.
+// Informational, like the tier. It must pass record.ValidQualification (at most 1024
+// bytes of UTF-8, no control or bidirectional format character), or plimsolld refuses
+// to start and a call is refused before it runs.
 type Qualifier interface {
 	Qualification() string
 }
@@ -93,9 +108,10 @@ func (d *DockerSandbox) Environments() Environments {
 		env.Project.SoftwareIdentity = state.projectManifest
 		env.Module.SoftwareIdentity = state.moduleManifest
 		// The seccomp profile runs apply, by digest, and the variant a run whose grant
-		// sets sdk_env gets instead (docker_seccomp.go); each run's record names the one
-		// it applied.
-		env.Policy = state.seccomp.describe(state.runtime)
+		// sets sdk_env gets instead (docker_seccomp.go), then the guest guard every
+		// command starts behind (withGuard); each run's record names the profile it
+		// applied and the guard.
+		env.Policy = state.withGuard(state.seccomp.describe(state.runtime))
 	}
 	d.stateMu.RLock()
 	env.Project.Languages = slices.Clone(d.projectLanguages)
@@ -129,8 +145,8 @@ func (e *E2B) Environments() Environments {
 // fails closed, as on E2B.
 func (d *DockerCloud) Environments() Environments {
 	identity := ""
-	if image := strings.TrimSpace(d.Image); isDigestPinned(image) && !d.rest() {
-		identity = "dockercloud-image:" + strings.ToLower(image[strings.LastIndex(image, "@")+1:])
+	if digest, pinned := providerkit.PinnedDigest(strings.TrimSpace(d.Image)); pinned && !d.rest() {
+		identity = "dockercloud-image:" + digest
 	}
 	ceiling := runCeiling(d.MaxTimeout)
 	langs := d.languages()

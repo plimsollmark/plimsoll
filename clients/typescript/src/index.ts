@@ -16,13 +16,15 @@ export {
   type ProjectOutcome,
   type ProjectRequest,
   type ProjectResult,
+  type GrantRunOptions,
   type RunOptions,
   type SessionOptions,
   type SessionSummary,
   type SoftwareRule,
   type StepResult,
 } from "./client.ts";
-export { PlimsollError, type Code, type Refusal, type SessionEnd } from "./errors.ts";
+export { CallAlreadySentError, CheckpointMismatchError, PlimsollError, StaleOwnerError, type Code, type Refusal, type SessionEnd } from "./errors.ts";
+export { checkpointProblem, checkpointToJSON, parseCheckpoint, validateCheckpoint, type SessionCheckpoint } from "./checkpoint.ts";
 export type { RunRecord } from "./record.ts";
 export {
   CodeSandboxes,
@@ -30,6 +32,8 @@ export {
   type CodeSandboxesOptions,
   type ExecuteCodeInput,
   type ExecuteCodeOutput,
+  type GrantPlan,
   type SessionMode,
+  type ToolGrant,
   type ToolLanguages,
 } from "./sandboxes.ts";

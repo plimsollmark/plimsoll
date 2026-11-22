@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 )
 
 // ready is a provider on a good fake whose smoke test has passed, with the calls so far
@@ -65,7 +66,7 @@ func TestProcessesStartOnlyThroughHostCommand(t *testing.T) {
 		}
 		for _, decl := range f.Decls {
 			fn, _ := decl.(*ast.FuncDecl)
-			inside := fn != nil && fn.Name.Name == "hostCommand" && name == "exec.go"
+			inside := fn != nil && fn.Name.Name == "startHost" && name == "exec.go"
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch n := n.(type) {
 				case *ast.SelectorExpr:
@@ -73,7 +74,7 @@ func TestProcessesStartOnlyThroughHostCommand(t *testing.T) {
 					if ok && slices.Contains(starters[pkg.Name], n.Sel.Name) {
 						checked++
 						if !inside {
-							t.Errorf("%s: %s.%s outside hostCommand: start a process only through hostCommand (exec.go)", fset.Position(n.Pos()), pkg.Name, n.Sel.Name)
+							t.Errorf("%s: %s.%s outside startHost: start a process only through hostCommand or startHost (exec.go)", fset.Position(n.Pos()), pkg.Name, n.Sel.Name)
 						}
 					}
 					// An exec.Cmd built by hand would skip hostCommand.
@@ -89,7 +90,7 @@ func TestProcessesStartOnlyThroughHostCommand(t *testing.T) {
 				case *ast.AssignStmt:
 					for _, lhs := range n.Lhs {
 						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Env" && !inside {
-							t.Errorf("%s: sets a command's Env outside hostCommand", fset.Position(n.Pos()))
+							t.Errorf("%s: sets a command's Env outside startHost", fset.Position(n.Pos()))
 						}
 					}
 				}
@@ -98,7 +99,7 @@ func TestProcessesStartOnlyThroughHostCommand(t *testing.T) {
 		}
 	}
 	if checked != 1 {
-		t.Fatalf("found %d process starts in the package, want exactly the one in hostCommand; the guard is broken", checked)
+		t.Fatalf("found %d process starts in the package, want exactly the one in startHost; the guard is broken", checked)
 	}
 }
 
@@ -193,7 +194,9 @@ func TestRunArgvCarriesTheLockdown(t *testing.T) {
 			t.Errorf("the run flags carry %s", banned)
 		}
 	}
-	want := []string{"-i", "PATH=" + controlPath, "HOME=/", "LD_PRELOAD=" + runnerGuardPath, "node", runnerPath}
+	// The runner is the native helper, started under a clean environment and nothing else:
+	// no guard library (it makes itself non-dumpable) and no node.
+	want := append([]string{"-i", "PATH=" + controlPath, "HOME=/"}, nativehelper.RunProject...)
 	if !slices.Equal(cmd, want) {
 		t.Fatalf("the container command is %q, want %q", cmd, want)
 	}
@@ -310,28 +313,31 @@ func TestSmokeTestRefusesAWeakerContainer(t *testing.T) {
 		mut  func(probe)
 		want string
 	}{
-		"no seccomp filter":      {status("Seccomp", "0"), "not a filter"},
-		"a capability left":      {status("CapEff", "00000000a80425fb"), "CapEff"},
-		"bounding set left":      {status("CapBnd", "00000000a80425fb"), "CapBnd"},
-		"root":                   {status("Uid", "0\t0\t0\t0"), "--user was not applied"},
-		"a supplementary group":  {status("Groups", "61000 27"), "supplementary"},
-		"a network":              {set("interfaces", []string{"lo", "eth0"}), "loopback alone"},
-		"a connection":           {set("connect", map[string]string{"1.1.1.1:443": "connected"}), "reached"},
-		"a writable image dir":   {set("writable", []string{"/dev/shm", "/opt/x", "/tmp", "/var/tmp", "/work"}), "accepted a write"},
-		"a tmpfs refused writes": {set("writable", []string{"/dev/shm", "/tmp", "/work"}), "accepted a write"},
-		"walk cut short":         {set("walk", map[string]any{"entries": 400001, "truncated": true}), "stopped"},
-		"memory not applied":     {set("memoryMax", "max"), "memory.max"},
-		"nproc not applied":      {set("limits", map[string]string{"Max processes": "unlimited unlimited", "Max open files": "4096 4096", "Max core file size": "0 0"}), "Max processes"},
-		"a search domain":        {set("resolv", "nameserver 127.0.0.1\nsearch corp.example\n"), "search"},
-		"an outside nameserver":  {set("resolv", "nameserver 10.255.255.254\n"), "nameserver"},
-		"an outside variable":    {set("envNames", []string{"HOME", "PATH", "WSL_INTEROP"}), "WSL_INTEROP"},
-		"runner memory readable": {set("runnerMem", "open"), "runner guard"},
-		"another kernel":         {set("kernel", "6.6.87.2-microsoft-standard-WSL2"), "kernel"},
-		"another boot":           {set("bootID", "ffffffff-0000-0000-0000-000000000000"), "boot ID"},
-		"a windows folder":       {mount("/var/tmp", "605 600 0:65 / /mnt/host rw,relatime - 9p drvfs rw,aname=drvfs;path=C:\\"), "Windows folder"},
-		"var tmp not tmpfs":      {mount("/var/tmp", "605 600 0:65 / /var/tmp rw,relatime - overlay overlay rw"), "not tmpfs"},
-		"tmp may run programs":   {mount(" /tmp ", "604 600 0:64 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=16384k"), "noexec"},
-		"work unbounded":         {mount(" /work ", "606 600 0:66 / /work rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,mode=1777"), "size="},
+		"no seccomp filter":       {status("Seccomp", "0"), "not a filter"},
+		"a capability left":       {status("CapEff", "00000000a80425fb"), "CapEff"},
+		"bounding set left":       {status("CapBnd", "00000000a80425fb"), "CapBnd"},
+		"root":                    {status("Uid", "0\t0\t0\t0"), "--user was not applied"},
+		"a supplementary group":   {status("Groups", "61000 27"), "supplementary"},
+		"a network":               {set("interfaces", []string{"lo", "eth0"}), "loopback alone"},
+		"a connection":            {set("connect", map[string]string{"1.1.1.1:443": "connected"}), "reached"},
+		"a writable image dir":    {set("writable", []string{"/dev/shm", "/opt/x", "/tmp", "/var/tmp", "/work"}), "accepted a write"},
+		"a tmpfs refused writes":  {set("writable", []string{"/dev/shm", "/tmp", "/work"}), "accepted a write"},
+		"walk cut short":          {set("walk", map[string]any{"entries": 400001, "truncated": true}), "stopped"},
+		"memory not applied":      {set("memoryMax", "max"), "memory.max"},
+		"nproc not applied":       {set("limits", map[string]string{"Max processes": "unlimited unlimited", "Max open files": "4096 4096", "Max core file size": "0 0"}), "Max processes"},
+		"a search domain":         {set("resolv", "nameserver 127.0.0.1\nsearch corp.example\n"), "search"},
+		"an outside nameserver":   {set("resolv", "nameserver 10.255.255.254\n"), "nameserver"},
+		"an outside variable":     {set("envNames", []string{"HOME", "PATH", "WSL_INTEROP"}), "WSL_INTEROP"},
+		"runner memory readable":  {set("runnerMem", "open"), "not non-dumpable"},
+		"no runner":               {set("helper", map[string]any{"error": "ENOENT"}), "no file at /usr/local/libexec/plimsoll-helper"},
+		"another runner":          {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64)}), "the native helper this plimsolld carries"},
+		"a runner the guest owns": {set("helper", map[string]any{"type": "file", "uid": 61000, "mode": 0o755, "sha256": goodHelper()["sha256"]}), "must be root's"},
+		"another kernel":          {set("kernel", "6.6.87.2-microsoft-standard-WSL2"), "kernel"},
+		"another boot":            {set("bootID", "ffffffff-0000-0000-0000-000000000000"), "boot ID"},
+		"a windows folder":        {mount("/var/tmp", "605 600 0:65 / /mnt/host rw,relatime - 9p drvfs rw,aname=drvfs;path=C:\\"), "Windows folder"},
+		"var tmp not tmpfs":       {mount("/var/tmp", "605 600 0:65 / /var/tmp rw,relatime - overlay overlay rw"), "not tmpfs"},
+		"tmp may run programs":    {mount(" /tmp ", "604 600 0:64 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=16384k"), "noexec"},
+		"work unbounded":          {mount(" /work ", "606 600 0:66 / /work rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,mode=1777"), "size="},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -539,12 +545,15 @@ func TestFromEnv(t *testing.T) {
 		env  func(string) string
 		want string
 	}{
-		"pids":          {env("SANDBOX_PIDS", "64"), "SANDBOX_PIDS"},
-		"no image":      {env("SANDBOX_WSLC_IMAGE", ""), "SANDBOX_WSLC_IMAGE is required"},
-		"unsafe image":  {env("SANDBOX_WSLC_IMAGE", "a b"), "not a plain image reference"},
-		"option image":  {env("SANDBOX_WSLC_IMAGE", "--privileged"), "not a plain image reference"},
-		"unpinned":      {env("SANDBOX_REQUIRE_PINNED_IMAGES", "1"), "name@sha256"},
-		"nproc":         {env("SANDBOX_WSLC_NPROC", "lots"), "whole number"},
+		"pids":         {env("SANDBOX_PIDS", "64"), "SANDBOX_PIDS"},
+		"no image":     {env("SANDBOX_WSLC_IMAGE", ""), "SANDBOX_WSLC_IMAGE is required"},
+		"unsafe image": {env("SANDBOX_WSLC_IMAGE", "a b"), "not a plain image reference"},
+		"option image": {env("SANDBOX_WSLC_IMAGE", "--privileged"), "not a plain image reference"},
+		"unpinned":     {env("SANDBOX_REQUIRE_PINNED_IMAGES", "1"), "name@sha256"},
+		"upper-case pin": {func(k string) string {
+			return map[string]string{"SANDBOX_REQUIRE_PINNED_IMAGES": "1", "SANDBOX_WSLC_IMAGE": "plimsoll/sandbox" + "@sha256:" + strings.Repeat("AB", 32)}[k]
+		}, "lower-case"},
+		"nproc":         {env("SANDBOX_WSLC_NPROC", "lots"), "must be an integer"},
 		"nproc range":   {env("SANDBOX_WSLC_NPROC", "2"), "between"},
 		"small disk":    {env("SANDBOX_DISK_MB", "40"), "SANDBOX_DISK_MB"},
 		"relative path": {env("SANDBOX_WSLC_PATH", "wslc.exe"), "absolute"},

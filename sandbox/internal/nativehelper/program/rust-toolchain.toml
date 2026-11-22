@@ -1,0 +1,9 @@
+# The toolchain the helper is built with, pinned exactly: the build's bytes depend on it
+# (the design review measured that the Rust image's own newer 1.100.0 gives other bytes than
+# 1.99.1 for the same source). 1.99.1 is the toolchain the Rust client pins. build.sh builds
+# inside rust:1.99.1-alpine named by its digest, which carries this same toolchain.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl"]

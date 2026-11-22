@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/boundary"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // Evidence is what the startup smoke test read: the software it ran on and the
@@ -106,6 +111,13 @@ func (p *Provider) Preflight(ctx context.Context) error {
 	return nil
 }
 
+// versionBudget bounds `wslc version`, Preflight's one call to Windows. It is held under
+// sandbox.PreflightBound, which the daemon's readiness budget is derived from: a larger
+// number here does not compile.
+const versionBudget = 30 * time.Second
+
+const _ = uint64(sandbox.PreflightBound - versionBudget)
+
 // version runs `wslc version --format json`, which prints the package version without a
 // session (VersionCommand.cpp at WSL master c7a28eb1), and refuses a release before
 // MinVersion.
@@ -119,7 +131,7 @@ func (p *Provider) version(ctx context.Context) (string, error) {
 	case !st.Mode().IsRegular():
 		return "", fmt.Errorf("wslc: %s is not a regular file", p.cfg.Path)
 	}
-	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	vctx, cancel := context.WithTimeout(ctx, versionBudget)
 	defer cancel()
 	out, err := p.output(vctx, "version", "--format", "json")
 	if err != nil {
@@ -162,8 +174,6 @@ func versionAtLeast(got, want string) bool {
 	return true
 }
 
-var imageIDRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-
 // inspectImage reads the configured image's ID, repository digests, platform,
 // environment and volumes, and refuses an image a run could not start safely.
 func (p *Provider) inspectImage(ctx context.Context) (id string, digests, env []string, err error) {
@@ -189,7 +199,7 @@ func (p *Provider) inspectImage(ctx context.Context) (id string, digests, env []
 	}
 	img := images[0]
 	switch {
-	case !imageIDRE.MatchString(img.Id):
+	case !providerkit.ValidDigest(img.Id):
 		return "", nil, nil, fmt.Errorf("wslc image inspect: the image ID %q is not sha256:<64 hex>", img.Id)
 	case img.Os != "linux":
 		return "", nil, nil, fmt.Errorf("wslc image inspect: the image is for %q, not linux", img.Os)
@@ -197,11 +207,11 @@ func (p *Provider) inspectImage(ctx context.Context) (id string, digests, env []
 		// A VOLUME gives every container a writable mount no tmpfs bound covers.
 		return "", nil, nil, errors.New("wslc: the image declares VOLUME mounts, which would be writable storage outside the tmpfs bounds; refused")
 	}
-	if m := pinnedRE.FindStringSubmatch(p.cfg.Image); m != nil {
+	if digest, ok := providerkit.PinnedDigest(p.cfg.Image); ok {
 		// The digest is the content address; the repository name may be written with or
 		// without its registry, so only the digest is compared.
-		if !slices.ContainsFunc(img.RepoDigests, func(d string) bool { return strings.HasSuffix(d, "@"+m[1]) }) {
-			return "", nil, nil, fmt.Errorf("wslc: the image's repository digests %v do not include the pinned %s", img.RepoDigests, m[1])
+		if !slices.ContainsFunc(img.RepoDigests, func(d string) bool { return strings.HasSuffix(d, "@"+digest) }) {
+			return "", nil, nil, fmt.Errorf("wslc: the image's repository digests %v do not include the pinned %s", img.RepoDigests, digest)
 		}
 	}
 	if err := checkImageEnv(img.Config.Env); err != nil {
@@ -219,8 +229,7 @@ func checkImageEnv(env []string) error {
 		if !ok || name == "" {
 			return fmt.Errorf("wslc: the image's environment entry %q is not NAME=value", kv)
 		}
-		switch {
-		case strings.HasPrefix(name, "LD_"), name == "GLIBC_TUNABLES", name == "LOCPATH", name == "NLSPATH", name == "GCONV_PATH":
+		if sessionkit.LoaderStartupVariable(name) {
 			return fmt.Errorf("wslc: the image sets %s, which the C library or dynamic loader reads before any program in the container runs; refused (bake the setting into the image)", name)
 		}
 	}
@@ -245,7 +254,7 @@ func (p *Provider) sessionRead(ctx context.Context, session string, argv ...stri
 // probeFile and probeStep are the smoke test's one-step project.
 const (
 	probeFile = "probe.js"
-	probeStep = "node " + probeFile
+	probeStep = sessionkit.GuestNode + " " + probeFile
 )
 
 // tmpfsMounts are the four places a run may write, each a bounded tmpfs.
@@ -256,8 +265,10 @@ var tmpfsMounts = []string{"/dev/shm", "/tmp", "/var/tmp", workDir}
 // image, then in the shared mode reads the session VM's kernel, boot ID and dockerd
 // version, runs probe.js as a runner step in a container started by runArgv, checks what
 // the probe read, and records which session it landed in. The per-run mode is
-// smokePerRun.
+// smokePerRun. Each claim is recorded as its check passes, and the record must match
+// claims (claims.go) before the evidence is kept.
 func (p *Provider) SmokeTest(ctx context.Context) error {
+	proof := claims.Start()
 	ver, err := p.version(ctx)
 	if err != nil {
 		return err
@@ -269,9 +280,12 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	proof.Proved(boundary.SetupReadBack, "SmokeTest")
 	if p.pr != nil {
-		return p.smokePerRun(ctx, ver, id, digests, env)
+		return p.smokePerRun(ctx, ver, id, digests, env, proof)
 	}
+	// The shared mode's runs share one session VM, which no run tears down.
+	proof.Skipped(boundary.Teardown)
 	kernel, err := p.sessionRead(ictx, "", "uname", "-r")
 	if err != nil {
 		return err
@@ -299,8 +313,11 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("wslc smoke test: %w", err)
 	}
-	ev, err := p.checkProbe(out, env, kernel, bootID, nil)
+	ev, err := p.checkProbe(out, env, kernel, bootID, nil, proof)
 	if err != nil {
+		return err
+	}
+	if err := proof.Done(); err != nil {
 		return err
 	}
 	ev.Mode, ev.WSLVersion, ev.ImageID, ev.RepoDigests, ev.Moby, ev.ReadAt = ModeShared, ver, id, digests, moby, time.Now().UTC()
@@ -314,18 +331,19 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 }
 
 // checkProbe holds one probe run's report to the container runArgv asks for.
-func (p *Provider) checkProbe(out planRun, env []string, kernel, bootID string, gv *gvisorProof) (Evidence, error) {
+func (p *Provider) checkProbe(out planRun, env []string, kernel, bootID string, gv *gvisorProof, proof *boundary.Proof) (Evidence, error) {
 	if !out.reported {
 		return Evidence{}, fmt.Errorf("wslc smoke test: no authenticated runner report (wslc exit %d): the image must be plimsoll's sandbox image or built FROM it", out.exit)
 	}
 	if out.result.Outcome != sandbox.ProjectOutcomeCompleted || len(out.result.Steps) != 1 || out.result.Steps[0].ExitCode != 0 {
 		return Evidence{}, fmt.Errorf("wslc smoke test: the probe step did not complete (%s, %s)", out.result.Outcome, out.result.Detail)
 	}
+	proof.Proved(boundary.RunPath, "checkProbe")
 	var rep boundaryReport
 	if err := json.Unmarshal([]byte(out.result.Steps[0].Stdout), &rep); err != nil {
 		return Evidence{}, fmt.Errorf("wslc smoke test: unreadable probe report: %w", err)
 	}
-	ev, err := p.checkBoundary(rep, env, kernel, bootID, gv)
+	ev, err := p.checkBoundary(rep, env, kernel, bootID, gv, proof)
 	if err != nil {
 		return Evidence{}, fmt.Errorf("wslc smoke test: %w", err)
 	}
@@ -357,6 +375,9 @@ func (p *Provider) landedSession(ctx context.Context, bootID string) string {
 // gpuDevice is the device WSL's GPU sharing gives a Linux kernel.
 const gpuDevice = "/dev/dxg"
 
+// lsAbsentWords is what ls says of a file that is not there, in the session VM's English.
+const lsAbsentWords = "No such file"
+
 // vmGPU is whether the session VM has the GPU device: "present: " and its ls -l line, or
 // "absent".
 func (p *Provider) vmGPU(ctx context.Context, session string) (string, error) {
@@ -364,7 +385,7 @@ func (p *Provider) vmGPU(ctx context.Context, session string) (string, error) {
 	switch {
 	case err == nil && strings.HasSuffix(line, gpuDevice):
 		return "present: " + line, nil
-	case err != nil && strings.Contains(err.Error(), "No such file"):
+	case err != nil && strings.Contains(err.Error(), lsAbsentWords):
 		return "absent", nil
 	case err != nil:
 		return "", fmt.Errorf("reading %s in the session VM: %w", gpuDevice, err)
@@ -398,7 +419,7 @@ func (p *Provider) vmWindowsMounts(ctx context.Context, session string) ([]strin
 // IDs that differ from each other, from the default session's and from this
 // distribution's. Each session is torn down before the next one starts, and the smoke test
 // requires both teardowns to finish and both directories to be gone.
-func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env []string) error {
+func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env []string, proof *boundary.Proof) error {
 	if err := p.resolveRoot(ctx); err != nil {
 		return fmt.Errorf("wslc smoke test: %w", err)
 	}
@@ -428,13 +449,16 @@ func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env
 	if err := p.checkTemplateACL(ctx, p.pr.root.win); err != nil {
 		return fmt.Errorf("wslc smoke test: %w", err)
 	}
+	// The run root (one process to it, and no one else may write there), the sweep and
+	// the template's own folder and disk file.
+	proof.Proved(boundary.SetupReadBack, "smokePerRun")
 	p.pr.mu.Lock()
 	p.pr.template = tpl.win
 	p.pr.mu.Unlock()
 	ev.TemplateBytes, ev.TemplateBuild = tpl.bytes, tpl.built
 	cand := &verified{imageID: id, imageEnv: env}
 	for i := 0; i < 2; i++ {
-		got, rs, err := p.smokeSession(ctx, cand, env)
+		got, rs, err := p.smokeSession(ctx, cand, env, proof)
 		if err != nil {
 			return fmt.Errorf("wslc smoke test, per-run session %d: %w", i+1, err)
 		}
@@ -451,6 +475,9 @@ func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env
 	}
 	ev.BootID, ev.ReadAt = "", time.Now().UTC() // each run's VM has its own: RunSessions
 	ev.VMTierAccepted = p.cfg.AcceptVMTier
+	if err := proof.Done(); err != nil {
+		return err
+	}
 	cand.evidence = ev
 	p.mu.Lock()
 	p.state = cand
@@ -459,7 +486,7 @@ func (p *Provider) smokePerRun(ctx context.Context, ver, id string, digests, env
 }
 
 // smokeSession runs the probe in one fresh session, opened and torn down as a run's.
-func (p *Provider) smokeSession(ctx context.Context, cand *verified, env []string) (Evidence, RunSessionEvidence, error) {
+func (p *Provider) smokeSession(ctx context.Context, cand *verified, env []string, proof *boundary.Proof) (Evidence, RunSessionEvidence, error) {
 	start := time.Now()
 	h, boot, err := p.openRunSession(ctx)
 	if err != nil {
@@ -509,7 +536,7 @@ func (p *Provider) smokeSession(ctx context.Context, cand *verified, env []strin
 		}
 	}
 	rs.Result = time.Since(start)
-	ev, checkErr := p.checkProbe(out, env, kernel, boot, gv)
+	ev, checkErr := p.checkProbe(out, env, kernel, boot, gv, proof)
 	if checkErr == nil && gv != nil {
 		ev.GVisor = p.gvisorEvidence(store, *gv)
 	}
@@ -524,6 +551,7 @@ func (p *Provider) smokeSession(ctx context.Context, cand *verified, env []strin
 	if _, err := os.Stat(h.dir); !errors.Is(err, os.ErrNotExist) {
 		return Evidence{}, rs, fmt.Errorf("the session's directory %s is still there after its teardown (%v)", h.dir, err)
 	}
+	proof.Proved(boundary.Teardown, "smokeSession")
 	ev.KernelRelease, ev.Moby, ev.GPUInSessionVM, ev.SessionVMWindowsMounts = kernel, moby, gpu, mounts
 	return ev, rs, nil
 }
@@ -594,7 +622,9 @@ type boundaryReport struct {
 	Resolv    string            `json:"resolv"`
 	EnvNames  []string          `json:"envNames"`
 	RunnerMem string            `json:"runnerMem"`
-	GPU       string            `json:"gpu"`
+	// Helper is the project runner's file as the step saw it (nativehelper.CheckExpr).
+	Helper nativehelper.FileReport `json:"helper"`
+	GPU    string                  `json:"gpu"`
 }
 
 // windowsFSTypes are the filesystems a Windows folder reaches a Linux guest through.
@@ -612,7 +642,7 @@ var stepEnvNames = []string{"PATH", "HOME", "HOSTNAME", "PWD", "OLDPWD", "SHLVL"
 // (checkGVisorReadings), accepted only together with the proof of gVisor itself; every
 // other check below runs as it does without gVisor, except the three mount-table allowances
 // checkMounts names.
-func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bootID string, gv *gvisorProof) (Evidence, error) {
+func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bootID string, gv *gvisorProof, proof *boundary.Proof) (Evidence, error) {
 	ev := Evidence{KernelRelease: kernel, BootID: bootID}
 	uid := strconv.Itoa(GuestUID)
 	for _, field := range []string{"Uid", "Gid"} {
@@ -624,32 +654,43 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 	if g := strings.Fields(r.Status["Groups"]); len(g) > 1 || (len(g) == 1 && g[0] != uid) {
 		return ev, fmt.Errorf("the guest has supplementary groups %q", r.Status["Groups"])
 	}
+	proof.Proved(boundary.GuestUser, "checkBoundary")
 	for _, field := range []string{"CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"} {
 		if v := r.Status[field]; strings.Trim(v, "0") != "" || v == "" {
 			return ev, fmt.Errorf("the guest's %s is %q, not empty: --cap-drop ALL was not applied", field, v)
 		}
 	}
+	proof.Proved(boundary.NoCapabilities, "checkBoundary")
 	ev.Seccomp, ev.SeccompFilters, ev.NoNewPrivs, ev.CapBnd = r.Status["Seccomp"], r.Status["Seccomp_filters"], r.Status["NoNewPrivs"], r.Status["CapBnd"]
 	if gv != nil {
 		if err := checkGVisorReadings(r, kernel, bootID, gv); err != nil {
 			return ev, err
 		}
+		// gVisor's own readings, which replace the filter line and the kernel and boot ID
+		// below (checkGVisorReadings says how each proves the same property).
+		proof.Proved(boundary.SeccompFilter, "checkBoundary")
+		proof.Proved(boundary.TierInside, "checkBoundary")
 	} else if ev.Seccomp != "2" {
 		// Below Docker's own default filter the provider is not worth serving, and WSLC
 		// offers no way to choose a profile.
 		return ev, fmt.Errorf("the guest runs with Seccomp %q, not a filter (2): dockerd's default seccomp profile is not in force and WSLC cannot set one; refused", ev.Seccomp)
+	} else {
+		proof.Proved(boundary.SeccompFilter, "checkBoundary")
 	}
 	if !slices.Equal(r.Interfaces, []string{"lo"}) {
 		return ev, fmt.Errorf("the container's network interfaces are %q, not loopback alone: --network none is not in force", r.Interfaces)
 	}
+	proof.Proved(boundary.LoopbackOnly, "checkBoundary")
 	for target, result := range r.Connect {
 		if result == "connected" {
 			return ev, fmt.Errorf("the guest reached %s with --network none", target)
 		}
 	}
+	proof.Proved(boundary.NoEgress, "checkBoundary")
 	if err := checkMounts(r.Mountinfo, p.cfg, gv != nil); err != nil {
 		return ev, err
 	}
+	proof.Proved(boundary.WritableBounds, "checkBoundary")
 	if r.Walk.Truncated {
 		return ev, fmt.Errorf("the writable-place walk stopped at %d entries before it covered the image; refused rather than serve a partly checked filesystem", r.Walk.Entries)
 	}
@@ -660,6 +701,7 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 	if !slices.Equal(got, want) {
 		return ev, fmt.Errorf("the places that accepted a write are %q, want exactly %q: with no read-only root, any other one is writable storage a guest can also run programs from", got, want)
 	}
+	proof.Proved(boundary.WritablePlaces, "checkBoundary")
 	ev.Writable, ev.WalkedEntries, ev.Unlistable = got, r.Walk.Entries, r.Walk.Unlistable
 	wantMem := int64(p.cfg.MemoryMB) * 1024 * 1024
 	memRead, memFrom := r.MemoryMax, "the container's"
@@ -671,6 +713,7 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 	if mem, err := strconv.ParseInt(memRead, 10, 64); err != nil || mem != wantMem {
 		return ev, fmt.Errorf("%s memory.max is %q, want %d: --memory was not applied", memFrom, memRead, wantMem)
 	}
+	proof.Proved(boundary.MemoryLimit, "checkBoundary")
 	ev.MemoryMax = wantMem
 	ev.PidsMax = r.PidsMax
 	n := strconv.Itoa(p.cfg.Nproc)
@@ -684,8 +727,9 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 			return ev, fmt.Errorf("the guest's %q limit is %q, want %s %s: --ulimit was not applied", name, r.Limits[name], want[0], want[1])
 		}
 	}
+	proof.Proved(boundary.ProcessLimit, "checkBoundary")
 	ev.NprocLimit = p.cfg.Nproc
-	if err := checkResolv(r.Resolv); err != nil {
+	if err := proof.Check(boundary.FixedResolver, "checkBoundary", checkResolv(r.Resolv)); err != nil {
 		return ev, err
 	}
 	allowed := slices.Clone(stepEnvNames)
@@ -698,12 +742,23 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 			return ev, fmt.Errorf("a step's environment holds %q, which neither the image nor the runner sets: a variable reached the container from outside", name)
 		}
 	}
-	if r.RunnerMem != "EACCES" && r.RunnerMem != "EPERM" {
-		return ev, fmt.Errorf("a step opening the runner's memory got %q, not a refusal: the runner guard is not in force", r.RunnerMem)
+	proof.Proved(boundary.ClosedEnvironment, "checkBoundary")
+	helperSum, err := nativehelper.SHA256(runtime.GOARCH)
+	if err != nil {
+		return ev, err
 	}
+	if err := r.Helper.Check(helperSum); err != nil {
+		return ev, fmt.Errorf("%w; plimsoll starts that file as the project runner of every run, so the image must be plimsoll's sandbox image built from this plimsolld's source (make docker-images) or one built FROM it", err)
+	}
+	if r.RunnerMem != "EACCES" && r.RunnerMem != "EPERM" {
+		return ev, fmt.Errorf("a step opening the runner's memory got %q, not a refusal: the runner is not non-dumpable", r.RunnerMem)
+	}
+	proof.Proved(boundary.ControlChannel, "checkBoundary")
 	if r.GPU != "absent" {
 		return ev, fmt.Errorf("the container's %s (the GPU device the session VM has) reads %q, not absent: a run must not reach the GPU", gpuDevice, r.GPU)
 	}
+	// No Windows folder in the mount table (checkMounts, above) and no GPU device.
+	proof.Proved(boundary.NoHostShare, "checkBoundary")
 	ev.GPUInContainer = r.GPU
 	if gv != nil {
 		// Replaced by the gVisor proof above: the kernel is gVisor's, the boot ID is its own,
@@ -716,6 +771,7 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 	if r.BootID == "" || r.BootID != bootID {
 		return ev, fmt.Errorf("the container's boot ID %q is not the session VM's %q: the run did not land in the session read", r.BootID, bootID)
 	}
+	proof.Proved(boundary.TierInside, "checkBoundary")
 	return ev, nil
 }
 
@@ -798,7 +854,7 @@ func checkResolv(s string) error {
 // probeScript is probe.js: it runs as a runner step, as the guest uid, and prints one
 // JSON object. Every read is bounded and every failure is recorded as text, so the host
 // decides.
-const probeScript = `const fs = require("fs"), net = require("net"), os = require("os");
+const probeScript = `const fs = require("fs"), net = require("net"), os = require("os"), cr = require("crypto");
 const read = (f, n) => { try { return fs.readFileSync(f, "utf8").slice(0, n || 65536); } catch (e) { return ""; } };
 const status = {};
 for (const line of read("/proc/self/status").split("\n")) {
@@ -870,7 +926,7 @@ Promise.all(targets.map(tryConnect)).then(() => {
     status, kernel: os.release(), procVersion: read("/proc/version", 512).trim(), bootID: read("/proc/sys/kernel/random/boot_id").trim(), interfaces, connect,
     mountinfo, writable: [...writable].sort().slice(0, 200), walk,
     memoryMax: read("/sys/fs/cgroup/memory.max").trim(), pidsMax: read("/sys/fs/cgroup/pids.max").trim(),
-    limits, resolv: read("/etc/resolv.conf", 4096), envNames: Object.keys(process.env).sort(), runnerMem,
+    limits, resolv: read("/etc/resolv.conf", 4096), envNames: Object.keys(process.env).sort(), runnerMem, helper: ` + nativehelper.CheckExpr + `,
     gpu: fs.existsSync("/dev/dxg") ? "present" : "absent",
   }));
 });

@@ -7,20 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
-	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
-
-// fakeSessionsURL serves a daemon on the in-memory session provider with sessions on,
-// for a suite that opens and closes sessions without running anything in them (the
-// framework adapters that serve a shell over a session).
-func fakeSessionsURL(t *testing.T) string {
-	t.Helper()
-	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{}))
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	return serve(t, svc, nil, nil)
-}
 
 // TestPythonWorkspaceDocker runs tests/docker_workspace_check.py, the agent
 // workspace's fixed scripts on a real docker session, against a daemon served here
@@ -65,9 +55,9 @@ func TestPythonWorkspaceDocker(t *testing.T) {
 	if err := (sandbox.Provider{Sandbox: d}).EnsureReady(ctx); err != nil {
 		t.Fatalf("docker provider not ready: %v", err)
 	}
-	svc := quiet(rpc.NewSandboxService(d))
+	svc := clientsuite.Quiet(rpc.NewSandboxService(d))
 	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, Lifetime: 10 * time.Minute, IdleTimeout: 2 * time.Minute}
-	url := serve(t, svc, nil, nil)
+	url := clientsuite.Serve(t, svc, nil, nil)
 
 	cmd := exec.Command(python, "-B", "-m", "unittest", "tests.docker_workspace_check", "-v")
 	cmd.Env = append(os.Environ(),

@@ -124,6 +124,7 @@ func (*meteredFake) Environments() sandbox.Environments {
 	return sandbox.Environments{JavaScript: sandbox.PayloadEnvironment{MaxTimeout: 10 * time.Second}}
 }
 func (f *meteredFake) RunJavaScript(context.Context, sandbox.Request) (sandbox.Result, error) {
+	// fixed-wait: the fake run's own duration, which the spend meter under test measures
 	time.Sleep(50 * time.Millisecond)
 	return sandbox.Result{Stdout: "ok", Sandbox: "fake", Isolation: sandbox.IsolationVM}, nil
 }
@@ -335,6 +336,34 @@ func TestSessionMeterChargesOnlyRunningTime(t *testing.T) {
 	now = now.Add(5 * time.Second)
 	if got := m.stop(); got != 125 || spent() != 125 {
 		t.Fatalf("after the second span: charged %v, %v spent; want 125", got, spent())
+	}
+}
+
+// A bill (a close of the daemon's own failed) holds its span past the allowance, since
+// those seconds bill anyway; the end settles it to what ran; and after the end neither a
+// bill nor a cover holds anything, so nothing is left unsettled for a sandbox that is gone.
+func TestSessionMeterBillHoldsPastTheAllowanceAndTheEndSettlesIt(t *testing.T) {
+	now := fixedSpendTestTime()
+	c := NewSpendCap(0)
+	c.now = func() time.Time { return now }
+	spent := func() float64 { a, _ := c.spent("alice"); return a }
+	m := c.meter("alice", 100)
+	if err := m.cover(100 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(40 * time.Second)
+	if held := m.bill(600 * time.Second); held != 600 || spent() != 640 {
+		t.Fatalf("bill: %v held, %v spent; want 600 held past the 100 s allowance, 640 counted", held, spent())
+	}
+	now = now.Add(20 * time.Second)
+	if got := m.end(); got != 60 || spent() != 60 || m.running() {
+		t.Fatalf("end: charged %v, %v spent, running %v; want the 60 s that ran", got, spent(), m.running())
+	}
+	if held := m.bill(600 * time.Second); held != 0 || spent() != 60 {
+		t.Fatalf("a bill after the end: %v held, %v spent; want nothing", held, spent())
+	}
+	if err := m.cover(10 * time.Second); err != nil || spent() != 60 || m.running() {
+		t.Fatalf("a cover after the end: %v, %v spent, running %v; want nothing held", err, spent(), m.running())
 	}
 }
 

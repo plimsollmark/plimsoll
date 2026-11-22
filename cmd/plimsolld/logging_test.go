@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/internal/printable"
 )
 
 func envOf(v string) func(string) string {
@@ -51,5 +54,42 @@ func TestUnknownLogFormatFallsToJSON(t *testing.T) {
 	slog.New(newLogHandler(envOf("jsonl"), &buf)).Info("code run")
 	if !json.Valid(bytes.TrimSpace(buf.Bytes())) {
 		t.Errorf("unknown format did not fall back to JSON: %s", buf.String())
+	}
+}
+
+// F8 of the security scan of 2026-11-20, in the daemon's own lines: a value from outside
+// (a file's name, a provider's error text) reaches the log stream with its control and
+// bidirectional characters escaped, in both formats. JSON escaped the C0 range already
+// and the text format quoted it, but neither escaped DEL, C1 or the bidirectional
+// controls. The line still parses, and an ordinary value is as it was.
+func TestLogLinesEscapeOutsideText(t *testing.T) {
+	hostile := "a\x1b[2K\rforged\u202e\u009b\x7f"
+	for _, format := range []string{"", "text"} {
+		var buf bytes.Buffer
+		slog.New(newLogHandler(envOf(format), &buf)).Error("cannot load", "path", hostile, "error", errors.New(hostile), "names", []string{hostile}, "trace_id", "9af31c02")
+		line := strings.TrimSuffix(buf.String(), "\n")
+		if strings.ContainsFunc(line, printable.Escaped) {
+			t.Errorf("format %q: a raw control or format character in %q", format, line)
+		}
+		if format == "text" {
+			if !strings.Contains(line, "path="+printable.Text(hostile)) || !strings.Contains(line, "trace_id=9af31c02") {
+				t.Errorf("text line %q", line)
+			}
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("not JSON: %v: %s", err, line)
+		}
+		want := printable.Text(hostile)
+		if m["path"] != want || m["error"] != want || m["trace_id"] != "9af31c02" || m["msg"] != "cannot load" || m["level"] != "ERROR" {
+			t.Errorf("JSON line %v", m)
+		}
+		if names, _ := m["names"].([]any); len(names) != 1 || names[0] != want {
+			t.Errorf("JSON line's list %v", m["names"])
+		}
+		if _, ok := m["time"].(string); !ok {
+			t.Errorf("JSON line's time %v", m["time"])
+		}
 	}
 }

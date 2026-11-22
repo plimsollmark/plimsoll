@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 // The per-run mode (SANDBOX_WSLC_MODE=per-run) gives every run a WSLC session of its
@@ -87,7 +88,7 @@ var (
 	bootIDRE   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
-func newSessionName() string { return SessionPrefix + randHex(8) }
+func newSessionName() string { return SessionPrefix + providerkit.RandHex(8) }
 
 // runRoot is the directory that holds the template and the run disks, both ways.
 type runRoot struct{ linux, win string }
@@ -110,10 +111,10 @@ type holder struct {
 	forced bool
 }
 
-// syncBuffer is a cappedBuffer read while a process writes to it.
+// syncBuffer is a providerkit.Capture read while a process writes to it.
 type syncBuffer struct {
 	mu sync.Mutex
-	b  cappedBuffer
+	b  providerkit.Capture
 }
 
 func (s *syncBuffer) Write(p []byte) (int, error) {
@@ -265,7 +266,7 @@ func (p *Provider) startHolder(h *holder) error {
 	if err != nil {
 		return err
 	}
-	h.out = &syncBuffer{b: cappedBuffer{limit: errorCap}}
+	h.out = &syncBuffer{b: providerkit.Capture{Limit: errorCap}}
 	cmd.Stdout, cmd.Stderr = h.out, h.out
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,12 +21,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/internal/settings/configfile"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // Registry maps a profile name to a ready, validated host-API grant.
 type Registry struct {
 	profiles map[string]*Profile
+	// fileModes is what lets a user other than the daemon's own or root change the
+	// grants file or a preamble_file it names (configfile), nil when nothing does.
+	fileModes *configfile.Finding
+}
+
+// FileModes is what lets a user other than the daemon's own or root change the grants
+// file or a preamble_file it names, nil when nothing does (or no file was read);
+// plimsolld refuses it in hardened mode and warns about it otherwise.
+func (r *Registry) FileModes() *configfile.Finding {
+	if r == nil {
+		return nil
+	}
+	return r.fileModes
 }
 
 // MaxProfileNameBytes is shared with the RPC edge so every configured profile is
@@ -370,31 +386,33 @@ type tokenConfig struct {
 }
 
 // buildMinter turns a profile's token config into a sandbox.TokenMinter. A nil
-// config means an unauthenticated host API (no Authorization header).
-func buildMinter(profile string, tc *tokenConfig) (sandbox.TokenMinter, error) {
+// config means an unauthenticated host API (no Authorization header). The second result
+// is the secret the minter holds as loaded: the static token, or the jwt signing secret
+// (with it the guest could sign any token it liked), for secretInGuestFields.
+func buildMinter(profile string, tc *tokenConfig) (sandbox.TokenMinter, string, error) {
 	if tc == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 	switch tc.Type {
 	case "", "static":
 		if tc.Env == "" {
-			return nil, fmt.Errorf("grants: profile %q: token.env is required for a static token", profile)
+			return nil, "", fmt.Errorf("grants: profile %q: token.env is required for a static token", profile)
 		}
 		v := os.Getenv(tc.Env)
 		if v == "" {
-			return nil, fmt.Errorf("grants: profile %q: token env %q is empty or unset", profile, tc.Env)
+			return nil, "", fmt.Errorf("grants: profile %q: token env %q is empty or unset", profile, tc.Env)
 		}
-		return sandbox.StaticToken(v), nil
+		return sandbox.StaticToken(v), v, nil
 	case "jwt":
 		if tc.SecretEnv == "" {
-			return nil, fmt.Errorf("grants: profile %q: token.secret_env is required for a jwt token", profile)
+			return nil, "", fmt.Errorf("grants: profile %q: token.secret_env is required for a jwt token", profile)
 		}
 		secret := os.Getenv(tc.SecretEnv)
 		if secret == "" {
-			return nil, fmt.Errorf("grants: profile %q: jwt secret env %q is empty or unset", profile, tc.SecretEnv)
+			return nil, "", fmt.Errorf("grants: profile %q: jwt secret env %q is empty or unset", profile, tc.SecretEnv)
 		}
 		if len(secret) < 32 {
-			return nil, fmt.Errorf("grants: profile %q: jwt secret env %q must contain at least 32 bytes for HS256", profile, tc.SecretEnv)
+			return nil, "", fmt.Errorf("grants: profile %q: jwt secret env %q must contain at least 32 bytes for HS256", profile, tc.SecretEnv)
 		}
 		// Audience is mandatory: plimsoll is the issuer, not the verifier, so it
 		// cannot enforce that a token is used only against its intended service. A
@@ -402,12 +420,51 @@ func buildMinter(profile string, tc *tokenConfig) (sandbox.TokenMinter, error) {
 		// replayed against API Y when they share the HS256 secret. Fail closed at
 		// load rather than mint an audience-less, cross-service-replayable token.
 		if strings.TrimSpace(tc.Audience) == "" {
-			return nil, fmt.Errorf("grants: profile %q: token.audience is required for a jwt token (binds it to one service; the target MUST reject a mismatched aud)", profile)
+			return nil, "", fmt.Errorf("grants: profile %q: token.audience is required for a jwt token (binds it to one service; the target MUST reject a mismatched aud)", profile)
 		}
-		return newJWTMinter([]byte(secret), time.Duration(tc.TTLSec)*time.Second, tc.Issuer, tc.Audience, tc.KeyID), nil
+		return newJWTMinter([]byte(secret), time.Duration(tc.TTLSec)*time.Second, tc.Issuer, tc.Audience, tc.KeyID), secret, nil
 	default:
-		return nil, fmt.Errorf("grants: profile %q: unknown token.type %q (want static|jwt)", profile, tc.Type)
+		return nil, "", fmt.Errorf("grants: profile %q: unknown token.type %q (want static|jwt)", profile, tc.Type)
 	}
+}
+
+// minSecretMatchBytes is the shortest secret looked for inside a longer value. A token
+// shorter than this is matched only as a whole value: a two-letter placeholder token
+// would otherwise refuse every preamble that holds those two letters.
+const minSecretMatchBytes = 8
+
+// secretInGuestFields names the first field of a profile whose value holds secret: an
+// sdk_env value or the preamble (both reach the guest as written), the global's name, or
+// a set_headers value (it goes to the API, but a credential belongs in token, never as a
+// value in the grants file, and an API that echoes headers would hand it back). It
+// returns "" when none does. It never returns the value.
+func secretInGuestFields(secret string, sdkEnv map[string]string, preamble, global string, setHeaders map[string]string) string {
+	if secret == "" {
+		return ""
+	}
+	holds := func(v string) bool {
+		if len(secret) < minSecretMatchBytes {
+			return v == secret
+		}
+		return strings.Contains(v, secret)
+	}
+	for _, name := range slices.Sorted(maps.Keys(sdkEnv)) {
+		if holds(sdkEnv[name]) {
+			return fmt.Sprintf("sdk_env %q", name)
+		}
+	}
+	if holds(preamble) {
+		return "preamble"
+	}
+	if holds(global) {
+		return "global"
+	}
+	for _, name := range slices.Sorted(maps.Keys(setHeaders)) {
+		if holds(setHeaders[name]) {
+			return fmt.Sprintf("set_headers %q", name)
+		}
+	}
+	return ""
 }
 
 // parsePlacement reads where the credential goes from a token config. A key that does
@@ -444,7 +501,7 @@ func parsePlacement(tc *tokenConfig) (sandbox.CredentialPlacement, error) {
 // LoadFromEnv builds the registry from the file named by PLIMSOLL_GRANTS_FILE. An
 // unset var yields an empty registry (no profiles) — grants are off by default.
 func LoadFromEnv() (*Registry, error) {
-	path := strings.TrimSpace(os.Getenv("PLIMSOLL_GRANTS_FILE"))
+	path := settings.GrantsFile.Get(os.Getenv)
 	if path == "" {
 		return &Registry{}, nil
 	}
@@ -455,7 +512,7 @@ func LoadFromEnv() (*Registry, error) {
 // sandbox.HostAPIGrant.Validate, so a profile that names a forbidden scope
 // (code:run / "*") or omits BaseURL fails fast at startup, not at first use.
 func Load(path string) (*Registry, error) {
-	raw, err := os.ReadFile(path)
+	raw, modes, err := configfile.Read(path)
 	if err != nil {
 		return nil, fmt.Errorf("grants: read %s: %w", path, err)
 	}
@@ -469,7 +526,7 @@ func Load(path string) (*Registry, error) {
 		return nil, fmt.Errorf("grants: parse %s: %w", path, err)
 	}
 
-	r := &Registry{profiles: make(map[string]*Profile, len(cfg.Profiles))}
+	r := &Registry{profiles: make(map[string]*Profile, len(cfg.Profiles)), fileModes: modes}
 	for name, pc := range cfg.Profiles {
 		if err := validateProfileName(name); err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
@@ -529,15 +586,28 @@ func Load(path string) (*Registry, error) {
 			if rel, rerr := filepath.Rel(realDir, realPF); rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return nil, fmt.Errorf("grants: profile %q: preamble_file %q resolves outside the grants directory", name, pc.PreambleFile)
 			}
-			b, err := os.ReadFile(realPF)
+			// The preamble enters every sandbox the profile grants, so it is judged as the
+			// grants file is.
+			b, pmodes, err := configfile.Read(realPF)
 			if err != nil {
 				return nil, fmt.Errorf("grants: profile %q: read preamble_file: %w", name, err)
 			}
+			if pmodes != nil {
+				if r.fileModes == nil {
+					r.fileModes = &configfile.Finding{}
+				}
+				r.fileModes.Problems = append(r.fileModes.Problems, pmodes.Problems...)
+			}
 			preamble = string(b)
 		}
-		minter, err := buildMinter(name, pc.Token)
+		minter, secret, err := buildMinter(name, pc.Token)
 		if err != nil {
 			return nil, err
+		}
+		if field := secretInGuestFields(secret, pc.SDKEnv, preamble, pc.Global, pc.SetHeaders); field != "" {
+			return nil, fmt.Errorf("grants: profile %q: %s holds the profile's token secret; the guest would receive it "+
+				"(sdk_env and the preamble reach the sandbox as written), which is what the broker exists to prevent: "+
+				"put a placeholder there, the broker never forwards it", name, field)
 		}
 		placement, err := parsePlacement(pc.Token)
 		if err != nil {

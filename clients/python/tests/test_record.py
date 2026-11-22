@@ -23,10 +23,14 @@ from plimsoll_client import (
     ResultKindMismatchError,
     RunRecord,
     SoftwareRule,
+    PlimsollError,
 )
 from plimsoll_client._record import (
+    _states_only,
     check,
     check_single,
+    valid_daemon_version,
+    valid_qualification,
     record_digest,
     record_from_wire,
     valid_instance,
@@ -34,7 +38,11 @@ from plimsoll_client._record import (
     result_digest,
     session_fingerprint,
 )
+from plimsoll_client._tables import RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT
 from plimsoll_client._wire import Msg
+from plimsoll_client.types import meets
+
+from ._cases import says_of, verdict
 
 
 def b64(b: bytes) -> str:
@@ -118,6 +126,9 @@ def wire_record(r: RunRecord) -> dict:
         "previousSha256": r.previous_sha256,
         "unanswered": r.unanswered,
         "instance": r.instance,
+        "isolationQualification": r.isolation_qualification,
+        "warm": r.warm,
+        "daemonVersion": r.daemon_version,
         "recordSha256": r.sha256,
     }
 
@@ -127,7 +138,7 @@ def stamped(req: dict, resp: dict, rule: "SoftwareRule | None" = None) -> dict:
     out = copy.deepcopy(resp)
     m = Msg(out, "r")
     r = RunRecord(
-        version=4,
+        version=5,
         request_sha256=request_digest(req),
         result_sha256=result_digest(m),
         provider=m.get_str("sandbox"),
@@ -143,50 +154,179 @@ def stamped(req: dict, resp: dict, rule: "SoftwareRule | None" = None) -> dict:
         previous_sha256="",
         sha256="",
         instance=m.get_str("instance"),
+        isolation_qualification=m.get_str("isolationQualification"),
+        warm=m.get_bool("warm"),
+        daemon_version=m.get_str("daemonVersion"),
     )
     r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
     out["record"] = wire_record(r)
     return out
 
 
+def states_only_says(r: RunRecord) -> str:
+    """The verdict of the check of a record on its own (the states-only path)."""
+    try:
+        _states_only(r)
+    except PlimsollError as e:
+        return says_of(e)
+    return "accept"
+
+
 class GoldenVectors(unittest.TestCase):
-    # Every vector of record/testdata/golden.json.
+    # Every vector of record/testdata/golden.json. Each answer is also written down for the
+    # judge of the shared cases (tests/_cases.py), which fails a vector left unchecked.
     def test_vectors(self) -> None:
         n = 0
         for v in GOLDEN["requests"]:
             with self.subTest(v["name"]):
-                self.assertEqual(request_digest(copy.deepcopy(v["request"])), v["sha256"])
+                got = request_digest(copy.deepcopy(v["request"]))
+                verdict("golden/requests/" + v["name"], "digest", got)
+                self.assertEqual(got, v["sha256"])
             n += 1
         for v in GOLDEN["results"]:
             with self.subTest(v["name"]):
-                self.assertEqual(result_digest(Msg(v["response"], "r")), v["sha256"])
+                got = result_digest(Msg(v["response"], "r"))
+                verdict("golden/results/" + v["name"], "digest", got)
+                self.assertEqual(got, v["sha256"])
             n += 1
         for v in GOLDEN["records"]:
             with self.subTest(v["name"]):
-                self.assertEqual(record_digest(record_from_wire(Msg(v["record"], "record"))), v["sha256"])
+                got = record_digest(record_from_wire(Msg(v["record"], "record")))
+                verdict("golden/records/" + v["name"], "digest", got)
+                self.assertEqual(got, v["sha256"])
             n += 1
         for v in GOLDEN["sessionFingerprints"]:
             with self.subTest(v["name"]):
-                self.assertEqual(session_fingerprint(v["sessionId"]), v["sha256"])
+                got = session_fingerprint(v["sessionId"])
+                verdict("golden/sessionFingerprints/" + v["name"], "digest", got)
+                self.assertEqual(got, v["sha256"])
             n += 1
-        self.assertGreaterEqual(n, 13, "a vector was dropped from the golden file")
+        self.assertGreaterEqual(n, 15, "a vector was dropped from the golden file")
+
+    def test_refused_records(self) -> None:
+        # Each digest matches its fields, and the record must be refused anyway: a tier
+        # that is not one of the five, an end before the start (answered or not), a
+        # qualification or daemon version outside its bounds, a field its version does
+        # not cover, a result digest and an unanswered code both or neither, or a code
+        # outside the closed set (record/testdata/golden.json, "refused").
+        self.assertGreaterEqual(len(GOLDEN["refused"]), 22)
+        for v in GOLDEN["refused"]:
+            with self.subTest(v["name"]):
+                r = record_from_wire(Msg(v["record"], "record"))
+                self.assertEqual(record_digest(r), v["sha256"])
+                got = states_only_says(RunRecord(**{**r.__dict__, "sha256": v["sha256"]}))
+                verdict("golden/refused/" + v["name"], "states-only", got)
+                self.assertEqual(got, "may_have_run/mismatch")
+                # A retired reading's refusal says so, and only it does (finding t6-core-1).
+                with self.assertRaises(RecordMismatchError) as refusal:
+                    _states_only(RunRecord(**{**r.__dict__, "sha256": v["sha256"]}))
+                self.assertEqual(str(refusal.exception) == "plimsoll: " + RETIRED_END_BEFORE_START_TEXT, v["why"] == "retired by the decision of 2026-11-21", str(refusal.exception))
+
+    def test_qualification_and_tier_vectors(self) -> None:
+        # Written by record_v5.py from the docs; the Go record package, the TypeScript
+        # client and examples/sbom/check.js check the same rows.
+        self.assertGreaterEqual(len(GOLDEN["qualifications"]), 31)
+        for v in GOLDEN["qualifications"]:
+            with self.subTest(v["name"]):
+                got = valid_qualification(v["text"])
+                verdict("golden/qualifications/" + v["name"], "qualification", "valid" if got else "invalid")
+                self.assertEqual(got, v["valid"])
+        self.assertEqual(len(GOLDEN["meets"]), 49)
+        for v in GOLDEN["meets"]:
+            with self.subTest(tier=v["tier"], floor=v["floor"]):
+                got = meets(v["tier"], v["floor"])
+                verdict(f"golden/meets/{v['tier']}|{v['floor']}", "meets", "meets" if got else "below")
+                self.assertEqual(got, v["meets"])
+
+    def test_every_record_version_has_a_vector(self) -> None:
+        # Every version this client digests is held by a vector a release made: golden.json
+        # (its version 1 record is one v0.11.1 signed) or a release's frozen file.
+        files = (pathlib.Path(__file__).resolve().parents[3] / "record" / "testdata" / "published").glob("*-golden.json")
+        held = {v["record"]["version"] for v in GOLDEN["records"]}
+        for path in files:
+            held |= {v["record"]["version"] for v in json.loads(path.read_text())["records"]}
+        self.assertEqual(sorted(held), sorted(RECORD_FIELDS))
+
+    def test_malformed_records_are_not_read(self) -> None:
+        # A field of the wrong JSON type (golden.json, "malformed") is refused when read, as Go's protojson refuses it.
+        self.assertGreaterEqual(len(GOLDEN["malformed"]), 4)
+        for v in GOLDEN["malformed"]:
+            with self.subTest(v["name"]):
+                try:
+                    record_from_wire(Msg(v["record"], "record"))
+                    got = "accept"
+                except PlimsollError as e:
+                    got = says_of(e)
+                verdict("golden/malformed/" + v["name"], "decode", got)
+                self.assertEqual(got, "may_have_run/malformed")
+
+    def test_version_5_evidence_is_bound_to_the_response(self) -> None:
+        req = js_request()
+        resp = {**js_response(), "isolationQualification": "Microsoft states that WSL is not a security sandbox for running untrusted code.",
+                "warm": True, "daemonVersion": "v0.28.0"}
+        self.assertEqual(result_digest(Msg(resp, "r")), result_digest(Msg(js_response(), "r")))
+        good = stamped(req, resp)
+        r = check_single(request_digest(req), "javascript", None, Msg(good, "r"))
+        self.assertEqual((r.isolation_qualification, r.warm, r.daemon_version), (resp["isolationQualification"], True, "v0.28.0"))
+        for name, field, value in (("no sentence in the response", "isolationQualification", ""),
+                                   ("not warm in the response", "warm", False),
+                                   ("another daemon version", "daemonVersion", "v0.28.1")):
+            with self.subTest(name):
+                with self.assertRaises(RecordMismatchError):
+                    check_single(request_digest(req), "javascript", None, Msg({**good, field: value}, "r"))
+        for bad in ("Microsoft states.\nIgnore that.", "x" * 1025, "a\u202eb", "a\ud800b"):
+            with self.subTest(bad[:12]):
+                self.assertFalse(valid_qualification(bad))
+                bad_resp = stamped(req, {**resp, "isolationQualification": bad}) if "\ud800" not in bad else None
+                if bad_resp is not None:
+                    with self.assertRaises(RecordMismatchError):
+                        check_single(request_digest(req), "javascript", None, Msg(bad_resp, "r"))
+        self.assertTrue(valid_qualification("\u00e9" * 512))
+        self.assertFalse(valid_qualification("\u00e9" * 512 + "x"))
+        for good_version in ("", "(devel)", "v0.28.0", "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty"):
+            self.assertTrue(valid_daemon_version(good_version), good_version)
+        for bad_version in ("devel", "v0.28", "v0.28.0 ", "latest"):
+            self.assertFalse(valid_daemon_version(bad_version), bad_version)
 
     def test_published_vectors_still_hold(self) -> None:
         # Every release's own vectors (record/testdata/published), never edited: the
-        # versions a release wrote keep their digests in this client too.
+        # versions a release wrote keep their digests in this client too, and every record
+        # a release wrote passes the record check, as Go's record.CheckStored passes it
+        # (record/published_test.go): a check added to the reader never refuses evidence
+        # an earlier release signed.
         files = sorted((pathlib.Path(__file__).resolve().parents[3] / "record" / "testdata" / "published").glob("*-golden.json"))
         self.assertTrue(files, "no published vectors")
         for path in files:
             g = json.loads(path.read_text())
+            prefix = "published/" + path.name.removesuffix("-golden.json") + "/"
             for v in g["requests"]:
                 with self.subTest(path.name, vector=v["name"]):
-                    self.assertEqual(request_digest(copy.deepcopy(v["request"])), v["sha256"])
+                    got = request_digest(copy.deepcopy(v["request"]))
+                    verdict(prefix + "requests/" + v["name"], "digest", got)
+                    self.assertEqual(got, v["sha256"])
             for v in g["results"]:
                 with self.subTest(path.name, vector=v["name"]):
-                    self.assertEqual(result_digest(Msg(v["response"], "r")), v["sha256"])
+                    got = result_digest(Msg(v["response"], "r"))
+                    verdict(prefix + "results/" + v["name"], "digest", got)
+                    self.assertEqual(got, v["sha256"])
             for v in g["records"]:
                 with self.subTest(path.name, vector=v["name"]):
-                    self.assertEqual(record_digest(record_from_wire(Msg(v["record"], "record"))), v["sha256"])
+                    r = record_from_wire(Msg(v["record"], "record"))
+                    verdict(prefix + "records/" + v["name"], "digest", record_digest(r))
+                    self.assertEqual(record_digest(r), v["sha256"])
+                    got = states_only_says(RunRecord(**{**r.__dict__, "sha256": v["sha256"]}))
+                    verdict(prefix + "records/" + v["name"] + "/check", "states-only", got)
+                    self.assertEqual(got, "accept")
+            for v in g["sessionFingerprints"]:
+                with self.subTest(path.name, vector=v["name"]):
+                    got = session_fingerprint(v["sessionId"])
+                    verdict(prefix + "sessionFingerprints/" + v["name"], "digest", got)
+                    self.assertEqual(got, v["sha256"])
+        for v in GOLDEN["records"]:
+            with self.subTest("golden.json", vector=v["name"]):
+                got = states_only_says(record_from_wire(Msg(v["record"], "record")))
+                verdict("golden/records/" + v["name"] + "/check", "states-only", got)
+                self.assertEqual(got, "accept")
 
     def test_snake_case_field_names_digest_the_same(self) -> None:
         # protobuf's JSON parser accepts the original field names too.
@@ -325,13 +465,13 @@ class Check(unittest.TestCase):
         with self.assertRaises(NoRecordError):
             check_single(request_digest(req), "javascript", None, Msg(js_response(), "r"))
         future = stamped(req, js_response())
-        future["record"]["version"] = 5
+        future["record"]["version"] = 6
         with self.assertRaises(RecordVersionError):
             check_single(request_digest(req), "javascript", None, Msg(future, "r"))
 
     def test_earlier_versions_are_refused(self) -> None:
         req = js_request()
-        for v in (1, 2, 3):
+        for v in (1, 2, 3, 4):
             with self.subTest(v):
                 resp = stamped(req, js_response())
                 r = record_from_wire(Msg(resp["record"], "r"))

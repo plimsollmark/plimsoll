@@ -40,6 +40,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1/openshellv1connect"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
@@ -77,6 +78,9 @@ func TestConfigValidate(t *testing.T) {
 		{"no image", func(c *Config) { c.Image = "" }, "image is required"},
 		{"image whitespace", func(c *Config) { c.Image = "plimsoll/sandbox:latest\n" }, "whitespace"},
 		{"unpinned", func(c *Config) { c.RequirePinnedImage = true }, "not pinned"},
+		{"upper-case digest", func(c *Config) {
+			c.RequirePinnedImage, c.Image = true, "plimsoll/sandbox"+"@sha256:"+strings.Repeat("AB", 32)
+		}, "lower-case"},
 		{"tiny memory", func(c *Config) { c.MemoryMB = 4 }, "at least 6 MiB"},
 		{"negative memory", func(c *Config) { c.MemoryMB = -1 }, "memory"},
 		{"NaN CPU", func(c *Config) { c.CPUs = math.NaN() }, "CPU"},
@@ -109,7 +113,14 @@ func TestPolicyHashMatchesTheGateway(t *testing.T) {
 		policy *sandboxv1.SandboxPolicy
 		want   string
 	}{
-		{"run policy", runPolicy(), "d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871"},
+		// The run policy as it was on 2026-09-28, with the Node runner's /runner.mjs read-only;
+		// runPolicy() is it without that path since the native helper (under /usr) replaced
+		// it, a policy no gateway has hashed for this test yet.
+		{"run policy of 2026-09-28", func() *sandboxv1.SandboxPolicy {
+			p := runPolicy()
+			p.Filesystem.ReadOnly = append(p.Filesystem.ReadOnly, "/runner.mjs")
+			return p
+		}(), "d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871"},
 		{"gateway default", &sandboxv1.SandboxPolicy{
 			Version:    1,
 			Filesystem: &sandboxv1.FilesystemPolicy{IncludeWorkdir: true, ReadOnly: append(append([]string{}, sys...), "/var/log"), ReadWrite: []string{"/tmp", "/dev/null"}},
@@ -948,10 +959,16 @@ func TestEnvironments(t *testing.T) {
 	if env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != snippetMax || env.Project.MaxTimeout != projectMax || !reflect.DeepEqual(env.Module, sandbox.PayloadEnvironment{}) {
 		t.Fatalf("tag image: %+v", env)
 	}
-	digest := strings.Repeat("Ab", 32)
+	digest := strings.Repeat("ab", 32)
 	p.cfg.Image = "plimsoll/sandbox@sha256:" + digest
-	if env := p.Environments(); env.Project.Identity != "openshell-image:sha256:"+strings.ToLower(digest) {
+	if env := p.Environments(); env.Project.Identity != "openshell-image:sha256:"+digest {
 		t.Fatalf("pinned image: %+v", env)
+	}
+	// Upper-case hexadecimal is not the OCI form, so it pins nothing and states no
+	// identity (until 2026-11-18 it was lower-cased and stated).
+	p.cfg.Image = "plimsoll/sandbox@sha256:" + strings.Repeat("Ab", 32)
+	if env := p.Environments(); env.Project.Identity != "" {
+		t.Fatalf("upper-case digest: %+v", env)
 	}
 }
 
@@ -1074,7 +1091,19 @@ func goodProbeReport() map[string]any {
 		"egress":    map[string]string{"tcp 1.1.1.1:443": "EACCES", "https://example.com": "EACCES"},
 		"dns":       "198.18.0.2",
 		"memoryMax": "268435456", "cpuMax": "100000 100000", "pidsMax": "2048", "interfaces": []string{"lo"},
+		"helper": goodHelper(),
 	}
+}
+
+// goodHelper is the probe's reading of the image's project runner that passes: the native
+// helper this test binary carries for x86-64 (the one machine it is built for), root's, mode
+// 0755, on an x86-64 gateway, whatever machine this test runs on.
+func goodHelper() map[string]any {
+	sum, err := nativehelper.SHA256(nativehelper.BuiltMachine)
+	if err != nil {
+		panic(err)
+	}
+	return map[string]any{"type": "file", "uid": 0, "mode": 0o755, "size": 516768, "sha256": sum, "arch": "x64"}
 }
 
 func TestSmokeTestAgainstFake(t *testing.T) {
@@ -1091,6 +1120,19 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 		{"external interface", func(s *smokeFake) { s.report["interfaces"] = []string{"lo", "eth0"} }, "not loopback alone"},
 		{"no interfaces reported", func(s *smokeFake) { delete(s.report, "interfaces") }, "not loopback alone"},
 		{"survives the cancel", func(s *smokeFake) { s.surviveKill = true }, "left 2 of its processes"},
+		{"no project runner", func(s *smokeFake) { s.report["helper"] = map[string]any{"error": "ENOENT"} }, "there is no file at /usr/local/libexec/plimsoll-helper"},
+		{"another project runner", func(s *smokeFake) {
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64), "arch": "x64"}
+		}, "the native helper this plimsolld carries"},
+		{"a project runner the guest may write", func(s *smokeFake) {
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o777, "sha256": goodHelper()["sha256"], "arch": "x64"}
+		}, "writable by no one else"},
+		{"a setuid project runner", func(s *smokeFake) {
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o4755, "sha256": goodHelper()["sha256"], "arch": "x64"}
+		}, "no setuid, setgid or sticky bit"},
+		{"an arm64 gateway", func(s *smokeFake) {
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64), "arch": "arm64"}
+		}, "the sandbox's machine is arm64 (node's process.arch); the native helper is built for x86-64 (x64) only"},
 	} {
 		f, p := newFake(t)
 		p.killWait = 500 * time.Millisecond
@@ -1377,6 +1419,7 @@ func TestACallerCannotChangeTheTierByHangingUp(t *testing.T) {
 	}
 	f.mu.Lock()
 	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+		// fixed-wait: the fake gateway's own answer time, so the caller's hang-up arrives while the check is in flight
 		time.Sleep(300 * time.Millisecond)
 		return dockerInfo()
 	}

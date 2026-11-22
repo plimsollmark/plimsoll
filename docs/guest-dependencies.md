@@ -143,16 +143,64 @@ ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 USER node
 ```
 
-The base image carries what every project image inherits: `/runner.mjs` and
-`/usr/local/lib/plimsoll-runner-guard.so`, which the docker provider loads into
-`node /runner.mjs` before the runner reads a plan, stopping a project step from reading
-the runner's plan, its report or its memory. The provider starts the runner itself, with
+The base image carries what every project image inherits: the project runner,
+`/usr/local/libexec/plimsoll-helper`, and `/usr/local/lib/plimsoll-runner-guard.so`. The
+runner is plimsoll's native helper, the program that writes a project's files, runs its steps
+and signs its report: one static program with no outside library (built from
+[sandbox/internal/nativehelper](../sandbox/internal/nativehelper/), fixed by its SHA-256), which
+stops a project step from reading its plan, its report or its memory by making itself
+<dfn>*non-dumpable*</dfn> (no other program of the same user may open its descriptors or
+read its memory) before it reads anything. A project image must keep it at exactly that path,
+root's and unchanged: the startup smoke test reads it in each project image and refuses the
+image unless its SHA-256 is the one compiled into plimsolld, so an image built `FROM` the
+`plimsoll/sandbox` of an earlier release is refused until it is rebuilt on the current one.
+Only an x86-64 build of the helper exists, so plimsoll's project images are built for x86-64
+alone. The library is for plimsoll's own node programs beside guest code, and a project image
+must keep it at exactly that path too. The provider loads it, through the `LD_PRELOAD` setting
+(which makes the system's loader load a library into a program before the program starts),
+into four of its own programs: the forwarder in front of a granted run's runner, and in a
+[session](trainers/glossary.html#session) the sweep between calls, the quiesce before a
+project call and the relay of each [cell](trainers/glossary.html#cell). Each then becomes
+non-dumpable too, so none of the guest code beside it may open its descriptors or read its
+memory. A loader that cannot find the
+library starts the program without it and without a word, so the startup smoke test starts
+a program the way a session starts those, checks from a process of the guest user that the
+library is there and that the program is non-dumpable, and refuses to serve, naming the
+image, when either fails. The provider starts the runner itself, with
 none of the image's environment, and ignores the image's `ENTRYPOINT`; the image's `ENV`
 (here the one BLAS thread) reaches the project's steps. `USER node`, no `VOLUME`, and a
 read-only root at run time also apply, and an `ENV` that sets a dynamic-loader variable
 (any `LD_` name, `GLIBC_TUNABLES`, `LOCPATH`, `NLSPATH` or `GCONV_PATH`) is refused at startup.
+The image's `node` must be v22.14.0 or later (v23.7.0 or later in the 23 line, or any v24 or
+later): plimsoll starts each node program of its own (the forwarder, a session's programs) with
+`--disable-sigusr1`, so that a step cannot open that program's debugger by
+sending it a signal, and the startup smoke test refuses an older node, naming the version
+needed. The same holds for an [OpenShell](trainers/glossary.html#openshell) image, whose
+relays and session programs are node programs of plimsoll's. It does not hold for an
+[agent-sandbox](trainers/glossary.html#agent-sandbox) image or a WSL containers image: there
+plimsoll starts no node program of its own (the project runner is the native helper, above),
+so their startup tests check the helper's file and not the node version. On E2B it holds for sessions only: a single run there starts none of plimsoll's own node programs, so E2B's `base` template (node v20.9.0 on 2026-11-20) serves single runs and refuses a session at its open; [e2b/README.md](../e2b/README.md) builds a template with node 24. The `node:22` images `docker/` builds on carry a newer one.
 Point a daemon at the image with `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`
 and a project whose step is `python3 main.py` runs through `RunProject` unchanged.
+
+The base image also carries a small program for a provider of <dfn>*sessions*</dfn> (a
+session is one sandbox kept for many calls, [docs/sessions.md](sessions.md)) whose
+containers start with no init option: the WSL containers provider ([docs/wslc.md](wslc.md)).
+`/usr/local/bin/plimsoll-session-init` ([docker/guard/session-init.c](../docker/guard/session-init.c))
+runs as a session container's PID 1 (the container's first process, which the kernel makes
+the parent of every process whose own parent has exited): it starts the session's main
+process and collects the exit status of every process handed to it, so a killed process
+does not stay listed as a dead entry. It is statically linked (it needs no dynamic loader,
+so no variable in the image's environment can load code into it). A derived image keeps
+it, as it keeps the runner guard. Each call of such a session is one `wslc container exec`
+whose command and environment are its own arguments (`/usr/bin/env -i -- NAME=value ...
+COMMAND ARG...`), so nothing of the call travels on standard input but its payload, and
+no other process in the container can change the command before it starts. The values are
+then on `wslc.exe`'s Windows command line, which other programs of the same Windows user
+can read and which Windows can record.
+[docker/guard/session-exec.c](../docker/guard/session-exec.c) is an earlier way, kept in
+the repository and built into no image: a helper that took the command as its arguments and
+the environment from numbered variables.
 
 Three things in that file matter:
 
@@ -163,11 +211,18 @@ Three things in that file matter:
   libraries load from by path, which is the same reason `/node_modules` is built into
   the image. `noexec` is not a wall against native code itself: a run's own code can
   still put machine code in memory (an in-memory file, or an executable mapping like the
-  ones a JavaScript engine's compiler makes) and run it. That code runs inside the same
+  ones a JavaScript engine's compiler makes) and run it. It cannot mount a fresh tmpfs of
+  its own without `noexec`, under `runc` or under <dfn>*gVisor*</dfn> (a stand-in kernel that
+  answers the container's requests itself): the <dfn>*guest guard*</dfn>, plimsoll's own
+  <dfn>*seccomp*</dfn> filter (a filter on which requests a process may make) in front of
+  every program the docker provider starts, refuses the <dfn>*namespace*</dfn> (a private view of the system in which the code acts as
+  administrator) and the mount it would need ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
+  The guest guard needs nothing in the image: plimsolld carries it and mounts it into each
+  container read-only, so an image of your own works with it unchanged. That code runs inside the same
   container, and the container (or the virtual machine, on providers that use one) is
   the boundary.
   `sandbox/docker_python_test.go` proves the extensions load under the shipped
-  <dfn>*seccomp*</dfn> profile (seccomp is the Linux feature that limits which kernel
+  seccomp profile (seccomp is the Linux feature that limits which kernel
   requests a process may make; the profile lists the ones plimsoll's containers may use):
   it solves a 3x3 linear system through SciPy's LAPACK binding (the standard
   linear-algebra library) and takes a fast Fourier transform, and checks the values to
@@ -289,7 +344,7 @@ and `out.bin` comes back as an artifact. Three things in that file matter:
 
 - **The simulator lives in the image root, for the same reason NumPy does.** An AOT
   module is machine code that WasmEdge loads with `dlopen`, so it must be mapped
-  executable, and every writable mount of a run is `noexec`.
+  executable, and every writable mount plimsoll gives a run is `noexec`.
   `sandbox/docker_sim_test.go` proves both halves under the shipped seccomp
   profile: the sweeps run from `/models`, and a byte-identical copy of the simulator
   under `/work` is refused by the loader. Registering a simulator means building an
@@ -361,7 +416,11 @@ Node. Two things make that work under the run's restrictions:
   machines cover and plimsoll does not.
 - The image root is read-only in a run. A package that writes beside itself at
   runtime fails with a normal non-zero exit; `/work` and `/tmp` are the writable
-  places, and they are the run's sized `noexec` tmpfs mounts.
+  places plimsoll gives a run, and they are the run's sized `noexec` tmpfs mounts; the guest
+  guard refuses a run's code a folder of its own, under `runc` and gVisor alike.
+- No debugger in a run: the guest guard refuses tracing, so `gdb`, `strace`, `py-spy` and
+  the like fail with "Operation not permitted" whatever the image holds
+  ([limitations](limitations.md)).
 - Changing the dependency set means rebuilding, re-pinning and redeploying the
   image, and every caller of a daemon sees the same set.
 - E2B: its template (the image E2B starts each sandbox from) builds in the toolchain the

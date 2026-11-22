@@ -154,8 +154,8 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 	if started {
 		sendErr = <-sent
 	}
-	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped || cut
-	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped || cut
+	out.stdout, out.stdoutTruncated = stdout.Bytes(), stdout.Truncated() || cut
+	out.stderr, out.stderrTruncated = stderr.Bytes(), stderr.Truncated() || cut
 	switch {
 	case out.exited:
 		return out, nil

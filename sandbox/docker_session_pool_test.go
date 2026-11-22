@@ -13,7 +13,10 @@ import (
 )
 
 // sessionContainers names d's session containers on the docker host now: d's own, by its
-// instance label, so another run's sessions on the same host are not counted as d's.
+// instance label, so another run's sessions on the same host, and another test's in this
+// run, are not counted as d's. That is what lets the pool tests below run side by side:
+// until the label (2026-11-05) they counted every session container on the host and ran
+// one at a time.
 func sessionContainers(t *testing.T, d *sandbox.DockerSandbox) []string {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "-a", "--filter", "label=io.plimsoll.session",
@@ -73,6 +76,7 @@ func startPool(t *testing.T, d *sandbox.DockerSandbox, size int) {
 // anything there. The pool then makes a replacement, and Drain removes both the
 // replacement and the session's container.
 func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
+	t.Parallel() // its counts are of its own sandbox's containers (sessionContainers)
 	d := pythonSessionDocker(t)
 	before := sessionContainers(t, d)
 	startPool(t, d, 1)
@@ -131,6 +135,7 @@ func TestDockerSessionPoolHandsOverAWarmMember(t *testing.T) {
 // A member that stopped while it waited is never handed over: the next session gets a
 // container of its own that works, and the dead member is removed.
 func TestDockerSessionPoolPassesOverADeadMember(t *testing.T) {
+	t.Parallel() // its counts are of its own sandbox's containers (sessionContainers)
 	d := sessionDocker(t)
 	before := sessionContainers(t, d)
 	startPool(t, d, 1)
@@ -184,6 +189,8 @@ func TestDockerSessionPoolConformance(t *testing.T) {
 // Python-hinted session is handed that member, whose first Python cell is warm. A
 // JavaScript cell in it still runs: a hint changes latency, never behavior.
 func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
+	t.Parallel()               // its counts are of its own sandbox's containers (sessionContainers)
+	sandbox.HeavyDockerTest(t) // five members, each with two interpreters
 	d := pythonSessionDocker(t)
 	before := sessionContainers(t, d)
 	// 5 is the smallest pool that divides its members across language sets.

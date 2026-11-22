@@ -23,6 +23,7 @@ import (
 // sandbox made for it, through the runner, and answers byte for byte the same, for
 // Python and JavaScript alike, files included.
 func TestDockerPreferWarmCell(t *testing.T) {
+	t.Parallel() // its counts are of its own sandbox's containers (sessionContainers)
 	sandbox.HeavyDockerTest(t)
 	d := pythonSessionDocker(t)
 	before := sessionContainers(t, d)

@@ -15,9 +15,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/plimsollmark/plimsoll/attest"
+	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/clients/mcp/internal/fakedaemon"
 	"github.com/plimsollmark/plimsoll/clients/mcp/server"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // withReceipts adds a fresh key and receipts directory to cfg, returning the public key.
@@ -835,5 +837,40 @@ func TestACloseWithAChainThisServerDidNotSeeStillDeleted(t *testing.T) {
 	// incomplete rather than complete.
 	if closed["receipts"] != "incomplete" || !strings.Contains(closed["receiptsReason"].(string), "never saw answered") {
 		t.Fatalf("close_sandbox reports receipts %q (%v), want incomplete", closed["receipts"], closed["receiptsReason"])
+	}
+}
+
+// A record get_record still keeps has the receipt it had, however many exchanges an
+// embedder's client records through the server's Recorder after it: the receipt store's
+// index of lines once forgot it first, and get_record called a line on disk and synced
+// "failed" (hunt-quality-45).
+func TestGetRecordKeepsTheReceiptOfARecordItKeeps(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{})
+	cfg, _, _ := withReceipts(t, local(d.URL))
+	s, err := server.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := connectServer(t, s)
+	embedder, err := client.New(d.URL, client.WithRecorder(s.Recorder()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func() *sandbox.RunRecord {
+		t.Helper()
+		r, err := embedder.RunCell(context.Background(), sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "1", Timeout: time.Second, MinimumIsolation: sandbox.IsolationContainer}, client.CellOptions{})
+		if err != nil || r.Record == nil {
+			t.Fatalf("an embedder's run: %v", err)
+		}
+		return r.Record
+	}
+	first := run()
+	s.Keep(context.Background(), first)
+	for range server.KeptRecords + 1 {
+		run()
+	}
+	out := c.ok("get_record", map[string]any{"recordSha256": first.SHA256})
+	if r := receiptOf(t, out); r["status"] != "stored" || r["line"] == nil || r["file"] == nil {
+		t.Errorf("the receipt of a record get_record keeps, after %d more recorded: %v", server.KeptRecords+1, r)
 	}
 }

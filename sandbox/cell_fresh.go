@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // A cell run by itself (RunCellFresh) runs in a sandbox made for it, as one project of
@@ -44,7 +46,33 @@ type cellRunner struct{ code, runner, step, source string }
 
 var cellRunners = map[Language]cellRunner{
 	LanguagePython:     {code: ".plimsoll/cell.py", runner: ".plimsoll/run.py", step: "python3 -I .plimsoll/run.py", source: cellRunnerPython},
-	LanguageJavaScript: {code: ".plimsoll/cell.js", runner: ".plimsoll/run.cjs", step: "node --expose-internals .plimsoll/run.cjs", source: cellRunnerJavaScript},
+	LanguageJavaScript: {code: ".plimsoll/cell.js", runner: ".plimsoll/run.cjs", step: sessionkit.GuestNode + " --expose-internals .plimsoll/run.cjs", source: cellRunnerJavaScript},
+}
+
+// FreshCellProject is the project RunCellFresh runs req as, on a provider that runs
+// projects: req's files, its code and its runner under CellRunnerDir, and the one step
+// that runs the runner. req's language must be one of Languages (CheckRunCell).
+func FreshCellProject(req CellRequest) (files []File, step string) {
+	r := cellRunners[req.Language]
+	return append(slices.Clone(req.Files), File{Path: r.code, Content: req.Code}, File{Path: r.runner, Content: r.source}), r.step
+}
+
+// GrantedCellProject is FreshCellProject for a run that carries a grant, which a cell
+// cannot (a session's interpreter outlives the call, and its code with it): a caller
+// that offers a cell's form (its statements run, its final expression's value printed)
+// on a call that may reach the grant's API sends this as a granted project. JavaScript
+// is FreshCellProject's own, since the provider preloads the host client into Node. A
+// Python cell also gets HostClientPython at HostClientPythonPath, with its directory on
+// the runner's import path after the work directory, so the cell can import
+// plimsoll_host; that reaches the broker only on PythonGrantProviders.
+func GrantedCellProject(req CellRequest) (files []File, step string) {
+	files, step = FreshCellProject(req)
+	if req.Language != LanguagePython {
+		return files, step
+	}
+	r := cellRunners[LanguagePython]
+	return append(files, File{Path: HostClientPythonPath, Content: HostClientPython}),
+		`python3 -I -c 'import sys; sys.path.insert(0, "` + HostClientPythonDir + `"); exec(compile(open("` + r.runner + `", encoding="utf-8").read(), "` + r.runner + `", "exec"))'`
 }
 
 // SnippetCell is a JavaScript cell's code as a snippet that prints its final value, for
@@ -151,9 +179,8 @@ func RunCellFresh(ctx context.Context, sb Sandbox, req CellRequest) (CellResult,
 		}
 		return out, err
 	}
-	r := cellRunners[req.Language]
-	files := append(slices.Clone(req.Files), File{Path: r.code, Content: req.Code}, File{Path: r.runner, Content: r.source})
-	res, err := sb.RunProject(ctx, ProjectRequest{Files: files, Steps: []string{r.step}, Timeout: req.Timeout, MinimumIsolation: req.MinimumIsolation, Software: req.Software})
+	files, step := FreshCellProject(req)
+	res, err := sb.RunProject(ctx, ProjectRequest{Files: files, Steps: []string{step}, Timeout: req.Timeout, MinimumIsolation: req.MinimumIsolation, Software: req.Software})
 	out := CellResult{
 		InterpreterStarted: true, InterpreterEnded: true, Duration: time.Since(started),
 		Sandbox: res.Sandbox, Isolation: res.Isolation, SoftwareIdentity: res.SoftwareIdentity, EnvironmentIdentity: res.EnvironmentIdentity, Instance: res.Instance,

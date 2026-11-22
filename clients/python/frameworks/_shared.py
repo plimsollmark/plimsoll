@@ -25,17 +25,17 @@ def echo(**kwargs: Any) -> CodeExecutor:
     """An executor on the echo daemon, which is container tier: a test that is not about
     the floor asks for container."""
     kwargs.setdefault("minimum_isolation", "container")
-    return CodeExecutor(Client(setting("PLIMSOLL_ECHO_URL")), **kwargs)
+    return CodeExecutor(Client(setting("PLIMSOLL_TOOL_ECHO_URL")), **kwargs)
 
 
 def echo_runs() -> int:
     """How many projects the echo daemon has been handed so far."""
-    with urllib.request.urlopen(setting("PLIMSOLL_ECHO_URL").rstrip("/") + "/test/project-runs", timeout=10) as r:
+    with urllib.request.urlopen(setting("PLIMSOLL_TOOL_ECHO_URL").rstrip("/") + "/test/project-runs", timeout=10) as r:
         return int(r.read())
 
 
 def _echo(method: str, path: str) -> bytes:
-    req = urllib.request.Request(setting("PLIMSOLL_ECHO_URL").rstrip("/") + path, method=method)
+    req = urllib.request.Request(setting("PLIMSOLL_TOOL_ECHO_URL").rstrip("/") + path, method=method)
     with urllib.request.urlopen(req, timeout=10) as r:
         return r.read()
 
@@ -53,6 +53,11 @@ def echo_hold_describe() -> None:
 
 def echo_release() -> None:
     _echo("POST", "/test/release")
+
+
+def echo_trace_id() -> str:
+    """The trace ID of the last Run request the echo daemon received, "" for none."""
+    return _echo("GET", "/test/last-trace-id").decode()
 
 
 class Recording(CodeExecutor):
@@ -76,7 +81,7 @@ class Recording(CodeExecutor):
 
 
 def recording() -> Recording:
-    return Recording(Client(setting("PLIMSOLL_ECHO_URL")), minimum_isolation="container")
+    return Recording(Client(setting("PLIMSOLL_TOOL_ECHO_URL")), minimum_isolation="container")
 
 
 def wasm() -> CodeExecutor:
@@ -86,6 +91,29 @@ def wasm() -> CodeExecutor:
 def dead() -> CodeExecutor:
     """A daemon nothing listens on."""
     return CodeExecutor(Client("http://127.0.0.1:9"), minimum_isolation="container")
+
+
+# An API description in plimsoll-specgen's shape, for the grant-echo daemons' one profile.
+API_DESCRIPTION = (
+    "Echo lights (v1).\nAgent code reaches it through the brokered `host.*` client; only the operations\n"
+    "below are permitted.\n\n  host.getLight(id)  ->  GET /v1/lights/*\n  host.lightOn(id, body)  ->  POST /v1/lights/*/on\n"
+)
+ECHO_ROUTES = ["GET /v1/lights/*", "POST /v1/lights/*/on"]
+
+
+def grant_client(*, guard: bool = False) -> Client:
+    """A client of a grant-echo daemon: its provider named docker (Python steps reach the
+    broker), or e2b with guard (they do not)."""
+    if guard:
+        return Client(setting("PLIMSOLL_GRANT_ECHO_GUARD_URL"), token=setting("PLIMSOLL_GRANT_ECHO_GUARD_TOKEN"))
+    return Client(setting("PLIMSOLL_GRANT_ECHO_URL"), token=setting("PLIMSOLL_GRANT_ECHO_TOKEN"))
+
+
+def granted(*, guard: bool = False, profile: str = "echo-api", **kwargs: Any) -> CodeExecutor:
+    """An executor whose runs carry a grant profile the application chose: the daemon's
+    one (echo-api) by default."""
+    kwargs.setdefault("minimum_isolation", "container")
+    return CodeExecutor(grant_client(guard=guard), grant_profile=profile, api_description=API_DESCRIPTION, **kwargs)
 
 
 class ToolCases:
@@ -179,7 +207,7 @@ class ToolCases:
 
     def test_the_default_floor_refuses_a_container_daemon_before_anything_runs(self) -> None:
         tc: unittest.TestCase = self  # type: ignore[assignment]
-        r = self.result(self.make(CodeExecutor(Client(setting("PLIMSOLL_ECHO_URL")))), code="print(1)")
+        r = self.result(self.make(CodeExecutor(Client(setting("PLIMSOLL_TOOL_ECHO_URL")))), code="print(1)")
         tc.assertEqual((r["ran"], r["refused"]), (False, "isolation"))
 
     def test_a_daemon_without_projects_refuses_before_anything_runs(self) -> None:
@@ -226,6 +254,71 @@ class ToolCases:
         with tc.assertRaises(ValueError):
             self.make(echo(), languages=())
 
+
+    # ---- a granted tool (CodeExecutor(grant_profile=..., api_description=...)) ----
+
+    model_view: Callable[[Any], "tuple[str, set]"]
+    """The tool's description and its argument names, as the framework hands them to a model."""
+
+    def test_a_granted_tool_tells_the_model_what_its_code_can_call(self) -> None:
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        text, args = self.model_view(self.make(granted()))
+        tc.assertIn(API_DESCRIPTION.strip(), text)
+        tc.assertIn("no network access except the one web API described below", text)
+        tc.assertIn("plimsoll_host", text)  # Python is offered: the daemon's provider is docker
+        tc.assertIn("adds the API's key outside the sandbox", text)
+        # The model's arguments name no profile, no route and no credential: the
+        # application chose the profile when it built the executor.
+        tc.assertEqual(args, {"code", "language", "input_files"})
+        plain, _ = self.model_view(self.make(echo()))
+        tc.assertNotIn("web API", plain)
+        tc.assertNotIn("plimsoll_host", plain)
+
+    def test_a_granted_call_carries_the_applications_profile_and_nothing_else_does(self) -> None:
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        from plimsoll_client import _granted
+
+        r = self.result(self.make(granted()), code="console.log(1)", language="javascript")
+        tc.assertIs(r["ran"], True)
+        plan = json.loads(r["stdout"])
+        tc.assertEqual(plan["grant"]["allow"], ECHO_ROUTES)
+        tc.assertNotIn(_granted.HOST_MODULE_PATH, plan["files"])
+        r = self.result(self.make(granted()), code="import plimsoll_host", language="python")
+        plan = json.loads(r["stdout"])
+        tc.assertEqual(plan["grant"]["allow"], ECHO_ROUTES)
+        tc.assertEqual(plan["files"][_granted.HOST_MODULE_PATH], _granted.HOST_MODULE_SOURCE)
+        tc.assertIn(_granted.HOST_MODULE_DIR, plan["steps"][0])
+        # The same daemon, a tool without a grant: no grant reaches the provider.
+        r = self.result(self.make(CodeExecutor(grant_client(), minimum_isolation="container")), code="print(1)")
+        tc.assertNotIn("grant", json.loads(r["stdout"]))
+
+    def test_python_where_it_cannot_reach_the_api_is_not_offered_and_is_refused(self) -> None:
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        tool = self.make(granted(guard=True))
+        tc.assertEqual(tuple(tool.languages), ("javascript",))
+        text, _ = self.model_view(tool)
+        tc.assertIn("Python code cannot call the API on this sandbox", text)
+        tc.assertNotIn("import plimsoll_host", text)
+        r = tool_direct(tool, code="print(1)", language="python")
+        tc.assertEqual((r["ran"], r["refused"]), (False, "unsupported"))
+        tc.assertIn("Write the program in JavaScript", r["error"])
+        # A tool that would offer none is the application's mistake, said when it is built.
+        with tc.assertRaises(ValueError):
+            self.make(granted(guard=True), languages=("python",))
+
+    def test_an_unknown_profile_is_refused_as_the_operators_to_fix(self) -> None:
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        from plimsoll_client import _code_tool as ct
+
+        r = self.result(self.make(granted(profile="no-such-api")), code="console.log(1)", language="javascript")
+        tc.assertEqual((r["ran"], r["refused"]), (False, "permission"))
+        tc.assertIn(ct.PERMISSION_NOTE, r["error"])
+
+    def test_a_granted_call_that_may_have_run_says_the_api_may_have_been_called(self) -> None:
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        r = self.result(self.make(granted()), code="ECHO:LOST", language="javascript")
+        tc.assertEqual(r["ran"], "unknown")
+        tc.assertIn("may have called the API too", r["note"])
 
     def test_cancel_while_describe_is_held_sends_no_run(self) -> None:
         # The call is cancelled

@@ -65,6 +65,27 @@ func TestEveryRunLineDecodesAsTheSharedType(t *testing.T) {
 	}
 }
 
+// A run's line names the policy the provider states the run ran under, as the run's record does
+// (docker: its seccomp profile and the guest guard), and a run without one names none.
+func TestRunLineNamesTheRunsPolicy(t *testing.T) {
+	const policy = "seccomp:skipped:runsc guest-guard:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, want := range []string{policy, ""} {
+		var buf bytes.Buffer
+		svc := NewSandboxService(&fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake", Isolation: sandbox.IsolationKernel, Policy: want}})
+		svc.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
+		if _, err := runJS(svc, context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		runs, err := auditline.Parse(&buf)
+		if err != nil || len(runs) != 1 {
+			t.Fatalf("%d run lines, %v: %s", len(runs), err, buf.String())
+		}
+		if runs[0].Policy != want {
+			t.Fatalf("the run line names policy %q, want %q: %s", runs[0].Policy, want, buf.String())
+		}
+	}
+}
+
 // A session's ordinary end is not an infrastructure failure; a sandbox that failed under
 // its session is (review B9, 2026-10-23).
 func TestOnlyASandboxThatFailedUnderItsSessionCountsAsAFailure(t *testing.T) {

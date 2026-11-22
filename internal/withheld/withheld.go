@@ -16,10 +16,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/plimsollmark/plimsoll/internal/printable"
+	"github.com/plimsollmark/plimsoll/internal/settings/configfile"
 )
 
 // Mode is what a found entry does to the call.
@@ -115,11 +117,24 @@ type Set struct {
 	sourceLines map[[sha256.Size]byte]int
 	lineEntries [][]int
 	sources     []sourceEntry
+	// fileModes is what lets a user other than the daemon's own or root change the file
+	// Load read (configfile), nil when nothing does or the set was parsed from bytes.
+	fileModes *configfile.Finding
+}
+
+// FileModes is what lets a user other than the daemon's own or root change the set file
+// Load read, nil when nothing does; plimsolld refuses it in hardened mode and warns about
+// it otherwise.
+func (s *Set) FileModes() *configfile.Finding {
+	if s == nil {
+		return nil
+	}
+	return s.fileModes
 }
 
 // Load reads and validates the set file at path.
 func Load(path string) (*Set, error) {
-	raw, err := os.ReadFile(path)
+	raw, modes, err := configfile.Read(path)
 	if err != nil {
 		return nil, fmt.Errorf("withheld: read %s: %w", path, err)
 	}
@@ -127,6 +142,7 @@ func Load(path string) (*Set, error) {
 	if err != nil {
 		return nil, fmt.Errorf("withheld: %s: %w", path, err)
 	}
+	s.fileModes = modes
 	return s, nil
 }
 
@@ -306,38 +322,18 @@ func (s *Set) ExemptCount() int { return len(s.exempt) }
 // list. An empty ID, an unauthenticated call's, is never exempt.
 func (s *Set) Exempt(caller string) bool { return caller != "" && s.exempt[caller] }
 
-// CleanWhere makes text safe to print in a Where: every control character (ESC and the C1
-// range included, so a terminal never reads an escape sequence out of a file name), CR, LF,
-// U+2028, U+2029, DEL and each byte that is not UTF-8 becomes an escape (\x1b, \u2028). A
-// name in an image or a directory comes from whoever built it, so the scans clean it where
-// they build a Where and Scan cleans every Part's, and every consumer (the command's output,
-// the daemon's log) gets text that cannot rewrite a screen or forge a log line. The escapes
-// hold no control character, so cleaning twice changes nothing.
-func CleanWhere(s string) string {
-	if utf8.ValidString(s) && !strings.ContainsFunc(s, needsEscape) {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		r, n := utf8.DecodeRuneInString(s[i:])
-		switch {
-		case r == utf8.RuneError && n == 1:
-			fmt.Fprintf(&b, `\x%02x`, s[i])
-		case !needsEscape(r):
-			b.WriteString(s[i : i+n])
-		case r < 0x100:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		default:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		}
-		i += n
-	}
-	return b.String()
-}
+// CleanWhere makes text safe to print in a Where: printable.Text, the one rule plimsoll
+// prints outside text by (each control character, ESC and the C1 range included, so a
+// terminal never reads an escape sequence out of a file name, and each line or paragraph
+// separator, bidirectional control and byte that is not UTF-8 becomes an escape such as
+// \x1b). A name in an image or a directory comes from whoever built it, so the scans clean
+// it where they build a Where and Scan cleans every Part's, and every consumer (the
+// command's output, the daemon's log) gets text that cannot rewrite a screen or forge a log
+// line. The escapes hold no such character, so cleaning twice changes nothing.
+func CleanWhere(s string) string { return printable.Text(s) }
 
-func needsEscape(r rune) bool {
-	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
-}
+// needsEscape is the set CleanWhere escapes.
+func needsEscape(r rune) bool { return printable.Escaped(r) }
 
 // Part is one piece of what a call carries into its sandbox.
 type Part struct {

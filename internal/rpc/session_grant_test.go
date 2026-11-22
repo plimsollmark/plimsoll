@@ -37,7 +37,7 @@ func TestSessionGrantProfileNeedsAllowInSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(grantProfile string) (*connect.Response[plimsollv1.SessionRunResponse], error) {
-		return svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
+		return svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
 			Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1", GrantProfile: grantProfile}}}))
 	}
 
@@ -80,7 +80,7 @@ func TestRefusedSessionGrantSpendsNoRateToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(grantProfile string) error {
-		_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
+		_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
 			Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1", GrantProfile: grantProfile}}}))
 		return err
 	}

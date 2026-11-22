@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/internal/settings/configfile"
 )
 
 // FileVerifier authenticates many callers from a JSON client list, so each caller
@@ -19,13 +20,16 @@ import (
 // The plimsoll-clients command manages this file using the same validator.
 type FileVerifier struct {
 	clients map[string]Principal // key: lowercase hex SHA-256 of the bearer token
+	// fileModes is what lets a user other than the daemon's own or root change the file
+	// (configfile), nil when nothing does.
+	fileModes *configfile.Finding
 }
 
 // LoadClientsFromEnv builds a FileVerifier from PLIMSOLL_CLIENTS_FILE, or returns
 // nil if that var is unset (the caller then falls back to the single static token or
 // open dev mode).
 func LoadClientsFromEnv() (*FileVerifier, error) {
-	path := strings.TrimSpace(os.Getenv("PLIMSOLL_CLIENTS_FILE"))
+	path := settings.ClientsFile.Get(os.Getenv)
 	if path == "" {
 		return nil, nil
 	}
@@ -34,7 +38,7 @@ func LoadClientsFromEnv() (*FileVerifier, error) {
 
 // LoadClients reads and validates a clients file at path.
 func LoadClients(path string) (*FileVerifier, error) {
-	raw, err := os.ReadFile(path)
+	raw, modes, err := configfile.Read(path)
 	if err != nil {
 		return nil, fmt.Errorf("clients: read %s: %w", path, err)
 	}
@@ -42,7 +46,7 @@ func LoadClients(path string) (*FileVerifier, error) {
 	if err != nil {
 		return nil, fmt.Errorf("clients: parse %s: %w", path, err)
 	}
-	v := &FileVerifier{clients: make(map[string]Principal, len(cf.Clients))}
+	v := &FileVerifier{clients: make(map[string]Principal, len(cf.Clients)), fileModes: modes}
 	for _, c := range cf.Clients {
 		v.clients[c.TokenSHA256] = Principal{UserID: c.ID, Scopes: c.Scopes, PaidSecondsPerDay: c.PaidSecondsPerDay}
 	}
@@ -50,6 +54,16 @@ func LoadClients(path string) (*FileVerifier, error) {
 		return nil, fmt.Errorf("clients: %s defines no clients", path)
 	}
 	return v, nil
+}
+
+// FileModes is what lets a user other than the daemon's own or root change the callers
+// file it was read from, nil when nothing does; plimsolld refuses it in hardened mode and
+// warns about it otherwise.
+func (v *FileVerifier) FileModes() *configfile.Finding {
+	if v == nil {
+		return nil
+	}
+	return v.fileModes
 }
 
 // Uncapped lists, sorted, the callers with no daily allowance on a metered provider

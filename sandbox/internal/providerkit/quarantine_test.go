@@ -71,6 +71,7 @@ func TestDestroyAndWaitReturnsOnlyOnceARetryConfirmsGone(t *testing.T) {
 	select {
 	case <-returned:
 		t.Fatal("DestroyAndWait returned while the sandbox was not confirmed gone")
+	// fixed-wait: 50 ms without DestroyAndWait returning stands for "it waits for the confirmation"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(50 * time.Millisecond):
 	}
 	if gone, err := q.Retry(func(string) error { return nil }); gone != 1 || err != nil {

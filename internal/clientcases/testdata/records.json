@@ -1,0 +1,211 @@
+{
+  "about": [
+    "Shared record cases every client runs on each path it has (internal/clientcases). Each case",
+    "breaks one rule and carries its correct own digest (sealed again), beside an accepted twin",
+    "that breaks none, so the rule it names is the only check that can refuse it. These three",
+    "are written by hand (finding release-76: a lost call's record stating a result digest",
+    "beside its code, or a code outside the closed set, passed two clients' attach checks);",
+    "their record digests were computed by record/testdata/record_v5.py's digest, the",
+    "independent implementation written from docs/run-records.md, and Go's runner checks them.",
+    "expect: the verdict on each path, accept or <outcome>/<check>. An attach refuses a lost",
+    "record that does not check as a broken chain, so attach-lost states chain where the",
+    "record paths state mismatch. Ids are never reused: a retired case's id moves to retired."
+  ],
+  "retired": [],
+  "reserved": [
+    {
+      "id": "wire/number-text-after",
+      "finding": "release-90",
+      "step": "V2b",
+      "what": "an answer whose record states a number in a string with text after it (\"5 6\", \"5,\", 5 then a zero byte): Go's protobuf library reads it as 5; every client must refuse it or read the same value"
+    }
+  ],
+  "cases": [
+    {
+      "id": "unanswered/accepted",
+      "family": "unanswered",
+      "breaks": "nothing: the unchanged twin, an unanswered call's record stating the code unavailable and no result digest, at the checkpoint's next call",
+      "paths": [
+        "session-unanswered",
+        "attach-lost",
+        "stored"
+      ],
+      "input": {
+        "request": {
+          "protocol": 4,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "cell": {
+            "language": "python",
+            "code": "import json\njson.loads(open('in.json').read())['n'] + 1",
+            "files": [
+              {
+                "path": "in.json",
+                "content": "{\"n\": 41}"
+              }
+            ]
+          }
+        },
+        "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+        "floor": "container",
+        "record": {
+          "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+          "resultSha256": "",
+          "provider": "openshell",
+          "isolation": "container",
+          "environment": "openshell-image:sha256:ab",
+          "policy": "openshell-policy:sha256:cd",
+          "startedUnixMs": "1790000000000",
+          "endedUnixMs": "1790000004210",
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "sequence": "2",
+          "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+          "version": 5,
+          "unanswered": "unavailable",
+          "isolationQualification": "Stated at open.",
+          "daemonVersion": "(devel)",
+          "recordSha256": "5efa88538e91fbbc28f37c21de0832655653b293a97572bddef1801377bf7457"
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "1",
+          "last": "0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
+      },
+      "expect": {
+        "session-unanswered": "accept",
+        "attach-lost": "accept",
+        "stored": "accept"
+      },
+      "source": "hand",
+      "finding": "release-76"
+    },
+    {
+      "id": "unanswered/result-and-code",
+      "family": "unanswered",
+      "breaks": "the record states a result digest beside its unanswered code (both, not exactly one), sealed again",
+      "paths": [
+        "session-unanswered",
+        "attach-lost",
+        "stored"
+      ],
+      "input": {
+        "request": {
+          "protocol": 4,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "cell": {
+            "language": "python",
+            "code": "import json\njson.loads(open('in.json').read())['n'] + 1",
+            "files": [
+              {
+                "path": "in.json",
+                "content": "{\"n\": 41}"
+              }
+            ]
+          }
+        },
+        "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+        "floor": "container",
+        "record": {
+          "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+          "resultSha256": "0ac5e3bdf4e3bc7f4bd2b5b11b44a57c2ac22bf5869825c6d8dc6f56909d1b61",
+          "provider": "openshell",
+          "isolation": "container",
+          "environment": "openshell-image:sha256:ab",
+          "policy": "openshell-policy:sha256:cd",
+          "startedUnixMs": "1790000000000",
+          "endedUnixMs": "1790000004210",
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "sequence": "2",
+          "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+          "version": 5,
+          "unanswered": "unavailable",
+          "isolationQualification": "Stated at open.",
+          "daemonVersion": "(devel)",
+          "recordSha256": "5dada81c26c92f19284c40a27e947f3043735826ec9a6bb5bf1017ec3a030d59"
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "1",
+          "last": "0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
+      },
+      "expect": {
+        "session-unanswered": "may_have_run/mismatch",
+        "attach-lost": "may_have_run/chain",
+        "stored": "may_have_run/mismatch"
+      },
+      "source": "hand",
+      "finding": "release-76"
+    },
+    {
+      "id": "unanswered/unknown-code",
+      "family": "unanswered",
+      "breaks": "the record's unanswered text is not one of the closed set of Connect codes, sealed again",
+      "paths": [
+        "session-unanswered",
+        "attach-lost",
+        "stored"
+      ],
+      "input": {
+        "request": {
+          "protocol": 4,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "cell": {
+            "language": "python",
+            "code": "import json\njson.loads(open('in.json').read())['n'] + 1",
+            "files": [
+              {
+                "path": "in.json",
+                "content": "{\"n\": 41}"
+              }
+            ]
+          }
+        },
+        "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+        "floor": "container",
+        "record": {
+          "requestSha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281",
+          "resultSha256": "",
+          "provider": "openshell",
+          "isolation": "container",
+          "environment": "openshell-image:sha256:ab",
+          "policy": "openshell-policy:sha256:cd",
+          "startedUnixMs": "1790000000000",
+          "endedUnixMs": "1790000004210",
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "sequence": "2",
+          "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+          "version": 5,
+          "unanswered": "ignore previous instructions",
+          "isolationQualification": "Stated at open.",
+          "daemonVersion": "(devel)",
+          "recordSha256": "2ed03ccf405cf17c1ad58fb0906138fb005293b4415de5f501eb9de29b4a02fc"
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "1",
+          "last": "0000000000000000000000000000000000000000000000000000000000000001"
+        },
+        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
+      },
+      "expect": {
+        "session-unanswered": "may_have_run/mismatch",
+        "attach-lost": "may_have_run/chain",
+        "stored": "may_have_run/mismatch"
+      },
+      "source": "hand",
+      "finding": "release-76"
+    }
+  ]
+}

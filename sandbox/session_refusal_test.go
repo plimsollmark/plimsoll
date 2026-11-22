@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,7 +80,9 @@ func TestDockerSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
 }
 
 // An interpreter that cannot start on a session that has ended failed because of
-// the end, and the caller is told the end; on a live session it is the image.
+// the end, and the caller is told the end; on a live session it is the environment,
+// never the image: only the environment's statement says the image cannot run a
+// language (TestSessionCellLaunchFailureIsNotUnsupported).
 func TestRefuseCellReportsTheSessionsEnd(t *testing.T) {
 	launch := fmt.Errorf("%w: the javascript interpreter exited at start", sessionkit.ErrLaunch)
 	end := &SessionEndedError{Reason: SessionExpired}
@@ -90,8 +93,8 @@ func TestRefuseCellReportsTheSessionsEnd(t *testing.T) {
 		t.Fatalf("launch on an ended session: %v; want the session's end, not dispatched", err)
 	}
 	err, _ = RefuseCell(context.Background(), launch, nil)
-	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment || !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("launch on a live session: %v; want unsupported, not dispatched, environment", err)
+	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment || errors.Is(err, ErrUnsupported) {
+		t.Fatalf("launch on a live session: %v; want not dispatched, environment, not unsupported", err)
 	}
 	// The launch error can carry an exec's stderr, so it travels marked private, and is
 	// still the launch error.
@@ -114,6 +117,63 @@ func TestRefuseCellReportsTheSessionsEnd(t *testing.T) {
 		func() error { return end }, func() error { return nil }, func(e error) error { return e })
 	if !errors.As(err, &se) {
 		t.Fatalf("docker cell whose launch met the session's end: %v; want the end", err)
+	}
+}
+
+// A cell refused before its code was sent says why in a form a caller can act on, with
+// stand-ins for the provider's launch. A language the session's environment does not
+// state is unsupported (reason unsupported) before anything is launched. In a sandbox
+// that states it, a launch that failed is an environment refusal and never
+// ErrUnsupported, whatever failed: an exec reported failed (exit 1, as a refused docker
+// exec reports), or the identity check that could not run. The docker fault rounds found
+// the second answered as unsupported (seeds 1002, 1067, 1125 under runc).
+func TestSessionCellLaunchFailureIsNotUnsupported(t *testing.T) {
+	ctx := context.Background()
+	req := CellRequest{Language: LanguagePython, Code: "1"}
+	both := PayloadEnvironment{Languages: []Language{LanguageJavaScript, LanguagePython}}
+	noRelay := func([]string, map[string]string) (sessionkit.Attached, error) {
+		t.Error("a relay was attached for a cell whose interpreter did not start")
+		return nil, errors.New("no relay here")
+	}
+	var launches int
+	refusedExec := func(context.Context, []string, map[string]string, []byte, int, int) (sessionkit.ExecResult, error) {
+		launches++
+		return sessionkit.ExecResult{Exited: true, ExitCode: 1, Stderr: "Error response from daemon"}, nil
+	}
+	// The launcher reports the interpreter it was handed (argv after sh -c script sh,
+	// then its directory), as the real one does.
+	reported := func(_ context.Context, argv []string, env map[string]string, _ []byte, _, _ int) (sessionkit.ExecResult, error) {
+		launches++
+		var b []byte
+		for _, a := range append(append([]string(nil), argv[4:]...), env["PLIMSOLL_INTERP_DIR"]) {
+			b = append(append(b, a...), 0)
+		}
+		return sessionkit.ExecResult{Stdout: "7:1:" + hex.EncodeToString(b), Exited: true}, nil
+	}
+	cell := func(in *sessionkit.Interpreters, launch sessionkit.ExecFunc, env PayloadEnvironment) error {
+		out, err := in.RunRelayed(ctx, launch, noRelay, SessionCell(req, env, "/work", 1<<10))
+		_, err = SessionCellResult(ctx, CellResult{}, out, err, 0, "", "",
+			func() error { return nil }, func() error { return nil }, func(e error) error { return e })
+		return err
+	}
+
+	err := cell(&sessionkit.Interpreters{}, refusedExec, PayloadEnvironment{Languages: []Language{LanguageJavaScript}})
+	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalUnsupported || !errors.Is(err, ErrUnsupported) || launches != 0 {
+		t.Fatalf("a language the environment does not state: %v (reason %q) after %d launches; want unsupported before any launch", err, reason, launches)
+	}
+	checkCannotRun := &sessionkit.Interpreters{Checker: func(context.Context, []string, map[string]string, []byte, int, int) (sessionkit.ExecResult, error) {
+		return sessionkit.ExecResult{}, errors.New("docker exec could not start")
+	}}
+	for name, err := range map[string]error{
+		"a refused launch":                  cell(&sessionkit.Interpreters{}, refusedExec, both),
+		"an identity check that cannot run": cell(checkCannotRun, reported, both),
+	} {
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment || errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%s in a sandbox that runs the language: %v (reason %q); want not dispatched, environment, not unsupported", name, err, reason)
+		}
+	}
+	if launches != 2 {
+		t.Fatalf("%d launches; want one for each failed launch", launches)
 	}
 }
 

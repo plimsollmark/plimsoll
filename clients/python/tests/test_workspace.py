@@ -5,7 +5,10 @@ docker_workspace_check.py, which client_test.go runs when docker is there."""
 from __future__ import annotations
 
 import base64
+import os
 import shlex
+import subprocess
+import tempfile
 import unittest
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -146,6 +149,21 @@ class ExecTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             Workspace(s).exec("true")
 
+    def test_an_answer_without_a_usable_result_is_an_error_that_keeps_the_answer(self) -> None:
+        # The answer was checked like any other (its tier, its record), so an adapter can
+        # still state what the daemon said about the call.
+        for outcome, steps, said in (("setup_failed", [], "did not run"), ("runner_failed", [], "may have run"),
+                                     ("protocol_error", None, "may have run"), ("completed", [], "may have run")):
+            with self.subTest(outcome=outcome):
+                s = FakeSession()
+                answer = result(outcome=outcome, steps=steps)
+                s.replies.append(answer)
+                with self.assertRaises(ws.WorkspaceCallError) as caught:
+                    Workspace(s).exec("true")
+                self.assertIsInstance(caught.exception, RuntimeError)
+                self.assertIs(caught.exception.result, answer)
+                self.assertIn(said, str(caught.exception))
+
 
 class PathTests(unittest.TestCase):
     def test_resolve(self) -> None:
@@ -167,6 +185,18 @@ class PathTests(unittest.TestCase):
             w.write(ws.STATE_DIR + "/cmd", "x")
         with self.assertRaises(WorkspacePathError):
             w.read(ws.STATE_DIR)
+
+    def test_a_double_slash_is_resolved_as_the_sandbox_reads_it(self) -> None:
+        # Finding release-47 (candidate d): resolve("/work//etc/passwd") returned
+        # "/etc/passwd", an absolute path naming another file, from the method that promises
+        # one relative to the work directory; the sandbox reads it as /work/etc/passwd.
+        w = Workspace(FakeSession())
+        self.assertEqual(w.resolve(ROOT + "//etc/passwd"), "etc/passwd")
+        self.assertEqual(w.resolve(ROOT + "/a//b"), "a/b")
+        self.assertEqual(w.resolve(ROOT + "/"), ".")
+        for bad in (ROOT + "//../etc", ROOT + "/a/../../etc", "//etc/passwd"):
+            with self.assertRaises(WorkspacePathError, msg=bad):
+                w.resolve(bad)
 
 
 class FileTests(unittest.TestCase):
@@ -234,6 +264,182 @@ class FileTests(unittest.TestCase):
             w.edit("f", "", "b")
 
 
+class WholeReadTests(unittest.TestCase):
+    """read_pieces and read_whole: a file of any size, never a cut or spliced copy."""
+
+    MAX = ws.MAX_READ_BYTES
+
+    def test_a_file_of_one_piece_is_one_call(self) -> None:
+        s = FakeSession()
+        s.replies.append(result(artifacts={ws._OUT: b"small"}))
+        self.assertEqual(Workspace(s).read_whole("f.txt"), b"small")
+        self.assertEqual(len(s.calls), 1)
+        s.replies.append(result(artifacts={ws._OUT: b""}))
+        self.assertEqual(list(Workspace(s).read_pieces("empty")), [])
+
+    def test_a_longer_file_is_measured_and_read_in_pieces(self) -> None:
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}),
+                      result(stdout=f"{self.MAX + 3} f.bin\n".encode()),
+                      result(artifacts={ws._OUT: b"bcd"})]
+        self.assertEqual(list(Workspace(s).read_pieces("f.bin")), [b"a" * self.MAX, b"bcd"])
+        # The read steps, the size between them, and the second read from the first one's end.
+        self.assertEqual([c[1][0] for c in s.calls], [ws._READ_STEP, ws._RUN_STEP, ws._READ_AT_STEP])
+        self.assertEqual(s.calls[1][0][ws._RUN], "exec wc -c -- f.bin\n")
+        self.assertEqual(s.calls[2][0][ws._A3], str(self.MAX + 1))
+        # The rest of the measured size and one byte past it, which shows a file that grew.
+        self.assertEqual(s.calls[2][0][ws._A2], "4")
+
+    def test_a_file_longer_than_the_limit_is_refused_before_its_second_piece(self) -> None:
+        # Finding release-46: a whole read had no limit, and a sandbox can make a file of
+        # any size for nothing (a sparse one), so the caller's process held all of it.
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{ws.MAX_WHOLE_BYTES + 1} f.bin\n".encode())]
+        with self.assertRaises(WorkspaceTooLargeError):
+            Workspace(s).read_whole("f.bin")
+        self.assertEqual(len(s.calls), 2)  # the first piece and the size, nothing after
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{self.MAX + 3} f.bin\n".encode())]
+        with self.assertRaises(WorkspaceTooLargeError):
+            list(Workspace(s).read_pieces("f.bin", limit=self.MAX + 2))
+        s = FakeSession()
+        s.replies.append(result(artifacts={ws._OUT: b"abc"}))
+        with self.assertRaises(WorkspaceTooLargeError):
+            Workspace(s).read_whole("f.txt", limit=2)
+        for bad in (-1, 1.5, True, "8"):
+            with self.subTest(limit=bad), self.assertRaises(ValueError):
+                Workspace(FakeSession()).read_whole("f.txt", limit=bad)  # type: ignore[arg-type]
+
+    def test_the_limit_is_the_callers_to_lift(self) -> None:
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{ws.MAX_WHOLE_BYTES + 1} f.bin\n".encode()),
+                      result(artifacts={ws._OUT: b"b"})]
+        pieces = Workspace(s).read_pieces("f.bin", limit=None)
+        self.assertEqual(next(pieces), b"a" * self.MAX)
+        self.assertEqual(next(pieces), b"b")  # read on, past 64 MiB, as asked
+        pieces.close()
+
+    def test_a_head_of_any_length_is_read_in_pieces_and_checked(self) -> None:
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{self.MAX + 100} f.bin\n".encode()),
+                      result(artifacts={ws._OUT: b"bcd"})]
+        self.assertEqual(Workspace(s).read_head("f.bin", self.MAX + 3), b"a" * self.MAX + b"bcd")
+        self.assertEqual(s.calls[2][0][ws._A2], "3")  # exactly what the head still needs
+        s = FakeSession()
+        s.replies.append(result(artifacts={ws._OUT: b"ab"}))
+        self.assertEqual(Workspace(s).read_head("f.txt", 2), b"ab")
+        self.assertEqual(s.calls[0][0][ws._A2], "2")
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{self.MAX + 100} f.bin\n".encode()),
+                      result(artifacts={ws._OUT: b"b"}), result(artifacts={ws._OUT: b""})]
+        with self.assertRaises(ws.WorkspaceChangedError):
+            Workspace(s).read_head("f.bin", self.MAX + 3)  # shrank between its pieces
+        with self.assertRaises(ValueError):
+            Workspace(FakeSession()).read_head("f.txt", 0)
+
+    def test_a_file_exactly_one_piece_long_is_measured_and_done(self) -> None:
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{self.MAX} f\n".encode())]
+        self.assertEqual(len(Workspace(s).read_whole("f")), self.MAX)
+        self.assertEqual(len(s.calls), 2)
+
+    def test_a_file_that_changed_size_while_read_is_an_error(self) -> None:
+        for name, rest in (("grew", [result(artifacts={ws._OUT: b"bcdef"})]),
+                           ("shrank", [result(artifacts={ws._OUT: b""})]),
+                           ("removed", [result(exit_code=1, stderr=b"head: f.bin: No such file")])):
+            s = FakeSession()
+            s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(stdout=f"{self.MAX + 3} f.bin\n".encode())] + rest
+            with self.subTest(change=name), self.assertRaises(ws.WorkspaceChangedError) as caught:
+                Workspace(s).read_whole("f.bin")
+            self.assertIsInstance(caught.exception, OSError)
+            self.assertIn("changed while it was read", str(caught.exception))
+        s = FakeSession()
+        s.replies += [result(artifacts={ws._OUT: b"a" * self.MAX}), result(exit_code=1, stderr=b"wc: gone")]
+        with self.assertRaises(ws.WorkspaceChangedError):
+            Workspace(s).read_whole("f.bin")
+
+    def test_a_missing_file_is_file_not_found(self) -> None:
+        s = FakeSession()
+        s.replies.append(result(exit_code=1, stderr=b"head: nope: No such file or directory"))
+        with self.assertRaises(FileNotFoundError):
+            Workspace(s).read_whole("nope")
+
+
+class ShellSession:
+    """A session whose project calls run the workspace's fixed steps under this machine's
+    sh (dash here), in a work directory of its own: the steps' shell behavior, proved with
+    no daemon. docker_workspace_check.py proves them on the images' BusyBox."""
+
+    def __init__(self, root: str) -> None:
+        self.root = root
+
+    def run_project(self, files: Any, steps: List[str], artifacts: List[str] = (), *, timeout: Optional[float] = None, **kw: Any) -> ProjectResult:
+        for name, content in (files or {}).items():
+            p = os.path.join(self.root, name)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(content.encode("utf-8") if isinstance(content, str) else content)
+        ran = []
+        for step in steps:
+            r = subprocess.run(["sh", "-c", step], cwd=self.root, capture_output=True, timeout=60,
+                               env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+            ran.append(StepResult(command=step, stdout=r.stdout, stderr=r.stderr, exit_code=r.returncode, timed_out=False, duration_ms=1,
+                                  stdout_truncated=False, stderr_truncated=False))
+            if r.returncode != 0:
+                break
+        found = {}
+        for a in artifacts:
+            p = os.path.join(self.root, a)
+            if os.path.isfile(p):
+                with open(p, "rb") as f:
+                    found[a] = f.read()
+        return result(steps=ran, artifacts=found)
+
+
+class ShellStepTests(unittest.TestCase):
+    """The fixed steps on a real shell: what a fake session cannot show."""
+
+    def setUp(self) -> None:
+        self._dir = tempfile.TemporaryDirectory()
+        self.root = os.path.realpath(self._dir.name)
+        self.w = Workspace(ShellSession(self.root))
+
+    def tearDown(self) -> None:
+        self._dir.cleanup()
+
+    def put(self, name: str, content: bytes = b"x") -> None:
+        with open(os.path.join(self.root, name), "wb") as f:
+            f.write(content)
+
+    def test_a_glob_pattern_with_a_space_is_one_pattern(self) -> None:
+        # Finding release-41: the shell split `my file*.txt` into two words and answered `my`.
+        for name in ("my", "my file1.txt", "notes.txt"):
+            self.put(name)
+        self.assertEqual(self.w.glob("my file*.txt"), ["my file1.txt"])
+        self.assertEqual(self.w.glob("*.txt"), ["my file1.txt", "notes.txt"])
+        self.assertEqual(self.w.glob("my"), ["my"])
+        self.assertEqual(self.w.glob("no such*"), [])
+
+    def test_a_file_named_with_a_leading_dash_past_one_piece_is_read_whole(self) -> None:
+        # Finding release-42: `wc -c -big` read the name as options, and the read failed as
+        # "the file changed while it was read".
+        content = bytes(range(256)) * ((ws.MAX_READ_BYTES + 3000) // 256)
+        self.put("-big", content)
+        self.assertEqual(self.w.read_whole("-big"), content)
+
+    def test_a_sparse_file_past_the_limit_is_refused_after_one_piece(self) -> None:
+        # Finding release-46: a sparse file costs the sandbox no disk and a whole read held
+        # all of it in the caller's memory.
+        with open(os.path.join(self.root, "sparse"), "wb") as f:
+            f.truncate(ws.MAX_WHOLE_BYTES + 1)
+        with self.assertRaises(WorkspaceTooLargeError) as caught:
+            self.w.read_whole("sparse")
+        self.assertIn(str(ws.MAX_WHOLE_BYTES + 1), str(caught.exception))
+        with self.assertRaises(WorkspaceTooLargeError):
+            list(self.w.read_pieces("sparse"))
+        self.assertEqual(self.w.read_head("sparse", ws.MAX_READ_BYTES + 3), bytes(ws.MAX_READ_BYTES + 3))
+
+
 class SearchTests(unittest.TestCase):
     def test_glob(self) -> None:
         s = FakeSession()
@@ -274,6 +480,13 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(w.grep("x"), "a:1:x\n[output truncated]")
         with self.assertRaises(ValueError):
             w.grep("")
+
+    def test_a_file_name_with_a_digit_int_refuses_still_sorts(self) -> None:
+        # Finding release-47: "²".isdigit() is true and int("²") raises, so a file the
+        # sandbox named `x:²:y` made grep raise ValueError, which adapters read as a bad pattern.
+        s = FakeSession()
+        s.replies.append(result(stdout="./x:\u00b2:y:3:hit\n./a.py:2:hit\n./a.py:1:hit\n".encode()))
+        self.assertEqual(Workspace(s).grep("hit"), "a.py:1:hit\na.py:2:hit\nx:\u00b2:y:3:hit")
 
 
 class TreeTests(unittest.TestCase):
@@ -373,6 +586,16 @@ class RunTests(unittest.TestCase):
         Workspace(s).exec("true")
         self.assertIsNone(s.kwargs[-1].get("cancel"))
 
+    def test_a_cancel_handle_reaches_persist_and_hydrate(self) -> None:
+        s = FakeSession()
+        w = Workspace(s)
+        handle = object()
+        s.replies.append(result(artifacts={ws.STATE_DIR + "/ws.tar": b"TAR"}))
+        w.persist(cancel=handle)  # type: ignore[arg-type]
+        w.hydrate(b"TAR", cancel=handle)  # type: ignore[arg-type]
+        # persist, then hydrate's upload of the tar and its extract
+        self.assertEqual([k.get("cancel") for k in s.kwargs], [handle] * 3)
+
 
 class UnconfinedTests(unittest.TestCase):
     def test_absolute_paths_outside_the_work_directory(self) -> None:
@@ -411,6 +634,31 @@ class UnconfinedTests(unittest.TestCase):
 
 
 class InvariantTests(unittest.TestCase):
+    def test_close_quietly_drops_a_plimsoll_error_only_and_is_the_one_copy(self) -> None:
+        from plimsoll_client import PlimsollError, SessionEndedError
+
+        class Closing:
+            def __init__(self, error: Optional[BaseException]) -> None:
+                self.error, self.closed = error, False
+
+            def close(self) -> None:
+                self.closed = True
+                if self.error is not None:
+                    raise self.error
+
+        for error in (None, PlimsollError("plimsoll: unreachable"), SessionEndedError("ended", reason="expired")):
+            c = Closing(error)
+            ws.close_quietly(c)
+            self.assertTrue(c.closed)
+        with self.assertRaises(KeyError):
+            ws.close_quietly(Closing(KeyError("a bug, not a lost session")))
+        # The review of the unread half (item 2) found it written five times: no adapter keeps a copy of its own.
+        src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "plimsoll_client")
+        for name in sorted(os.listdir(src)):
+            if name.endswith(".py"):
+                with open(os.path.join(src, name), encoding="utf-8") as f:
+                    self.assertNotIn("\ndef _close_quietly(", f.read(), f"{name} keeps its own _close_quietly; import workspace.close_quietly")
+
     def test_every_fixed_step_has_a_kind(self) -> None:
         self.assertEqual(set(ws.STEP_KINDS), set(ws.FIXED_STEPS))
         self.assertEqual(ws.STEP_KINDS[ws._RUN_STEP], "run")

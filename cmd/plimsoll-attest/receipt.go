@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/plimsollmark/plimsoll/attest/receipt"
+	"github.com/plimsollmark/plimsoll/internal/printable"
 )
 
 func verifyReceipt(args []string, stdout io.Writer) error {
@@ -47,9 +48,14 @@ func verifyReceipt(args []string, stdout io.Writer) error {
 	if hex.EncodeToString(hash.Sum(nil)) != report.Subject.Digest["sha256"] {
 		return errors.New("artifact bytes do not match the policy's expected SHA-256 digest")
 	}
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(report)
+	// The report holds the receipt's own strings: their characters that could rewrite a
+	// terminal are written as JSON escapes, which read as the same value (the security scan of 2026-11-20, F8 and F11).
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = stdout.Write(printable.JSON(append(data, '\n')))
+	return err
 }
 
 func readReceiptInput(path string) ([]byte, error) {
@@ -63,7 +69,7 @@ func readReceiptInput(path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > receipt.MaxBytes {
-		return nil, fmt.Errorf("%s exceeds 1 MiB", path)
+		return nil, fmt.Errorf("%s is larger than %d bytes, the most a receipt or policy may be", path, receipt.MaxBytes)
 	}
 	return b, nil
 }

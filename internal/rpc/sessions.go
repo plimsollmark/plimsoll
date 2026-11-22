@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -53,9 +55,18 @@ type SessionConfig struct {
 const tombstoneTTL = 10 * time.Minute
 
 // sessionSuspendBudget bounds an idle suspend. It sits above the provider's own
-// bound, so a slow stop is the provider's to report (openshell allows 60 s for a stop
-// and its wait, stopBudget); the margin beyond that is a judgment, not a measurement.
-const sessionSuspendBudget = 90 * time.Second
+// bound, so a slow stop is the provider's to report: that bound is sandbox.SuspendBound,
+// which every in-tree provider's stop or pause is held under where its number is
+// declared, and this budget is computed from it, so the two cannot part (until
+// 2026-11-20 this was 90 s typed beside a comment naming openshell's 60 s,
+// hunt-quality-58). The margin beyond the bound is a judgment, not a measurement. A
+// variable for tests; a close's budget is its own (sessionOrphanCloseBudget), so a pause
+// that spends this one leaves the close after it a whole budget.
+var sessionSuspendBudget = sandbox.SuspendBound + sessionSuspendMargin
+
+// sessionSuspendMargin is what the daemon allows an idle suspend beyond the provider's
+// own bound: the wait for the session's turn and the provider's own report.
+const sessionSuspendMargin = 30 * time.Second
 
 // sessionOpenCharge is what an open on a provider billed by the second reserves for
 // itself, besides the idle time after it: its sandbox bills from its create, and an
@@ -66,9 +77,10 @@ const sessionOpenCharge = 2 * time.Minute
 // sessionClaimWindow is how long a session that never suspends (idle timeout 0) waits
 // for a request naming it before the daemon closes it as unclaimed; a session that
 // suspends waits its idle timeout. It is SANDBOX_SESSION_IDLE's default, the time the
-// daemon already gives an unused session before it stops paying for it. A variable for
-// tests.
-var sessionClaimWindow = 5 * time.Minute
+// daemon already gives an unused session before it stops paying for it, read from the
+// settings table rather than typed here a second time (finding release-43). A variable
+// for tests.
+var sessionClaimWindow, _ = settings.SessionIdle.Get(settings.Unset) // unset: the default, which parses
 
 // sessionOrphanCloseBudget bounds closing a session opened for a caller that gave up:
 // nobody waits for that close, but its handler, slot and place do, so it gets the
@@ -78,22 +90,36 @@ var sessionOrphanCloseBudget = sessionSuspendBudget
 // sessionEntry is one session in the registry. calls, last and the slot change only
 // with turn held, so the chain numbers calls in the order they executed.
 type sessionEntry struct {
-	id          string // the capability; never logged or recorded
-	fingerprint string
-	principal   string
-	owner       string // OpenSessionRequest.owner; never logged or recorded
-	sess        sandbox.Session
-	software    sandbox.Environments // identities captured when the session opened
-	rule        sandbox.SoftwareRule
-	idleTimeout time.Duration
-	turn        chan struct{} // one call at a time, in order
-	waiting     chan struct{} // the one call (or close) allowed to wait for turn
+	id            string // the capability; never logged or recorded
+	fingerprint   string
+	principal     string
+	authenticated bool // dev-mode sessions cannot be acquired through a public locator
+	minimum       sandbox.IsolationClass
+	provider      string
+	isolation     sandbox.IsolationClass
+	expires       time.Time
+	owner         string // OpenSessionRequest.owner; never logged or recorded
+	sess          sandbox.Session
+	software      sandbox.Environments // identities captured when the session opened
+	// qualification is the sentence the provider stated beside the tier at open, which
+	// every call's answer and record state (an unanswered call's included).
+	qualification string
+	rule          sandbox.SoftwareRule
+	idleTimeout   time.Duration
+	turn          chan struct{} // one call at a time, in order
+	waiting       chan struct{} // the one call (or close) allowed to wait for turn
 
-	mu      sync.Mutex
-	calls   uint64
-	last    string
-	release func() // the held concurrency slot; nil while suspended or ended
-	idle    *time.Timer
+	generation uint64 // protected by mu; ownership changes only under turn
+	mu         sync.Mutex
+	calls      uint64
+	last       string
+	// lastRecord is the record whose digest last is (answered or not), kept so an attach
+	// from a checkpoint one call behind can return the call that ran (the explained gap,
+	// sessions_attach.go); nil before the first call. Protected by mu.
+	lastRecord *plimsollv1.RunRecord
+	release    func() // the held concurrency slot; nil while suspended or ended
+	idle       *time.Timer
+	idleDue    func() // a fired timer waiting for the current turn to finish
 	// idleAt is when the idle timer last armed was set to fire.
 	idleAt time.Time
 	// idleGen numbers the idle timers: stopping one or arming the next moves it on, so
@@ -109,11 +135,29 @@ type sessionEntry struct {
 	// client looks exactly like that, and nobody can use or close it.
 	claimed   bool
 	unclaimed bool
-	used      uint64        // the registry's clock at open and at the end of each call
-	gone      chan struct{} // closed once the session has ended and given back its slot
+	// unpaid: the daemon is closing it because it could not be suspended and its caller's
+	// paid allowance cannot cover another idle period. Like unclaimed, it stays set while
+	// a failed close is tried again (closeOwn), so no call runs in the meantime.
+	unpaid bool
+	used   uint64        // the registry's clock at open and at the end of each call
+	gone   chan struct{} // closed once the session has ended and given back its slot
 	// paid charges the session's running time on a provider billed by the second
 	// (spend.go); nil otherwise.
 	paid *sessionMeter
+}
+
+// checkGeneration refuses an obsolete owner without ending the session. A zero
+// generation never reaches it: refuseZeroGeneration refuses that request before
+// the lookup. Callers check once before waiting for the turn, so a stale worker does
+// not hold the session's one waiting place, and again under the turn, before any
+// dispatch or close, since an attach may have moved ownership while they waited.
+func (e *sessionEntry) checkGeneration(generation uint64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if generation != e.generation {
+		return refuse(connect.CodeFailedPrecondition, sandbox.RefusalPermission, errors.New(textStaleOwner))
+	}
+	return nil
 }
 
 // endErr is the session's end as its calls and its close report it: replaced when
@@ -121,7 +165,7 @@ type sessionEntry struct {
 // because no request named it, whatever the provider says.
 func (e *sessionEntry) endErr() error {
 	e.mu.Lock()
-	replaced, unclaimed := e.replaced, e.unclaimed
+	replaced, unclaimed, unpaid := e.replaced, e.unclaimed, e.unpaid
 	e.mu.Unlock()
 	err := e.sess.Err()
 	// An end the provider reached by itself (an expiry between the choice and the
@@ -134,6 +178,9 @@ func (e *sessionEntry) endErr() error {
 		case unclaimed:
 			return &sandbox.SessionEndedError{Reason: sandbox.SessionUnclaimed,
 				Detail: "no request named it before its first idle timeout, so the daemon closed it; nothing ran in it, so a new session loses nothing", Public: true}
+		case unpaid:
+			return &sandbox.SessionEndedError{Reason: sandbox.SessionClosed,
+				Detail: "the daemon closed it: it could not be paused when idle, and this caller's paid allowance cannot cover another idle period", Public: true}
 		}
 	}
 	return err
@@ -147,11 +194,12 @@ func (e *sessionEntry) claim() {
 }
 
 type sessionRegistry struct {
-	mu        sync.Mutex
-	byID      map[string]*sessionEntry
-	opening   int            // reservations taken by opens still creating their sandbox
-	openingBy map[string]int // the same, by principal and by ownerKey
-	clock     atomic.Uint64  // orders sessions by last use
+	mu            sync.Mutex
+	byID          map[string]*sessionEntry
+	byFingerprint map[string]*sessionEntry
+	opening       int            // reservations taken by opens still creating their sandbox
+	openingBy     map[string]int // the same, by principal and by ownerKey
+	clock         atomic.Uint64  // orders sessions by last use
 }
 
 // ownerKey names one owner of one principal: owners of different callers never meet.
@@ -209,7 +257,7 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evic
 			}
 			if len(victims) < need {
 				for _, e := range victims {
-					<-e.turn
+					e.giveTurn()
 				}
 				return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
 					fmt.Errorf("%w: this owner has %d sessions open, the most one owner keeps, and none can be closed now (each is running a call, suspending, closing, or already taken by another open)", sandbox.ErrAtCapacity, c.MaxPerOwner))
@@ -236,7 +284,7 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evic
 			e.mu.Lock()
 			e.replaced = false
 			e.mu.Unlock()
-			<-e.turn
+			e.giveTurn()
 		}
 		return nil, err
 	}
@@ -260,7 +308,7 @@ func (r *sessionRegistry) restore(victims []*sessionEntry) {
 		e.mu.Lock()
 		e.replaced = false
 		e.mu.Unlock()
-		<-e.turn
+		e.giveTurn()
 	}
 }
 
@@ -295,8 +343,10 @@ func (r *sessionRegistry) add(e *sessionEntry) {
 	defer r.mu.Unlock()
 	if r.byID == nil {
 		r.byID = make(map[string]*sessionEntry)
+		r.byFingerprint = make(map[string]*sessionEntry)
 	}
 	r.byID[e.id] = e
+	r.byFingerprint[e.fingerprint] = e
 	r.opening--
 	r.doneOpeningLocked(e.principal, e.owner)
 }
@@ -304,6 +354,9 @@ func (r *sessionRegistry) add(e *sessionEntry) {
 func (r *sessionRegistry) remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if e := r.byID[id]; e != nil {
+		delete(r.byFingerprint, e.fingerprint)
+	}
 	delete(r.byID, id)
 }
 
@@ -360,7 +413,7 @@ func (e *sessionEntry) takeTurn(ctx context.Context) (func(), error) {
 	}
 	select {
 	case e.turn <- struct{}{}:
-		return func() { <-e.turn }, nil
+		return e.giveTurn, nil
 	default:
 	}
 	select {
@@ -372,9 +425,23 @@ func (e *sessionEntry) takeTurn(ctx context.Context) (func(), error) {
 	defer func() { <-e.waiting }()
 	select {
 	case e.turn <- struct{}{}:
-		return func() { <-e.turn }, nil
+		return e.giveTurn, nil
 	case <-ctx.Done():
 		return nil, busy(ctx)
+	}
+}
+
+// giveTurn releases the session and retries an idle timer that fired during the
+// operation. A handoff does not earn a fresh idle period. stopIdle invalidates the
+// pending callback when a real call rearms its timer or the session ends.
+func (e *sessionEntry) giveTurn() {
+	e.mu.Lock()
+	<-e.turn
+	retry := e.idleDue
+	e.idleDue = nil
+	e.mu.Unlock()
+	if retry != nil {
+		go retry()
 	}
 }
 
@@ -419,12 +486,19 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		return nil, refuse(connect.CodeUnimplemented, sandbox.RefusalUnsupported,
 			fmt.Errorf("%w: this daemon has no sessions (the provider has none, or SANDBOX_MAX_SESSIONS is unset)", sandbox.ErrUnsupported))
 	}
+	qualification, err := s.qualification()
+	if err != nil {
+		return nil, err
+	}
 	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), env.minimum); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 	// Every call of a session runs where the provider says sessions run, which on
 	// docker is not where a single snippet runs.
 	software := sp.SessionEnvironments()
+	if err := oneSoftwareIdentity(software); err != nil {
+		return nil, mapSandboxErr(err)
+	}
 	if err := env.software.Check(software.JavaScript.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
@@ -492,12 +566,17 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		stopPaid()
 		return nil, err
 	}
-	// A session closed before it is handed over is charged until its sandbox is gone.
-	stopPaidOnDone := func(sess sandbox.Session) {
+	// A session closed before it is handed over is charged until its sandbox is gone:
+	// the daemon closes it by itself (closeOwn: on a budget of its own, tried again when
+	// it fails, its paid time held meanwhile), its slot comes back once its sandbox is
+	// gone, and its meter settles then. why is the close's word for the log.
+	abandon := func(sess sandbox.Session, why string) {
+		s.closeOwn(ctx, sess, ownClose{why: why, caller: principal, paid: paid})
+		go releaseOnDone(sess, release)
 		if paid != nil {
 			go func() {
 				<-sess.Done()
-				paid.stop()
+				paid.end()
 				s.oweLeak(principal, sess, "")
 			}()
 		}
@@ -548,59 +627,51 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 			level, msg = slog.LevelInfo, "session open refused: no warm sandbox waiting"
 		}
 		s.logger().LogAttrs(ctx, level, msg, append(attrs, traceAttrs(env.traceID)...)...)
+		markRefusalLogged(ctx)
 		return nil, mapSandboxErr(err)
 	}
 	// A caller that gave up while the sandbox opened never learns the session's ID,
 	// so the session would hold its place until it expired.
 	if ctx.Err() != nil {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
-		_ = sess.Close(closeCtx)
-		cancel()
-		go releaseOnDone(sess, release)
-		stopPaidOnDone(sess)
+		abandon(sess, "caller_gone")
 		return nil, mapSandboxErr(sandbox.RefuseGaveUp(ctx))
 	}
-	// The rule again, against what the opened session runs: the provider can refresh
-	// its image during the open, so what it stated before may name an earlier one
-	// (review F10). Nothing has run in the session, so the refusal is not dispatched,
-	// and the session's identity, not the earlier statement, is what the entry, the
-	// answer and every call's record carry.
-	software = sess.Environments()
-	err = env.software.Check(software.JavaScript.SoftwareIdentity)
-	if err == nil {
-		err = env.software.Check(software.Project.SoftwareIdentity)
-	}
+	software, why, err := checkOpened(sess, env)
 	if err != nil {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
-		_ = sess.Close(closeCtx)
-		cancel()
-		go releaseOnDone(sess, release)
-		stopPaidOnDone(sess)
+		abandon(sess, why)
+		s.logger().LogAttrs(ctx, slog.LevelWarn, "session open refused: the opened session does not meet the request",
+			append([]slog.Attr{slog.String("caller", principal), slog.String("sandbox", s.Sandbox.Name()), slog.String("why", why),
+				slog.String("isolation", sess.Isolation().String()), errAttr(err)}, traceAttrs(env.traceID)...)...)
+		markRefusalLogged(ctx)
 		return nil, mapSandboxErr(err)
 	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
-		_ = sess.Close(closeCtx)
-		cancel()
-		go releaseOnDone(sess, release)
-		stopPaidOnDone(sess)
+		abandon(sess, "no_id")
 		return nil, mapSandboxErr(err)
 	}
+	p, present := PrincipalFrom(ctx)
 	e := &sessionEntry{
-		id:          hex.EncodeToString(id),
-		principal:   principal,
-		owner:       owner,
-		used:        s.sessions.tick(),
-		sess:        sess,
-		software:    software,
-		rule:        env.software,
-		idleTimeout: idle,
-		turn:        make(chan struct{}, 1),
-		waiting:     make(chan struct{}, 1),
-		release:     release,
-		gone:        make(chan struct{}),
-		paid:        paid,
+		authenticated: present && p.UserID != "",
+		minimum:       sandbox.ParseIsolationClass(m.GetMinimumIsolation()),
+		provider:      s.Sandbox.Name(),
+		isolation:     sess.Isolation(),
+		expires:       sess.ExpiresAt(),
+		id:            hex.EncodeToString(id),
+		generation:    1,
+		principal:     principal,
+		owner:         owner,
+		used:          s.sessions.tick(),
+		sess:          sess,
+		software:      software,
+		qualification: qualification,
+		rule:          env.software,
+		idleTimeout:   idle,
+		turn:          make(chan struct{}, 1),
+		waiting:       make(chan struct{}, 1),
+		release:       release,
+		gone:          make(chan struct{}),
+		paid:          paid,
 	}
 	e.fingerprint = record.SessionFingerprint(e.id)
 	s.sessions.add(e)
@@ -631,15 +702,56 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		attrs = append(attrs, slog.Int("unread_listeners", lc.UnreadListeners()))
 	}
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session opened", append(attrs, traceAttrs(env.traceID)...)...)
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{
-		SessionId:        e.id,
-		Session:          e.fingerprint,
-		Sandbox:          s.Sandbox.Name(),
-		Isolation:        sess.Isolation().String(),
-		ExpiresUnixMs:    sess.ExpiresAt().UnixMilli(),
-		IdleTimeoutMs:    uint32(idle / time.Millisecond),
-		SoftwareIdentity: software.JavaScript.SoftwareIdentity,
-	}), nil
+	// Every call's answer and record state the qualification beside the tier, and an
+	// unanswered call's record states it as the evidence the session stated here
+	// (sessionInfo carries it, for an attach too).
+	return connect.NewResponse(e.sessionInfo(1)), nil
+}
+
+// checkOpened checks what an open got against the request before the open answers, and
+// returns the session's environments, which the entry, the answer and every call's
+// record carry rather than what the provider stated before the open; why is the word an
+// abandoned open's close is logged under.
+//
+// The rule again, against what the opened session runs: the provider can refresh its
+// image during the open, so what it stated before may name an earlier one (review F10).
+// The floor again, against the tier the session measured when it opened: the floor was
+// checked before the open against the provider's stated tier, and the opened sandbox may
+// sit below it (a pool member made earlier, a runtime that changed); without this check
+// the open answered the weaker tier, every call was then refused below the floor, and
+// the session held a place, a slot and paid time until it was closed (finding
+// hunt-quality-4, 2026-11-20). Both refusals are not dispatched: an open carries no code
+// of the caller's (OpenSessionRequest has no payload), so nothing but plimsoll's own
+// programs has run in the session when either is made.
+func checkOpened(sess sandbox.Session, env envelope) (sandbox.Environments, string, error) {
+	if err := sandbox.CheckMinimumIsolation(sess.Isolation(), env.minimum); err != nil {
+		return sandbox.Environments{}, "below_floor", err
+	}
+	software := sess.Environments()
+	err := oneSoftwareIdentity(software)
+	if err == nil {
+		err = env.software.Check(software.JavaScript.SoftwareIdentity)
+	}
+	if err == nil {
+		err = env.software.Check(software.Project.SoftwareIdentity)
+	}
+	if err != nil {
+		return sandbox.Environments{}, "software_rule", err
+	}
+	return software, "", nil
+}
+
+// oneSoftwareIdentity refuses a session whose snippets and projects would run different
+// software. The open answer states one identity, the snippet one, and every client
+// compares it with the record of a call that ended without an answer, which names the
+// project identity for a project or cell call: with two, no client could accept such a
+// record. Every session provider states one today; this makes that a rule rather than
+// a coincidence. Nothing has run, so the refusal is not dispatched.
+func oneSoftwareIdentity(software sandbox.Environments) error {
+	if software.JavaScript.SoftwareIdentity == software.Project.SoftwareIdentity {
+		return nil
+	}
+	return sandbox.NotDispatched(sandbox.RefusalEnvironment, fmt.Errorf("%w: the provider states two software identities for one session (one for snippets, one for projects and cells); a session's open answer states one", sandbox.ErrUnsupported))
 }
 
 // replace closes a session reserve took for a newer session of its owner, holding
@@ -649,29 +761,19 @@ func (s *SandboxService) replace(ctx context.Context, e *sessionEntry) (took boo
 	e.mu.Lock()
 	e.stopIdle()
 	e.mu.Unlock()
-	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
-	defer cancel()
-	err := func() (err error) {
-		// A provider that panics while closing has not closed it, as far as anyone can
-		// tell; the session is given back below rather than left half replaced.
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("the provider panicked while closing: %v", r)
-			}
-		}()
-		return e.sess.Close(closeCtx)
-	}()
-	// The close took if it says so, or if the session ended anyway.
-	took = err == nil || e.sess.Err() != nil
-	if !took {
-		s.logger().Warn("replaced session close failed; it stays open", "session", e.fingerprint, "error", err.Error())
+	// One try, on its own budget (tryClose, which also takes a provider's panic as a
+	// failed close): a failure gives the session back below rather than leave it half
+	// replaced, so there is nothing to try again.
+	err := s.tryClose(ctx, e.sess, sessionOrphanCloseBudget)
+	if !closeTook(err, e.sess) {
+		s.logger().Warn("replaced session close failed; it stays open", "session", e.fingerprint, "sandbox", s.Sandbox.Name(), "error", err.Error())
 		s.sessions.restore([]*sessionEntry{e})
 		e.mu.Lock()
 		e.armIdle(s)
 		e.mu.Unlock()
 		return false
 	}
-	<-e.turn
+	e.giveTurn()
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session replaced",
 		slog.String("caller", e.principal), slog.String("session", e.fingerprint))
 	return true
@@ -785,7 +887,7 @@ func (s *SandboxService) watch(e *sessionEntry) {
 	<-e.sess.Done()
 	if e.paid != nil {
 		// Done closes once the sandbox is deleted, so the charge covers the delete.
-		s.logger().Info("session paid time", "session", e.fingerprint, "paid_seconds", e.paid.stop())
+		s.logger().Info("session paid time", "session", e.fingerprint, "paid_seconds", e.paid.end())
 		s.oweLeak(e.principal, e.sess, e.fingerprint)
 	}
 	e.mu.Lock()
@@ -807,6 +909,7 @@ func (e *sessionEntry) stopIdle() {
 		e.idle.Stop()
 	}
 	e.idleGen++
+	e.idleDue = nil
 }
 
 // idleWait is how long the idle timer waits: the idle timeout, or, for a session that
@@ -827,7 +930,9 @@ func (e *sessionEntry) armIdle(s *SandboxService) {
 // armIdleAt starts the idle timer to fire at at, at once when at has passed; e.mu is
 // held.
 func (e *sessionEntry) armIdleAt(s *SandboxService, at time.Time) {
-	if e.idleWait() <= 0 || e.ended || e.replaced {
+	// A session the daemon is closing by itself has no idle timer: its close is tried
+	// again by closeOwn.
+	if e.idleWait() <= 0 || e.ended || e.replaced || e.unclaimed || e.unpaid {
 		return
 	}
 	e.stopIdle()
@@ -845,17 +950,21 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 	select {
 	case e.turn <- struct{}{}:
 	default:
-		// A call holds the turn. It rearms the timer when it ends, but it does so
-		// before giving the turn back, so a short idle timeout can fire in between and
-		// land here: rearm, or nothing would suspend the session until its next call.
+		// Preserve the original idle deadline. Retrying on turn release avoids
+		// extending idle time for attaches and avoids spinning during a long call.
 		e.mu.Lock()
 		if gen == e.idleGen {
-			e.armIdle(s)
+			retry := func() { s.suspend(e, gen) }
+			if len(e.turn) == 0 {
+				go retry() // the holder released before this callback took mu
+			} else {
+				e.idleDue = retry
+			}
 		}
 		e.mu.Unlock()
 		return
 	}
-	defer func() { <-e.turn }()
+	defer e.giveTurn()
 	e.mu.Lock()
 	// A timer that fired, then waited while a call took the turn, ran and armed a fresh
 	// one, is stale: the session was used since, and suspending it now would end the
@@ -896,12 +1005,19 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 			// ends it, so this cannot repeat faster than the idle timeout.
 			s.logger().Warn("session suspend failed", "session", e.fingerprint, "error", err.Error())
 			// Still running and still billing: another idle period is reserved, or, when
-			// the allowance cannot cover it, the session is closed rather than run unpaid.
+			// the allowance cannot cover it, the session is closed rather than run unpaid,
+			// on a budget of its own: a pause that hung for its whole budget has spent ctx.
+			// A close that fails is tried again and its time held (closeOwn), and the log
+			// says closed only of a close that took.
 			if e.paid != nil {
 				if perr := e.paid.cover(e.idleTimeout + s.meteredTeardown()); perr != nil {
-					s.logger().Warn("session closed: it could not be suspended and its paid allowance cannot cover another idle period",
-						"session", e.fingerprint, "error", perr.Error())
-					_ = e.sess.Close(ctx)
+					e.mu.Lock()
+					e.unpaid = true
+					e.mu.Unlock()
+					if s.closeOwn(context.Background(), e.sess, e.ownClose("unpaid")) {
+						s.logger().Warn("session closed: it could not be suspended and its paid allowance cannot cover another idle period",
+							"session", e.fingerprint, "error", perr.Error())
+					}
 					return
 				}
 			}
@@ -932,37 +1048,14 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 // that crashed after sending), and then nobody can use or close it, or opened it ahead of
 // calls that have not come; the daemon cannot tell which. Kept, it would hold its place,
 // and until a suspend its slot and any paid time, for its whole lifetime; nothing ran in
-// it, so closing it loses nothing. A close that fails without ending the session keeps
-// it, as claimable as before, and tries again after another period.
+// it, so closing it loses nothing. A close that fails without ending the session is
+// tried again, and its paid time held, by closeOwn; the session stays unclaimed
+// meanwhile, so a request naming it is answered as one naming a closed unclaimed session
+// is, whether or not the provider's close has taken yet. (Before 2026-11-20 a failed
+// close made it claimable again and armed another idle period, while its paid time,
+// when the allowance could not cover that period, ran unmetered.)
 func (s *SandboxService) closeUnclaimed(e *sessionEntry) {
-	ctx, cancel := context.WithTimeout(context.Background(), sessionOrphanCloseBudget)
-	defer cancel()
-	err := func() (err error) {
-		// On a timer's goroutine a panic would end the daemon: a provider that panics
-		// while closing has failed to close.
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("the provider panicked while closing: %v", r)
-			}
-		}()
-		return e.sess.Close(ctx)
-	}()
-	if err != nil && e.sess.Err() == nil {
-		s.logger().Warn("unclaimed session close failed; it stays open", "session", e.fingerprint, "error", err.Error())
-		e.mu.Lock()
-		e.unclaimed = false
-		wait := e.idleWait()
-		e.mu.Unlock()
-		// Still running and still billing: another period is reserved, as after a failed
-		// suspend. The close is tried again either way, since nobody else will make it.
-		if e.paid != nil {
-			if perr := e.paid.cover(wait + s.meteredTeardown()); perr != nil {
-				s.logger().Warn("unclaimed session: its paid allowance cannot cover another period", "session", e.fingerprint, "error", perr.Error())
-			}
-		}
-		e.mu.Lock()
-		e.armIdle(s)
-		e.mu.Unlock()
+	if !s.closeOwn(context.Background(), e.sess, e.ownClose("unclaimed")) {
 		return
 	}
 	e.mu.Lock()
@@ -980,9 +1073,15 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if err != nil {
 		return nil, err
 	}
+	if m.GetGeneration() == 0 {
+		return nil, refuseZeroGeneration()
+	}
 	e, ok := s.sessions.get(m.GetSessionId(), auditCaller(ctx))
 	if !ok {
 		return nil, errSessionNotFound()
+	}
+	if err := e.checkGeneration(m.GetGeneration()); err != nil {
+		return nil, err
 	}
 	// Any call naming the session claims it, one refused below included: its client
 	// holds the ID.
@@ -998,6 +1097,13 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project or cell"))
 	}
+	// The request must explicitly preserve the open's floor in its signed digest,
+	// even if the daemon also supplies a floor of its own.
+	requested, err := parseMinimumIsolation(m.GetMinimumIsolation())
+	if err != nil || requested < e.minimum {
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
+			errors.New("session call omitted or weakened the isolation floor established at open"))
+	}
 	// The open's rule cannot be silently dropped by a raw session caller. The
 	// request must carry the effective rule so its digest and record bind it.
 	effective, err := sandbox.MergeSoftwareRules(e.rule, env.software)
@@ -1010,14 +1116,15 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	}
 	callTimeout := reservation(env.timeout, k.environment(target{software: e.software}).MaxTimeout, 0)
 	t := target{
-		provider: s.Sandbox.Name(),
-		tier:     e.sess.Isolation(),
-		admit:    func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e, callTimeout) },
-		js:       e.sess.RunJavaScript,
-		project:  e.sess.RunProject,
-		cell:     e.sess.RunCell,
-		software: e.software,
-		session:  true,
+		qualification: e.qualification,
+		provider:      s.Sandbox.Name(),
+		tier:          e.sess.Isolation(),
+		admit:         func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e, callTimeout) },
+		js:            e.sess.RunJavaScript,
+		project:       e.sess.RunProject,
+		cell:          e.sess.RunCell,
+		software:      e.software,
+		session:       true,
 		// The session, for a line written before the call has a number (a ship-scan
 		// find); the call's own number joins it once it has its turn.
 		attrs: []slog.Attr{slog.String("session", e.fingerprint)},
@@ -1035,6 +1142,12 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		return nil, err
 	}
 	defer give()
+	if ctx.Err() != nil {
+		return nil, busy(ctx)
+	}
+	if err := e.checkGeneration(m.GetGeneration()); err != nil {
+		return nil, err
+	}
 	if err := e.endErr(); err != nil {
 		return nil, refuseEnded(err)
 	}
@@ -1062,18 +1175,10 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	seq := e.calls + 1
 	e.mu.Unlock()
 	t.attrs = []slog.Attr{slog.String("session", e.fingerprint), slog.Uint64("session_call", seq)}
-	resp, err := func() (resp *plimsollv1.RunResponse, err error) {
-		// A provider that panics may already have run the call. Recovered here, the
-		// panic is an unmarked error, so the call is chained as unanswered like any
-		// other that may have run, instead of unwinding past the chain.
-		defer func() {
-			if r := recover(); r != nil {
-				s.logger().LogAttrs(ctx, slog.LevelError, "session call panicked", slog.String("session", e.fingerprint), slog.Any("panic", r))
-				resp, err = nil, mapSandboxErr(errors.New("the provider failed during the call")) // unmarked: it may have run
-			}
-		}()
-		return s.run(ctx, env, k, t)
-	}()
+	// A provider that panics may already have run the call: run's guarded dispatch
+	// recovers it as an unmarked error, so the call is chained as unanswered below like
+	// any other that may have run.
+	resp, err := s.run(ctx, env, k, t)
 	if err != nil {
 		// The mark as the client reads it: an admission refusal (the caller's rate, no
 		// slot) is marked by refuse, on the wire only.
@@ -1086,9 +1191,10 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	e.mu.Lock()
 	link := sandbox.RunRecord{Session: e.fingerprint, Sequence: seq, PreviousSHA256: e.last}
 	e.mu.Unlock()
-	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software, s.recordPolicy(k))
+	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software, recordPolicy(k, e.software.Policy))
 	e.mu.Lock()
 	e.calls, e.last = seq, resp.Record.GetRecordSha256()
+	e.lastRecord = proto.Clone(resp.Record).(*plimsollv1.RunRecord)
 	e.mu.Unlock()
 	out := &plimsollv1.SessionRunResponse{Run: resp}
 	// Err, not Done: Done waits for the sandbox's delete, and a call that ended the
@@ -1174,17 +1280,29 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	if err := checkProtocol(req.Msg.GetProtocol()); err != nil {
 		return nil, err
 	}
+	if req.Msg.GetGeneration() == 0 {
+		return nil, refuseZeroGeneration()
+	}
 	e, ok := s.sessions.get(req.Msg.GetSessionId(), auditCaller(ctx))
 	if !ok {
 		return nil, errSessionNotFound()
 	}
-	e.claim()
+	if err := e.checkGeneration(req.Msg.GetGeneration()); err != nil {
+		return nil, err
+	}
 	// Wait for a call in flight, so the count covers it.
 	give, err := e.takeTurn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer give()
+	if ctx.Err() != nil {
+		return nil, busy(ctx)
+	}
+	if err := e.checkGeneration(req.Msg.GetGeneration()); err != nil {
+		return nil, err
+	}
+	e.claim()
 	e.mu.Lock()
 	e.stopIdle()
 	e.mu.Unlock()
@@ -1235,8 +1353,9 @@ func refuseEnded(end error) error {
 // (an error without a not-dispatched mark) and returns err carrying it as an
 // UnansweredCall detail. Without it the next call would chain cleanly, the close count
 // would match the caller's, and a verified chain could hide a call that ran. The
-// record's evidence is what the session stated at open, since there is no response to
-// read it from, and its error code is plimsoll's own word for err, never err's text.
+// record's evidence is what the session stated at open (its policy included, as every
+// answered call of the session states it), since there is no response to read it
+// from, and its error code is plimsoll's own word for err, never err's text.
 func (s *SandboxService) unanswered(ctx context.Context, e *sessionEntry, m *plimsollv1.SessionRunRequest, env envelope, seq uint64, received time.Time, err error) error {
 	payload := e.software.Project
 	if m.GetJavascript() != nil {
@@ -1248,20 +1367,23 @@ func (s *SandboxService) unanswered(ctx context.Context, e *sessionEntry, m *pli
 	}
 	e.mu.Lock()
 	rec := record.StampUnanswered(sandbox.RunRecord{
-		RequestSHA256:    record.SessionRunRequestDigest(m),
-		Provider:         s.Sandbox.Name(),
-		Isolation:        e.sess.Isolation().String(),
-		Environment:      payload.Identity,
-		SoftwareIdentity: payload.SoftwareIdentity,
-		SoftwareRuleID:   env.software.ID(),
-		Policy:           s.policy(),
-		Started:          received,
-		Ended:            recordEnd(received, time.Now()),
-		Session:          e.fingerprint,
-		Sequence:         seq,
-		PreviousSHA256:   e.last,
+		RequestSHA256:          record.SessionRunRequestDigest(m),
+		Provider:               s.Sandbox.Name(),
+		Isolation:              e.sess.Isolation().String(),
+		IsolationQualification: e.qualification,
+		DaemonVersion:          daemonVersion(),
+		Environment:            payload.Identity,
+		SoftwareIdentity:       payload.SoftwareIdentity,
+		SoftwareRuleID:         env.software.ID(),
+		Policy:                 e.software.Policy,
+		Started:                received,
+		Ended:                  recordEnd(received, time.Now()),
+		Session:                e.fingerprint,
+		Sequence:               seq,
+		PreviousSHA256:         e.last,
 	}, ce.Code().String())
 	e.calls, e.last = seq, rec.GetRecordSha256()
+	e.lastRecord = proto.Clone(rec).(*plimsollv1.RunRecord)
 	e.mu.Unlock()
 	if detail, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
 		ce.AddDetail(detail)

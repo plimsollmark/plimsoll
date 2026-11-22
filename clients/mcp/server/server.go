@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -38,10 +40,20 @@ const tierNote = "the tier is the daemon's configuration and provider evidence p
 type Server struct {
 	cfg    Config
 	remote *client.Remote
-	mcp    *mcp.Server
-	tools  []*mcp.Tool
+	// granted is the client a run_code call without a sandbox uses when the server was
+	// installed with a grant: remote's settings with the grant profile selected for
+	// snippets and projects. plan is what the daemon's Describe said the grant can do.
+	// Both nil without a grant.
+	granted *client.Remote
+	plan    *grantPlan
+	mcp     *mcp.Server
+	tools   []*mcp.Tool
 	// receipts, when configured, signs every checked exchange (nil otherwise).
 	receipts *Receipts
+	// opts are remote's options without its recorder, and shares the daemon clients of
+	// each approved app, whose recorder counts its receipts against its share (clientsFor).
+	opts   []client.Option
+	shares map[string]shareClients
 
 	// callFiles, when set (SetCallFiles), gives files every run_code call writes first.
 	callFiles func() []sandbox.File
@@ -53,9 +65,10 @@ type Server struct {
 	mu           sync.Mutex
 	info         *client.Info
 	grants       map[string]*connectorGrant
-	records      map[string]*sandbox.RunRecord
-	order        []string // record digests, oldest first
-	recordBytes  int      // the text the kept records hold, against maxKeptRecordBytes
+	records      map[string]keptRecord   // by recordKey
+	held         map[string]*heldRecords // what each connection keeps, by grantID ("" over stdio)
+	recordCount  int                     // the records kept, against keptPool
+	recordBytes  int                     // the text they hold, against keptBytesPool
 	boxes        map[string]*box
 	closings     map[*closing]struct{} // closes not yet finished, each holding a place
 	opening      int                   // opens in progress, each holding a place
@@ -73,8 +86,11 @@ type Server struct {
 	stopped   bool // Shutdown was called: no new work
 }
 
-// New builds the server. It does not contact the daemon: a host starts the server
-// before any tool is called, and a daemon that is down is reported per call.
+// New builds the server. Without a grant it does not contact the daemon: a host starts
+// the server before any tool is called, and a daemon that is down is reported per call.
+// With one (Config.GrantProfile) it reads the daemon's Describe once, because what
+// run_code's description tells the model it can call depends on the daemon, and fails
+// when the daemon is unreachable or cannot carry the grant.
 func New(cfg Config) (*Server, error) {
 	cfg, err := cfg.withDefaults()
 	if err != nil {
@@ -101,13 +117,22 @@ func New(cfg Config) (*Server, error) {
 		if receipts, err = OpenReceipts(cfg.ReceiptsDir, cfg.SigningKeyFile, cfg.ReceiptsMaxBytes); err != nil {
 			return nil, fmt.Errorf("receipts: %w", err)
 		}
-		opts = append(opts, client.WithRecorder(receipts))
+		// In remote mode each approved app has its share of the directory (Full); over
+		// stdio there is one caller, the owner, whose calls may fill the whole limit.
+		receipts.shared = cfg.RequireGrant
 	}
-	remote, err := client.New(cfg.URL, opts...)
+	s := &Server{cfg: cfg, receipts: receipts, opts: opts, shares: map[string]shareClients{}, grants: map[string]*connectorGrant{}, records: map[string]keptRecord{}, held: map[string]*heldRecords{}, boxes: map[string]*box{}, closings: map[*closing]struct{}{}, openingBy: map[string]int{}, openingGrant: map[string]int{}}
+	local, err := s.newClients("")
 	if err != nil {
 		return nil, fmt.Errorf("PLIMSOLL_URL: %w", err)
 	}
-	s := &Server{cfg: cfg, remote: remote, receipts: receipts, grants: map[string]*connectorGrant{}, records: map[string]*sandbox.RunRecord{}, boxes: map[string]*box{}, closings: map[*closing]struct{}{}, openingBy: map[string]int{}, openingGrant: map[string]int{}}
+	s.remote = local.remote
+	if cfg.GrantProfile != "" {
+		if s.plan, err = describeGrant(s.remote, cfg); err != nil {
+			return nil, err
+		}
+		s.granted = local.granted
+	}
 	s.stopCtx, s.stop = context.WithCancel(context.Background())
 	mopts := &mcp.ServerOptions{
 		Instructions: "Runs code in plimsoll, a sandbox for untrusted code, and returns its output with a checked run record. " +
@@ -120,7 +145,7 @@ func New(cfg Config) (*Server, error) {
 		mopts.Capabilities.AddExtension("io.modelcontextprotocol/ui", map[string]any{"mimeTypes": []string{PanelMIME}})
 	}
 	s.mcp = mcp.NewServer(&mcp.Implementation{Name: Name, Version: Version}, mopts)
-	s.mcp.AddReceivingMiddleware(schemaRefusals)
+	s.mcp.AddReceivingMiddleware(s.schemaRefusals)
 	for _, p := range cfg.Panels {
 		page := p
 		s.mcp.AddResource(&mcp.Resource{URI: page.URI, Name: page.Name, Title: page.Title, MIMEType: PanelMIME, Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true}}},
@@ -132,10 +157,59 @@ func New(cfg Config) (*Server, error) {
 	return s, nil
 }
 
+// shareClients are the daemon clients one share's calls use: remote, and granted when
+// the server was installed with a grant.
+type shareClients struct{ remote, granted *client.Remote }
+
+// newClients builds the daemon clients of a share ("" for calls of no approved app),
+// recording into its share of the receipts when there are receipts.
+func (s *Server) newClients(share string) (shareClients, error) {
+	opts := s.opts
+	switch {
+	case s.receipts != nil && share == "":
+		opts = append(slices.Clip(opts), client.WithRecorder(s.receipts))
+	case s.receipts != nil:
+		opts = append(slices.Clip(opts), client.WithRecorder(shareRecorder{r: s.receipts, share: share}))
+	}
+	var c shareClients
+	var err error
+	if c.remote, err = client.New(s.cfg.URL, opts...); err != nil {
+		return c, err
+	}
+	if s.cfg.GrantProfile != "" {
+		c.granted, err = client.New(s.cfg.URL, append(slices.Clip(opts), client.WithProjectGrantProfile(s.cfg.GrantProfile), client.WithJavaScriptGrantProfile(s.cfg.GrantProfile))...)
+	}
+	return c, err
+}
+
+// shareOfCall is the share a call's receipts count against: the approved app its grant
+// belongs to (so approving an app twice does not double its share, as with sandboxes),
+// or "" for a call of no app.
+func (s *Server) shareOfCall(ctx context.Context) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g := s.grantLocked(ctx); g != nil {
+		return g.group
+	}
+	return ""
+}
+
+// clientsFor is the daemon clients of a share: those built for it when its first grant
+// was registered (RegisterGrant), or the server's own for "", and for a share with none.
+func (s *Server) clientsFor(share string) shareClients {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.shares[share]; ok {
+		return c
+	}
+	return shareClients{remote: s.remote, granted: s.granted}
+}
+
 // MCP is the server to serve: mcp.StdioTransport for a local host.
-// A tool an embedder registers on the returned server directly must write its failures as
-// JSON objects: schemaRefusals reads any plain-text error result as a schema refusal that
-// ran nothing (review, 2026-10-26).
+// A tool an embedder registers on the returned server directly is not one of this server's:
+// it gets none of their admission, deadline or answer writing, and its answers pass as it
+// writes them, with nothing of this server's saying whether anything ran. Register a tool
+// through Extend or ExtendRun instead.
 func (s *Server) MCP() *mcp.Server { return s.mcp }
 
 // failure is a tool error as the model reads it: what happened in one sentence, then
@@ -187,9 +261,14 @@ func shown(err error) string {
 	var de *net.DNSError
 	var ue *url.Error
 	var pe *fs.PathError
+	var he x509.HostnameError
 	switch {
 	case err == nil:
 		return ""
+	case errors.As(err, &he):
+		// Its standard text names every name on the daemon's certificate and the name
+		// dialed, which are the daemon's address as much as the address itself is.
+		return "the daemon's TLS certificate is not valid for the name this server connects to"
 	case errors.As(err, &de):
 		return "the daemon's name could not be resolved"
 	case errors.As(err, &oe):
@@ -230,13 +309,14 @@ func WithNote(err error, note string) error {
 // failed in this server before any request carried code.
 func (s *Server) failed(ctx context.Context, err error) *failure {
 	f := &failure{Ran: "maybe"}
+	var own *notSentError
 	switch reason, ok := sandbox.NotDispatchedReason(err); {
 	case ok:
 		f.Ran, f.Refusal = "no", reason.String()
 		f.Summary = fmt.Sprintf("Nothing ran (%s): %s", reason, shown(err))
-	case errors.Is(err, errNotSent):
+	case errors.As(err, &own):
 		f.Ran = "no"
-		f.Summary = "Nothing ran: " + err.Error()
+		f.Summary = "Nothing ran: " + own.what + ": " + shown(own.err)
 	case errors.Is(err, context.DeadlineExceeded):
 		f.Summary = fmt.Sprintf("The call reached this server's %s deadline; the code may have run, and there is no checked answer for it. It was not retried; running it again could repeat what it did.", s.cfg.CallTimeout)
 	default:
@@ -263,25 +343,63 @@ func (s *Server) failed(ctx context.Context, err error) *failure {
 	return f
 }
 
-// errNotSent marks a failure of this server's own before any request carried code.
-var errNotSent = errors.New("not sent")
+// notSentError marks a failure of this server's own before any request carried code:
+// what failed, and why. The mark is not words for the model: it once added ": not sent" to
+// the answer (hunt-quality-49, 2026-11-20).
+type notSentError struct {
+	what string
+	err  error
+}
+
+func (e *notSentError) Error() string { return e.what + ": " + e.err.Error() }
+func (e *notSentError) Unwrap() error { return e.err }
 
 // A checked record's digests are its own, but the daemon writes its other text
 // (provider, environment, policy, ...), and a record checks however long that is: so the
 // records kept are bounded in bytes as well as in number, and a record whose text alone
 // is past maxRecordText is not kept at all (its receipt, when receipts are on, still is).
+//
+// The records kept are shared by every connection, and each keeps its own: a connection
+// holds at most shareOf the pool, KeptRecords records and maxKeptRecordBytes of their
+// text, its own oldest going first past either, so one connection's calls never push out
+// another's records (hunt-security-25, 2026-11-20). The pool is twice a share so that a
+// connection at its share leaves exactly a share for the others, and a share is what
+// get_record's description promises and what the server kept before it had shares. Past
+// the pool, which takes three connections or more, the oldest record of the connection
+// holding the most goes.
 const (
 	maxRecordText      = 64 << 10
 	maxKeptRecordBytes = 16 << 20
+	keptPool           = 2 * KeptRecords
+	keptBytesPool      = 2 * maxKeptRecordBytes
 )
+
+// heldRecords is what one connection keeps: its record keys, oldest first, and their text.
+type heldRecords struct {
+	order []string
+	bytes int
+}
 
 func recordText(r *sandbox.RunRecord) int {
 	return len(r.RequestSHA256) + len(r.ResultSHA256) + len(r.Provider) + len(r.Isolation) + len(r.Environment) +
-		len(r.SoftwareIdentity) + len(r.SoftwareRuleID) + len(r.Policy) + len(r.Session) + len(r.PreviousSHA256) + len(r.Unanswered) + len(r.Instance) + len(r.SHA256)
+		len(r.SoftwareIdentity) + len(r.SoftwareRuleID) + len(r.Policy) + len(r.Session) + len(r.PreviousSHA256) + len(r.Unanswered) + len(r.Instance) +
+		len(r.IsolationQualification) + len(r.DaemonVersion) + len(r.SHA256)
 }
 
-// keep stores a checked record for get_record, evicting the oldest past KeptRecords or
-// maxKeptRecordBytes.
+// keptRecord is a record get_record returns, with its receipt's line as the receipt store
+// knew it when the record was kept. The store's index of lines is bounded too, and holds
+// lines get_record never sees (records too long to keep, an embedder's client's), so the
+// two forgot in different orders and get_record called a line on disk and synced "failed"
+// (hunt-quality-45, 2026-11-20). One entry holding both, they cannot disagree: the line
+// lives exactly as long as the record. The pointer is the store's own, so the session's
+// state it reads (open, closed, incomplete) is the current one.
+type keptRecord struct {
+	rec  *sandbox.RunRecord
+	line *kept // nil when no line was stored (its write failed), or with no receipts
+}
+
+// keep stores a checked record for get_record, evicting the connection's own oldest past
+// its share, and the oldest of the connection holding the most past the pool.
 func (s *Server) keep(ctx context.Context, r *sandbox.RunRecord) {
 	if r == nil || r.SHA256 == "" {
 		return
@@ -291,27 +409,73 @@ func (s *Server) keep(ctx context.Context, r *sandbox.RunRecord) {
 		s.cfg.Logger.Warn("a checked record was not kept for get_record: its text is too long", "bytes", size, "record", r.SHA256)
 		return
 	}
+	line := s.receipts.lineOf(r.SHA256)
 	s.mu.Lock()
 	key := recordKey(ctx, r.SHA256)
 	if s.grantRevokedLocked(ctx) {
 		s.mu.Unlock()
 		return
 	}
-	if old, ok := s.records[key]; ok {
-		s.recordBytes -= recordText(old)
-	} else {
-		s.order = append(s.order, key)
+	g := grantID(ctx)
+	h := s.held[g]
+	if h == nil {
+		h = &heldRecords{}
+		s.held[g] = h
 	}
-	s.records[key] = r
+	if old, ok := s.records[key]; ok {
+		h.bytes -= recordText(old.rec)
+		s.recordBytes -= recordText(old.rec)
+	} else {
+		h.order = append(h.order, key)
+		s.recordCount++
+	}
+	s.records[key] = keptRecord{rec: r, line: line}
+	h.bytes += size
 	s.recordBytes += size
-	for len(s.order) > KeptRecords || s.recordBytes > maxKeptRecordBytes {
-		s.recordBytes -= recordText(s.records[s.order[0]])
-		delete(s.records, s.order[0])
-		s.order = s.order[1:]
+	for len(h.order) > int(shareOf(keptPool)) || h.bytes > int(shareOf(keptBytesPool)) {
+		s.evictLocked(g)
+	}
+	for s.recordCount > keptPool || s.recordBytes > keptBytesPool {
+		s.evictLocked(s.largestHolderLocked())
 	}
 	s.mu.Unlock()
 	if s.cfg.RecordObserver != nil {
 		s.cfg.RecordObserver(grantID(ctx), r.SHA256)
+	}
+}
+
+// evictLocked forgets the oldest record connection g keeps.
+func (s *Server) evictLocked(g string) {
+	h := s.held[g]
+	key := h.order[0]
+	h.order = h.order[1:]
+	size := recordText(s.records[key].rec)
+	h.bytes -= size
+	s.recordBytes -= size
+	s.recordCount--
+	delete(s.records, key)
+	if len(h.order) == 0 {
+		delete(s.held, g)
+	}
+}
+
+// largestHolderLocked is the connection keeping the most records (then the most text,
+// then the least ID, so the choice does not depend on map order).
+func (s *Server) largestHolderLocked() string {
+	var best string
+	var top *heldRecords
+	for g, h := range s.held {
+		if top == nil || len(h.order) > len(top.order) || len(h.order) == len(top.order) && (h.bytes > top.bytes || h.bytes == top.bytes && g < best) {
+			best, top = g, h
+		}
+	}
+	return best
+}
+
+// forgetRecordsLocked forgets every record connection g keeps (its grant was revoked).
+func (s *Server) forgetRecordsLocked(g string) {
+	for s.held[g] != nil {
+		s.evictLocked(g)
 	}
 }
 
@@ -326,7 +490,7 @@ func (s *Server) describe(ctx context.Context) (*client.Info, error) {
 	}
 	got, err := s.remote.Describe(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the daemon did not answer Describe: %w: %w", err, errNotSent)
+		return nil, &notSentError{what: "the daemon did not answer Describe", err: err}
 	}
 	s.mu.Lock()
 	s.info = &got
@@ -566,7 +730,15 @@ func extend[In, Out any](s *Server, t *mcp.Tool, runs bool, h func(context.Conte
 	addToolWith(s, t, func(ctx context.Context, in In) (Out, []Picture, *failure) {
 		var zero Out
 		if runs {
-			release, f := s.admitRun()
+			// An embedder's client built on Recorder writes into the share of calls of no
+			// app, so that share is checked too; one built on RecorderFor writes into its
+			// caller's app's share, which admitRun checks.
+			if s.shareOfCall(ctx) != "" {
+				if f := s.full(""); f != nil {
+					return zero, nil, f
+				}
+			}
+			release, f := s.admitRun(ctx)
 			if f != nil {
 				return zero, nil, f
 			}
@@ -594,7 +766,7 @@ func (s *Server) Keep(ctx context.Context, r *sandbox.RunRecord) { s.keep(ctx, r
 func (s *Server) Kept(ctx context.Context, recordSHA256 string) *sandbox.RunRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r := s.records[recordKey(ctx, recordSHA256)]
+	r := s.records[recordKey(ctx, recordSHA256)].rec
 	if r == nil {
 		return nil
 	}
@@ -604,12 +776,24 @@ func (s *Server) Kept(ctx context.Context, recordSHA256 string) *sandbox.RunReco
 
 // Recorder is what records every checked exchange (the receipts, or the embedder's
 // Recorder), or nil: an embedder's own daemon client records through it, so its runs
-// get receipts like the server's.
+// get receipts like the server's. In remote mode its receipts count against the share of
+// calls of no approved app; an embedder whose tool builds its client per call uses
+// RecorderFor, so they count against the calling app's.
 func (s *Server) Recorder() client.Recorder {
 	if s.receipts != nil {
 		return s.receipts
 	}
 	return s.cfg.Recorder
+}
+
+// RecorderFor is Recorder as the calls of ctx's caller reach it: in remote mode with
+// receipts, the receipt store counting what it writes against the approved app of the
+// call's grant (Receipts.Full); otherwise Recorder.
+func (s *Server) RecorderFor(ctx context.Context) client.Recorder {
+	if share := s.shareOfCall(ctx); s.receipts != nil && share != "" {
+		return shareRecorder{r: s.receipts, share: share}
+	}
+	return s.Recorder()
 }
 
 // ReceiptFor says what became of a checked record, given the error its result came
@@ -619,14 +803,28 @@ func (s *Server) ReceiptFor(r *sandbox.RunRecord, err error) *Receipt { return s
 // Settings is the configuration the server runs with, defaults filled in.
 func (s *Server) Settings() Config { return s.cfg }
 
+// started marks, on a tools/call's context, that the call reached the server's handler:
+// schemaRefusals sets it, and answer stores true in it first thing.
+type startedKey struct{}
+
 // schemaRefusals gives the SDK's own refusals the shape of this server's: arguments the tool's
 // input schema refuses are answered by the SDK before any handler runs, as an error result in
-// plain text. Every failure this server writes is a JSON object, and the SDK reports a failure
-// after a handler (an output that does not fit its schema) as a protocol error, not a result, so
-// an error result whose text is not a JSON object is a refusal that ran nothing.
-func schemaRefusals(next mcp.MethodHandler) mcp.MethodHandler {
+// plain text. It rewrites only those: a call to one of this server's tools whose handler never
+// started. A handler that started writes its own answer (answer), and that answer is never
+// read as a refusal, whatever its text: a call whose code ran was once told "Nothing ran"
+// when its output could not be written as JSON (hunt-quality-43, 2026-11-20). A tool an
+// embedder registered on MCP() directly is not this server's, so its answers pass as written.
+func (s *Server) schemaRefusals(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-		res, err := next(ctx, method, req)
+		callReq, isCall := req.(*mcp.CallToolRequest)
+		if !isCall || callReq.Params == nil || !s.isTool(callReq.Params.Name) {
+			return next(ctx, method, req)
+		}
+		started := new(atomic.Bool)
+		res, err := next(context.WithValue(ctx, startedKey{}, started), method, req)
+		if started.Load() {
+			return res, err
+		}
 		call, ok := res.(*mcp.CallToolResult)
 		if err != nil || !ok || !call.IsError || len(call.Content) != 1 {
 			return res, err
@@ -645,6 +843,12 @@ func schemaRefusals(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
+// isTool reports whether name is one of the tools registered through addToolWith. The tools
+// are registered before serving, so the list is read without the lock, as server_info reads it.
+func (s *Server) isTool(name string) bool {
+	return slices.ContainsFunc(s.tools, func(t *mcp.Tool) bool { return t.Name == name })
+}
+
 // addTool registers a tool whose output schema is Out's, and whose failures are tool
 // errors carrying a failure as JSON (never structured output, which would have to
 // conform to Out). Every tool is registered through it, so server_info lists exactly
@@ -661,6 +865,9 @@ func addTool[In, Out any](s *Server, t *mcp.Tool, h func(context.Context, In) (O
 	})
 }
 
+// addToolWith registers every tool, the server's and each embedder's (Extend, ExtendRun):
+// the SDK reads and checks the arguments, and everything after that is answer's. A test
+// fails if a tool is registered, or a tool result made, anywhere else.
 func addToolWith[In, Out any](s *Server, t *mcp.Tool, h func(context.Context, In) (Out, []Picture, *failure)) {
 	if t.OutputSchema == nil {
 		schema, err := jsonschema.For[Out](nil)
@@ -684,62 +891,139 @@ func addToolWith[In, Out any](s *Server, t *mcp.Tool, h func(context.Context, In
 			panic(fmt.Sprintf("tool %s is registered twice", t.Name))
 		}
 	}
+	fit := resolveOutput(t)
 	s.tools = append(s.tools, t)
 	mcp.AddTool(s.mcp, t, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		// Admission and Shutdown share the lock: a call is either counted before
-		// shutdown, which then waits for it, or refused.
-		s.mu.Lock()
-		if s.stopped {
-			s.mu.Unlock()
-			b, _ := json.Marshal(shuttingDown)
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil, nil
-		}
-		var grant *connectorGrant
-		if s.cfg.RequireGrant {
-			grant = s.grantLocked(ctx)
-			if grant == nil {
-				s.mu.Unlock()
-				b, _ := json.Marshal(refused(sandbox.RefusalPermission, "connector authorization is absent or revoked"))
-				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil, nil
-			}
-			grant.calls.Add(1)
-		}
-		s.calls.Add(1)
-		s.mu.Unlock()
-		if grant != nil {
-			defer grant.calls.Done()
-		}
-		defer s.calls.Done()
-		ctx, cancel := context.WithTimeout(ctx, s.cfg.CallTimeout)
-		defer cancel()
-		if grant != nil {
-			defer context.AfterFunc(grant.ctx, cancel)()
-			if grant.ctx.Err() != nil {
-				cancel()
-			}
-		}
-		// Shutdown cancels every call in progress, so a signal need not wait for them.
-		defer context.AfterFunc(s.stopCtx, cancel)()
-		out, pics, f := h(ctx, in)
-		if f != nil {
-			b, _ := json.Marshal(f)
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, nil, nil
-		}
-		if len(pics) == 0 {
-			return nil, out, nil
-		}
-		// With Content set the SDK adds no text block of its own, so the value's JSON
-		// goes first, as the only text: a host that drops images keeps the result.
-		b, err := json.Marshal(out)
-		if err != nil {
-			return nil, nil, err
-		}
-		content := []mcp.Content{&mcp.TextContent{Text: string(b)}}
-		for _, p := range pics {
-			content = append(content, &mcp.ImageContent{Data: p.PNG, MIMEType: "image/png"})
-		}
-		return &mcp.CallToolResult{Content: content}, out, nil
+		// The result is complete, its output already checked against the schema
+		// (StructuredContent set and no value returned), so the SDK adds nothing to it.
+		return s.answer(ctx, t.Name, fit, func(ctx context.Context) (any, []Picture, *failure) {
+			return h(ctx, in)
+		}), nil, nil
 	})
+}
+
+// resolveOutput is t's output schema resolved as the SDK resolves it, for answer to check
+// each output against before it is sent.
+func resolveOutput(t *mcp.Tool) *jsonschema.Resolved {
+	schema, ok := t.OutputSchema.(*jsonschema.Schema)
+	if !ok {
+		schema = new(jsonschema.Schema)
+		b, err := json.Marshal(t.OutputSchema)
+		if err == nil {
+			err = json.Unmarshal(b, schema)
+		}
+		if err != nil {
+			panic(fmt.Sprintf("tool %s: output schema: %v", t.Name, err))
+		}
+	}
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{ValidateDefaults: true})
+	if err != nil {
+		panic(fmt.Sprintf("tool %s: output schema: %v", t.Name, err))
+	}
+	return resolved
+}
+
+// answer is the one place every tool call's answer is made once the SDK has read its
+// arguments: admission, the call's deadline, the handler, and the writing of its output or
+// its failure. The server writes each output itself, as JSON checked against the tool's
+// output schema, rather than leaving that to the SDK, which answers an output it cannot
+// write with a protocol error that says nothing of whether anything ran; with pictures the
+// output was marshaled here, and a failure to do so went back as plain text that
+// schemaRefusals read as "nothing ran" (hunt-quality-43, 2026-11-20). The handler has
+// returned by then, so whatever code it sent may have run: such a failure is ran "maybe".
+func (s *Server) answer(ctx context.Context, tool string, fit *jsonschema.Resolved, h func(context.Context) (any, []Picture, *failure)) *mcp.CallToolResult {
+	if started, ok := ctx.Value(startedKey{}).(*atomic.Bool); ok {
+		started.Store(true)
+	}
+	// Admission and Shutdown share the lock: a call is either counted before
+	// shutdown, which then waits for it, or refused.
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return toolError(shuttingDown)
+	}
+	var grant *connectorGrant
+	if s.cfg.RequireGrant {
+		grant = s.grantLocked(ctx)
+		if grant == nil {
+			s.mu.Unlock()
+			return toolError(refused(sandbox.RefusalPermission, "connector authorization is absent or revoked"))
+		}
+		grant.calls.Add(1)
+	}
+	s.calls.Add(1)
+	s.mu.Unlock()
+	if grant != nil {
+		defer grant.calls.Done()
+	}
+	defer s.calls.Done()
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.CallTimeout)
+	defer cancel()
+	if grant != nil {
+		defer context.AfterFunc(grant.ctx, cancel)()
+		if grant.ctx.Err() != nil {
+			cancel()
+		}
+	}
+	// Shutdown cancels every call in progress, so a signal need not wait for them.
+	defer context.AfterFunc(s.stopCtx, cancel)()
+	out, pics, f := h(ctx)
+	if f != nil {
+		return toolError(f)
+	}
+	b, err := writeOutput(out, fit)
+	if err != nil {
+		s.cfg.Logger.Warn("a tool's output could not be written; the call is answered as one that may have run", "tool", tool, "error", err)
+		return toolError(undelivered(tool, err))
+	}
+	// The value's JSON goes first, as the only text: a host that drops images keeps the result.
+	content := []mcp.Content{&mcp.TextContent{Text: string(b)}}
+	for _, p := range pics {
+		content = append(content, &mcp.ImageContent{Data: p.PNG, MIMEType: "image/png"})
+	}
+	return &mcp.CallToolResult{Content: content, StructuredContent: json.RawMessage(b)}
+}
+
+// undelivered is the answer to a call whose handler returned an output this server could
+// not write: the call got as far as its tool, so its code may have run.
+func undelivered(tool string, err error) *failure {
+	return &failure{Ran: "maybe", Summary: fmt.Sprintf("The code may have run, and its output could not be delivered: this server could not write the %s tool's output as JSON that fits the tool's output schema (%s). It was not retried; running it again could repeat what it did.", tool, clipRunes(err.Error(), 300))}
+}
+
+// writeOutput is out as the SDK would have sent it: its JSON with the output schema's
+// defaults applied, checked against the schema. An error is an output that cannot be sent
+// (a number that is not finite, a value the schema refuses).
+func writeOutput(out any, fit *jsonschema.Resolved) ([]byte, error) {
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, err
+	}
+	if v == nil && fit.Schema().Type == "object" {
+		v = map[string]any{}
+	}
+	_, isObject := v.(map[string]any)
+	if isObject {
+		if err := fit.ApplyDefaults(&v); err != nil {
+			return nil, err
+		}
+	}
+	if err := fit.Validate(&v); err != nil {
+		return nil, err
+	}
+	if !isObject {
+		return b, nil
+	}
+	return json.Marshal(v)
+}
+
+// toolError is f as the tool error a model reads.
+func toolError(f *failure) *mcp.CallToolResult {
+	b, _ := json.Marshal(f)
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}
 }
 
 func ptr[T any](v T) *T { return &v }

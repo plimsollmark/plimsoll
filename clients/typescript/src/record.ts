@@ -5,25 +5,75 @@
 import { createHash, type Hash } from "node:crypto";
 
 import { PlimsollError } from "./errors.ts";
-import { OUTCOMES, TIERS } from "./tables.gen.ts";
+// The record's version (the one this client computes and checks: every field, every time,
+// for an answered call and an unanswered session call alike), its layouts and bounds,
+// generated from the Go record and sandbox packages.
+import {
+  DAEMON_VERSION_PATTERN,
+  INSTANCE_PATTERN,
+  LAST_WALL_CLOCK_END_VERSION,
+  MAX_DAEMON_VERSION_BYTES,
+  MAX_QUALIFICATION_BYTES,
+  OUTCOMES,
+  QUALIFICATION_FORBIDDEN,
+  RECORD_FIELDS,
+  RECORD_VERSION,
+  RETIRED_END_BEFORE_START_TEXT,
+  TIERS,
+  UNANSWERED_CODES as UNANSWERED_CODE_LIST,
+} from "./tables.gen.ts";
 
 import { wireBytes, WireShapeError, type WireRecord, type WireRunResponse, type WireSoftwareRule } from "./wire.ts";
 
-/** The record encoding version this client computes and checks: every field, every time, for an answered call and an unanswered session call alike. */
-export const RECORD_VERSION = 4;
-
-const INSTANCE_FORM = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$/;
+const INSTANCE_FORM = new RegExp(INSTANCE_PATTERN);
 
 /** A record's instance: "" (the provider names none) or a typed reference such as `k8s-pod-uid:` and a pod's UID. */
 export function validInstance(s: string): boolean {
   return s === "" || INSTANCE_FORM.test(s);
 }
 
-const UNANSWERED_CODES = new Set([
-  "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists", "permission_denied",
-  "resource_exhausted", "failed_precondition", "aborted", "out_of_range", "unimplemented", "internal", "unavailable",
-  "data_loss", "unauthenticated",
-]);
+// A control character, or a format character that breaks a line or shows text in another
+// order than it is stored (record.ValidText), from the generated ranges: the one set every
+// field a reader is shown is held to (the table's name is the qualification's, the first
+// field it was written for).
+const hex = (c: number) => `\\u{${c.toString(16)}}`;
+const FORBIDDEN_IN_TEXT = new RegExp(`[${QUALIFICATION_FORBIDDEN.map(([lo, hi]) => `${hex(lo)}-${hex(hi)}`).join("")}]`, "u");
+
+/**
+ * Text a record may state where a reader is shown it as it is: UTF-8 with no control
+ * character and none of the format characters that break a line or reorder displayed text,
+ * as record.ValidText. A lone surrogate is not UTF-8. The provider's name, the tier and the
+ * isolation qualification are held to it (shownFields).
+ */
+export function validText(s: string): boolean {
+  return !/\p{Cs}/u.test(s) && !FORBIDDEN_IN_TEXT.test(s);
+}
+
+/** A record's fields a reader is shown as the run's evidence, each with the name a refusal gives it, as record.ShownFields. */
+export function shownFields(r: RunRecord): readonly (readonly [string, string])[] {
+  return [["provider", r.provider], ["isolation", r.isolation], ["isolation qualification", r.isolationQualification]];
+}
+
+/**
+ * A record's isolation qualification: "" (the provider states none), or at most
+ * MAX_QUALIFICATION_BYTES of UTF-8 that validText accepts, as record.ValidQualification.
+ */
+export function validQualification(s: string): boolean {
+  return validText(s) && Buffer.byteLength(s, "utf8") <= MAX_QUALIFICATION_BYTES;
+}
+
+const DAEMON_VERSION_FORM = new RegExp(DAEMON_VERSION_PATTERN);
+
+/**
+ * A record's daemon version: "", "(devel)", or a module version such as "v0.28.0" or a
+ * pseudo-version, at most MAX_DAEMON_VERSION_BYTES (the grammar is ASCII, so characters are
+ * bytes), as record.ValidDaemonVersion.
+ */
+export function validDaemonVersion(s: string): boolean {
+  return s === "" || (s.length <= MAX_DAEMON_VERSION_BYTES && DAEMON_VERSION_FORM.test(s));
+}
+
+const UNANSWERED_CODES: ReadonlySet<string> = new Set(UNANSWERED_CODE_LIST);
 
 class Encoder {
   private readonly h: Hash = createHash("sha256");
@@ -229,6 +279,12 @@ export type RunRecord = {
   unanswered: string;
   /** The sandbox instance that ran the call, as the response states it, or "". */
   instance: string;
+  /** The sentence the provider states beside the tier, as the response states it, or "" (record version 5). */
+  isolationQualification: string;
+  /** Whether a waiting pool sandbox ran the call, as the response states it (record version 5). */
+  warm: boolean;
+  /** The answering daemon's plimsoll module version, as the response states it (record version 5). */
+  daemonVersion: string;
   sha256: string;
 };
 
@@ -241,25 +297,43 @@ function big(v: string | number | undefined, name: string): bigint {
   throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not an integer`);
 }
 
+// text and flag read a record field the JSON codec sends as a string or a boolean: absent is "" or false, and any
+// other JSON type is an answer this client cannot read, a PlimsollError (Go's protojson and Python's typed reads
+// refuse the same), never a TypeError later or a value coerced to the right type.
+function text(v: unknown, name: string): string {
+  if (v === undefined || v === null) return "";
+  if (typeof v !== "string") throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not text`);
+  return v;
+}
+
+function flag(v: unknown, name: string): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v !== "boolean") throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not a boolean`);
+  return v;
+}
+
 export function recordFromWire(m: WireRecord): RunRecord {
   return {
     version: m.version ?? 0,
-    requestSha256: m.requestSha256 ?? "",
-    resultSha256: m.resultSha256 ?? "",
-    provider: m.provider ?? "",
-    isolation: m.isolation ?? "",
-    environment: m.environment ?? "",
-    policy: m.policy ?? "",
-    softwareIdentity: m.softwareIdentity ?? "",
-    softwareRuleId: m.softwareRuleId ?? "",
+    requestSha256: text(m.requestSha256, "requestSha256"),
+    resultSha256: text(m.resultSha256, "resultSha256"),
+    provider: text(m.provider, "provider"),
+    isolation: text(m.isolation, "isolation"),
+    environment: text(m.environment, "environment"),
+    policy: text(m.policy, "policy"),
+    softwareIdentity: text(m.softwareIdentity, "softwareIdentity"),
+    softwareRuleId: text(m.softwareRuleId, "softwareRuleId"),
     startedUnixMs: big(m.startedUnixMs, "startedUnixMs"),
     endedUnixMs: big(m.endedUnixMs, "endedUnixMs"),
-    session: m.session ?? "",
+    session: text(m.session, "session"),
     sequence: big(m.sequence, "sequence"),
-    previousSha256: m.previousSha256 ?? "",
-    unanswered: m.unanswered ?? "",
-    instance: m.instance ?? "",
-    sha256: m.recordSha256 ?? "",
+    previousSha256: text(m.previousSha256, "previousSha256"),
+    unanswered: text(m.unanswered, "unanswered"),
+    instance: text(m.instance, "instance"),
+    isolationQualification: text(m.isolationQualification, "isolationQualification"),
+    warm: flag(m.warm, "warm"),
+    daemonVersion: text(m.daemonVersion, "daemonVersion"),
+    sha256: text(m.recordSha256, "recordSha256"),
   };
 }
 
@@ -269,30 +343,45 @@ export function recordDigest(r: RunRecord): string {
   for (const name of RECORD_FIELDS[r.version] ?? RECORD_FIELDS[RECORD_VERSION]!) {
     const v = recordField(r, name);
     if (typeof v === "string") e.str(name, v);
+    else if (typeof v === "boolean") e.bool(name, v);
     else e.int(name, v);
   }
   return e.sum();
 }
 
 /**
- * The fields of each published record version's digest, in order (record.published): a
- * version leaves this table only by a dated, announced decision.
+ * The fields a record's version does not cover are unset, it states a result digest or,
+ * for an unanswered call, an error code, exactly one, and the code is one of the closed
+ * set, its tier is one of TIERS (never "unknown" or empty, whatever floor the request
+ * named), it does not end before it starts, answered or not, its qualification and daemon
+ * version are in their bounds, and its instance is a typed reference (record.statesOnly).
+ * The record of a call lost across a takeover is checked by this alone.
+ * Returns the reason it fails, or undefined.
  */
-const RECORD_FIELDS: Record<number, readonly string[]> = {
-  1: ["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
-    "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
-  2: ["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
-    "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
-    "previous_sha256"],
-  3: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
-    "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
-    "previous_sha256"],
-  4: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
-    "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
-    "sequence", "previous_sha256"],
-};
+export function statesOnlyProblem(r: RunRecord): string | undefined {
+  for (const [name, text] of shownFields(r)) {
+    if (typeof text !== "string" || !validText(text)) return `the record's ${name} is not UTF-8 or holds a control or bidirectional format character`;
+  }
+  const covered = RECORD_FIELDS[r.version] ?? [];
+  for (const name of RECORD_FIELDS[RECORD_VERSION]!) {
+    const v = recordField(r, name);
+    if (!covered.includes(name) && v !== "" && v !== false && v !== 0n) return `a version ${r.version} record does not cover ${name}, so it cannot state one`;
+  }
+  const unanswered = r.unanswered !== "";
+  if (unanswered === (r.resultSha256 !== "")) return "a record states a result or, for an unanswered call, an error code, exactly one";
+  if (unanswered && !UNANSWERED_CODES.has(r.unanswered)) return `an unanswered call's record names ${JSON.stringify(r.unanswered)}, not a Connect code`;
+  if (!(TIERS as readonly string[]).includes(r.isolation)) return `the record's isolation ${JSON.stringify(r.isolation)} is not a tier (${TIERS.join(", ")})`;
+  // A version 1 or 2 record that ends before it starts is refused as a retired reading, not
+  // as a forgery (record.LastWallClockEndVersion, retired 2026-11-21).
+  if (r.endedUnixMs < r.startedUnixMs && r.version <= LAST_WALL_CLOCK_END_VERSION) return RETIRED_END_BEFORE_START_TEXT;
+  if (r.endedUnixMs < r.startedUnixMs) return "the record ends before it starts";
+  if (!validInstance(r.instance)) return "the record's instance is not a typed reference";
+  if (!validQualification(r.isolationQualification)) return `the record's isolation qualification is over ${MAX_QUALIFICATION_BYTES} bytes`;
+  if (!validDaemonVersion(r.daemonVersion)) return `the record's daemon version ${JSON.stringify(r.daemonVersion)} is not a module version or (devel)`;
+  return undefined;
+}
 
-function recordField(r: RunRecord, name: string): string | bigint {
+function recordField(r: RunRecord, name: string): string | bigint | boolean {
   switch (name) {
     case "request_sha256": return r.requestSha256;
     case "result_sha256": return r.resultSha256;
@@ -304,6 +393,9 @@ function recordField(r: RunRecord, name: string): string | bigint {
     case "software_identity": return r.softwareIdentity;
     case "software_rule_id": return r.softwareRuleId;
     case "instance": return r.instance;
+    case "isolation_qualification": return r.isolationQualification;
+    case "warm": return r.warm;
+    case "daemon_version": return r.daemonVersion;
     case "started_unix_ms": return r.startedUnixMs;
     case "ended_unix_ms": return r.endedUnixMs;
     case "session": return r.session;
@@ -356,7 +448,8 @@ export function checkUnanswered(
 ): { record: RunRecord } | { problem: string } {
   const r = recordFromWire(m);
   if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
-  if (!validInstance(r.instance)) return { problem: "the record's instance is not a typed reference" };
+  const bounds = statesOnlyProblem(r);
+  if (bounds !== undefined) return { problem: bounds };
   if (r.resultSha256 !== "" || !UNANSWERED_CODES.has(r.unanswered)) return { problem: "an unanswered call's record states a result or no error code" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.softwareRuleId !== softwareRuleId(rule) || !softwareRuleAllows(rule, r.softwareIdentity)) {
@@ -400,7 +493,6 @@ export function checkRecord(
   const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
   if (kinds.length > 1) return { problem: `the answer holds ${kinds.length} results; a run has one` };
   if (kinds.length !== 1 || kinds[0] !== kind) return { problem: `the daemon answered a ${kind} request with ${kinds.length === 1 ? kinds[0] : "no"} result` };
-  if (r.endedUnixMs < r.startedUnixMs) return { problem: "the record ends before it starts" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the result received digests to ${result}` };
   if (r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "")) return { problem: "the record's provider or tier differs from the response's" };
@@ -408,6 +500,11 @@ export function checkRecord(
   if (r.instance !== (resp.instance ?? "") || !validInstance(r.instance)) {
     return { problem: "the record's instance is not the response's, or not a typed reference" };
   }
+  if (r.isolationQualification !== (resp.isolationQualification ?? "")) return { problem: "the record's isolation qualification is not the response's" };
+  if (r.warm !== (resp.warm ?? false)) return { problem: `the record states warm ${r.warm}, the response ${resp.warm ?? false}` };
+  if (r.daemonVersion !== (resp.daemonVersion ?? "")) return { problem: "the record's daemon version is not the response's" };
+  const bounds = statesOnlyProblem(r);
+  if (bounds !== undefined) return { problem: bounds };
   if (
     (r.softwareIdentity !== (resp.softwareIdentity ?? "") || r.softwareRuleId !== softwareRuleId(rule) || !softwareRuleAllows(rule, r.softwareIdentity))
   ) {

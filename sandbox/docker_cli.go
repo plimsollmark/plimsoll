@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -72,6 +74,11 @@ type dockerHostFiles struct {
 	// each copy named by the digest of its bytes (pinSeccompProfile), so a run applies
 	// exactly the bytes its record names.
 	seccomp string
+	// guard is the folder Preflight writes the guest guard program into (writeGuestGuard), named
+	// by the digest of its bytes, and every container mounts read-only at guestGuardTarget; it is
+	// checked again at each Preflight, and removed with the private directory when a dead
+	// process left it (reapDeadHostDirs).
+	guard string
 	// lock is the open directory whose lock keeps systemd-tmpfiles from aging these
 	// files away (holdHostDir); kept here so it is never closed.
 	lock *os.File
@@ -84,7 +91,8 @@ var dockerProcessFiles = sync.OnceValues(func() (dockerHostFiles, error) {
 	if err != nil {
 		return dockerHostFiles{}, err
 	}
-	f := dockerHostFiles{dir: dir, config: filepath.Join(dir, "config"), resolvConf: filepath.Join(dir, "resolv.conf"), seccomp: filepath.Join(dir, "seccomp")}
+	f := dockerHostFiles{dir: dir, config: filepath.Join(dir, "config"), resolvConf: filepath.Join(dir, "resolv.conf"), seccomp: filepath.Join(dir, "seccomp"),
+		guard: filepath.Join(dir, "guest-guard")}
 	fail := func(what string, err error) (dockerHostFiles, error) {
 		if f.lock != nil {
 			_ = f.lock.Close()
@@ -102,6 +110,10 @@ var dockerProcessFiles = sync.OnceValues(func() (dockerHostFiles, error) {
 	// searchable; its parent stays private to this process.
 	if err := os.Mkdir(f.seccomp, 0o755); err != nil {
 		return fail("seccomp profiles", err)
+	}
+	// As the profiles' folder: docker's daemon reads the guard to mount it.
+	if err := os.Mkdir(f.guard, 0o755); err != nil {
+		return fail("guest guard", err)
 	}
 	if err := writeGuestResolvConf(f.resolvConf); err != nil {
 		return fail("guest resolv.conf", err)
@@ -183,13 +195,27 @@ func dockerCLIEnv() []string {
 
 // dockerCommand is the one way the docker provider starts the docker CLI (see the
 // warning above). A failure to make the private directory is returned by the
-// command's Start, Run or Output.
+// command's Start, Run or Output, and so is a command the refusing point refuses
+// (checkGuardedCommand): one not on its allow list, a run or exec whose container
+// command does not start with the guest guard, a run that mounts anything but the file
+// Preflight verified at the guard's path. Such a command never starts docker
+// (TestDockerCommandRefusesUnguardedCommands), so nothing starts in a container any
+// other way.
 func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
 	files, err := dockerProcessFiles()
 	cmd := exec.CommandContext(ctx, "docker", append([]string{"--config", files.config}, args...)...)
 	cmd.Env = dockerCLIEnv()
 	if err != nil {
 		cmd.Err = fmt.Errorf("docker: no private client config directory: %w", err)
+		return cmd
+	}
+	// The exact file writeGuestGuard writes and Preflight verifies; "" on a machine with no
+	// guard, where every run is refused. check is the guard check's file beside it, the one
+	// source the startup smoke test may mount at the check's path.
+	guard, _ := guestGuardPath(files.guard)
+	check, _ := guestGuardCheckPath(files.guard)
+	if err := checkGuardedCommand(args, guard, check); err != nil {
+		cmd.Err = err
 	}
 	return cmd
 }
@@ -221,8 +247,8 @@ func dockerResolveOutput(ctx context.Context, args ...string) ([]byte, error) {
 // reads whole goes through it; TestDockerCLIOutputIsAlwaysCapped fails the build on a
 // read that does not.
 func cappedOutput(cmd *exec.Cmd) ([]byte, error) {
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = dockerOutputCap, dockerErrorCap
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = dockerOutputCap, dockerErrorCap
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
@@ -236,20 +262,29 @@ func cappedOutput(cmd *exec.Cmd) ([]byte, error) {
 // dockerResolveCommand starts the docker CLI for the one command that must read the
 // operator's client setup: resolving which daemon DOCKER_HOST, DOCKER_CONTEXT and
 // the saved context name. It starts no container, so the config's proxies cannot
-// reach one; it gets only the variables that resolution reads, never a secret.
+// reach one; it gets only the variables that resolution reads, never a secret. Since
+// it reads the operator's config and has no guard check of its own, it starts docker
+// context inspect and nothing else: any other command is refused before docker starts.
 func dockerResolveCommand(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	env := dockerCLIEnv()
-	for _, k := range []string{"HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR"} {
+	for _, k := range []string{"HOME", settings.DockerHost.Name, "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR"} {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
 	}
 	cmd.Env = env
+	if len(args) < 2 || args[0] != "context" || args[1] != "inspect" {
+		cmd.Err = fmt.Errorf("docker %s: the command that reads the operator's client setup starts only docker context inspect", strings.Join(args, " "))
+	}
 	return cmd
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// dockerEnvFlagWord is docker's -e flag, named here only: dockerEnvFlag writes it, and the
+// refusing point reads it (checkGuardedExec, which refuses one that is not NAME=value).
+const dockerEnvFlagWord = "-e"
 
 // dockerEnvFlag is the one place a docker -e flag is built: always NAME=value, so the
 // CLI never copies a variable from its own environment, and the name a valid one.
@@ -257,7 +292,14 @@ func dockerEnvFlag(name, value string) ([]string, error) {
 	if !envName.MatchString(name) {
 		return nil, fmt.Errorf("docker: %q is not an environment variable name", name)
 	}
-	return []string{"-e", name + "=" + value}, nil
+	return []string{dockerEnvFlagWord, name + "=" + value}, nil
+}
+
+// isDockerEnvPair reports whether v is the value of an -e flag dockerEnvFlag writes:
+// NAME=value with a valid name.
+func isDockerEnvPair(v string) bool {
+	name, _, ok := strings.Cut(v, "=")
+	return ok && envName.MatchString(name)
 }
 
 // dockerEnvFlagPair is dockerEnvFlag for a NAME=value string.
@@ -329,7 +371,7 @@ func guestArgv(marker string, env []string, argv ...string) ([]string, error) {
 
 // startMarker is a fresh marker for one call: startScript writes it to stderr before
 // the call's command starts, so it is never guest output.
-func startMarker() string { return "plimsoll-started:" + randID() + "\n" }
+func startMarker() string { return "plimsoll-started:" + providerkit.RandHex(8) + "\n" }
 
 // afterMarker reports whether stderr holds marker, which proves the call's start
 // script ran in the container, and returns what followed it: the call's own stderr.
@@ -361,14 +403,8 @@ func checkEnvEntries(env []string) error {
 	return nil
 }
 
-// libcStartupEnv are the variables the C library and dynamic loader of a program read
-// while it starts, before its main runs, to find files to load: glibc's own list of
-// variables unsafe in an environment someone else controls (UNSECURE_ENVVARS), cut to
-// those GNU or busybox env reads at startup; plus any LD_ name (musl reads
-// LD_PRELOAD and LD_LIBRARY_PATH).
-var libcStartupEnv = map[string]bool{"GLIBC_TUNABLES": true, "LOCPATH": true, "NLSPATH": true, "GCONV_PATH": true}
-
-// checkLoaderEnv refuses an image environment that sets a libcStartupEnv variable.
+// checkLoaderEnv refuses an image environment that sets a variable the C library or dynamic
+// loader reads while a program starts (sessionkit.LoaderStartupVariable, the one list).
 // Docker gives the image's environment to the first process of every container
 // command, and that process is plimsoll's /usr/bin/env: its loader and C library read
 // these before env -i can clear anything. LD_DEBUG writes to stderr ahead of a call's
@@ -381,7 +417,7 @@ var libcStartupEnv = map[string]bool{"GLIBC_TUNABLES": true, "LOCPATH": true, "N
 func checkLoaderEnv(env []string) error {
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "LD_") || libcStartupEnv[name] {
+		if sessionkit.LoaderStartupVariable(name) {
 			return fmt.Errorf("the image sets %s, which the C library or dynamic loader reads before any program in the container runs, plimsoll's own included; refused (bake the setting into the image: ld.so.conf, an rpath)", name)
 		}
 	}

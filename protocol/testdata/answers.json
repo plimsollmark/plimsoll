@@ -125,6 +125,32 @@
    }
   },
   {
+   "name": "a deadline that came with the session's end",
+   "status": 504,
+   "contentType": "application/json",
+   "body": "{\"code\":\"deadline_exceeded\",\"message\":\"the deadline passed before the call finished (error 0000000000000000; the daemon's log holds its detail)\",\"details\":[{\"type\":\"plimsoll.v1.SessionEnded\",\"value\":\"CAQSF3RoZSBtYWluIHByb2Nlc3MgZXhpdGVk\",\"debug\":{\"reason\":\"SESSION_END_MAIN_PROCESS_ENDED\",\"detail\":\"the main process exited\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "deadline_exceeded",
+    "notDispatched": "",
+    "sessionEnded": "main_process_ended",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a cancellation that came with the session's end",
+   "status": 499,
+   "contentType": "application/json",
+   "body": "{\"code\":\"canceled\",\"message\":\"the call was canceled before it finished (error 0000000000000000; the daemon's log holds its detail)\",\"details\":[{\"type\":\"plimsoll.v1.SessionEnded\",\"value\":\"CAQSF3RoZSBtYWluIHByb2Nlc3MgZXhpdGVk\",\"debug\":{\"reason\":\"SESSION_END_MAIN_PROCESS_ENDED\",\"detail\":\"the main process exited\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "canceled",
+    "notDispatched": "",
+    "sessionEnded": "main_process_ended",
+    "answerNotBound": false
+   }
+  },
+  {
    "name": "a refusal reason this client cannot name",
    "status": 429,
    "contentType": "application/json",
@@ -177,6 +203,19 @@
    }
   },
   {
+   "name": "a refusal detail whose base64 holds a stray character",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"code\":\"unavailable\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY!\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "unavailable",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
    "name": "a refusal before the handler, marked by the header",
    "status": 400,
    "contentType": "application/json",
@@ -201,6 +240,59 @@
     "notDispatched": "",
     "sessionEnded": "",
     "answerNotBound": true
+   }
+  },
+  {
+   "name": "a details list holding only null",
+   "status": 500,
+   "contentType": "application/json",
+   "body": "{\"code\":\"internal\",\"details\":[null]}",
+   "echo": "match",
+   "expect": {
+    "code": "unknown",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a null before a refusal detail, marked by the header",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[null,{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "mark": "capacity",
+   "expect": {
+    "code": "unavailable",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a null before a session end",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"failed_precondition\",\"details\":[null,{\"type\":\"plimsoll.v1.SessionEnded\",\"value\":\"CAI\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "internal",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a null before an unanswered call's record",
+   "status": 504,
+   "contentType": "application/json",
+   "body": "{\"code\":\"deadline_exceeded\",\"details\":[null,{\"type\":\"plimsoll.v1.UnansweredCall\",\"value\":\"ChgIBVgBggERZGVhZGxpbmVfZXhjZWVkZWQ\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "unavailable",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
    }
   }
  ]

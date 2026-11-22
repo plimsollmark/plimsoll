@@ -3,6 +3,7 @@ package rpc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -317,8 +318,19 @@ func TestRunJavaScriptAuditRejectsHostileTraceID(t *testing.T) {
 	if !strings.Contains(out, `"trace_id_rejected":true`) {
 		t.Errorf("audit log did not record that it dropped a non-conforming trace id\nlog: %s", out)
 	}
+	// The line's time is left out of the search: its nanoseconds hold any four digits now and
+	// then ("05:16:11.882121724" failed this test on 2026-11-21 with nothing leaked).
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("the audit line is not one JSON object: %v\nlog: %s", err, out)
+	}
+	delete(line, slog.TimeKey)
+	fields, err := json.Marshal(line)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, leak := range []string{"customers", "ssn", "8821"} {
-		if strings.Contains(out, leak) {
+		if strings.Contains(string(fields), leak) {
 			t.Errorf("rejected trace id leaked %q into the audit log\nlog: %s", leak, out)
 		}
 	}
@@ -753,7 +765,8 @@ type qualifyingFake struct {
 func (q *qualifyingFake) Qualification() string { return q.sentence }
 
 // Describe carries the sentence a provider states beside its tier, whole, and nothing for
-// a provider that states none or whose sentence is empty. Run records do not carry it.
+// a provider that states none or whose sentence is empty. Every run's answer and record
+// state it too (evidence_test.go).
 func TestDescribeCarriesTheIsolationQualification(t *testing.T) {
 	const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code."
 	for name, tc := range map[string]struct {
@@ -770,6 +783,40 @@ func TestDescribeCarriesTheIsolationQualification(t *testing.T) {
 		}
 		if got := resp.Msg.GetIsolationQualification(); got != tc.want {
 			t.Errorf("%s: isolation_qualification = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// TestTheAuditLineNamesAPossibleGuessOfTheCredential (finding hunt-security-32): a run in
+// which an answer held the credential (the broker withheld it and ended the grant) says so
+// on its audit line, by count, and names a possible guessing attempt in plimsoll's fixed
+// words, which hold nothing of the run's; a run with no such answer carries neither field.
+func TestTheAuditLineNamesAPossibleGuessOfTheCredential(t *testing.T) {
+	find := func(attrs []slog.Attr, key string) (slog.Value, bool) {
+		for _, a := range attrs {
+			if a.Key == key {
+				return a.Value, true
+			}
+		}
+		return slog.Value{}, false
+	}
+	matched := &sandbox.CallTrace{Calls: []sandbox.CallRow{
+		{Seq: 1, Method: "POST", Route: "/v1/items", Status: 201, CredentialMatched: true},
+		{Seq: 2, Method: "GET", Route: "/items/*", Status: 200, Delivered: true},
+		{Seq: 3, Method: "GET", Route: "/debug/echo", Status: 200, CredentialMatched: true},
+	}}
+	attrs := hostCallAttrs(matched)
+	if n, ok := find(attrs, "host_calls_credential_matched"); !ok || n.Int64() != 2 {
+		t.Fatalf("host_calls_credential_matched = %v (present %v), want 2", n, ok)
+	}
+	alert, ok := find(attrs, "host_credential_alert")
+	if !ok || alert.String() != hostCredentialAlert || !strings.Contains(alert.String(), "possibly code guessing the credential") {
+		t.Fatalf("host_credential_alert = %q (present %v), want the fixed words naming a possible guessing attempt", alert, ok)
+	}
+	clean := &sandbox.CallTrace{Calls: []sandbox.CallRow{{Seq: 1, Method: "GET", Route: "/items/*", Status: 200, Delivered: true}}}
+	for _, key := range []string{"host_calls_credential_matched", "host_credential_alert"} {
+		if _, ok := find(hostCallAttrs(clean), key); ok {
+			t.Fatalf("a run with no answer that held the credential carries %s", key)
 		}
 	}
 }

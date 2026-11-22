@@ -11,13 +11,29 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/boundary"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
+
+// TestHostedMicroVMClaimsRefuseADoubleAnswer keeps the answers e2b and dockercloud share in
+// one place (hostedMicroVMClaims): a provider that answers a shared claim again is refused
+// before it declares anything.
+func TestHostedMicroVMClaimsRefuseADoubleAnswer(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a provider answering a shared claim again was accepted")
+		}
+	}()
+	hostedMicroVMClaims("test-double", "x.go", "A test.", map[boundary.Claim]boundary.Entry{boundary.WritablePlaces: {Not: "again"}})
+}
 
 // TestE2BCreateDeniesAllEgress verifies every ungranted E2B VM is created secured
 // and with deny-all egress.
@@ -431,9 +447,18 @@ type e2bSmokeCalls struct {
 	procCmd     string
 	procCwd     string
 	procEnvs    map[string]string
-	starts      int // every process started, the language probe included
+	starts      int        // every process started, the language probe included
+	argvs       [][]string // every process's command line, in order
 	deleted     bool
+	creates     int    // sandboxes made
 	end         string // the end event's object when a test scripts one; "" is exited with exitCode
+	// How the read of the session's node ends (the start by /usr/bin/env with the closed
+	// PATH): its stdout, stderr and exit. The zero value answers v24.11.1, exit 0.
+	sessionNodeOut, sessionNodeErr string
+	sessionNodeExit                int
+	// sessionNodeStart is that start as the fake saw it: who, where, and its command line.
+	sessionNodeUser, sessionNodeCwd string
+	sessionNodeArgv                 []string
 }
 
 // e2bSmokeFake serves the minimal control-plane + envd surface SmokeTest touches,
@@ -446,6 +471,7 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 		switch {
 		case r.URL.Path == "/sandboxes" && r.Method == http.MethodPost:
 			stamp.takeFrom(r)
+			calls.creates++
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"sandboxID":"sb-smoke","envdAccessToken":"envd","trafficAccessToken":"traffic"}`))
 		case strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == http.MethodGet:
@@ -484,6 +510,22 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 				_ = json.Unmarshal(raw[5:], &start) // strip the connect envelope header
 			}
 			calls.starts++
+			calls.argvs = append(calls.argvs, append([]string{start.Process.Cmd}, start.Process.Args...))
+			if start.Process.Cmd == "/usr/bin/env" {
+				// The read of the session's node (readSessionNode): env with the closed PATH.
+				calls.sessionNodeUser, _, _ = r.BasicAuth()
+				calls.sessionNodeCwd = start.Process.Cwd
+				calls.sessionNodeArgv = append([]string{start.Process.Cmd}, start.Process.Args...)
+				stdout, stderr := calls.sessionNodeOut, calls.sessionNodeErr
+				if stdout == "" && stderr == "" && calls.sessionNodeExit == 0 {
+					stdout = "v24.11.1"
+				}
+				w.Header().Set("Content-Type", "application/connect+json")
+				_, _ = w.Write(frame(0, []byte(`{"event":{"data":{"stdout":"`+base64.StdEncoding.EncodeToString([]byte(stdout))+`","stderr":"`+base64.StdEncoding.EncodeToString([]byte(stderr))+`"}}}`)))
+				_, _ = w.Write(frame(0, []byte(`{"event":{"end":{"exitCode":`+strconv.Itoa(calls.sessionNodeExit)+`,"exited":true}}}`)))
+				_, _ = w.Write(frame(0x2, []byte(`{}`)))
+				return
+			}
 			out := report
 			if strings.Contains(strings.Join(start.Process.Args, " "), "python3") {
 				out = "javascript\npython\n" // the language probe (LanguageProbe): this template runs both
@@ -507,12 +549,29 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 	return srv, calls
 }
 
+// TestE2BSmokeTestRecordsTheCapsItReadsBack runs the smoke test with every resource cap
+// set, so it takes the path that records memory-limit, cpu-limit and writable-bounds as
+// proved by the read-back (the other smoke tests here set none, and record them skipped),
+// and with a cap the microVM exceeds, which refuses as before.
+func TestE2BSmokeTestRecordsTheCapsItReadsBack(t *testing.T) {
+	t.Parallel()
+	srv, _ := e2bSmokeFake(t, `{"node":"v22.23.4","cwd":"/home/user/project","egressOpen":[]}`, 0)
+	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }, MaxMemoryMB: 512, MaxVCPU: 2, MaxDiskMB: 1024}
+	if err := e.SmokeTest(context.Background()); err != nil {
+		t.Fatalf("SmokeTest with every cap met: %v", err)
+	}
+	e.MaxMemoryMB = 256
+	if err := e.SmokeTest(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds memory cap") {
+		t.Fatalf("SmokeTest under a cap the microVM exceeds: %v, want the over-cap refusal", err)
+	}
+}
+
 // TestE2BSmokeTestVerifiesTemplateEndToEnd proves the startup smoke drives the
 // exact project-run mechanics: multi-file staging into the project dir, a probe
 // launched via `sh <script>` with the project cwd, and teardown afterwards.
 func TestE2BSmokeTestVerifiesTemplateEndToEnd(t *testing.T) {
 	t.Parallel()
-	srv, calls := e2bSmokeFake(t, `{"node":"v22.0.0","cwd":"/home/user/project","egressOpen":[]}`, 0)
+	srv, calls := e2bSmokeFake(t, `{"node":"v22.23.4","cwd":"/home/user/project","egressOpen":[]}`, 0)
 	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }}
 	if err := e.SmokeTest(context.Background()); err != nil {
 		t.Fatalf("SmokeTest: %v", err)
@@ -553,10 +612,10 @@ func TestE2BSmokeTestFailsClosed(t *testing.T) {
 		exitCode int
 		wantErr  string
 	}{
-		{"egress open", `{"node":"v22.0.0","cwd":"/home/user/project","egressOpen":["https://1.1.1.1"]}`, 0, "egress is OPEN"},
+		{"egress open", `{"node":"v22.23.4","cwd":"/home/user/project","egressOpen":["https://1.1.1.1"]}`, 0, "egress is OPEN"},
 		{"missing toolchain", ``, 127, "exited 127"},
 		{"garbage report", `not json`, 0, "unparseable probe report"},
-		{"wrong cwd", `{"node":"v22.0.0","cwd":"/","egressOpen":[]}`, 0, "project dir"},
+		{"wrong cwd", `{"node":"v22.23.4","cwd":"/","egressOpen":[]}`, 0, "project dir"},
 		{"no node version", `{"node":"","cwd":"/home/user/project","egressOpen":[]}`, 0, "no node version"},
 	}
 	for _, tc := range cases {
@@ -569,6 +628,156 @@ func TestE2BSmokeTestFailsClosed(t *testing.T) {
 			}
 			if !calls.deleted {
 				t.Error("failed smoke leaked its throwaway sandbox")
+			}
+		})
+	}
+}
+
+// A single run starts no node program of plimsoll's inside the machine, only the guest's
+// own node and sh, so a template whose node is too old for sessionkit.NodeSignalFlag
+// (E2B's base carried v20.9.0 on 2026-11-20) serves the startup check, a snippet and a
+// project; no command any of them sends carries the flag (finding rust-native-helper-35).
+func TestE2BSingleRunsServeANodeTooOldForSessions(t *testing.T) {
+	t.Parallel()
+	srv, calls := e2bSmokeFake(t, `{"node":"v20.9.0","cwd":"/home/user/project","egressOpen":[]}`, 0)
+	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }}
+	ctx := context.Background()
+	if err := e.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest on node v20.9.0: %v", err)
+	}
+	if got := e.smokeStepNode(); got != "v20.9.0" {
+		t.Errorf("the smoke test kept the steps' node %q, want v20.9.0", got)
+	}
+	if res, err := e.RunJavaScript(ctx, Request{Code: `console.log(1)`, Timeout: 5 * time.Second}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("a snippet on node v20.9.0: %+v, %v", res, err)
+	}
+	pres, err := e.RunProject(ctx, ProjectRequest{Files: []File{{Path: "main.js", Content: "console.log(1)"}},
+		Steps: []string{sessionkit.GuestNode + " main.js"}, Timeout: 5 * time.Second})
+	if err != nil || pres.Outcome != ProjectOutcomeCompleted {
+		t.Fatalf("a project on node v20.9.0: %+v, %v", pres, err)
+	}
+	if len(calls.argvs) < 5 {
+		t.Fatalf("the fake saw %d process starts, want the smoke test's three, a snippet's and a step's", len(calls.argvs))
+	}
+	for _, argv := range calls.argvs {
+		if slices.Contains(argv, sessionkit.NodeSignalFlag) || strings.Contains(strings.Join(argv, " "), sessionkit.NodeSignalFlag) {
+			t.Errorf("a single run sent %q, which carries %s", argv, sessionkit.NodeSignalFlag)
+		}
+	}
+}
+
+// The startup check reads two nodes and keeps each for what it is: the steps' node, which
+// the template's own PATH finds, and the node a session's own programs use, started the
+// way a session's open starts it (root, the control folder, by name through the closed
+// PATH, an empty environment) and without the flag. A session is refused early by the
+// second alone: until 2026-11-20 it was refused by the first, so a template with an old
+// node for steps and a new one for sessions was refused every session, and the reverse
+// made a billed machine for each open before refusing it (hunt-quality-53).
+func TestE2BStartupCheckReadsTheSessionsNode(t *testing.T) {
+	t.Parallel()
+	const stepOld, stepNew = `{"node":"v20.9.0","cwd":"/home/user/project","egressOpen":[]}`, `{"node":"v24.11.1","cwd":"/home/user/project","egressOpen":[]}`
+	smoke := func(t *testing.T, report string, set func(*e2bSmokeCalls)) (*E2B, *e2bSmokeCalls) {
+		t.Helper()
+		srv, calls := e2bSmokeFake(t, report, 0)
+		set(calls)
+		e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }}
+		if err := e.SmokeTest(context.Background()); err != nil {
+			t.Fatalf("SmokeTest: %v (single runs do not use the session's node, so it never fails the startup check)", err)
+		}
+		return e, calls
+	}
+	// open reports whether an open got as far as making a sandbox, and its error.
+	open := func(e *E2B, calls *e2bSmokeCalls) (made bool, err error) {
+		before := calls.creates
+		s, err := e.OpenSession(context.Background(), SessionOptions{Lifetime: time.Minute})
+		if err == nil {
+			_ = s.Close(context.Background())
+		}
+		return calls.creates > before, err
+	}
+	t.Run("an old node for steps and a new one for sessions is not refused early", func(t *testing.T) {
+		t.Parallel()
+		e, calls := smoke(t, stepOld, func(c *e2bSmokeCalls) { c.sessionNodeOut = "v24.11.1\n" })
+		if step, session := e.smokeStepNode(), e.smokeSessionNode(); step != "v20.9.0" || session != (e2bSessionNode{read: true, version: "v24.11.1"}) {
+			t.Fatalf("the startup check kept the steps' node %q and the session's %+v; want v20.9.0 and v24.11.1, read", step, session)
+		}
+		want, err := sessionkit.ControlArgvClosedByName(nil, sessionkit.StartupNodeArgv("-e", e2bSessionNodeScript)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(calls.sessionNodeArgv, want) || calls.sessionNodeUser != e2bRootUser || calls.sessionNodeCwd != e2bControlDir {
+			t.Errorf("the session's node was read by %q as %q in %q; want %q as %s in %s, as the open starts its node",
+				calls.sessionNodeArgv, calls.sessionNodeUser, calls.sessionNodeCwd, want, e2bRootUser, e2bControlDir)
+		}
+		if !slices.Contains(calls.sessionNodeArgv, "PATH="+sessionkit.ControlPathClosed) || slices.Contains(calls.sessionNodeArgv, sessionkit.NodeSignalFlag) {
+			t.Errorf("the read %q must use the closed PATH and no flag (a node too old for it would say nothing)", calls.sessionNodeArgv)
+		}
+		if made, err := open(e, calls); !made {
+			t.Errorf("the open was refused before any sandbox was made, for the steps' node, which no session uses: %v", err)
+		}
+	})
+	t.Run("a new node for steps and an old one for sessions is refused before any sandbox", func(t *testing.T) {
+		t.Parallel()
+		e, calls := smoke(t, stepNew, func(c *e2bSmokeCalls) { c.sessionNodeOut = "v20.9.0" })
+		made, err := open(e, calls)
+		if made || err == nil {
+			t.Fatalf("the open made a sandbox (%v) or opened (%v) on a session node too old for the flag", made, err)
+		}
+		if !errors.Is(err, sessionkit.ErrNodeFlagRefused) || !errors.Is(err, ErrUnsupported) {
+			t.Errorf("the refusal %q does not wrap both sessionkit.ErrNodeFlagRefused and ErrUnsupported", err)
+		}
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalUnsupported {
+			t.Errorf("the refusal is marked %v, %v; want not dispatched, unsupported", reason, ok)
+		}
+		if want := "the startup check read node's version v20.9.0 from the node a session's programs use"; !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	})
+	t.Run("no node on the closed PATH is refused before any sandbox, in the open's own words", func(t *testing.T) {
+		t.Parallel()
+		e, calls := smoke(t, stepNew, func(c *e2bSmokeCalls) {
+			c.sessionNodeExit, c.sessionNodeErr = 127, "/usr/bin/env: 'node': No such file or directory (template stderr)\n"
+		})
+		if got := e.smokeSessionNode(); got != (e2bSessionNode{read: true}) {
+			t.Fatalf("the startup check kept %+v; want read, with no node", got)
+		}
+		made, err := open(e, calls)
+		if made || err == nil {
+			t.Fatalf("the open made a sandbox (%v) or opened (%v) on a template with no node on the closed PATH", made, err)
+		}
+		if !errors.Is(err, ErrE2BNoControlNode) || !errors.Is(err, ErrUnsupported) {
+			t.Errorf("the refusal %q does not wrap both ErrE2BNoControlNode and ErrUnsupported", err)
+		}
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalUnsupported {
+			t.Errorf("the refusal is marked %v, %v; want not dispatched, unsupported", reason, ok)
+		}
+		for _, want := range []string{"/usr/sbin, /usr/bin, /sbin, /bin", "writable by every user", "e2b/README.md", "Single runs work"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q does not say %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "template stderr") {
+			t.Errorf("the refusal %q repeats the template's own stderr", err)
+		}
+	})
+	// What the check cannot tell it does not act on: the open finds out, as before.
+	for name, set := range map[string]func(*e2bSmokeCalls){
+		"an exit 127 that does not name node": func(c *e2bSmokeCalls) {
+			c.sessionNodeExit, c.sessionNodeErr = 127, "/bin/sh: 1: /usr/bin/env: not found\n"
+		},
+		"another exit":                      func(c *e2bSmokeCalls) { c.sessionNodeExit, c.sessionNodeErr = 1, "boom\n" },
+		"a version that is not a release's": func(c *e2bSmokeCalls) { c.sessionNodeOut = "v24.0.0-rc.1" },
+		"an answer that is not a version":   func(c *e2bSmokeCalls) { c.sessionNodeOut = "hello" },
+		"a version with a failing exit":     func(c *e2bSmokeCalls) { c.sessionNodeOut, c.sessionNodeExit = "v20.9.0", 3 },
+	} {
+		t.Run("not told: "+name, func(t *testing.T) {
+			t.Parallel()
+			e, calls := smoke(t, stepOld, set)
+			if got := e.smokeSessionNode(); got != (e2bSessionNode{}) {
+				t.Fatalf("the startup check kept %+v; want nothing read", got)
+			}
+			if made, err := open(e, calls); !made {
+				t.Errorf("the open was refused before any sandbox was made on an answer the check could not read: %v", err)
 			}
 		})
 	}
@@ -683,7 +892,7 @@ func TestE2BNeverFollowsARedirect(t *testing.T) {
 
 	// The whole startup path: envd redirects the file upload with a 307, which keeps
 	// the method, the body and the access token.
-	srv, _ := e2bSmokeFake(t, `{"node":"v22.0.0","cwd":"/home/user/project","egressOpen":[]}`, 0)
+	srv, _ := e2bSmokeFake(t, `{"node":"v22.23.4","cwd":"/home/user/project","egressOpen":[]}`, 0)
 	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/files" {
 			http.Redirect(w, r, target.URL+"/files", http.StatusTemporaryRedirect)
@@ -787,7 +996,8 @@ func (s *e2bStamp) serveRecord(w http.ResponseWriter, r *http.Request) {
 	md := s.md
 	s.mu.Unlock()
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"sandboxID": strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "state": "running", "metadata": md})
+		"sandboxID": strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "state": "running", "metadata": md,
+		"memoryMB": 512, "cpuCount": 2, "diskSizeMB": 1024})
 }
 
 // createAnswering is a control plane whose create answers answer. Its record of the

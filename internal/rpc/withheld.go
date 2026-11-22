@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -90,10 +91,12 @@ type waitBound struct{ all, perCaller int }
 // SANDBOX_PER_KEY_CONCURRENT). A caller within what admission would run is not refused
 // by the scan for having to wait, and the scan holds at most that many requests beyond
 // its slots, half what the decode stage may hold (LimitHTTPConcurrency is given twice
-// the concurrency). Without a limiter, plimsolld's defaults: 8 and 4.
+// the concurrency). Without a limiter, plimsolld's defaults, read from the settings table
+// (8 and 4 today), never typed here a second time (finding release-43).
 func (s *SandboxService) scanWaitBound() waitBound {
 	if s.Limiter == nil {
-		return waitBound{all: 8, perCaller: 4}
+		all, _ := settings.MaxConcurrent.Get(settings.Unset) // unset: the default, which parses
+		return waitBound{all: all, perCaller: settings.PerKeyConcurrentDefault(all)}
 	}
 	all := cap(s.Limiter.sem)
 	perCaller := s.Limiter.perKey
@@ -286,6 +289,7 @@ func (s *SandboxService) shipScan(ctx context.Context, env envelope, k kind, t t
 	if len(refused) == 0 && len(unread) == 0 {
 		return ctx, nil
 	}
+	markRefusalLogged(ctx) // the line above is this refusal's
 	var why []string
 	if len(refused) > 0 {
 		why = append(why, "the request carries material this daemon's operator withholds from sandboxes: "+strings.Join(refused, "; "))

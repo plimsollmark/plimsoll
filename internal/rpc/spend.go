@@ -283,6 +283,7 @@ type sessionMeter struct {
 	h       *held     // the running span's reservation; nil while suspended or ended
 	since   time.Time // when h was taken
 	charged float64   // seconds charged so far, for the log
+	ended   bool      // the sandbox is gone (end): nothing more is held
 }
 
 func (c *SpendCap) meter(principal string, perCaller int64) *sessionMeter {
@@ -293,10 +294,15 @@ func (c *SpendCap) meter(principal string, perCaller int64) *sessionMeter {
 // call that resumes the session) it takes want. Otherwise, unless what is held reaches
 // that far already, it charges what ran since the last cover and takes want from now,
 // in one step under the cap's lock. A refusal (capacity, not dispatched) leaves the
-// session covered as far as it was.
+// session covered as far as it was. Once the session has ended (end) it holds nothing: a
+// call that raced the end would otherwise take a reservation nothing settles, and charge
+// the caller for a sandbox already gone.
 func (m *sessionMeter) cover(want time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.ended {
+		return nil
+	}
 	c := m.c
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -330,9 +336,37 @@ func (m *sessionMeter) cover(want time.Duration) error {
 	return nil
 }
 
+// bill holds span from now without a check: a session the daemon could not close may run,
+// and bill, that long (to its lifetime's end and its delete), whether or not an allowance
+// has room, as owe charges a sandbox whose delete gave up. Unlike owe's debt, the hold
+// settles to what ran when the session ends (end), since a close tried again may still
+// take. What ran since the last cover is charged first. It returns the seconds held, 0
+// once the session has ended.
+func (m *sessionMeter) bill(span time.Duration) float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ended || span <= 0 {
+		return 0
+	}
+	c := m.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if m.h != nil {
+		m.charged += c.give(m.h, now.Sub(m.since))
+	}
+	m.h, m.since = c.book(m.principal, span.Seconds(), c.today()), now
+	return span.Seconds()
+}
+
 // stop charges what ran since the last cover and holds nothing more: the session was
-// suspended, or its sandbox is gone. It returns the session's seconds charged so far.
-func (m *sessionMeter) stop() float64 {
+// suspended. It returns the session's seconds charged so far.
+func (m *sessionMeter) stop() float64 { return m.settle(false) }
+
+// end is stop for a session whose sandbox is gone: a later bill holds nothing.
+func (m *sessionMeter) end() float64 { return m.settle(true) }
+
+func (m *sessionMeter) settle(final bool) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.h != nil {
@@ -340,6 +374,9 @@ func (m *sessionMeter) stop() float64 {
 		m.charged += m.c.give(m.h, m.c.now().Sub(m.since))
 		m.c.mu.Unlock()
 		m.h = nil
+	}
+	if final {
+		m.ended = true
 	}
 	return m.charged
 }

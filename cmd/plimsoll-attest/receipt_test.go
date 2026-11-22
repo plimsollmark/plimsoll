@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/attest/receipt"
 )
 
 func TestVerifyReceiptCommand(t *testing.T) {
@@ -37,10 +40,11 @@ func TestVerifyReceiptCommand(t *testing.T) {
 		t.Fatalf("changed artifact: %v, %q", err, out.String())
 	}
 	huge := filepath.Join(t.TempDir(), "huge.json")
-	if err := os.WriteFile(huge, bytes.Repeat([]byte(" "), (1<<20)+1), 0o600); err != nil {
+	if err := os.WriteFile(huge, bytes.Repeat([]byte(" "), receipt.MaxBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readReceiptInput(huge); err == nil {
-		t.Fatal("read unbounded input")
+	// The message states the limit the check applies, whatever it is.
+	if _, err := readReceiptInput(huge); err == nil || !strings.Contains(err.Error(), strconv.Itoa(receipt.MaxBytes)) {
+		t.Fatalf("read unbounded input: %v", err)
 	}
 }

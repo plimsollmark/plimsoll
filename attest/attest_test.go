@@ -83,6 +83,69 @@ func TestPAEMatchesTheDSSEExample(t *testing.T) {
 	}
 }
 
+// A version 5 record's sentence beside the tier, warm and daemon version are signed and
+// come back from the envelope and from a verified bundle as the daemon stated them, and a
+// change to any of them in the stored response or the payload fails (finding
+// cyclonedx-21).
+func TestVersion5FieldsRoundTripThroughASignedBundle(t *testing.T) {
+	key := newKey(t)
+	s := NewSigner(key)
+	v := NewVerifier(key.Public().(ed25519.PublicKey))
+	const sentence = "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code."
+	req := &plimsollv1.RunRequest{Protocol: protocol.Number, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
+	resp := &plimsollv1.RunResponse{Sandbox: "wslc", Isolation: "vm", IsolationQualification: sentence, Warm: true, DaemonVersion: "v0.28.0",
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("1\n")}}}
+	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100)}, resp)
+	var buf bytes.Buffer
+	h := NewHarness(s, &buf)
+	if err := h.Record(req, resp); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ReadBundle(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := VerifyBundle(entries, v); err != nil || rep.Runs != 1 {
+		t.Fatalf("verify: %+v, %v", rep, err)
+	}
+	rec, err := v.Verify(entries[0].Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Version != 5 || rec.IsolationQualification != sentence || !rec.Warm || rec.DaemonVersion != "v0.28.0" {
+		t.Fatalf("the signed record states %+v", rec)
+	}
+	payload, _ := base64.StdEncoding.DecodeString(entries[0].Envelope.Payload)
+	if !bytes.Contains(payload, []byte(`"isolation_qualification":"Hyper-V VM per run`)) || !bytes.Contains(payload, []byte(`"warm":true`)) || !bytes.Contains(payload, []byte(`"daemon_version":"v0.28.0"`)) {
+		t.Fatalf("the predicate does not name the version 5 fields: %s", payload)
+	}
+	if got, err := VerifyCall(v, entries[0]); err != nil || got.IsolationQualification != sentence {
+		t.Fatalf("VerifyCall: %+v, %v", got, err)
+	}
+	// The stored response must state what the signed record does: one with the sentence
+	// removed, or warm turned off, no longer verifies as a call.
+	for name, edit := range map[string]func(*plimsollv1.RunResponse){
+		"no sentence": func(m *plimsollv1.RunResponse) { m.IsolationQualification = "" },
+		"not warm":    func(m *plimsollv1.RunResponse) { m.Warm = false },
+	} {
+		stored := &plimsollv1.RunResponse{}
+		if err := proto.Unmarshal(entries[0].Response, stored); err != nil {
+			t.Fatal(err)
+		}
+		edit(stored)
+		changed := entries[0]
+		if changed.Response, err = proto.Marshal(stored); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := VerifyCall(v, changed); !errors.Is(err, record.ErrMismatch) {
+			t.Errorf("%s: a stored response that differs from the signed record: %v, want record.ErrMismatch", name, err)
+		}
+	}
+}
+
 func TestSignAndVerify(t *testing.T) {
 	key := newKey(t)
 	s := NewSigner(key)
@@ -127,12 +190,15 @@ func TestSignAndVerify(t *testing.T) {
 	}
 }
 
-// Only version 4 is signed: a record of an earlier layout is refused by Sign, and a
-// daemon's answer carrying one is refused before signing.
+// Only the current version is signed: a record of an earlier layout is refused by Sign,
+// and a daemon's answer carrying one is refused before signing.
 func TestEarlierRecordVersionsAreNotSigned(t *testing.T) {
 	key := newKey(t)
 	signer := NewSigner(key)
-	for _, v := range []int{1, 2, 3} {
+	if record.Version != 5 {
+		t.Fatalf("record version %d; this test lists the versions before 5", record.Version)
+	}
+	for _, v := range []int{1, 2, 3, 4} {
 		req, resp := exchange("old", "ok", sandbox.RunRecord{})
 		r := record.FromWire(resp.GetRecord())
 		r.Version = v

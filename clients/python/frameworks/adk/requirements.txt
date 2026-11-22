@@ -29,9 +29,9 @@ attrs==26.1.0 \
     # via
     #   jsonschema
     #   referencing
-authlib==1.8.0 \
-    --hash=sha256:88aebbd9af6757e14e912d5dc007ae1dc1f3e27e3b2152ce7c552ee2c3b3c121 \
-    --hash=sha256:f3ecd5f1da737262fb53bf1a4d95c4ea1ad9dd509316587a255c99ab1838a4f0
+authlib==1.9.9 \
+    --hash=sha256:0199649865fefb4304fc57683eaebb15614523073e41e09d98c72f3268ce5cbc \
+    --hash=sha256:cca3dffa51c8d80d6df19aee2279e47219dc996f5a527c06ac2e39d0757c99ef
     # via google-adk
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
@@ -384,6 +384,7 @@ cryptography==50.0.2 \
     --hash=sha256:fdd28f912fccfec1846a94e2e1e8f9b0012f557f0c46fe4f3eb0d7a87afcf90b
     # via
     #   authlib
+    #   google-adk
     #   google-auth
     #   joserfc
 distro==1.9.0 \
@@ -394,9 +395,9 @@ fastapi==0.141.1 \
     --hash=sha256:bfb91aa2d334c61cb35ba9a116fc123b3d3df31640b801cf57a7a78ec3f603b3 \
     --hash=sha256:e8822fc40db1e1858054d7a949a888695bc9bdce70139178e33bd2871a453ca1
     # via google-adk
-google-adk==2.11.0 \
-    --hash=sha256:4774e1fc7bb37727e56142e7d41e9035949ebfc876a2b15d5505969b02798bcd \
-    --hash=sha256:59258cec8d79306192bf65e0d43fa64b764f831e3b74ed3b8e6fe9df16a1e2c8
+google-adk==2.14.1 \
+    --hash=sha256:a92783e99babba5611163ce8fb4ced3ce6c5e630a34f15a3460bc577571a41a3 \
+    --hash=sha256:b0033571ca101f6bb8617f4791ada0f141f7ef32b0f21ff32116f1161b32ee3c
     # via -r requirements.in
 google-auth==2.61.0 \
     --hash=sha256:37f0815967322e8c32b12bf422531e8b637cafdaae0acbb9141117cfe6a96f23 \
@@ -404,9 +405,9 @@ google-auth==2.61.0 \
     # via
     #   google-adk
     #   google-genai
-google-genai==2.28.0 \
-    --hash=sha256:970cb2eaf1951949851c3e0a5b70265cfea8a408fb7361c7c980a84d90672bf2 \
-    --hash=sha256:cdee15e2fbfea08ea61bce6e5bfbb3301db4bd13a52dccfa8c8d1167e37ca1cc
+google-genai==2.34.0 \
+    --hash=sha256:8e182cf3f73384167b96861cf0aef5102b5070f2db1ea11002879e913806ef37 \
+    --hash=sha256:a4cb02aebc4c357f863d2938132f0e3f7967fc5e00b8a4078673f68aad340665
     # via google-adk
 graphviz==0.21 \
     --hash=sha256:20743e7183be82aaaa8ad6c93f8893c923bd6658a04c32ee115edb3c8a835f78 \

@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/wslc"
 )
@@ -14,10 +15,9 @@ import (
 func init() {
 	providers[wslc.Name] = providerDescriptor{
 		build: wslc.FromEnv,
-		usage: wslcUsage,
 		// Every container gets --memory and --cpus, and the four tmpfs mounts are sized
 		// from SANDBOX_DISK_MB; there is no process limit, so SANDBOX_PIDS is refused.
-		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
+		hardenedEnvelope: []settings.Size{settings.MemoryMB, settings.CPUs, settings.DiskMB},
 		// Hardened mode refuses wslc in both modes, whatever tier it reports. The shared mode
 		// is container tier with five of the docker provider's controls absent (wslc.Absent);
 		// the per-run mode's VM wall is Hyper-V's (tier container, or vm with
@@ -81,119 +81,3 @@ func init() {
 
 // wslcAbsentShort names wslc.Absent's controls for the startup log line.
 var wslcAbsentShort = []string{"read-only root", "seccomp choice", "no-new-privileges", "process limit", "user namespaces", "log driver", "init"}
-
-const wslcUsage = `
-  SANDBOX_PROVIDER=wslc
-                             WSL containers (WSLC) on Windows, driven through WSL
-                             interop from a plimsolld in a WSL distribution. Needs
-                             WSL 3.0.5 or later. Microsoft states that WSL is not a
-                             security sandbox for running untrusted code; hardened
-                             mode refuses it in both modes.
-                             In both, a run's container has no read-only root, no
-                             seccomp choice or no-new-privileges, no process limit
-                             and no user namespaces. The smoke test refuses startup
-                             unless the probe container has loopback alone, no
-                             capability, the guest uid, the memory limit, a seccomp
-                             filter, no GPU device, no Windows folder and no writable
-                             place but its four tmpfs mounts.
-                             Snippets and projects only: no grants, sessions or modules.
-                             Guide: docs/wslc.md.
-  SANDBOX_WSLC_MODE          per-run (default) or shared.
-                             per-run, tier container (vm with
-                             SANDBOX_WSLC_ACCEPT_VM_TIER=1), always stated with its
-                             qualification (Describe carries it as
-                             isolation_qualification, and the startup log too): a
-                             Hyper-V VM per run (one WSLC session per run), booted from
-                             a fresh copy of a template disk plimsolld builds at
-                             startup and deleted after the run; the VM wall is
-                             Hyper-V's, and the Windows components around it (network
-                             relay, shares, interop) run with the user's rights. Uses
-                             wslc.exe's undocumented "system session enter",
-                             powershell.exe (System32) and /usr/sbin/mkfs.ext4; about
-                             0.9 GB of Windows memory per live run. Each per-run
-                             plimsolld needs a run folder of its own: it ends only
-                             sessions whose folder is under its run folder, and a
-                             second process on the same folder refuses to start.
-                             shared, chosen by setting it, tier container: every run is
-                             a fresh container in the caller's default WSLC session VM
-                             (one per Windows user and elevation), beside the others,
-                             sharing its kernel and rootful dockerd. Weaker than docker
-                             under runc. One run at a time: the process limit is counted
-                             across the session VM, so a second run waits for its turn,
-                             no longer than its own timeout, and is refused (not
-                             dispatched, capacity) if the wait ends first.
-  SANDBOX_WSLC_ACCEPT_VM_TIER
-                             per-run only, off by default. Off (unset, 0 or false),
-                             the per-run mode reports the container tier, because
-                             Microsoft states that WSL is not a security sandbox for
-                             running untrusted code: a vm or kernel floor (a
-                             request's minimum_isolation, SANDBOX_MIN_ISOLATION,
-                             placement) refuses it, not dispatched (isolation), and
-                             SANDBOX_MIN_ISOLATION=vm or kernel refuses startup. On
-                             (1 or true) is the operator accepting that statement:
-                             the mode then reports vm, stated with the same
-                             qualification plus that the operator set this. Letter
-                             case and spaces around the value are ignored; any other
-                             value refuses startup. gVisor does not change the tier.
-                             In the shared mode any value refuses startup, 0
-                             included: the setting means nothing there
-  SANDBOX_WSLC_MAX_SESSIONS  per-run only: the most runs in VMs of their own at once
-                             (default 2, at most 16); a run past it is refused, not
-                             dispatched, and a run waits while an ended one's VM is
-                             still being torn down
-  SANDBOX_WSLC_GVISOR        per-run only, off by default: 1 makes gVisor (runsc, the
-                             systrap platform) the runtime inside every run's VM, an
-                             added wall inside the Hyper-V VM. The tier does not
-                             change (container, or vm with
-                             SANDBOX_WSLC_ACCEPT_VM_TIER=1) and is stated with
-                             gVisor's position added; hardened mode still refuses
-                             the provider. The template carries runsc
-                             (streamed in at startup and checked by SHA-512 inside
-                             the VM). WSLC rewrites the docker settings at every VM
-                             boot, so each run writes them again, reloads dockerd and
-                             reads the default runtime back: a run whose VM does not
-                             read runsc is refused (not dispatched, environment) and
-                             is never started under runc. The smoke test then proves
-                             gVisor from inside (its kernel string) and from the VM's
-                             side (the container's runtime, a runsc process, the
-                             memory limit and the Sentry's own filter). Each result
-                             carries the policy gvisor:proven. Rests on three
-                             behaviors Microsoft does not document: "system session
-                             enter", "system session run" as root in the VM, and
-                             dockerd rereading /etc/docker/daemon.json on SIGHUP.
-                             The VM has no /dev/kvm, so systrap. Refused in the shared
-                             mode
-  SANDBOX_WSLC_RUNSC_PATH    with SANDBOX_WSLC_GVISOR=1: the runsc binary as this
-                             distribution sees it (an absolute path; nothing is
-                             downloaded). Needs SANDBOX_WSLC_RUNSC_SHA512
-  SANDBOX_WSLC_RUNSC_SHA512  with SANDBOX_WSLC_GVISOR=1: the binary's SHA-512, 128
-                             lowercase hex digits (a path without a digest, or a digest
-                             that does not match, refuses startup)
-  SANDBOX_WSLC_RUNSC_HELPERS with SANDBOX_WSLC_GVISOR=1: the files runsc needs from the
-                             gvisor-bin directory beside it, as NAME=SHA512 pairs
-                             separated by commas (default none); each is sent and
-                             checked, and the store must hold exactly this set
-  SANDBOX_WSLC_RUN_ROOT      per-run only: the directory for the template and the run
-                             disks, on a Windows drive as this distribution mounts it
-                             (default the Windows user's %LOCALAPPDATA%\plimsoll-wslc);
-                             only names plimsolld creates there are ever deleted. Every
-                             run boots the template kept there, so startup refuses to
-                             serve unless the root's owner and everyone who can write,
-                             create or delete there (by Windows access list, inherited
-                             rules included) is this Windows user, SYSTEM or
-                             Administrators, or the list cannot be read. Every folder
-                             above it, to the drive's own, is read too and refused when
-                             anyone else could delete, rename or take it over, and so
-                             are the built template's folder and disk file. The
-                             template is not checked again between runs
-  SANDBOX_WSLC_PATH          wslc.exe as this distribution sees it (default
-                             /mnt/c/Program Files/WSL/wslc.exe)
-  SANDBOX_WSLC_IMAGE         the image every run starts: plimsoll's sandbox image or
-                             one built FROM it (required; with
-                             SANDBOX_REQUIRE_PINNED_IMAGES=1, name@sha256:<digest>)
-  SANDBOX_WSLC_NPROC         --ulimit nproc (default 256): processes of the guest uid
-                             at once in the session VM (shared: one run at a time, so
-                             one run's; per-run: in the run's own VM)
-                             SANDBOX_MEMORY_MB, SANDBOX_CPUS and SANDBOX_DISK_MB size
-                             each container; SANDBOX_PIDS fails startup
-`

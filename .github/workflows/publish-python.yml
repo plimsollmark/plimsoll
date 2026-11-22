@@ -11,6 +11,9 @@
 #
 # PyPI side, once: a pending publisher (owner plimsollmark, repository plimsoll,
 # workflow publish-python.yml, environment pypi). Actions are pinned by commit SHA.
+#
+# Everything after this comment is written by internal/publishflows from its table (make
+# publish-workflows); edit the table, not this file.
 name: publish-python
 
 on:

@@ -1,1 +1,6 @@
-google-adk==2.11.0
+# The Google ADK version this adapter's suite runs against: 2.14.1, PyPI's latest on
+# 2026-11-17. 2.14.0 made the environment interface PlimsollEnvironment implements
+# (google.adk.environment.BaseEnvironment, read_file_stream included) stable. Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+google-adk==2.14.1

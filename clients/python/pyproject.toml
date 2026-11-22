@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plimsoll-client"
-version = "0.27.2"
+version = "0.28.0"
 description = "Client for plimsolld, the plimsoll sandbox daemon, that checks every run record it receives"
 readme = "README.md"
 license = "Apache-2.0"
@@ -17,15 +17,18 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# Framework adapters are optional imports (plimsoll_client.adk, .agno, .crewai, .anthropic_worker, .openai_sandbox);
-# the lower bounds are the versions their suites run against (clients/python/frameworks/).
+# Framework adapters are optional imports (plimsoll_client.adk, .agno, .crewai, .langchain, .deepagents, .anthropic_worker, .openai_sandbox);
+# each extra pins exactly the version its suite's lock file installs (clients/python/frameworks/<extra>/requirements.txt),
+# held by TestAdaptersPinTheVersionTheirLockInstalls.
 [project.optional-dependencies]
-adk = ["google-adk>=2.11.0,<3"]
-agno = ["agno>=3.1.1,<4"]
-crewai = ["crewai>=1.15.23,<2"]
-anthropic = ["anthropic>=1.13.0,<2"]
-openai-agents = ["openai-agents>=0.23.1,<1"]
-verifiers = ["verifiers>=0.4.1.dev97,<0.5"]
+adk = ["google-adk==2.14.1"]
+agno = ["agno==3.1.1"]
+crewai = ["crewai==1.15.23"]
+langchain = ["langchain-core==1.8.0"]
+deepagents = ["deepagents==0.7.38"]
+anthropic = ["anthropic==1.13.0"]
+openai-agents = ["openai-agents==0.25.0"]
+verifiers = ["verifiers==0.4.1.dev97"]
 
 [project.urls]
 Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python"

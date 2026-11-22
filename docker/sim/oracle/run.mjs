@@ -32,11 +32,25 @@ import { WASI } from 'node:wasi';
 // claim held only where the host's ptrace policy already refused /proc/<pid>/mem to a
 // same-uid child (review, 2026-10-26). Copied from judge.mjs.
 const GUARD = '/usr/local/lib/plimsoll-runner-guard.so';
-if (process.env.PLIMSOLL_JUDGE_GUARD !== GUARD) {
+// --disable-sigusr1 keeps this process's debugger shut: node opens it on SIGUSR1, which
+// the controller, a process of the same uid, may send its parent, and the debugger then
+// listens on 127.0.0.1:9229, which the controller may reach (finding rust-native-helper-34,
+// measured 2026-11-20: a controller opened this judge's debugger that way). A step starts
+// this file as plain node, so the re-execution below adds the flag whatever the step
+// wrote; it is an argument, never NODE_OPTIONS, which the controller would inherit. Until
+// the re-execution nothing secret is held and no controller exists.
+if (process.env.PLIMSOLL_JUDGE_GUARD !== GUARD || !process.execArgv.includes('--disable-sigusr1')) {
   // Same pid, new image: the guard's constructor runs before any of this code again.
   process.execve(process.execPath,
-    [process.execPath, ...process.execArgv, fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+    [process.execPath, '--disable-sigusr1', ...process.execArgv.filter((a) => a !== '--disable-sigusr1'),
+      fileURLToPath(import.meta.url), ...process.argv.slice(2)],
     { ...process.env, LD_PRELOAD: GUARD, PLIMSOLL_JUDGE_GUARD: GUARD });
+}
+if (!process.execArgv.includes('--disable-sigusr1')) {
+  // execve replaces this process or throws, so this is never reached; if it were, the
+  // judge would go on with its debugger open to the controller, so it stops instead.
+  console.error('the judge could not start itself with --disable-sigusr1');
+  process.exit(1);
 }
 // The guard stays in this process only; the controller and the probe start without it.
 delete process.env.LD_PRELOAD;
@@ -49,7 +63,7 @@ delete process.env.PLIMSOLL_JUDGE_GUARD;
 for(const [f,m] of [["/fd/0",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_WRONLY],["/mem",fs.constants.O_RDONLY]]){
 try{fs.closeSync(fs.openSync(p+f,m));out.push("open");}catch(e){out.push(e.code||"unknown");}}
 process.stdout.write(out.join(","));`;
-  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', timeout: 5000, maxBuffer: 4096 });
+  const r = spawnSync(process.execPath, ['--disable-sigusr1', '-e', probe], { encoding: 'utf8', timeout: 5000, maxBuffer: 4096 });
   const codes = (r.stdout ?? '').split(',');
   if (r.error || r.status !== 0 || codes.length !== 4 || codes.some((c) => c !== 'EACCES' && c !== 'EPERM')) {
     console.error(`the judge could not prove it is closed to the controller (${r.stdout || r.error})`);
@@ -80,7 +94,10 @@ if (rc < 0) { console.error(`plant refused to initialise: ${rc}`); process.exit(
 const ownDir = dirname(resolve(controller));
 const ownCode = readdirSync(ownDir).filter((f) => lstatSync(join(ownDir, f)).isFile())
   .map((f) => `--allow-fs-read=${join(ownDir, f)}`);
-const child = spawn(process.execPath, ['--no-warnings', '--permission', ...ownCode, controller], { stdio: ['pipe', 'pipe', 'inherit'] });
+// The controller gets the flag too: it is the code under test and gains nothing from its
+// own debugger, and with it shut a second trial running at the same time in the same
+// sandbox cannot steer this controller's answers through it.
+const child = spawn(process.execPath, ['--disable-sigusr1', '--no-warnings', '--permission', ...ownCode, controller], { stdio: ['pipe', 'pipe', 'inherit'] });
 const closed = new Promise((resolve) => child.on('close', resolve));
 // A controller that exits while ticks remain can close its input before the judge
 // sees its output end; the write error is the controller's failure (exit 3).

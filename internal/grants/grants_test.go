@@ -474,6 +474,39 @@ func TestLoadPreambleFile(t *testing.T) {
 	}
 }
 
+// The grants file and a preamble_file it names are judged as the daemon reads them
+// (internal/settings/configfile): a preamble another user could change enters every
+// sandbox the profile grants, so it is named in FileModes beside the grants file.
+func TestLoadJudgesFileModes(t *testing.T) {
+	p := writeGrants(t, `{"profiles":{"p":{"base_url":"https://x","allow":["GET /a"],"allowed_callers":["test"],"preamble_file":"sdk.js"}}}`)
+	sdk := filepath.Join(filepath.Dir(p), "sdk.js")
+	if err := os.WriteFile(sdk, []byte("globalThis.x = 1;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if r.FileModes() != nil {
+		t.Fatalf("0600 files judged loose: %s", r.FileModes())
+	}
+	for path, name := range map[string]string{p: "grants file", sdk: "preamble_file"} {
+		if err := os.Chmod(path, 0o620); err != nil {
+			t.Fatal(err)
+		}
+		r, err := Load(p)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if f := r.FileModes(); f == nil || !strings.Contains(f.String(), path+" has mode 0620") {
+			t.Fatalf("a group-writable %s judged as %v", name, f)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLoadRejectsPreambleFileTraversal(t *testing.T) {
 	p := writeGrants(t, `{"profiles":{"p":{"base_url":"https://x","allow":["GET /a"],"allowed_callers":["test"],"preamble_file":"../escape.js"}}}`)
 	if _, err := Load(p); err == nil {
@@ -711,6 +744,84 @@ func TestLoadAllowInSessions(t *testing.T) {
 		p, _ := r.Get("lights")
 		if got := p.Grant().AllowInSessions; got != c.want {
 			t.Errorf("%q: AllowInSessions = %v, want %v", c.extra, got, c.want)
+		}
+	}
+}
+
+// TestLoadRefusesTheTokenSecretInWhatTheGuestReceives (hunt-security-6): a profile that
+// writes its static token, or its jwt signing secret, into sdk_env, the preamble (inline
+// or from its file), the global's name or a set_headers value fails to load, naming the
+// field and never the value; a token inside a longer value is found too; a token shorter
+// than 8 bytes is matched only as a whole value; a placeholder key loads.
+func TestLoadRefusesTheTokenSecretInWhatTheGuestReceives(t *testing.T) {
+	const token = "test-token-0123456789abcdef"
+	const secret = "0123456789abcdef0123456789abcdef-hs256"
+	t.Setenv("HUNT6_TOKEN", token)
+	t.Setenv("HUNT6_SECRET", secret)
+	t.Setenv("HUNT6_SHORT", "tok")
+	static := `"token": {"type": "static", "env": "HUNT6_TOKEN"}`
+	jwt := `"token": {"type": "jwt", "secret_env": "HUNT6_SECRET", "audience": "api"}`
+	profile := func(tok, extra string) string {
+		return `{"profiles": {"p": {"base_url": "https://api.example", "allow": ["POST /v1/x"], "allowed_callers": ["user:a"], ` +
+			tok + extra + `}}}`
+	}
+	for _, c := range []struct{ name, tok, extra, field string }{
+		{"sdk_env exact", static, `, "sdk_env": {"OPENAI_API_KEY": "` + token + `"}`, `sdk_env "OPENAI_API_KEY"`},
+		{"sdk_env inside a longer value", static, `, "sdk_env": {"OPENAI_BASE_URL": "{origin}/v1?k=` + token + `"}`, `sdk_env "OPENAI_BASE_URL"`},
+		{"preamble", static, `, "preamble": "globalThis.k = '` + token + `';"`, "preamble"},
+		{"set_headers", static, `, "set_headers": {"X-Auth-Token": "` + token + `"}`, `set_headers "X-Auth-Token"`},
+		{"jwt secret in sdk_env", jwt, `, "sdk_env": {"SIGNING_KEY": "` + secret + `"}`, `sdk_env "SIGNING_KEY"`},
+		{"jwt secret in preamble", jwt, `, "preamble": "const s = '` + secret + `';"`, "preamble"},
+		{"short token as a whole value", `"token": {"type": "static", "env": "HUNT6_SHORT"}`, `, "sdk_env": {"API_KEY": "tok"}`, `sdk_env "API_KEY"`},
+	} {
+		_, err := Load(writeGrants(t, profile(c.tok, c.extra)))
+		if err == nil || !strings.Contains(err.Error(), c.field+" holds the profile's token secret") {
+			t.Errorf("%s: err = %v, want the field %s named", c.name, err, c.field)
+			continue
+		}
+		if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the error names the secret: %v", c.name, err)
+		}
+	}
+
+	// The preamble from its file is the preamble.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sdk.js"), []byte("const k = '"+token+"';\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "grants.json")
+	if err := os.WriteFile(p, []byte(profile(static, `, "preamble_file": "sdk.js"`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "preamble holds the profile's token secret") {
+		t.Errorf("preamble_file: err = %v", err)
+	}
+
+	// What still loads: a placeholder key, and a short token's letters inside a preamble.
+	for _, ok := range []string{
+		profile(static, `, "sdk_env": {"OPENAI_BASE_URL": "{origin}/v1", "OPENAI_API_KEY": "plimsoll-grant"}`),
+		profile(`"token": {"type": "static", "env": "HUNT6_SHORT"}`, `, "preamble": "const tokens = [];"`),
+	} {
+		if _, err := Load(writeGrants(t, ok)); err != nil {
+			t.Errorf("load: %v", err)
+		}
+	}
+}
+
+// TestLoadRefusesOverrideHeaders (hunt-security-5): a profile that passes or sets a
+// header a framework reads as the request's method or path fails to load, saying why.
+func TestLoadRefusesOverrideHeaders(t *testing.T) {
+	t.Setenv("HUNT5_TOKEN", "tok-123")
+	for _, extra := range []string{
+		`"pass_headers": ["X-HTTP-Method-Override"]`, `"pass_headers": ["x-http-method"]`, `"pass_headers": ["X-Method-Override"]`,
+		`"pass_headers": ["X-Original-URL"]`, `"pass_headers": ["x-rewrite-url"]`,
+		`"set_headers": {"X-HTTP-METHOD-OVERRIDE": "DELETE"}`, `"set_headers": {"X-Original-Url": "/admin"}`,
+	} {
+		p := writeGrants(t, `{"profiles": {"p": {"base_url": "https://api.example", "allow": ["POST /v1/x"], "allowed_callers": ["user:a"], `+
+			`"token": {"type": "static", "env": "HUNT5_TOKEN"}, `+extra+`}}}`)
+		_, err := Load(p)
+		if err == nil || !strings.Contains(err.Error(), "web frameworks and servers read it as the request's") {
+			t.Errorf("%s: err = %v", extra, err)
 		}
 	}
 }

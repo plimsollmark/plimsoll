@@ -577,11 +577,16 @@ var lifecycle = []string{"preinstall", "install", "postinstall", "prepare"}
 // mount table (docs/agentsandbox.md, "What each run does", step 4).
 const checkPrefix = "printf 'kernel %s\\n'"
 
+// runnerPath is where plimsoll's project images carry the project runner, the native helper
+// (sandbox/internal/nativehelper's InContainer, which this example cannot import).
+const runnerPath = "/usr/local/libexec/plimsoll-helper"
+
 // see groups a receipt's processes by the command that started them, and counts each
 // group's calls on each side. A process belongs to its nearest ancestor (or itself) that
 // is the root of a group: a step of the run (a shell running the step's exact command), an
 // install script of the package (a shell running the script's exact command), plimsoll's
-// runner (node /runner.mjs) or plimsoll's per-pod check; the processes under none of them
+// runner (runnerPath run-project, the native helper; node /runner.mjs before 2026-11-21, in the
+// published run) or plimsoll's per-pod check; the processes under none of them
 // are runsc's start of the pod and sandboxd.
 func see(p receipt.Predicate, req *plimsollv1.RunRequest, scripts map[string]string) (seen, error) {
 	s := seen{Processes: len(p.Processes), Written: len(p.Effected.Written), Unclear: len(p.Unclear)}
@@ -605,7 +610,9 @@ func see(p receipt.Predicate, req *plimsollv1.RunRequest, scripts map[string]str
 		for _, g := range pr.Programs {
 			a := g.Argv
 			switch {
-			case len(a) == 2 && a[0] == "node" && a[1] == "/runner.mjs":
+			case len(a) == 2 && a[0] == runnerPath && a[1] == "run-project",
+				// The Node runner it replaced on 2026-11-21, which the published run's logs show.
+				len(a) == 2 && a[0] == "node" && a[1] == "/runner.mjs":
 				roots[pr.PID] = root{kind: "runner"}
 			case len(a) == 3 && a[0] == "sh" && a[1] == "-c" && strings.HasPrefix(a[2], checkPrefix):
 				roots[pr.PID] = root{kind: "check"}

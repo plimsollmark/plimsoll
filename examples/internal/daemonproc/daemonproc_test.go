@@ -2,13 +2,16 @@ package daemonproc
 
 import (
 	"context"
+	"debug/buildinfo"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -66,6 +69,7 @@ func fakeDaemon(report string) {
 	}
 	go func() { _ = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})) }()
 	fmt.Fprintf(f, "signal %v\n", <-signals)
+	// fixed-wait: the fake daemon's drain time, which the test's second signal must land inside; the fake's own behavior, not a wait for anything
 	time.Sleep(200 * time.Millisecond) // the drain, during which a second signal would force-quit plimsolld
 	select {
 	case s := <-signals:
@@ -131,6 +135,128 @@ func TestADaemonIsStoppedOnceWithSIGTERMAndGetsOnlyItsOwnSettings(t *testing.T) 
 	for name := range env {
 		if !slices.Contains(passedEnv, name) && !slices.Contains([]string{fakeDaemonReport, "SANDBOX_PROVIDER", "PLIMSOLL_ADDR", "PLIMSOLL_METRICS_ADDR"}, name) {
 			t.Errorf("the daemon got %s, which neither Options.Env nor passedEnv names", name)
+		}
+	}
+}
+
+// The daemon Build makes states daemon_version "(devel)": its build information names plimsoll's module at
+// version (devel) with no version control stamp, which is what the daemon reads (internal/rpc's moduleVersion).
+func TestBuildLeavesOutTheVersionControlStamp(t *testing.T) {
+	t.Chdir(filepath.Join("..", "..", ".."))
+	binary, err := Build(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bi, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bi.Main.Path != "github.com/plimsollmark/plimsoll" || bi.Main.Version != "(devel)" {
+		t.Fatalf("the daemon's build names %s %s, want github.com/plimsollmark/plimsoll (devel)", bi.Main.Path, bi.Main.Version)
+	}
+	for _, s := range bi.Settings {
+		if strings.HasPrefix(s.Key, "vcs") {
+			t.Errorf("the build information keeps the version control setting %s=%s", s.Key, s.Value)
+		}
+	}
+}
+
+// No example or measurement builds plimsolld with the version control stamp: each go build of ./cmd/plimsolld in
+// their Go and shell sources passes -buildvcs=false, or goes through BuildArgs. A new build site without it fails here.
+func TestEveryExampleBuildOfPlimsolldLeavesOutTheStamp(t *testing.T) {
+	goBuild := regexp.MustCompile(`"build".*"\./cmd/plimsolld"|go( -C \S+)? build .*\./cmd/plimsolld`)
+	n := 0
+	for _, root := range []string{filepath.Join("..", ".."), filepath.Join("..", "..", "..", "measurements")} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".sh")) || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for i, line := range strings.Split(string(b), "\n") {
+				code := strings.TrimSpace(line)
+				if strings.HasPrefix(code, "//") || strings.HasPrefix(code, "#") || !goBuild.MatchString(code) {
+					continue
+				}
+				n++
+				// The pull-request recipe alone asks buildvcs.sh: at a clean release tag the stamp is the true release, so a
+				// user's receipt names it; everywhere else that script answers false (its own test holds it to that).
+				if strings.HasSuffix(filepath.ToSlash(path), "pr-receipt/receipt.sh") && code == recipeBuild {
+					if err := recipeSetsBuildvcsOnce(string(b)); err != nil {
+						t.Errorf("%s: %v", path, err)
+					}
+					continue
+				}
+				if !strings.Contains(code, "-buildvcs=false") {
+					t.Errorf("%s:%d builds plimsolld with the version control stamp: %s", path, i+1, code)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n < 2 {
+		t.Fatalf("found %d builds of plimsolld; the scan no longer sees the example and measurement build sites", n)
+	}
+}
+
+// The pull-request recipe's one build of plimsolld that may keep the stamp, and the one line that sets what it passes.
+const (
+	recipeAssign = `buildvcs="$(env "${no_git_env[@]}" bash "$script_dir/buildvcs.sh" "$source_dir")"`
+	recipeBuild  = `env "${no_git_env[@]}" go -C "$source_dir" build -buildvcs="$buildvcs" -o "$work_dir/plimsolld" ./cmd/plimsolld`
+)
+
+// recipeSetsBuildvcsOnce: in receipt.sh the variable buildvcs is set only by the line that asks buildvcs.sh and read
+// only by the build above. Any other mention outside a comment (a second assignment, a read, a declare, an export, a
+// -buildvcs=true) could change what that build stamps, so it fails.
+func recipeSetsBuildvcsOnce(src string) error {
+	assigned, built := 0, 0
+	for i, line := range strings.Split(src, "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "#") {
+			continue
+		}
+		switch code {
+		case recipeAssign:
+			assigned++
+			code = strings.TrimPrefix(code, "buildvcs=")
+		case recipeBuild:
+			built++
+			code = strings.Replace(code, `-buildvcs="$buildvcs"`, "", 1)
+		}
+		code = strings.NewReplacer("buildvcs.sh", "", "-buildvcs=false", "").Replace(code)
+		if strings.Contains(code, "buildvcs") {
+			return fmt.Errorf("line %d mentions buildvcs outside the one assignment and the one build: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if assigned != 1 || built != 1 {
+		return fmt.Errorf("%d lines assign buildvcs as %s and %d build with it; want one of each", assigned, recipeAssign, built)
+	}
+	return nil
+}
+
+// The recipe's exemption refuses anything else that sets the variable its build passes.
+func TestTheRecipeSetsBuildvcsOnlyFromTheScript(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "pr-receipt", "receipt.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if err := recipeSetsBuildvcsOnce(src); err != nil {
+		t.Fatalf("receipt.sh as committed: %v", err)
+	}
+	at := strings.Index(src, recipeBuild)
+	if at < 0 {
+		t.Fatal("receipt.sh has no line building plimsolld as the recipe's exemption names it")
+	}
+	for _, added := range []string{"buildvcs=true", "export buildvcs=true", "read -r buildvcs < /dev/null", `: "${buildvcs:=true}"`,
+		"declare buildvcs=true", "GOFLAGS=-buildvcs=true go version", recipeAssign} {
+		if err := recipeSetsBuildvcsOnce(src[:at] + added + "\n" + src[at:]); err == nil {
+			t.Errorf("a line %q before the build passes", added)
 		}
 	}
 }

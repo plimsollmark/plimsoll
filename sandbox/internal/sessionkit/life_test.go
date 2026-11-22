@@ -183,9 +183,9 @@ func TestSweepDecidesTheBoundary(t *testing.T) {
 			if tc.detail != "" && !strings.Contains(l.Err().Error(), tc.detail) {
 				t.Fatalf("end %q; want it to say %q", l.Err(), tc.detail)
 			}
-			argv := f.swept[0]
-			if !slices.Equal(argv[3:6], []string{"4096", "200000", "walk"}) || !slices.Equal(argv[7:], []string{"1:1:00", "7:2:00"}) {
-				t.Fatalf("sweep argv %q", argv[3:])
+			argv, n := f.swept[0], len(NodeArgv("-e", SweepScript))
+			if !slices.Equal(argv[n:n+3], []string{"4096", "200000", "walk"}) || !slices.Equal(argv[n+4:], []string{"1:1:00", "7:2:00"}) {
+				t.Fatalf("sweep argv %q", argv[n:])
 			}
 
 		})
@@ -273,6 +273,7 @@ func TestDoneWaitsForTeardown(t *testing.T) {
 	select {
 	case <-l.Done():
 		t.Fatal("Done before the sandbox was removed")
+	// fixed-wait: 20 ms without Done stands for "it waits for the removal"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(20 * time.Millisecond):
 	}
 	if len(reg.Open()) != 0 {
@@ -431,8 +432,8 @@ func TestQuiesceDecidesTheCall(t *testing.T) {
 	if err := l.Quiesce(context.Background()); err != nil {
 		t.Fatalf("a clean quiesce: %v", err)
 	}
-	if argv := f.quiesced[0]; !slices.Equal(argv[3:], []string{"1:1:00", "7:2:00"}) {
-		t.Fatalf("quiesce argv %q; want only plimsoll's own processes spared", argv[3:])
+	if argv, n := f.quiesced[0], len(NodeArgv("-e", QuiesceScript)); !slices.Equal(argv[n:], []string{"1:1:00", "7:2:00"}) {
+		t.Fatalf("quiesce argv %q; want only plimsoll's own processes spared", argv[n:])
 	}
 	if guests := l.Interps.Guests(); len(guests) != 0 {
 		t.Fatalf("interpreters after a clean quiesce: %q; want none, they were killed", guests)

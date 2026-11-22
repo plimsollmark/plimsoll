@@ -11,38 +11,44 @@ gate is the project's full check, `make audit`. In CI:
 - The [audit workflow](.github/workflows/audit.yml) runs `make audit`: build, vet,
   race tests, golangci-lint, `buf lint` plus a check that the generated code still
   matches its source, and <dfn>*govulncheck*</dfn>, Go's vulnerability scanner.
-- Its `clients` job runs `make clients-suite` after `audit`: `npm ci` in
+- Its other jobs start at the same time as `audit`, each on its own runner.
+- Its `clients` job runs `make clients-suite`: `npm ci` in
   `clients/typescript` and `examples/trigger-chat`, then the Python and TypeScript
   Go test packages in required mode. A green check means the Python client, the
   TypeScript client, its add-ons and the <dfn>*Trigger.dev*</dfn> example (a chat
   agent on a hosted TypeScript job runner) ran, and none of the selected Go
   tests skipped; a missing runtime or dependency fails the job.
-- Its `capsule` job runs `make capsule-suite` after `audit`: the capsule example
+- Its `capsule` job runs `make capsule-suite`: the capsule example
   (`examples/capsule`, its own Go module, outside the root build) is vetted and
   race-tested with the capsule project's Python reference verifier installed from the
   example's lockfile, which names each package's exact version and content hash, so
   the public capsule page's checks run on every push. A missing verifier or a skipped
   test fails the job.
-- Its `sbom` job runs `make sbom-suite` after `audit`: the
+- Its `sbom` job runs `make sbom-suite`: the
   [INTERNAL · CycloneDX example guide →](examples/sbom/README.md), outside the root build,
   is vetted and race-tested against the published evidence and embedded schemas
   offline. CycloneDX is a standard for bills of materials (parts lists); this
   example converts signed execution records into that format. No sandbox or
   paid service is used; a skipped test fails the job. Run this additional target
   locally when changing the example or its published outputs.
-- Its `mcp` job runs `make mcp-suite` after `audit`: the server that lets AI assistants run
+- Its `mcp` job runs `make mcp-suite`: the server that lets AI assistants run
   code through plimsoll (`clients/mcp`, its own Go module, outside the root build) is vetted,
   linted and race-tested, through the real RPC handler with stand-in backends and the built
   program over its standard input and output, then scanned with govulncheck.
   A skipped test fails the job.
-- It then runs `make docker-suite` with the images prepared, so the docker,
+- Its `docker` jobs run the two parts of `make docker-suite`, `docker-go-suite` and
+  `docker-py-suite`, each as a job of its own
+  ([docker-suite workflow](.github/workflows/docker-suite.yml)) with the images
+  prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
-  daemon, run on every push to `main` and every pull request under
+  daemon, and the Python client's checks that run real docker sandboxes (its agent
+  workspace, its verifiers runtime, its Deep Agents, Agent Framework, smolagents, PydanticAI and Google ADK
+  environment adapters, and its example programs), run on every push to `main` and every pull request under
   <dfn>*runc*</dfn>, docker's default runtime. A push to another branch runs nothing
   until it has a pull request. Seccomp
   is the kernel feature that limits which requests a process may make to the kernel;
-  the broker is the part of plimsoll that makes API calls for sandboxed code. That
-  second job is in required mode: a missing image or a skipped test fails it rather
+  the broker is the part of plimsoll that makes API calls for sandboxed code. Each
+  part is in required mode: a missing image or a skipped test fails its job rather
   than passing quietly.
   The same suite also runs the small programs plimsoll sends into sandboxes it does not
   run itself (on a Kubernetes cluster, and on the services described below): their startup
@@ -52,14 +58,15 @@ gate is the project's full check, `make audit`. In CI:
   runs it.
 - The same suite also runs under <dfn>*runsc*</dfn>, the runtime of
   <dfn>*gVisor*</dfn> (a stand-in kernel that runs as an ordinary program), in the
-  [gvisor workflow](.github/workflows/gvisor.yml).
+  [gvisor workflow](.github/workflows/gvisor.yml), through the same job definition.
 
-Race tests run in the plain audit job, and the two docker-suite jobs run their
-isolation tests under the race detector too. The `clients` job runs without it.
+Race tests run in the plain audit job, and the `docker-go-suite` jobs run their
+isolation tests under the race detector too. The `clients` and `docker-py-suite`
+jobs run without it.
 Locally, `make audit DOCKER=1` runs each docker test once: its race pass leaves the
 docker suite's tests to `make docker-suite`.
 
-Both docker-suite jobs run on the hosted runners' classic image store, where docker
+The docker-suite jobs run on the hosted runners' classic image store, where docker
 states no software identity, so there the identity tests check only that a required
 software rule is refused. The half that compares the identity with the one docker
 itself reports for the image needs the containerd image store and Docker Engine 28.1 or later
@@ -107,7 +114,7 @@ opt-in:
 ```sh
 make docker-images                   # pull node:22-alpine, build the four plimsoll/sandbox images
 make audit DOCKER=1                  # adds the docker suite; skips are failures
-E2B_API_KEY=... make audit E2B=1     # adds the live E2B microVM suite
+E2B_API_KEY=... make audit E2B=1     # adds the live E2B microVM suite; a missing key or a skip fails
 DOCKER_SBX_TOKEN=... DOCKER_SBX_USERNAME=... SANDBOX_DOCKERCLOUD_API_URL=... \
   SANDBOX_DOCKERCLOUD_IMAGE=... make audit DOCKERCLOUD=1  # adds the live Docker Cloud Sandboxes suite
 SANDBOX_OPENSHELL_GATEWAY_URL=... make audit OPENSHELL=1  # adds the live OpenShell suite (plus its other SANDBOX_OPENSHELL_* settings)
@@ -116,7 +123,7 @@ SANDBOX_OPENSHELL_GATEWAY_URL=... make audit OPENSHELL=1  # adds the live OpenSh
 The E2B and <dfn>*Docker Cloud Sandboxes*</dfn> (Docker's hosted microVM service)
 suites create billable microVMs, so the ordinary targets strip both credentials from
 the environment and no CI job runs either suite. Every paid test also skips unless the
-flag only its make target sets is `1` (`E2B_LIVE`, `E2B_GUARD_LIVE_REQUIRED`,
+flag only its make target sets is `1` (`E2B_LIVE_REQUIRED`, `E2B_GUARD_LIVE_REQUIRED`,
 `E2B_SESSION_LIVE`, `DOCKERCLOUD_LIVE_REQUIRED`), so a key in your shell does not make a
 plain `go test ./...` spend. The <dfn>*OpenShell*</dfn> suite
 (NVIDIA's agent sandbox runtime) is free but needs a running OpenShell gateway, so no CI

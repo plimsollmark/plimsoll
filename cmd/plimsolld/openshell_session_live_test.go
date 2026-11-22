@@ -64,6 +64,7 @@ func TestOpenShellDaemonSessionLive(t *testing.T) {
 		t.Fatalf("first call: %+v, %v", res, err)
 	}
 	// Let the idle timeout suspend the sandbox; the next call resumes it.
+	// fixed-wait: the wait is the thing under test: longer than the daemon's idle timeout, and the log line read next is the proof the suspend happened
 	time.Sleep(4 * time.Second)
 	if !strings.Contains(d.logText(), "session suspended") {
 		t.Fatalf("the idle session was not suspended:\n%s", d.logText())

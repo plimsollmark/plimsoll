@@ -140,9 +140,8 @@ func TestRefusalDoesNotWaitForAHeldBackBody(t *testing.T) {
 // The control: without the wrapper the same refusal waits for the body. If Go's
 // server ever stops draining, this fails and the wrapper can go.
 func TestUnwrappedRefusalWaitsForTheBody(t *testing.T) {
-	if testing.Short() {
-		t.Skip("waits out the stall window")
-	}
+	// It waits out the 2 s stall window, and runs in the short pass all the same: skipped
+	// there, it ran in no make target and no CI job (found 2026-11-20).
 	addr := newServer(t, refuse)
 	conn := slowRequest(t, addr, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n", "{}")
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))

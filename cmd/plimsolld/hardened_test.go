@@ -44,6 +44,35 @@ func hardenedDockerFacts() hardenedFacts {
 		RatePerMin:      30,
 		Burst:           30,
 		PerCaller:       4,
+		// The smoke test proved the guest guard in force (sandbox.GuestGuarded).
+		GuestGuard:       "guest-guard:sha256:" + strings.Repeat("ab", 32),
+		GuestGuardProven: true,
+	}
+}
+
+// TestHardenedPolicyRequiresTheGuestGuardProven: on docker, whose commands start behind the
+// guest guard, hardened mode refuses to serve once the smoke test has run unless the provider
+// states the guard proven, and says why; the early pass (before the smoke test) does not ask, and
+// a provider the guard does not cover yet (e2b) is not asked. The deletion check for the refusal.
+func TestHardenedPolicyRequiresTheGuestGuardProven(t *testing.T) {
+	f := hardenedDockerFacts()
+	f.GuestGuard, f.GuestGuardProven = "", false
+	err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f)
+	if err == nil || !strings.Contains(err.Error(), "guest guard proven in force") || !strings.Contains(err.Error(), "refuses the code namespaces, mounts, clone3 and tracing") {
+		t.Fatalf("docker without the guest guard proven: %v; want the guard's refusal with its reason", err)
+	}
+	f.IsolationPending = true
+	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f); err != nil {
+		t.Fatalf("the pass before the smoke test asked for the guard: %v", err)
+	}
+	e2bEnv := map[string]string{"E2B_TEMPLATE": "plimsoll-toolchain", "SANDBOX_MEMORY_MB": "1024", "SANDBOX_CPUS": "2", "SANDBOX_DISK_MB": "2048"}
+	e := hardenedDockerFacts()
+	e.Provider, e.Isolation, e.GuestGuard, e.GuestGuardProven = "e2b", sandbox.IsolationVM, "", false
+	if err := enforceHardenedPolicy(getenvFrom(e2bEnv), e); err != nil {
+		t.Fatalf("e2b, which the guard does not cover, was asked for it: %v", err)
+	}
+	if !providers["docker"].guestGuard {
+		t.Fatal("the docker provider does not require the guest guard in hardened mode")
 	}
 }
 
@@ -197,7 +226,10 @@ func TestLoopbackAddr(t *testing.T) {
 	for addr, want := range map[string]bool{
 		"127.0.0.1:8746": true,
 		"[::1]:8746":     true,
-		"localhost:8746": true,
+		// Callers pass bound addresses, which never name a host: a name is never
+		// loopback, since it can resolve to an address other hosts reach.
+		"localhost:8746": false,
+		"[::]:8746":      false, // what ":8746" reads back as once bound
 		":8746":          false,
 		"0.0.0.0:8746":   false,
 		"10.0.0.5:8746":  false,

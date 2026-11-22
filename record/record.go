@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -33,7 +34,37 @@ import (
 // every time. An unanswered session call's record is the same encoding with the result
 // digest empty and unanswered set. A live answer must carry it; stored evidence may carry
 // any published version.
-const Version = 4
+const Version = 5
+
+// LastWallClockEndVersion is the last record version whose daemons stamped both times from
+// the wall clock: daemons v0.10.0 to v0.12.0, so a clock step between the two readings
+// could write a genuine record that ends before it starts (5d6270398 measured one 1.3 s
+// early and made the end the start plus monotonic elapsed time, from v0.13.0). Version 2
+// states no daemon version, so all of versions 1 and 2 are covered. Reading such a record
+// was retired by the decision of 2026-11-21 (docs/run-records.md): every reader
+// refuses it, with RetiredEndBeforeStartText rather than the text that a current
+// record's refusal gives, so the refusal reads as a retirement and not as a forgery. Every
+// reader takes the number and the text from internal/wiretables, so they agree
+// (record/testdata/retired/clock-step-v1-v2.json).
+const LastWallClockEndVersion = 2
+
+// RetiredEndBeforeStartText is the refusal of a version 1 or 2 record that ends before it
+// starts.
+const RetiredEndBeforeStartText = "the record ends before it starts, and that reading is retired by the decision of 2026-11-21: records of versions 1 and 2 that end before they start are no longer read; daemons v0.10.0 to v0.12.0 could write one during a clock step"
+
+// ErrRetired marks a refusal by a retired reading (RetiredEndBeforeStartText): the record
+// may be genuine, and is refused by a dated, announced decision, not as forged. The error
+// is ErrMismatch too, so a caller that only asks whether the record was refused still sees
+// it refused, but its text is the retirement's alone.
+var ErrRetired = errors.New("record: refused by a retired reading")
+
+// retiredEndBeforeStart is the refusal of a version 1 or 2 record that ends before it starts.
+type retiredEndBeforeStart struct{}
+
+func (retiredEndBeforeStart) Error() string { return "record: " + RetiredEndBeforeStartText }
+func (retiredEndBeforeStart) Is(target error) bool {
+	return target == ErrRetired || target == ErrMismatch
+}
 
 // published holds every record version a release has written, frozen: the fields its
 // digest covers, in order, and what a record of it may state. Writers write Version only,
@@ -56,10 +87,16 @@ var published = map[int]spec{
 	3: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment",
 		"policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
 		"previous_sha256"}, unanswered: true, evidence: true},
-	// From v0.23.0: both kinds, and the instance.
+	// v0.23.0 to v0.27.x: both kinds, and the instance.
 	4: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment",
 		"policy", "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
 		"sequence", "previous_sha256"}, answered: true, unanswered: true, evidence: true},
+	// From v0.28.0: version 4 with the sentence the provider states beside the tier, whether
+	// a waiting pool sandbox ran the call, and the daemon's own version.
+	5: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation",
+		"isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm",
+		"daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"},
+		answered: true, unanswered: true, evidence: true},
 }
 
 // spec is one published record version.
@@ -75,6 +112,17 @@ type spec struct {
 
 func (s spec) covers(field string) bool { return slices.Contains(s.fields, field) }
 
+// PublishedLayouts returns, for every published record version, the fields its digest
+// covers in order: the table internal/wiretables writes into the Python and TypeScript
+// clients and examples/sbom/check.js, so no reader keeps a copy by hand.
+func PublishedLayouts() map[int][]string {
+	out := make(map[int][]string, len(published))
+	for v, s := range published {
+		out[v] = slices.Clone(s.fields)
+	}
+	return out
+}
+
 // recordField is one field a record digest can cover: how it is encoded, and whether a
 // record states it (a field a version does not cover must be empty, or the record would
 // state evidence nothing signed).
@@ -84,21 +132,24 @@ type recordField struct {
 }
 
 var recordFields = map[string]recordField{
-	"request_sha256":    {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.RequestSHA256) }, func(r sandbox.RunRecord) bool { return r.RequestSHA256 != "" }},
-	"result_sha256":     {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.ResultSHA256) }, func(r sandbox.RunRecord) bool { return r.ResultSHA256 != "" }},
-	"unanswered":        {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Unanswered) }, func(r sandbox.RunRecord) bool { return r.Unanswered != "" }},
-	"provider":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Provider) }, func(r sandbox.RunRecord) bool { return r.Provider != "" }},
-	"isolation":         {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Isolation) }, func(r sandbox.RunRecord) bool { return r.Isolation != "" }},
-	"environment":       {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Environment) }, func(r sandbox.RunRecord) bool { return r.Environment != "" }},
-	"policy":            {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Policy) }, func(r sandbox.RunRecord) bool { return r.Policy != "" }},
-	"software_identity": {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareIdentity) }, func(r sandbox.RunRecord) bool { return r.SoftwareIdentity != "" }},
-	"software_rule_id":  {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareRuleID) }, func(r sandbox.RunRecord) bool { return r.SoftwareRuleID != "" }},
-	"instance":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Instance) }, func(r sandbox.RunRecord) bool { return r.Instance != "" }},
-	"started_unix_ms":   {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Started.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Started.IsZero() }},
-	"ended_unix_ms":     {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Ended.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Ended.IsZero() }},
-	"session":           {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Session) }, func(r sandbox.RunRecord) bool { return r.Session != "" }},
-	"sequence":          {func(e *encoder, n string, r sandbox.RunRecord) { e.uint(n, r.Sequence) }, func(r sandbox.RunRecord) bool { return r.Sequence != 0 }},
-	"previous_sha256":   {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.PreviousSHA256) }, func(r sandbox.RunRecord) bool { return r.PreviousSHA256 != "" }},
+	"request_sha256":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.RequestSHA256) }, func(r sandbox.RunRecord) bool { return r.RequestSHA256 != "" }},
+	"result_sha256":           {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.ResultSHA256) }, func(r sandbox.RunRecord) bool { return r.ResultSHA256 != "" }},
+	"unanswered":              {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Unanswered) }, func(r sandbox.RunRecord) bool { return r.Unanswered != "" }},
+	"provider":                {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Provider) }, func(r sandbox.RunRecord) bool { return r.Provider != "" }},
+	"isolation":               {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Isolation) }, func(r sandbox.RunRecord) bool { return r.Isolation != "" }},
+	"environment":             {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Environment) }, func(r sandbox.RunRecord) bool { return r.Environment != "" }},
+	"policy":                  {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Policy) }, func(r sandbox.RunRecord) bool { return r.Policy != "" }},
+	"software_identity":       {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareIdentity) }, func(r sandbox.RunRecord) bool { return r.SoftwareIdentity != "" }},
+	"software_rule_id":        {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareRuleID) }, func(r sandbox.RunRecord) bool { return r.SoftwareRuleID != "" }},
+	"instance":                {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Instance) }, func(r sandbox.RunRecord) bool { return r.Instance != "" }},
+	"isolation_qualification": {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.IsolationQualification) }, func(r sandbox.RunRecord) bool { return r.IsolationQualification != "" }},
+	"warm":                    {func(e *encoder, n string, r sandbox.RunRecord) { e.bool(n, r.Warm) }, func(r sandbox.RunRecord) bool { return r.Warm }},
+	"daemon_version":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.DaemonVersion) }, func(r sandbox.RunRecord) bool { return r.DaemonVersion != "" }},
+	"started_unix_ms":         {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Started.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Started.IsZero() }},
+	"ended_unix_ms":           {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Ended.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Ended.IsZero() }},
+	"session":                 {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Session) }, func(r sandbox.RunRecord) bool { return r.Session != "" }},
+	"sequence":                {func(e *encoder, n string, r sandbox.RunRecord) { e.uint(n, r.Sequence) }, func(r sandbox.RunRecord) bool { return r.Sequence != 0 }},
+	"previous_sha256":         {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.PreviousSHA256) }, func(r sandbox.RunRecord) bool { return r.PreviousSHA256 != "" }},
 }
 
 // Each encoding opens with its domain string, so a digest of one kind can never
@@ -396,6 +447,14 @@ func CheckStored(r sandbox.RunRecord) error {
 	return s.statesOnly(r)
 }
 
+// CheckVersion is ErrVersion for a record version this package does not read as stored
+// evidence, and nil for a published one. A verifier asks it before reading a record's
+// fields, since a newer version may state fields this release does not know.
+func CheckVersion(version int) error {
+	_, err := readable(version, false)
+	return err
+}
+
 // readable returns the spec of a record version a verifier accepts: every published
 // version for stored evidence, Version alone for a live answer.
 func readable(version int, live bool) (spec, error) {
@@ -410,8 +469,16 @@ func readable(version int, live bool) (spec, error) {
 }
 
 // statesOnly checks that r is a kind of call its version records, states no field the
-// version does not cover, names a typed instance, and matches its own digest.
+// version does not cover, names one of the five tiers (none, process, container, kernel,
+// vm: never "unknown" or empty, whatever floor the request named), does not end before it
+// starts, answered or not (at or below LastWallClockEndVersion, as a retired reading), names a typed instance, states a bounded qualification and a
+// daemon version of the module version form, and matches its own digest.
 func (s spec) statesOnly(r sandbox.RunRecord) error {
+	for _, f := range ShownFields(r) {
+		if !ValidText(f[1]) {
+			return fmt.Errorf("%w: the record's %s is not UTF-8 or holds a control or bidirectional format character", ErrMismatch, f[0])
+		}
+	}
 	switch unanswered := r.Unanswered != ""; {
 	case unanswered && !s.unanswered:
 		return fmt.Errorf("%w: a version %d record cannot record an unanswered call", ErrMismatch, r.Version)
@@ -421,11 +488,21 @@ func (s spec) statesOnly(r sandbox.RunRecord) error {
 		return fmt.Errorf("%w: a record states a result or, for an unanswered call, an error code, exactly one", ErrMismatch)
 	case unanswered && !unansweredCodes[r.Unanswered]:
 		return fmt.Errorf("%w: an unanswered call's record names %q, not a Connect code", ErrMismatch, r.Unanswered)
+	case sandbox.ParseIsolationClass(r.Isolation) == sandbox.IsolationUnknown:
+		return fmt.Errorf("%w: the record's isolation %q is not a tier (none, process, container, kernel or vm)", ErrMismatch, r.Isolation)
+	case r.Ended.Before(r.Started) && r.Version <= LastWallClockEndVersion:
+		return retiredEndBeforeStart{}
+	case r.Ended.Before(r.Started):
+		return fmt.Errorf("%w: the record ends before it starts", ErrMismatch)
 	case !sandbox.ValidInstance(r.Instance):
 		return fmt.Errorf("%w: the record's instance %q is not a typed reference", ErrMismatch, r.Instance)
+	case len(r.IsolationQualification) > MaxQualificationBytes:
+		return fmt.Errorf("%w: the record's isolation qualification is over %d bytes", ErrMismatch, MaxQualificationBytes)
+	case !ValidDaemonVersion(r.DaemonVersion):
+		return fmt.Errorf("%w: the record's daemon version %q is not a module version or (devel)", ErrMismatch, r.DaemonVersion)
 	}
-	for name, f := range recordFields {
-		if !s.covers(name) && f.set(r) {
+	for _, name := range recordFieldOrder {
+		if f := recordFields[name]; !s.covers(name) && f.set(r) {
 			return fmt.Errorf("%w: a version %d record does not cover %s, so it cannot state one", ErrMismatch, r.Version, name)
 		}
 	}
@@ -434,6 +511,19 @@ func (s spec) statesOnly(r sandbox.RunRecord) error {
 	}
 	return nil
 }
+
+// recordFieldOrder is every field a record digest can cover, in the current version's
+// order (then any other, sorted), so statesOnly names the same uncovered field on every
+// run rather than whichever a map's order reaches first.
+var recordFieldOrder = func() []string {
+	order := slices.Clone(published[Version].fields)
+	for _, name := range slices.Sorted(maps.Keys(recordFields)) {
+		if !slices.Contains(order, name) {
+			order = append(order, name)
+		}
+	}
+	return order
+}()
 
 // publishedList names the published versions, lowest first.
 func publishedList() string {
@@ -465,46 +555,52 @@ func SessionFingerprint(sessionID string) string {
 // ToWire puts a record on the wire.
 func ToWire(r sandbox.RunRecord) *plimsollv1.RunRecord {
 	return &plimsollv1.RunRecord{
-		Version:          uint32(r.Version),
-		RequestSha256:    r.RequestSHA256,
-		ResultSha256:     r.ResultSHA256,
-		Provider:         r.Provider,
-		Isolation:        r.Isolation,
-		Environment:      r.Environment,
-		SoftwareIdentity: r.SoftwareIdentity,
-		SoftwareRuleId:   r.SoftwareRuleID,
-		Policy:           r.Policy,
-		StartedUnixMs:    r.Started.UnixMilli(),
-		EndedUnixMs:      r.Ended.UnixMilli(),
-		Session:          r.Session,
-		Sequence:         r.Sequence,
-		PreviousSha256:   r.PreviousSHA256,
-		Unanswered:       r.Unanswered,
-		Instance:         r.Instance,
-		RecordSha256:     r.SHA256,
+		Version:                uint32(r.Version),
+		RequestSha256:          r.RequestSHA256,
+		ResultSha256:           r.ResultSHA256,
+		Provider:               r.Provider,
+		Isolation:              r.Isolation,
+		Environment:            r.Environment,
+		SoftwareIdentity:       r.SoftwareIdentity,
+		SoftwareRuleId:         r.SoftwareRuleID,
+		Policy:                 r.Policy,
+		StartedUnixMs:          r.Started.UnixMilli(),
+		EndedUnixMs:            r.Ended.UnixMilli(),
+		Session:                r.Session,
+		Sequence:               r.Sequence,
+		PreviousSha256:         r.PreviousSHA256,
+		Unanswered:             r.Unanswered,
+		Instance:               r.Instance,
+		IsolationQualification: r.IsolationQualification,
+		Warm:                   r.Warm,
+		DaemonVersion:          r.DaemonVersion,
+		RecordSha256:           r.SHA256,
 	}
 }
 
 // FromWire reads a record off the wire, unchecked.
 func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 	return sandbox.RunRecord{
-		Version:          int(m.GetVersion()),
-		RequestSHA256:    m.GetRequestSha256(),
-		ResultSHA256:     m.GetResultSha256(),
-		Provider:         m.GetProvider(),
-		Isolation:        m.GetIsolation(),
-		Environment:      m.GetEnvironment(),
-		SoftwareIdentity: m.GetSoftwareIdentity(),
-		SoftwareRuleID:   m.GetSoftwareRuleId(),
-		Policy:           m.GetPolicy(),
-		Started:          time.UnixMilli(m.GetStartedUnixMs()).UTC(),
-		Ended:            time.UnixMilli(m.GetEndedUnixMs()).UTC(),
-		Session:          m.GetSession(),
-		Sequence:         m.GetSequence(),
-		PreviousSHA256:   m.GetPreviousSha256(),
-		Unanswered:       m.GetUnanswered(),
-		Instance:         m.GetInstance(),
-		SHA256:           m.GetRecordSha256(),
+		Version:                int(m.GetVersion()),
+		RequestSHA256:          m.GetRequestSha256(),
+		ResultSHA256:           m.GetResultSha256(),
+		Provider:               m.GetProvider(),
+		Isolation:              m.GetIsolation(),
+		Environment:            m.GetEnvironment(),
+		SoftwareIdentity:       m.GetSoftwareIdentity(),
+		SoftwareRuleID:         m.GetSoftwareRuleId(),
+		Policy:                 m.GetPolicy(),
+		Started:                time.UnixMilli(m.GetStartedUnixMs()).UTC(),
+		Ended:                  time.UnixMilli(m.GetEndedUnixMs()).UTC(),
+		Session:                m.GetSession(),
+		Sequence:               m.GetSequence(),
+		PreviousSHA256:         m.GetPreviousSha256(),
+		Unanswered:             m.GetUnanswered(),
+		Instance:               m.GetInstance(),
+		IsolationQualification: m.GetIsolationQualification(),
+		Warm:                   m.GetWarm(),
+		DaemonVersion:          m.GetDaemonVersion(),
+		SHA256:                 m.GetRecordSha256(),
 	}
 }
 
@@ -514,8 +610,9 @@ func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 var ErrMismatch = errors.New("record: the run record does not match the request and result it came with")
 
 // Stamp completes r as the record of resp and returns it in wire form: the
-// version, the result's digest, the evidence resp carries (provider, tier, outer
-// environment, selected software identity and instance) and the record's own digest. The
+// version, the result's digest, the evidence resp carries (provider, tier and its
+// qualification, outer environment, selected software identity, instance, whether a
+// waiting pool sandbox ran it, and the daemon's version) and the record's own digest. The
 // caller sets what only it knows: the request's digest (RunRequestDigest or
 // SessionRunRequestDigest), the software rule's ID, the policy, the start and end,
 // and a session call's place in its chain. Stamp reads resp and never changes it, so
@@ -529,14 +626,18 @@ func Stamp(r sandbox.RunRecord, resp *plimsollv1.RunResponse) *plimsollv1.RunRec
 	r.Environment = resp.GetEnvironment()
 	r.SoftwareIdentity = resp.GetSoftwareIdentity()
 	r.Instance = resp.GetInstance()
+	r.IsolationQualification = resp.GetIsolationQualification()
+	r.Warm = resp.GetWarm()
+	r.DaemonVersion = resp.GetDaemonVersion()
 	r.SHA256 = Digest(r)
 	return ToWire(r)
 }
 
 // StampUnanswered completes r as the record of a session call that may have run but
 // ended in the error whose Connect code is code: no result digest, the code, and the
-// record's own digest. The caller sets everything else, the evidence included, since
-// there is no response to read it from.
+// record's own digest. The caller sets everything else, the evidence included (the
+// qualification the session stated at open among it), since there is no response to
+// read it from.
 func StampUnanswered(r sandbox.RunRecord, code string) *plimsollv1.RunRecord {
 	r.Version = Version
 	r.ResultSHA256 = ""
@@ -552,6 +653,12 @@ var unansweredCodes = map[string]bool{
 	"not_found": true, "already_exists": true, "permission_denied": true, "resource_exhausted": true,
 	"failed_precondition": true, "aborted": true, "out_of_range": true, "unimplemented": true,
 	"internal": true, "unavailable": true, "data_loss": true, "unauthenticated": true,
+}
+
+// UnansweredCodes returns the codes an unanswered call's record may name, sorted, for the
+// generator that writes the clients' copies.
+func UnansweredCodes() []string {
+	return slices.Sorted(maps.Keys(unansweredCodes))
 }
 
 // CheckUnanswered verifies the record an unanswered session call's error carries:
@@ -705,8 +812,6 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 		return nil, fmt.Errorf("%w: a %s request answered with %s", ErrMismatch, kind, what)
 	}
 	switch {
-	case r.Ended.Before(r.Started):
-		return nil, fmt.Errorf("%w: the record ends before it starts", ErrMismatch)
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):
@@ -717,6 +822,12 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 		return nil, fmt.Errorf("%w: record environment differs from response", ErrMismatch)
 	case s.covers("instance") && r.Instance != resp.GetInstance():
 		return nil, fmt.Errorf("%w: the record's instance %q is not the response's", ErrMismatch, r.Instance)
+	case s.covers("isolation_qualification") && r.IsolationQualification != resp.GetIsolationQualification():
+		return nil, fmt.Errorf("%w: the record's isolation qualification is not the response's", ErrMismatch)
+	case s.covers("warm") && r.Warm != resp.GetWarm():
+		return nil, fmt.Errorf("%w: the record states warm %t, the response %t", ErrMismatch, r.Warm, resp.GetWarm())
+	case s.covers("daemon_version") && r.DaemonVersion != resp.GetDaemonVersion():
+		return nil, fmt.Errorf("%w: the record's daemon version %q is not the response's %q", ErrMismatch, r.DaemonVersion, resp.GetDaemonVersion())
 	case s.evidence && (r.SoftwareIdentity != resp.GetSoftwareIdentity() || r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)):
 		return nil, fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
 	}

@@ -1,6 +1,6 @@
 # Capability grants
 
-How agent-written code calls your API without ever receiving the credential, the base URL, or general network access; how the policy and the model-facing <dfn>*tool*</dfn> description (a tool is one named action an AI application offers its model, and its description is what the model reads about it) are generated from one source; and how plimsoll protects the API from the agent.
+How agent-written code calls your API while the credential and the base URL stay with plimsoll outside the sandbox and the code gets no general network access; how the policy and the model-facing <dfn>*tool*</dfn> description (a tool is one named action an AI application offers its model, and its description is what the model reads about it) are generated from one source; and how plimsoll protects the API from the agent.
 
 Part of the [plimsoll README](../README.md).
 
@@ -63,6 +63,15 @@ case, is reserved: a run's bill of materials writes `none` in `plimsoll:grant` f
 that named no profile ([the property taxonomy](cyclonedx-properties.md)), so the daemon
 refuses to load a profile of that name.
 
+The profiles live in the grants file, named by `PLIMSOLL_GRANTS_FILE`, which the daemon
+reads at startup. It judges the file's permissions as it reads it, and those of each
+`preamble_file` a profile names (code placed in every sandbox the profile grants): a file
+that its group or every other user can write, or that sits in a directory they can write,
+could be changed by another user of the machine to open a profile to themselves. In
+<dfn>*hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`, the setting under which the daemon refuses to start unless every production safeguard is in force) the daemon refuses to start on such a file; otherwise it logs one warning
+line naming `PLIMSOLL_GRANTS_FILE` and the mode bits
+([the rule](hardened-mode.md#files-another-user-could-change)).
+
 A profile is off limits to calls inside a
 [session (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#session),
 one sandbox kept for many calls, unless it sets `"allow_in_sessions":
@@ -121,13 +130,117 @@ than the agent.
 *every* operation in the document, because a spec describes what an API has, not what
 an agent should be able to reach. Pasting it unedited into a profile grants the agent
 the whole API. Trim it to the routes you actually want reachable, and keep the
-untrimmed list in the profile's `catalog` field. The gap between the two is what lets
+untrimmed list in the profile's `catalog` field. Then run the generator again with
+`-only` on the trimmed list (`plimsoll-specgen -only allow.json -emit description
+api.openapi.json`), so the preamble and the description name only the routes you grant:
+without it they name every operation in the document, and a model is told about routes
+the broker refuses. The gap between the two lists is what lets
 the [efficiency advisor](efficiency-advisor.md), which reads each run's call log and
 suggests cheaper call patterns, name the specific missing route to add, instead of
 reporting a vague shortfall you still have to diagnose.
 
 Worked example, with the input document and every generated artifact side by side:
 [docs/examples/specgen](examples/specgen).
+
+### From an agent kit's code tool
+
+An <dfn>*agent kit*</dfn> is a library people build AI agents with (CrewAI, LangChain), and
+its code tool is the tool a model calls with a program it wrote. That tool can carry a
+grant, so that one program can call an API many times from inside the sandbox instead of
+the model asking for one call at a time: the pattern Cloudflare calls [code mode (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#code-mode).
+The tools that can: `plimsoll_run_code` in the CrewAI, Agno, LangChain, Microsoft Agent
+Framework and PydanticAI packages, the TypeScript client's `executeCode` (the AI SDK's
+`plimsollGrantedCodeTool`, Mastra's `plimsollGrantedExecuteCode`), and the `run_code` tool
+of plimsoll's server for the
+[Model Context Protocol (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#mcp)
+(MCP, the standard by which an AI application calls tools another program serves).
+
+**Your application chooses the grant, never the model.** It names a profile the operator
+configured on the daemon, and passes the description `plimsoll-specgen -only` wrote for
+that profile; the tool's arguments name no profile, no route and no credential.
+
+```python
+executor = CodeExecutor(client, grant_profile="lights",
+                        api_description=open("description.txt").read())
+tool = PlimsollCodeTool(executor)   # CrewAI; the other Python kits take the same executor
+```
+
+```ts
+const { executeCode } = await plimsollGrantedCodeTool({ client, grant: { profile: "lights", apiDescription } });
+```
+
+The MCP server takes `PLIMSOLL_GRANT_PROFILE` and `PLIMSOLL_GRANT_DESCRIPTION_FILE` from
+whoever installs it.
+
+**What a granted call can do, by provider and language.** The tool reads the daemon's
+Describe answer when it is built and offers the model only the languages whose code can
+call the API there, so the model learns it from the tool's description, not by failing:
+
+| Provider | JavaScript | Python |
+|---|---|---|
+| docker | yes | yes, through the module `plimsoll_host` the tool writes into the run |
+| [OpenShell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#openshell) | yes | yes, the same way (the same socket, through OpenShell's relay; not run on a live gateway) |
+| [E2B (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#e2b) with a [guard (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guard) URL, dockercloud | yes | no: a Python step there has no route to the broker |
+| wasm | the TypeScript tools and the MCP server only, as a snippet without files or top-level `await` | no |
+| agentsandbox, wslc | no grants | no grants |
+
+A call in a language that cannot reach the API, a daemon that cannot carry the grant, and
+an unknown profile are refused before anything runs, marked
+[not dispatched (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#dispatch),
+with what to do instead. Every granted call runs in a sandbox of its own: a session's
+[cells (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell)
+never carry a grant, so the TypeScript granted tools keep no state between calls, the MCP
+server's `run_code` with a sandbox handle cannot call the API, and the smolagents executor,
+ADK's code executor and the workspace adapters take no grant at all.
+
+**What the grant protects, and what it does not.**
+
+- The broker, outside the sandbox, holds the API's credential and adds it to each request;
+  the guest's environment, files and requests never hold it.
+- Each request's method and path are checked against the profile's routes, and the override
+  headers and a JSON body's `_method` field, ways a web framework may run a request as another
+  method or path, are refused; a form or upload body is not read (see "Method and path
+  override" below, with what an operator does about it). That is a list
+  of routes, not of operations or arguments: the code can do whatever an allowed route
+  permits, with any arguments, and read whatever it returns. The API's own authorization
+  is what limits a route.
+- An allowed route whose answer contains the credential (an endpoint that echoes request
+  headers, say) is still a route not to grant. The broker looks for every exact copy of
+  what it sent in an answer before the code reads it, in an ordinary answer and in a
+  streamed one. An answer that holds one never reaches the code: it gets the broker's own
+  error in its place (502, "host api answer held this run's credential"), or, in a stream
+  already begun, the stream ends before the piece that held the copy; the run's grant ends
+  there, so every later call of the run is refused; and the run's audit line counts the
+  answer (`host_calls_credential_matched`) and names a possible attempt to guess the
+  credential (`host_credential_alert`), so the operator learns which grant has such a route.
+  Exact means byte for byte: the credential itself and, for basic authentication, the
+  header's base64 value. A copy the API re-encoded, split or cut short passes
+  as the API sent it, and so does a credential shorter than 8 bytes (a placeholder that
+  short would match ordinary words in every answer). In a streamed answer the
+  unfinished last word of each piece waits for the next piece; a stream cut at a limit
+  loses that word.
+- **A credential used with a grant must be random**: a key the API generated, or 16 random
+  bytes or more (2^128 possible values, beyond any number of guesses), never a password a
+  person chose or a short fixed value. Code under a
+  grant whose routes reflect what it sends (a create route that answers with the object, an
+  error that quotes the bad value) can send guesses of the credential and see whether the
+  answer came back or was withheld. Replacing each copy in place would show which of tens of
+  thousands of guesses in one call was the credential, so a match withholds the answer and
+  ends the grant instead, so a run learns at most which of its calls met
+  the credential, and in a stream about where it was cut; that is enough to search a short
+  list of human-chosen passwords over many runs, and nothing against a random key. The
+  broker does not judge whether a credential is guessable: no length or form tells it.
+- The broker never follows a redirect, so the credential is never sent to another host: a
+  `3xx` answer reaches the code as its status, without its `Location`.
+- The [run record (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#run-record),
+  the daemon's checked statement of what was sent and what came back, does not list the
+  calls. The daemon's audit line counts them, and its
+  metrics name them by route template; neither holds a path, an argument or an answer.
+- A call that changes data takes effect even if the program fails afterwards, and the
+  kits never retry a run.
+
+Runnable examples, one per tool, each against a stand-in API:
+`clients/python/examples/*_grant.py` and `clients/typescript/examples/granted.ts`.
 
 ### The broker also protects the API from the agent
 
@@ -211,9 +324,9 @@ that count within a session. A profile for a RunPod serverless endpoint, two job
 
 The endpoint ID is written into each route, so the run reaches that one endpoint, and the
 account's API key stays in the daemon. What the cap cannot bound, the service must: a job
-keeps running after the run that started it ends, and the broker never reads a request
-body, so an API whose body chooses the machine and its running time can only be bounded
-on the service's side. A RunPod endpoint fixes its GPU type, its worker count and a job's
+keeps running after the run that started it ends, and the broker does not read what a
+request body asks for (it looks only for a JSON body's method override field, below), so an API whose
+body chooses the machine and its running time can only be bounded on the service's side. A RunPod endpoint fixes its GPU type, its worker count and a job's
 execution timeout (10 minutes unless changed) in the endpoint's settings, outside the
 run's reach. This profile is tested against a stand-in shaped like RunPod's API
 (`TestGrantGPUJobRouteCap`); against RunPod itself (2026-10-08), code in a docker sandbox started one job through the broker, its
@@ -266,16 +379,28 @@ run in which nothing ran, reason `environment`), and a plain grant keeps the def
 gets no forwarder at all. What the variant adds to a run, and why it is a profile of its own, is in
 [docs/seccomp.md](seccomp.md#the-second-profile-runs-whose-grant-sets-sdk_env); setting
 `sdk_env` on a profile is the operator's authorization of that exposure for the runs that
-select it. Each run's record names the profile it applied (`seccomp:sha256:...`). Under
+select it. Each run's record names the profile it applied (`seccomp:sha256:...`), then one
+space and the <dfn>*guest guard*</dfn> its commands started behind (`guest-guard:sha256:...`), plimsoll's
+own second filter in front of every program in the container
+([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)). Under
 <dfn>*gVisor*</dfn> (`runsc`, the user-space kernel the docker provider can run containers
-on) no host profile is applied to any run and the record says `seccomp:skipped:runsc`. If the
+on) no host profile is applied to any run and the record says
+`seccomp:skipped:runsc guest-guard:sha256:...`. If the
 forwarder cannot listen, the run fails before any guest code starts: a snippet exits 126
 with the forwarder's message on stderr and no output of its own, and a project runs no step
 (`TestDockerForwarderThatCannotListenFailsBeforeGuestCode`).
 
 The key in `sdk_env` is a placeholder: both libraries refuse to construct a client without
 one, and the broker replaces whatever the guest sends with the credential it minted. Never
-put the real key there; the `token` field is where it lives, in the daemon. A variable name
+put the real key there; the `token` field is where it lives, in the daemon. A profile whose
+`sdk_env` values, preamble (inline or from its file), `global` or `set_headers` values hold
+its token's secret fails to load, naming the field and never the value: the static token
+itself, or for a `jwt` token the signing secret (with it the code could sign any token it
+liked; the tokens minted from it are made per run and appear in no profile field). The
+secret is found inside a longer value too, unless it is shorter than 8 bytes, when only a
+value equal to it is refused, so that a short placeholder token does not refuse every
+preamble that happens to contain its letters
+(`TestLoadRefusesTheTokenSecretInWhatTheGuestReceives`). A variable name
 plimsoll itself sets in the guest environment or the dynamic loader reads (`PATH`, `HOME`,
 `HOSTNAME`, `NODE_OPTIONS`, `HOST_API_SOCKET`, `HOST_API_LISTEN`, `LD_*`, `PLIMSOLL_*`) is
 refused when the profile loads, since a profile's entry would come later and win, moving the
@@ -438,9 +563,18 @@ profile fields let a route take one, and each is a number the operator chose:
   `Content-Type` on that entry. Every route takes `application/json`. On a route that lists
   types, a body of any other type is refused with 415 before a byte is read or sent; on a
   route that lists none, every body is sent as `application/json`, as it always was, whatever
-  the guest's header said. A listed type is sent with the guest's `boundary` and `charset`
-  parameters alone, each checked (a boundary of 1 to 70 of the characters RFC 2046 allows, a
-  charset of token characters), and every other parameter dropped. A wildcard,
+  the guest's header said. The `Content-Type` the API receives is the broker's own text: the
+  guest's media type, written with only these parameters. A multipart type keeps its
+  `boundary` (1 to 70 of the characters RFC 2046, the multipart standard, allows), which the
+  API needs to find the parts; a JSON type keeps none; any other type (a form, `text/plain`,
+  `application/octet-stream`, XML) keeps a `charset` of `utf-8`, `us-ascii` or `iso-8859-1`,
+  written in lowercase. A `charset` of `utf-8` on JSON or multipart is dropped, since every
+  parser assumes it; any other charset there, and any other parameter on any type, is
+  refused with 415 rather than dropped, since dropping it could change what an honest API
+  reads. Last, the header the broker writes holds `/json` or `+json` (the test Laravel uses,
+  on the whole header, to decide a body is JSON) exactly when the broker reads the body as
+  JSON, so a boundary such as `a+json` is refused too ("Method and path override" below says
+  why that matters). A wildcard,
   `application/json`, `multipart/byteranges` or a `message/*` type cannot be listed.
 - **`max_request_bytes`** is the run's total: the request body bytes of all its calls,
   uploads and JSON alike, so what a grant lets a run send to the API is a number the
@@ -505,6 +639,8 @@ line break or a byte outside that range is dropped whole, never cleaned. A name 
 the connection owns is refused when the profile loads: `Authorization`, `Cookie`, `Host`,
 `Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Accept-Encoding`,
 `Forwarded` and the `X-Forwarded-*` and `X-Plimsoll-*` families among them. So is a header
+a framework reads as the request's method or path (`X-HTTP-Method-Override` and the others
+"Method and path override" below lists). So is a header
 a model API reads an API key from: `x-api-key` (the Claude API still accepts a key there),
 `x-goog-api-key`, `api-key` and `ocp-apim-subscription-key`. Passed through, the guest's own
 key would arrive beside the run's credential, and the guest, not the profile, could choose
@@ -558,6 +694,64 @@ bare, and the client's retry policy toward the API stays the client's. A request
 its own destination, an absolute-form target such as `GET http://other.example/v1/items`, a
 `CONNECT` to a host, or a doubled leading slash, is refused before anything is sent: the only
 origin the broker ever dials is the profile's `base_url`.
+
+### Method and path override
+
+Some web frameworks let a request name a method or a path other than the one on its request
+line, a habit from the days when a browser form could send only GET and POST. This is
+called method override. On an API that honors it, a grant of only
+`POST /v1/items/*/comments` could let the code delete, and the trace would still say "POST to
+the comments route".
+
+What the broker checks:
+
+- **The method and path it sends.** Each request's method and its decoded path, in its one
+  canonical spelling, must match a route of the profile. A target with a query string (a `?`)
+  is refused, so a `_method` in the query never reaches the API.
+- **The override headers.** `X-HTTP-Method-Override`, `X-HTTP-Method` and `X-Method-Override`
+  (headers some frameworks read as the method) and `X-Original-URL` and `X-Rewrite-URL`
+  (headers some servers read as the path) never reach the API from the code: no header of the
+  code's is forwarded unless the profile passes it, and a profile that passes or sets one of
+  these, in any letter case and with `_` for any `-`, fails to load with a message that says
+  why.
+- **A JSON body's top-level `_method`.** A body sent as JSON (any type with `/json` or `+json`
+  in it, and the type sent when the code names none) whose top-level object has the key
+  `_method`, in any letter case, is refused with 403 before the API receives it whole, whether
+  the broker holds the body or passes it through piece by piece on an upload route. A body sent
+  as JSON that is not JSON, or not valid UTF-8 (the byte encoding of text JSON uses), is
+  refused with 400. A refused body the broker holds is refused before anything is sent: the
+  call counts as denied, spends no `route_max_calls`, and writes no call row. A passed-through
+  body is refused while its request is under way, after the request's headers went (they are
+  sent before the body, and an API's handler runs on them), so the API may already have acted
+  on the headers, or on the pieces before the refused one (a JSON decoder returns at the first
+  value's closing brace): that call keeps its `route_max_calls` charge and writes a call row with
+  the bytes sent, none or some. The `Content-Type` the API receives is the broker's own text (the
+  `route_content_types` item of "Large uploads"), so a body the broker did not read as JSON
+  never arrives labeled as JSON.
+
+What it does not check: **form and upload bodies.** The broker does not read a form body
+(`application/x-www-form-urlencoded`, what an HTML form posts) or a multipart body
+(`multipart/form-data`, what a file upload sends). On a route whose `route_content_types`
+lists one of those types, such a body is forwarded unread. On an API that honors method
+override, a `_method` field in it can make a granted method run as another method on the same
+path: a granted upload to `/v1/files` could run as a `DELETE /v1/files`.
+
+What an operator does about it, any one of:
+
+- Turn method override off at the API.
+- Grant JSON routes only: list no `route_content_types` for the API's routes, the standard
+  setting, so every body is sent as JSON and checked.
+- Limit the per-run credential (the key the broker adds to each call of one run) at the API:
+  give it only the permissions the grant means, so a delete it was never allowed fails there
+  whatever method the body names.
+
+The tests: `TestBrokerOverrideStandInNeverActsOnAnOverride` (a stand-in API that honors the
+override headers and a body's `_method` and acts only on the granted method and path),
+`TestBrokerOverrideStreamedBodyNeverArrivesWhole`, `TestBrokerOverrideRefusalKeepsTheChargeOnceABodyByteWent`,
+`TestGrantRefusesOverrideHeaders`, `TestHostAPIGrantRequestContentType`,
+`TestJSONScannerRefusesWhatIsNotUTF8`, `FuzzJSONOverrideScannerAgreesWithDecoder`, and
+`TestBrokerForwardsFormAndUploadBodiesUnread`, which holds the limit above as a fact: the
+stand-in acts on `DELETE` for a form body and a multipart body that name `_method`.
 
 ### Where the credential goes: a named header or basic authentication
 

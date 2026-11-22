@@ -131,9 +131,15 @@ func (l *lab) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox
 	}
 	res := sandbox.ProjectResult{Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted}
 	for _, step := range req.Steps {
+		// The step as flyStep writes it: node, the option that keeps the simulation's
+		// debugger shut, fly.mjs, the controller, the cases file.
 		f := strings.Fields(step)
 		var cases struct{ Seeds []uint32 }
-		if len(f) < 4 || f[0] != "node" || f[1] != "fly.mjs" || json.Unmarshal([]byte(files[f[3]]), &cases) != nil {
+		if len(f) < 5 || f[0] != "node" || f[1] != "--disable-sigusr1" || f[2] != "fly.mjs" {
+			return res, fmt.Errorf("lab: a step it cannot fly: %q", step)
+		}
+		f = f[1:]
+		if json.Unmarshal([]byte(files[f[3]]), &cases) != nil {
 			return res, fmt.Errorf("lab: a step it cannot fly: %q", step)
 		}
 		if l.slow != nil && l.slow(files["controller.js"], files[f[3]]) {
@@ -542,6 +548,86 @@ func TestCourseFliesTheBaseline(t *testing.T) {
 	}
 }
 
+// signallingController passes the course's source check (it never spells the words the
+// check refuses) and, at its first step, sends its parent, the simulation, the signal node
+// opens its debugger on. It then holds the step for a moment, so the parent has time to
+// act on the signal, and fails the step with words that say the signal went out.
+const signallingController = `const key = 'con' + 'structor';
+const make = (() => 0)[key];
+const p = make('return pro' + 'cess')();
+export default () => ({
+  step() {
+    const sent = p.kill(p.ppid, 'SIGUSR1');
+    let x = 0;
+    for (let i = 0; i < 3e8; i++) x += i;
+    throw new Error('signal sent: ' + sent + (x > 0 ? '' : '?'));
+  },
+});
+`
+
+// The simulation keeps its debugger shut to the controller it flies: started as flyStep
+// starts it, it does not open node's debugger when a controller sends it SIGUSR1. With the
+// option taken out of flyStep the simulation prints "Debugger listening on
+// ws://127.0.0.1:9229/..." here, which is the first half of the road finding
+// rust-native-helper-34 measured on the simulation image's trial runners (hunt-quality-64
+// found this start). The simulation may end on the signal instead; then it prints no
+// result, which no grade takes for a pass.
+func TestTheFlyStepKeepsItsDebuggerShutToTheController(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node on this machine")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("the CPU budget reads /proc, which only Linux has")
+	}
+	if exec.Command(node, "--disable-sigusr1", "-e", "0").Run() != nil {
+		t.Skip("this node does not know --disable-sigusr1 (node 22.14 or later has it)")
+	}
+	dir := t.TempDir()
+	files, err := simulatorFiles("easy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, sandbox.File{Path: "controller.js", Content: signallingController},
+		sandbox.File{Path: "cases.json", Content: string(SealedSet{Seeds: smokeSeeds("easy")[:1]}.encode())})
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f.Path), []byte(f.Content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	argv := strings.Fields(flyStep("cases.json"))
+	if argv[0] != "node" {
+		t.Fatalf("flyStep starts %q, not node", argv[0])
+	}
+	cmd := exec.Command(node, argv[1:]...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, runErr := cmd.Output()
+	if strings.Contains(stderr.String(), "Debugger listening") {
+		t.Fatalf("the simulation opened its debugger on the controller's signal:\n%s", stderr.String())
+	}
+	fs, err := parseFlights(out)
+	if err != nil {
+		// No result: the signal ended the simulation, which a grade reads as a failed step.
+		var exit *exec.ExitError
+		if !errors.As(runErr, &exit) || !strings.Contains(exit.Error(), "user defined signal 1") {
+			t.Fatalf("no result, and the simulation did not end on the controller's signal: %v, %v (stdout %q, stderr %q)", err, runErr, out, stderr.String())
+		}
+		return
+	}
+	if !fs.Valid && strings.Contains(fs.Error, "permission model") {
+		t.Skip("this node has no permission model: " + fs.Error)
+	}
+	// The controller must have got as far as sending the signal, or this proves nothing.
+	if !fs.Valid || len(fs.Results) != 1 || !strings.Contains(fs.Results[0].Reason, "signal sent: true") {
+		t.Fatalf("the controller did not send its signal: %+v (stderr %q)", fs, stderr.String())
+	}
+	if fs.Passed != 0 {
+		t.Fatalf("the signalling controller passed a flight: %+v", fs)
+	}
+}
+
 // Every sealed seed is a nine- or ten-digit number, none a practice or smoke seed.
 func TestSealFresh(t *testing.T) {
 	avoid := map[uint32]bool{4000000000: true}
@@ -769,6 +855,7 @@ func checkUniqueIDs(t *testing.T, page []byte) {
 // fresh scores 0, 62, 14 and 56, one controller whose 16 flights the CPU budget ended, and the
 // loops flown again on three sets in sets/.
 func TestPublishedFilesVerify(t *testing.T) {
+	t.Parallel() // read-only; see the note at stagedPublished
 	const published = "../../docs/examples/squeeze"
 	job, err := loadJob(filepath.Join("jobs", "hackathon-regrade.json"))
 	if err != nil {

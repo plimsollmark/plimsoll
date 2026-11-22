@@ -6,19 +6,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // The service account files a pod is given, the defaults for plimsolld running in the
 // cluster, which it must to reach the pods' addresses.
-const (
-	inClusterAPIServer = "https://kubernetes.default.svc"
-	inClusterCAFile    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-	inClusterTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-)
-
 // FromEnv builds the provider from SANDBOX_AGENTSANDBOX_* and the shared variables, as
-// plimsolld does (cmd/plimsolld/agentsandbox.go, whose -h text names each one). The API
+// plimsolld does (each is a setting in internal/settings, which -h is printed from). The API
 // server, its CA and the token default to the pod's own service account. sandboxd's token
 // is read from a file, never from the environment, which every child process inherits.
 func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
@@ -29,17 +24,11 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 	if res.PidsLimit > 0 {
 		return sandbox.Provider{}, errors.New("agentsandbox: SANDBOX_PIDS cannot be honored: a pod's process limit is the kubelet's podPidsLimit on each node, which the API does not show; unset it")
 	}
-	pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+	pinned, err := settings.RequirePinnedImages.Get(getenv)
 	if err != nil {
 		return sandbox.Provider{}, err
 	}
-	or := func(name, def string) string {
-		if v := getenv(name); v != "" {
-			return v
-		}
-		return def
-	}
-	tokenFile := getenv("SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE")
+	tokenFile := settings.AgentsandboxSandboxdTokenFile.Get(getenv)
 	if tokenFile == "" {
 		return sandbox.Provider{}, errors.New("agentsandbox: SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE is required: the file holding the token sandboxd checks")
 	}
@@ -48,31 +37,31 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: sandboxd token: %w", err)
 	}
 	var missing []string
-	for _, name := range []string{"SANDBOX_AGENTSANDBOX_NAMESPACE", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS", "SANDBOX_AGENTSANDBOX_IMAGE", "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE"} {
-		if getenv(name) == "" {
-			missing = append(missing, name)
+	for _, s := range []*settings.Text{settings.AgentsandboxNamespace, settings.AgentsandboxWarmPool, settings.AgentsandboxRuntimeClass, settings.AgentsandboxImage, settings.AgentsandboxSandboxdCAFile} {
+		if s.Get(getenv) == "" {
+			missing = append(missing, s.Name)
 		}
 	}
 	if len(missing) > 0 {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: %s required", strings.Join(missing, ", "))
 	}
-	handlers := splitList(getenv("SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"))
+	handlers := splitList(settings.AgentsandboxRunscHandlers.Get(getenv))
 	if err := checkRunscHandlers(handlers); err != nil {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS: %w", err)
 	}
 	p, err := New(Config{
-		APIServer:          or("SANDBOX_AGENTSANDBOX_API_SERVER", inClusterAPIServer),
-		CAFile:             or("SANDBOX_AGENTSANDBOX_CA_FILE", inClusterCAFile),
-		TokenFile:          or("SANDBOX_AGENTSANDBOX_TOKEN_FILE", inClusterTokenFile),
-		Namespace:          getenv("SANDBOX_AGENTSANDBOX_NAMESPACE"),
-		WarmPool:           getenv("SANDBOX_AGENTSANDBOX_WARM_POOL"),
-		RuntimeClass:       getenv("SANDBOX_AGENTSANDBOX_RUNTIME_CLASS"),
+		APIServer:          settings.AgentsandboxAPIServer.Get(getenv), // default: the pod's own service account
+		CAFile:             settings.AgentsandboxCAFile.Get(getenv),
+		TokenFile:          settings.AgentsandboxTokenFile.Get(getenv),
+		Namespace:          settings.AgentsandboxNamespace.Get(getenv),
+		WarmPool:           settings.AgentsandboxWarmPool.Get(getenv),
+		RuntimeClass:       settings.AgentsandboxRuntimeClass.Get(getenv),
 		RunscHandlers:      handlers,
-		Image:              getenv("SANDBOX_AGENTSANDBOX_IMAGE"),
+		Image:              settings.AgentsandboxImage.Get(getenv),
 		RequirePinnedImage: pinned,
 		SandboxdToken:      strings.TrimSpace(string(token)),
-		SandboxdCAFile:     getenv("SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE"),
-		SandboxdServerName: getenv("SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME"),
+		SandboxdCAFile:     settings.AgentsandboxSandboxdCAFile.Get(getenv),
+		SandboxdServerName: settings.AgentsandboxSandboxdServerName.Get(getenv),
 		MemoryMB:           res.MemoryMB,
 		CPUs:               res.CPUs,
 		DiskMB:             res.DiskMB,

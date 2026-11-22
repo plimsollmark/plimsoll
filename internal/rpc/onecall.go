@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -32,6 +31,18 @@ import (
 // the cell and the close after it: ample for both, and short, since the lifetime is
 // what bounds a member whose close never came.
 const oneCallMargin = time.Minute
+
+// cellBudget is the longest a warm cell may take, by reservation's arithmetic rather than
+// a second copy of it (finding release-43): a cell that names a budget is held to the RPC
+// ceiling alone, one that names none gets the provider's ceiling (stated, at most the RPC
+// ceiling).
+func cellBudget(requested, stated time.Duration) time.Duration {
+	ceiling := maxRunTimeout
+	if requested <= 0 {
+		ceiling = stated
+	}
+	return reservation(requested, ceiling, 0)
+}
 
 // cellRun is how Run runs its cell.
 func (s *SandboxService) cellRun(preferWarm bool) func(context.Context, sandbox.CellRequest) (sandbox.CellResult, error) {
@@ -76,13 +87,7 @@ func (s *SandboxService) warmCell(ctx context.Context, req sandbox.CellRequest) 
 	// The session must outlive its one cell: the call's budget, or with none the longest a
 	// cell may take there, at most the RPC ceiling, plus the margin; never longer than the
 	// daemon's session lifetime, for which the pool made its members.
-	budget := req.Timeout
-	if budget <= 0 {
-		budget = stated.Project.MaxTimeout
-	}
-	if budget <= 0 || budget > maxRunTimeout {
-		budget = maxRunTimeout
-	}
+	budget := cellBudget(req.Timeout, stated.Project.MaxTimeout)
 	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{
 		MinimumIsolation: req.MinimumIsolation,
 		Lifetime:         min(s.Sessions.Lifetime, budget+oneCallMargin),
@@ -99,16 +104,23 @@ func (s *SandboxService) warmCell(ctx context.Context, req sandbox.CellRequest) 
 	// The member goes when the call does, on every path below, off the answer's path; the
 	// run's slot stays held until its sandbox is gone, as for a provider that deletes a
 	// fresh run's sandbox after answering.
+	// The close is the daemon's own (closeOwn): tried again when it fails, and on a
+	// provider billed by the second the member's time held meanwhile, to the caller whose
+	// call it ran, settled when it is gone.
 	hold := sandbox.HoldCapacity(ctx)
 	defer func() {
 		go func() {
-			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
-			err := sess.Close(closeCtx)
-			cancel()
-			if err != nil {
-				s.logger().LogAttrs(context.WithoutCancel(ctx), slog.LevelWarn, "closing a pool member after its one call failed; its lifetime ends it", errAttr(err))
+			var paid *sessionMeter
+			caller := auditCaller(ctx)
+			if s.meteredTeardown() > 0 {
+				p, _ := PrincipalFrom(ctx)
+				paid = s.Spend.meter(caller, p.PaidSecondsPerDay)
 			}
+			s.closeOwn(ctx, sess, ownClose{why: "pool_member", caller: caller, paid: paid})
 			<-sess.Done()
+			if paid != nil {
+				paid.end()
+			}
 			hold()
 		}()
 	}()

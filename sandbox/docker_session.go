@@ -15,9 +15,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
@@ -29,12 +32,26 @@ import (
 // call the shared sweep (sandbox/internal/sessionkit) kills every process the call
 // left behind. What is particular to docker:
 //
-//   - PID 1 is docker's init (`--init`), which reaps: a killed process whose parent
-//     has gone is reparented to PID 1, and a PID 1 that never reaps (sleep) would
-//     keep its zombie, which counts against the process limit, for the session's life.
-//   - The sweep runs non-dumpable under the runner guard, so no process of a call
-//     can attach to it and forge its exit status, whatever the host's Yama setting;
-//     the baseline still refuses a host whose ptrace_scope reads 0.
+//   - PID 1 is the guest guard in its process-1 mode (launchPID1; finding guest-guard-10,
+//     decision 10 B), in place of docker's --init, so it runs behind the guard's filter like
+//     every other process of the container. It collects: a killed process whose parent has
+//     gone is reparented to PID 1, and a PID 1 that never collected (sleep) would keep its
+//     zombie, which counts against the process limit, for the session's life. It starts
+//     the main process as its child, exits with it, and exits on a signal recorded as from
+//     outside the container (docker stop's is one), so the kernel ends the rest; it passes no
+//     signal on. Code of the session can still end or stall its own session through process 1,
+//     as it always could by ending the main process: it can cause a signal recorded as from
+//     outside (finding guest-guard-34), stop or end process 1 under gVisor (35), and keep a
+//     SIGTERM pending so an outside docker stop waits its timeout (36). Close does not use
+//     docker stop: removeContainer is docker rm -f, which does not wait.
+//   - The sweep runs non-dumpable under the runner guard, so once the guard has loaded
+//     no process of a call can attach to it and forge its exit status. From its exec
+//     until then (env, sh, then node's loader) it is dumpable, and what refuses an
+//     attach in that moment is Yama: docker exec starts it outside the ancestry of
+//     every process of the session's, and the baseline refuses a host whose
+//     ptrace_scope reads 0 (gVisor's own reads 1 whatever the host's). What code of the
+//     session can still open then is the exec's own pipes, which the verdict, an exit
+//     status, does not travel on (docker_guard_window_test.go measures both).
 //   - Every writable mount is a sized tmpfs, which a stopped container loses. So a
 //     suspend is `docker pause` (the cgroup freezer): CPU stops, memory, files and
 //     live interpreters stay, and Suspend reports that the memory is still held. And
@@ -49,8 +66,8 @@ import (
 //     a call without a grant, it answers 503.
 
 var (
-	// dockerSessionCommand is a session container's main process (under docker's
-	// init): 2^31-1 seconds, which every sleep accepts, and far beyond any lifetime.
+	// dockerSessionCommand is a session container's main process (under the guard as
+	// PID 1): 2^31-1 seconds, which every sleep accepts, and far beyond any lifetime.
 	dockerSessionCommand = []string{"sleep", "2147483647"}
 	// dockerSessionDirs are a session's writable mounts, which the sweep measures
 	// against its disk budget.
@@ -76,28 +93,53 @@ const (
 	dockerReapMargin = 5 * time.Minute
 	// dockerSessionWork is the working directory of every call.
 	dockerSessionWork = "/work"
-	// dockerRunnerGuard is the library the project image's runner loads to make
-	// itself non-dumpable; the sweep loads it too.
+	// dockerRunnerGuard is the library plimsoll loads into each node program of its own
+	// beside guest code (a session's sweep, quiesce and relays, the granted-run
+	// forwarder) to make it non-dumpable. The project runner, the native helper, makes
+	// itself non-dumpable with one call and loads nothing.
 	dockerRunnerGuard = "/usr/local/lib/plimsoll-runner-guard.so"
 	// dockerControlBudget bounds a create, inspect, pause, unpause or listing.
 	dockerControlBudget = 60 * time.Second
 )
 
-// dockerRunnerArgv starts the project image's runner with its guard loaded and the
-// environment startScript gives a process, and none of the image's: the steps get
-// that through the plan (runnerwire.Plan.Env), the runner never does. marker is the
-// call's start marker (afterMarker).
-func dockerRunnerArgv(marker string) ([]string, error) {
-	return guestArgv(marker, []string{"LD_PRELOAD=" + dockerRunnerGuard}, "node", "/runner.mjs")
+// A pause's budget is held under SuspendBound, which a session layer's suspend budget is
+// derived from: a larger number here does not compile.
+const _ = uint64(SuspendBound - dockerControlBudget)
+
+// dockerProjectRunner is the project runner's own command line: what plimsoll starts,
+// after the start script, for every project call (a run, a granted run behind the
+// forwarder, a session's project call): the native helper in the project image
+// (nativehelper.RunProject), which SmokeTest holds to its pin (smokeNativeHelper) before
+// any run. A variable only so that a test can wrap it; nothing a daemon reads sets it.
+var dockerProjectRunner = slices.Clone(nativehelper.RunProject)
+
+// runnerCommand is the project runner's command line this provider starts:
+// dockerProjectRunner, or the one a test set (projectRunner).
+func (d *DockerSandbox) runnerCommand() []string {
+	if len(d.projectRunner) > 0 {
+		return slices.Clone(d.projectRunner)
+	}
+	return slices.Clone(dockerProjectRunner)
 }
 
-// dockerForwardingRunnerArgv starts the runner for a granted project run: behind
+// runnerArgv starts the project image's runner with the environment startScript gives a
+// process, and none of the image's: the steps get that through the plan
+// (runnerwire.Plan.Env), the runner never does. marker is the call's start marker
+// (afterMarker). No guard library: the runner is a static program that makes itself
+// non-dumpable before it reads its plan, and no loader reads LD_PRELOAD for it.
+func (d *DockerSandbox) runnerArgv(marker string) ([]string, error) {
+	return guestArgv(marker, nil, d.runnerCommand()...)
+}
+
+// forwardingRunnerArgv starts the runner for a granted project run: behind
 // plimsoll's loopback forwarder (hostForwarderWrapperJS), which listens on hostAPIListen,
 // passes each connection to the broker's socket, and runs the runner as its child with
-// the same stdin and stdout. The guard loads into both, since the forwarder holds the
-// same descriptors the runner does.
-func dockerForwardingRunnerArgv(marker, listen string) ([]string, error) {
-	return guestArgv(marker, []string{"LD_PRELOAD=" + dockerRunnerGuard}, "node", "--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--", "--", "node", "/runner.mjs")
+// the same stdin and stdout. The guard loads into the forwarder, a node program that
+// holds the same descriptors the runner does; the runner inherits LD_PRELOAD, which
+// nothing in a static program reads, and drops it from every step's environment.
+func (d *DockerSandbox) forwardingRunnerArgv(marker, listen string) ([]string, error) {
+	argv := append(sessionkit.NodeArgv("--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--", "--"), d.runnerCommand()...)
+	return guestArgv(marker, []string{"LD_PRELOAD=" + dockerRunnerGuard}, argv...)
 }
 
 // dockerForwardingSnippetArgv starts a snippet with sdk_env behind the forwarder: the
@@ -108,8 +150,8 @@ func dockerForwardingSnippetArgv(marker, listen string, env []string) ([]string,
 	if err := checkEnvEntries(env); err != nil {
 		return nil, err
 	}
-	argv := append([]string{"node", "--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--"}, env...)
-	argv = append(argv, "--", "node", "-")
+	argv := append(sessionkit.NodeArgv("--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--"), env...)
+	argv = append(append(argv, "--"), sessionkit.GuestNodeArgv("-")...)
 	return guestArgv(marker, nil, argv...)
 }
 
@@ -117,6 +159,15 @@ func dockerForwardingSnippetArgv(marker, listen string, env []string) ([]string,
 // argv, never into sh, and only into that one program.
 func guarded(argv []string) []string {
 	return append([]string{"sh", "-c", `export LD_PRELOAD=` + dockerRunnerGuard + `; exec "$@"`, "sh"}, argv...)
+}
+
+// sessionControlArgv is how a session starts each of its control programs (the sweep,
+// the quiesce, every cell relay): under sessionkit.ControlArgv, with env as its only
+// variables (docker_cli.go), and non-dumpable under the runner guard. SmokeTest starts
+// its guard check the same way (smokeGuard), so an image that lacks the library, which
+// a loader skips without a word, is refused at startup.
+func sessionControlArgv(env map[string]string, argv []string) ([]string, error) {
+	return sessionkit.ControlArgv(env, guarded(argv)...)
 }
 
 // SupportsSessions reports whether a project image is configured: a session runs
@@ -158,6 +209,10 @@ type dockerSession struct {
 	// suspend and the sweep after every call (sessionkit.Life), with the session's
 	// interpreters, which a pause keeps.
 	life *sessionkit.Life
+	// held is set once a caller holds the session (activate): from then on a command the
+	// refusing point refuses ends the session (refused); before, it fails the open or the
+	// pool member, marked not dispatched.
+	held atomic.Bool
 }
 
 var _ Session = (*dockerSession)(nil)
@@ -257,7 +312,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 }
 
 // newSessionContainer creates a session container from the Preflight-verified project
-// image under the run lockdown, with docker's init as PID 1, sleep as its main process
+// image under the run lockdown, with the guard as PID 1 (launchPID1), sleep as its main process
 // and label as the end of its declared lifetime (which ReconcileOrphans reads); reads
 // it back; and records its own processes, which every sweep spares. No caller holds it
 // until activate.
@@ -267,7 +322,7 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 		return nil, err
 	}
 	s := &dockerSession{
-		d: d, host: state.host, name: "plsm-session-" + randID(),
+		d: d, host: state.host, name: "plsm-session-" + providerkit.RandHex(8),
 		imageID: state.projectImageID, manifest: state.projectManifest, env: state.guestEnv(state.projectImageID), tier: state.isolation, policy: state.sessionPolicy(),
 		broker: broker, routes: NewRouteBudget(),
 	}
@@ -283,12 +338,16 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 		return nil, err
 	}
 	s.life.Interps.Start = start
-	main, err := sessionkit.ControlArgv(nil, dockerSessionCommand...)
+	marker := dockerMainMarker()
+	main, err := dockerSessionMain(marker)
 	if err != nil {
 		broker.Close()
 		return nil, err
 	}
-	args := []string{"run", "-d", "--name", s.name, "--log-driver", "none", "--init",
+	// Attached, not -d: the open reads the main process's standard error until its marker
+	// (startMain), then lets the CLI go. Docker keeps nothing of it (--log-driver none).
+	// No --init: process 1 is the guard itself (launchPID1), which collects as docker's init did.
+	args := []string{"run", "--name", s.name, "--log-driver", "none",
 		"--label", dockerSessionLabel + "=1"}
 	args = append(args, d.labelArgs(label)...)
 	// A session's container applies the default profile for its life: a grant with
@@ -299,36 +358,191 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	if state.platform != "" {
 		args = append(args, "--platform", state.platform)
 	}
-	args = append(args, launch(state.projectImageID, main)...)
-	out, err := s.controlOutput(ctx, args...)
+	tail, err := launchPID1(state.guard, state.projectImageID, main)
 	if err != nil {
+		broker.Close()
+		return nil, err
+	}
+	args = append(args, tail...)
+	opened, err := s.startMain(ctx, marker, args...)
+	if err != nil {
+		if refused := refusalIn(err); refused != nil {
+			// The refusing point refused the session's docker run: docker never started, so
+			// no container exists to remove and nothing ran (finding guest-guard-24).
+			s.life.Abandon()
+			broker.Close()
+			return nil, NotDispatched(RefusalEnvironment, refused)
+		}
 		s.abandon(ctx)
 		return nil, err
 	}
-	if s.id = strings.TrimSpace(string(out)); !dockerContainerID.MatchString(s.id) {
+	if err := guardLineAtOpen(opened); err != nil {
 		s.abandon(ctx)
-		return nil, fmt.Errorf("docker run: unreadable container ID %q", truncateForError(s.id))
+		return nil, err
 	}
 	insp, err := s.inspect(ctx)
 	if err != nil {
 		s.abandon(ctx)
+		if !opened.started {
+			// docker run ended before the main process started and left no container to read:
+			// docker's own failure, as a failed docker run -d was.
+			return nil, fmt.Errorf("docker run exited %d before the session's main process started: %s", opened.exit, truncateForError(strings.TrimSpace(opened.stderr)))
+		}
 		return nil, err
 	}
 	if err := insp.verifyAtOpen(state.projectImageID); err != nil {
 		s.abandon(ctx)
+		if refusal := guardCodeAtOpen(opened.started, insp); refusal != nil {
+			return nil, refusal
+		}
 		return nil, err
 	}
+	if s.id = insp.ID; !dockerContainerID.MatchString(s.id) {
+		s.abandon(ctx)
+		return nil, fmt.Errorf("docker inspect: unreadable container ID %q", truncateForError(s.id))
+	}
 	s.snapshot = insp.securitySnapshot()
-	if err := s.recordBaseline(ctx); err != nil {
+	if err := s.recordBaseline(ctx, guardedPID1(main), dockerSessionShell(marker)); err != nil {
 		s.abandon(ctx)
 		return nil, err
 	}
 	return s, nil
 }
 
+// The open reads the guest guard's own line (finding guest-guard-16, decision 16 B). A session's
+// container keeps no output (--log-driver none), so the line the guard writes when it refuses
+// the main process was lost, and the open read the main process's exit code alone. Now the
+// open runs docker run attached, reads the CLI's standard error, and lets the CLI go once the
+// main process has written its marker: plimsoll's shell, which the guard starts in place of the
+// sleep, writes a fresh marker and then becomes the sleep (dockerSessionMain). The marker
+// before anything else shows the guard started the main process. Without it, the CLI exited with
+// the container, and its standard error ends with the guard's line when the guard refused.
+//
+// Guest code cannot forge either. Nothing of a caller's has run at that point: the container
+// was created from the verified image a moment before, no call has been made in it, and every
+// process in it is the guard, as process 1, and the plimsoll programs it starts. So what
+// reaches that standard error is the docker CLI's and plimsoll's own, and only the guard
+// writes a line in its form with its exit code. Docker still keeps nothing (attaching is
+// not logging), and nothing reads the container's output after the open.
+
+// dockerMainMarker is a fresh marker for a session's main process (dockerSessionMain); its
+// prefix is not a call's (startMarker).
+func dockerMainMarker() string { return "plimsoll-session-main:" + providerkit.RandHex(8) + "\n" }
+
+// dockerSessionMain is a session container's main process, for the guard to start: plimsoll's
+// shell under sessionkit.ControlArgv writes marker to standard error and becomes the sleep
+// (dockerSessionCommand), so the process the session keeps is the sleep, with the environment
+// it had before.
+func dockerSessionMain(marker string) ([]string, error) {
+	return sessionkit.ControlArgv(nil, dockerSessionShell(marker)...)
+}
+
+// dockerSessionShell is the shell's own command line in the main process, as the process
+// list shows it between the marker and the exec (sessionkit.BaselineSettled): env -i has
+// already become it, and it has not yet become the sleep.
+func dockerSessionShell(marker string) []string {
+	return append([]string{"/bin/sh", "-c", `printf %s "$1" >&2; shift; exec "$@"`, "sh", marker}, dockerSessionCommand...)
+}
+
+// mainStderrCap bounds what the open keeps of the attached docker run's standard error: the
+// docker CLI's warnings, the guard's one line, the marker.
+const mainStderrCap = 64 << 10
+
+// mainStart is how a session's attached docker run went (startMain).
+type mainStart struct {
+	started bool   // the main process wrote its marker: the guard started it
+	exit    int    // without the marker, the CLI's exit code: the container's, or docker's own (125)
+	stderr  string // the CLI's standard error up to the marker or its exit, at most mainStderrCap bytes
+}
+
+// startMain runs the session's docker run (args) attached, reading its standard error until
+// the main process writes marker or the CLI exits. On the marker the CLI is killed: the
+// container runs on without it, as a docker run -d leaves it (measured 2026-11-20 under runc
+// and gVisor: running, and docker exec into it works), and nothing reads its output again.
+// An error means the docker run could not be started or did not end within the budget.
+func (s *dockerSession) startMain(ctx context.Context, marker string, args ...string) (mainStart, error) {
+	ctx, cancel := context.WithTimeout(ctx, dockerControlBudget)
+	defer cancel()
+	full, err := dockerArgs(s.host, args...)
+	if err != nil {
+		return mainStart{}, err
+	}
+	cmd := dockerCommand(ctx, full...)
+	if cmd.Err != nil {
+		return mainStart{}, fmt.Errorf("docker run: %w", cmd.Err)
+	}
+	pipe, err := cmd.StderrPipe()
+	if err != nil {
+		return mainStart{}, err
+	}
+	if err := cmd.Start(); err != nil {
+		return mainStart{}, fmt.Errorf("docker run: %w", err)
+	}
+	var got []byte
+	chunk := make([]byte, 4096)
+	started := false
+	for len(got) < mainStderrCap {
+		n, rerr := pipe.Read(chunk)
+		got = append(got, chunk[:min(n, mainStderrCap-len(got))]...)
+		if started = bytes.Contains(got, []byte(marker)); started || rerr != nil {
+			break
+		}
+	}
+	if started || len(got) >= mainStderrCap {
+		_ = cmd.Process.Kill()
+	}
+	werr := cmd.Wait()
+	if started {
+		return mainStart{started: true, stderr: string(got)}, nil
+	}
+	if ctx.Err() != nil {
+		return mainStart{}, fmt.Errorf("docker run: %w", ctx.Err())
+	}
+	if len(got) >= mainStderrCap {
+		return mainStart{}, fmt.Errorf("docker run wrote more than %d bytes before the session's main process started", mainStderrCap)
+	}
+	return mainStart{exit: exitCodeOf(werr), stderr: string(got)}, nil
+}
+
+// guardLineAtOpen is the open's reading of the guard's own line: when the main process never
+// wrote its marker and the CLI's standard error ends with the guard's line for its exit code,
+// the guard refused to start it, marked not dispatched, in plimsoll's words for the step and
+// errno the line names. nil otherwise, and then the exit code is still read (guardCodeAtOpen).
+func guardLineAtOpen(start mainStart) error {
+	if start.started {
+		return nil
+	}
+	refusal, ok := guestGuardRefusal(start.exit, start.stderr)
+	if !ok {
+		return nil
+	}
+	return NotDispatched(RefusalEnvironment, errors.New("docker session: the main process: "+refusal))
+}
+
+// guardCodeAtOpen is the reading the open made before it read the guard's line, kept for when
+// that line cannot be read, so the open is never weaker than it was: a main process that is
+// not running at open and exited with a code of the guard's is refused, marked not dispatched,
+// since no code of a caller's exists at open whatever ended it. Without the marker the code
+// names the step; with it, the guard had started the main process, and the words say so.
+func guardCodeAtOpen(started bool, insp dockerInspect) error {
+	if insp.State.Running {
+		return nil
+	}
+	for step, code := range guestGuardExit {
+		if insp.State.ExitCode != code {
+			continue
+		}
+		if started {
+			return NotDispatched(RefusalEnvironment, fmt.Errorf("the session's main process ended at open with exit %d after the guest guard had started it; no code of a caller's had run", code))
+		}
+		return NotDispatched(RefusalEnvironment, fmt.Errorf("the guest guard refused to start the session's main process, so nothing was started: exit %d, its code for step %s", code, step))
+	}
+	return nil
+}
+
 // instance is d's id for dockerInstanceLabel.
 func (d *DockerSandbox) instance() string {
-	d.instanceOnce.Do(func() { d.instanceID = randID() })
+	d.instanceOnce.Do(func() { d.instanceID = providerkit.RandHex(8) })
 	return d.instanceID
 }
 
@@ -354,7 +568,87 @@ func (d *DockerSandbox) activate(s *dockerSession, expires time.Time, disk int64
 	if !s.life.Activate(&d.sessions, expires, disk) {
 		return NotDispatched(RefusalCapacity, errDraining)
 	}
+	s.held.Store(true)
 	return nil
+}
+
+// refused is what a session command the refusing point refused becomes (refusedCommand, finding
+// guest-guard-24). Before a caller holds the session (an open, a pool member) it is marked not
+// dispatched: no code of a caller's exists yet. Once held, the sandbox no longer starts
+// plimsoll's programs as opened, so the session ends, as when the boundary is not proven, and
+// the call gets that end; when the refused command was the call's own, callRefusal marks the
+// call not dispatched as well.
+func (s *dockerSession) refused(r *refusedCommandError) error {
+	if !s.held.Load() {
+		return NotDispatched(RefusalEnvironment, r)
+	}
+	s.life.FinishWith(&SessionEndedError{Reason: SessionBoundaryFailed, Detail: errDockerRefused})
+	return s.Err()
+}
+
+// callRefusal is the one place that decides whether a call of a session a caller holds is
+// marked not dispatched because its own command was refused (finding guest-guard-24, decision
+// 24 B, narrowed by finding hunt-security-30). It is asked once per call, about the call's own
+// command only, as soon as that command's exec has returned (out and err are what execAs
+// returned; started is the call's start marker). It answers nil when it has nothing to say, and
+// the call's other branches then decide.
+//
+// The call's own command is the one exec that starts the caller's code:
+//
+//   - a snippet: the exec of guestArgv(started, ..., node -), the start script and node behind
+//     the guard. Before it a snippet makes no exec (the read-back is a docker inspect).
+//   - a project: the exec of the runner (runnerArgv). Every step runs inside that one exec,
+//     started by the runner, not by plimsoll and not behind a guard of their own, so no refusal of
+//     plimsoll's can fall between two steps. A project whose second step fails after its first
+//     ran, the guard's own line and code included (a step that starts the guard itself), is the
+//     runner's authenticated report: the call ran, and it is a result, never marked. The quiesce
+//     before the runner is not the call's own command; a refused quiesce refuses the call
+//     through the session's lifecycle (sessionkit.Life.Quiesce), as one that never ran does.
+//   - a cell: none. Its code travels over a relay to an interpreter, and its execs (the launcher,
+//     the identity check, the relay's attach) are the interpreter driver's (sessionkit); a refusal
+//     of one ends the session and leaves the cell unmarked, as before.
+//   - a module: none. A session runs no modules; a module run is a fresh run, and docker_run.go
+//     marks its refused command.
+//
+// One refusal of the call's own command is marked, reason environment: the refusing point
+// refused it (out.refused), so docker was never started and no byte of the call exists. The
+// session ends (boundary failed), as before.
+//
+// The guard's refusal is not marked, though nothing of the call ran when it is real. What shows
+// it is the exec's standard error and exit code: the guard's line and code, and no start
+// marker. Code of the session can shape all three. It writes the line and picks the code once
+// its own call runs, and it can take the marker out: under runc the exec's standard error is a
+// pipe the guest's uid owns, so a thread left in a kept interpreter (or the call's own code)
+// reopens it through /proc/<pid>/fd/2 and reads the marker off it before docker does
+// (TestDockerSessionCallThatRanIsNeverMarkedFromItsStderr does it on the first try). A mark
+// there would tell the caller that a call that ran did not, and invite a retry that runs it
+// again. So such an end is the session's end, boundary failed, unmarked, in words that say
+// whether the call ran is not known; a real refusal of the guard's loses only its mark (no
+// mark means execution may have occurred, which then forbids a blind retry and nothing more).
+// The mark stays where no byte of a caller's can reach: the refusing point's refusal here, and
+// the guard's line at open (guardLineAtOpen), before any code of a caller's exists.
+//
+// Everything else stays unmarked too, because no mark means execution may have occurred and
+// that must stay true: a refusal of the sweep after the call (it runs after the answer has
+// gone back, and the session's end reaches the next call), of the process list, the identity
+// check, or of any command after the call's own command started.
+func (s *dockerSession) callRefusal(out dockerExecResult, err error, started string) error {
+	if out.refused {
+		return NotDispatched(RefusalEnvironment, s.Err())
+	}
+	if err != nil || !out.exited {
+		return nil
+	}
+	if _, ran := afterMarker(out.stderr, started); ran {
+		return nil
+	}
+	step, errno, ok := guestGuardShape(out.exitCode, out.stderr)
+	if !ok {
+		return nil
+	}
+	s.life.FinishWith(&SessionEndedError{Reason: SessionBoundaryFailed, Detail: fmt.Sprintf(
+		"the call's command ended as the guest guard ends when it refuses (step %s, errno %d, exit %d) and its start marker was not read; code of the session can write that line and take the marker, so whether the call's code ran is not known", step, errno, out.exitCode)})
+	return s.Err()
 }
 
 // abandon removes a session container no caller ever held (one that failed to open,
@@ -391,9 +685,10 @@ func (s *dockerSession) hooks() sessionkit.Hooks {
 		// The sweep's exit status is the session's boundary: it starts under
 		// sessionkit.ControlArgv, so no variable of the image can load code into it
 		// (docker_cli.go), and non-dumpable under the runner guard, so no process of the
-		// session can attach to it.
+		// session can attach to it; before the guard has loaded, Yama refuses the attach
+		// (the baseline requires ptrace_scope 1 or more; TestDockerGuardWindowSweep).
 		Sweep: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
-			argv, err := sessionkit.ControlArgv(nil, guarded(argv)...)
+			argv, err := sessionControlArgv(nil, argv)
 			if err != nil {
 				return sessionkit.ExecResult{}, err
 			}
@@ -405,7 +700,7 @@ func (s *dockerSession) hooks() sessionkit.Hooks {
 		// may run while one starts (QuiesceScript). It starts the same way the sweep
 		// does, and its exit status is as trustworthy.
 		Quiesce: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
-			argv, err := sessionkit.ControlArgv(nil, guarded(argv)...)
+			argv, err := sessionControlArgv(nil, argv)
 			if err != nil {
 				return sessionkit.ExecResult{}, err
 			}
@@ -461,6 +756,9 @@ type dockerExecResult struct {
 	stdoutTruncated, stderrTruncated bool
 	exitCode                         int
 	exited                           bool // the CLI exited by itself, with exitCode
+	// refused: the refusing point refused the command, so docker was never started and nothing
+	// of it ran (the error is the refusal's, s.refused). Only callRefusal reads it.
+	refused bool
 }
 
 // exec runs argv in the session's container with stdin, in the work directory.
@@ -470,8 +768,13 @@ func (s *dockerSession) exec(ctx context.Context, argv, env []string, stdin []by
 	return s.execAs(ctx, "", argv, env, stdin, outCap, errCap)
 }
 
-// execAs is exec as user ("" for the container's own).
+// execAs is exec as user ("" for the container's own), behind the guest guard
+// (guardFirst, docker_guestguard.go).
 func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []string, stdin []byte, outCap, errCap int) (dockerExecResult, error) {
+	argv, err := guardFirst(argv)
+	if err != nil {
+		return dockerExecResult{}, err
+	}
 	args := []string{"exec", "-i", "-w", dockerSessionWork}
 	if user != "" {
 		args = append(args, "--user", user)
@@ -489,9 +792,12 @@ func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []str
 	if err != nil {
 		return dockerExecResult{}, err
 	}
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = outCap, errCap
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = outCap, errCap
 	cmd := dockerCommand(ctx, full...)
+	if refused := refusedCommand(cmd); refused != nil {
+		return dockerExecResult{refused: true}, s.refused(refused)
+	}
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
@@ -516,12 +822,14 @@ func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []str
 
 // dockerInspect is the part of `docker inspect` a session reads back.
 type dockerInspect struct {
+	ID    string `json:"Id"`
 	Image string `json:"Image"`
 	State struct {
 		Status    string `json:"Status"`
 		Running   bool   `json:"Running"`
 		Paused    bool   `json:"Paused"`
 		OOMKilled bool   `json:"OOMKilled"`
+		ExitCode  int    `json:"ExitCode"`
 	} `json:"State"`
 	Config struct {
 		User   string            `json:"User"`
@@ -552,10 +860,14 @@ var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // inspect reads the container back. When docker cannot, the container is gone only
 // if a listing filtered by its ID answers empty: docker's wording for a missing
-// container is not a contract, and a daemon that did not answer is not a removal.
+// container is not a contract, and a daemon that did not answer is not a removal. At
+// open, before the first inspect has named the ID, there is no listing to make.
 func (s *dockerSession) inspect(ctx context.Context) (dockerInspect, error) {
 	out, err := s.controlOutput(ctx, "inspect", "--type", "container", s.name)
 	if err != nil {
+		if s.id == "" {
+			return dockerInspect{}, err
+		}
 		if listed, lerr := s.controlOutput(ctx, "ps", "-a", "-q", "--no-trunc", "--filter", "id="+s.id); lerr == nil && strings.TrimSpace(string(listed)) == "" {
 			return dockerInspect{}, errContainerGone
 		}
@@ -574,7 +886,8 @@ func (s *dockerSession) inspect(ctx context.Context) (dockerInspect, error) {
 
 // verifyAtOpen checks what the session's walls depend on, right after create:
 // the verified image, running, no network but none, a read-only root, not
-// privileged, no added capability, docker's init.
+// privileged, no added capability, and not docker's init, whose place the guard
+// takes as process 1 (recordBaseline reads that it does).
 func (i dockerInspect) verifyAtOpen(imageID string) error {
 	var problems []string
 	if i.Image != imageID {
@@ -600,8 +913,8 @@ func (i dockerInspect) verifyAtOpen(imageID string) error {
 	if len(i.hostConfig.CapAdd) > 0 {
 		problems = append(problems, "added capabilities "+strings.Join(i.hostConfig.CapAdd, ","))
 	}
-	if i.hostConfig.Init == nil || !*i.hostConfig.Init {
-		problems = append(problems, "no init")
+	if i.hostConfig.Init != nil && *i.hostConfig.Init {
+		problems = append(problems, "docker's init, outside the guest guard, as process 1")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("docker session: the created container is not as requested: %s", strings.Join(problems, "; "))
@@ -710,21 +1023,47 @@ func pruneZero(v any) any {
 }
 
 // recordBaseline lists the processes of a container no call has touched and keeps
-// them as its own: docker's init and the main process.
-func (s *dockerSession) recordBaseline(ctx context.Context) error {
+// them as its own: process 1 and the main process. Process 1 must be pid1, the guard in
+// its process-1 mode as launchPID1 started it (finding guest-guard-10): its command
+// line is compared byte for byte, so a container whose first process is another
+// program (docker's init, the image's own) is refused before any call. The open lists
+// right after the main process's marker, which its shell writes before it execs the
+// sleep, so a list that shows the shell (shell, its command line) is taken again, under
+// the open's deadline and at most dockerControlBudget, until the same process runs the
+// sleep (sessionkit.BaselineSettled, hunt-quality-102).
+func (s *dockerSession) recordBaseline(ctx context.Context, pid1, shell []string) error {
 	argv, err := sessionkit.ControlArgv(nil, sessionkit.ListArgv()...)
 	if err != nil {
 		return err
 	}
-	out, err := s.exec(ctx, argv, nil, nil, 1<<20, 64<<10)
-	if err != nil {
-		return fmt.Errorf("docker session: list processes: %w", err)
+	var listErr error // the list's own failure, returned as it is worded
+	list := func(ctx context.Context) ([]byte, error) {
+		out, err := s.exec(ctx, argv, nil, nil, 1<<20, 64<<10)
+		switch {
+		case err != nil:
+			listErr = fmt.Errorf("docker session: list processes: %w", err)
+		case !out.exited || out.exitCode != 0:
+			// At open no code of the guest exists, so this stderr is the guard's or docker's alone.
+			if refusal, ok := guestGuardRefusal(out.exitCode, out.stderr); ok && out.exited {
+				listErr = NotDispatched(RefusalEnvironment, errors.New("docker session: the process list: "+refusal))
+			} else {
+				listErr = fmt.Errorf("docker session: the process list exited %d: %q", out.exitCode, out.stderr)
+			}
+		default:
+			return []byte(out.stdout), nil
+		}
+		return nil, listErr
 	}
-	if !out.exited || out.exitCode != 0 {
-		return fmt.Errorf("docker session: the process list exited %d: %q", out.exitCode, out.stderr)
-	}
-	keep, err := sessionkit.Baseline([]byte(out.stdout), dockerSessionCommand, true)
+	ctx, cancel := context.WithTimeout(ctx, dockerControlBudget)
+	defer cancel()
+	stdout, keep, err := sessionkit.BaselineSettled(ctx, list, dockerSessionCommand, shell, true)
 	if err != nil {
+		if listErr != nil && errors.Is(err, listErr) {
+			return err
+		}
+		return fmt.Errorf("docker session: %w", err)
+	}
+	if err := processOneIs(stdout, pid1); err != nil {
 		return fmt.Errorf("docker session: %w", err)
 	}
 	s.life.SetBaseline(keep)
@@ -734,7 +1073,10 @@ func (s *dockerSession) recordBaseline(ctx context.Context) error {
 func (s *dockerSession) Isolation() IsolationClass { return s.tier }
 
 // Environments is SessionEnvironments for the image this session's container was
-// created from, which is what every call of it runs.
+// created from, which is what every call of it runs, and the seccomp profile the
+// container applies for its life, which every call's result names: never the
+// provider's Describe policy, which names the sdk_env variant too when one is
+// configured, a profile no session's container applies.
 func (s *dockerSession) Environments() Environments {
 	s.d.stateMu.RLock()
 	langs := slices.Clone(s.d.projectLanguages)
@@ -744,7 +1086,7 @@ func (s *dockerSession) Environments() Environments {
 	js := project
 	js.Languages = slices.Clone(langs)
 	js.MaxTimeout = s.d.snippetCeiling()
-	return Environments{JavaScript: js, Project: project}
+	return Environments{JavaScript: js, Project: project, Policy: s.policy}
 }
 func (s *dockerSession) ExpiresAt() time.Time  { return s.life.ExpiresAt() }
 func (s *dockerSession) Done() <-chan struct{} { return s.life.Done() }
@@ -808,15 +1150,38 @@ func (s *dockerSession) containerEndWithin(ctx context.Context) *SessionEndedErr
 	return nil
 }
 
-// exited says how a session's container that no longer runs ended, naming the memory
-// limit when docker records a kill by it: under gVisor one process over the limit ends
-// the whole sandbox, so a guest that used too much memory sees its session end, and the
-// end should say why.
+// exited says how a session's container that no longer runs ended (dockerExitDetail).
 func (s *dockerSession) exited(insp dockerInspect) string {
-	if insp.State.OOMKilled {
-		return fmt.Sprintf("the container is %s: it ran out of memory (the sandbox's limit is %s)", insp.State.Status, s.d.Memory)
+	return dockerExitDetail(s.d.Runtime, insp.State.Status, insp.State.ExitCode, insp.State.OOMKilled, s.d.Memory)
+}
+
+// The words a docker session's end uses for the memory limit, in one place: the kill docker
+// recorded, and the probable one under gVisor (dockerExitDetail).
+const (
+	dockerOOMRecorded = "it ran out of memory"
+	dockerOOMLikely   = "probably by its memory limit"
+)
+
+// dockerExitDetail is the explanation of a session's end when its container no longer runs,
+// built from trusted values only (docker's recorded state, the configured runtime and limit),
+// never from anything the guest wrote. It names the memory limit when docker records a kill
+// by it: under gVisor one process over the limit ends the whole sandbox, so a guest that used
+// too much memory sees its session end, and the end should say why. Under gVisor docker can
+// also miss that kill altogether (1 container in 40 over its limit, measured 2026-11-21; the
+// outside fact docker-oomkilled-under-runsc): the container then reads exit status 137, a
+// SIGKILL, with no kill recorded. So under runsc a 137 with none recorded names the limit as
+// the probable cause, never as certain, since any forced kill gives 137. Under runc a process
+// over the limit is killed alone, so a 137 there says nothing about memory.
+func dockerExitDetail(runtime, status string, exitCode int, oomKilled bool, memory string) string {
+	switch {
+	case oomKilled:
+		return fmt.Sprintf("the container is %s: %s (the sandbox's limit is %s)", status, dockerOOMRecorded, memory)
+	case runtime == "runsc" && exitCode == 137:
+		return fmt.Sprintf("the container is %s with status 137, a forced kill: %s (the sandbox's limit is %s), "+
+			"since under gVisor docker can miss a kill by the memory limit; any other forced kill also gives 137",
+			status, dockerOOMLikely, memory)
 	}
-	return "the container is " + insp.State.Status
+	return "the container is " + status
 }
 
 // dockerEndGrace bounds the wait, after a cell's interpreter ended, for docker to report the
@@ -923,7 +1288,7 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	// error, and never docker's failure as a result: the consequence stays inside the
 	// forger's own session (review, 2026-10-26).
 	started := startMarker()
-	argv, err := guestArgv(started, append(slices.Clone(s.env), env...), "node", "-")
+	argv, err := guestArgv(started, append(slices.Clone(s.env), env...), sessionkit.GuestNodeArgv("-")...)
 	if err != nil {
 		return fail, err
 	}
@@ -947,6 +1312,10 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 		CallTrace:           core.traceSnapshot(),
 		Policy:              s.policy,
 	}
+	if refusal := s.callRefusal(out, err, started); refusal != nil {
+		fail.CallTrace = res.CallTrace
+		return fail, refusal
+	}
 	if ended == context.DeadlineExceeded && guestStarted && s.Err() == nil {
 		// The call's own deadline: the CLI is killed, and the sweep that follows kills
 		// the command and anything it started. Without the marker nothing shows the
@@ -963,8 +1332,8 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 		return fail, s.Err()
 	}
 	if !guestStarted {
-		// No start marker, whatever docker exited with: almost always docker exec never
-		// started the call's start script. Unmarked: an attach stream that broke could lose
+		// No start marker, and no refusal of the guard's (callRefusal read that above), whatever
+		// docker exited with: almost always docker exec never started the call's start script. Unmarked: an attach stream that broke could lose
 		// the marker of a call that ran. plimsoll's own words, as for the runner: session
 		// code can write into this stderr before the marker (above), and the daemon logs
 		// this error, so docker's text cannot be told from the guest's and stays out (the
@@ -996,7 +1365,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		return fail, err
 	}
 	started := startMarker()
-	runner, err := dockerRunnerArgv(started)
+	runner, err := s.d.runnerArgv(started)
 	if err != nil {
 		return fail, err
 	}
@@ -1022,7 +1391,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	}
 	defer unlend()
 	// The steps start with the image's environment and the grant's socket; the runner
-	// itself starts with neither (dockerRunnerArgv).
+	// itself starts with neither (runnerArgv).
 	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
 		Env: append(slices.Clone(s.env), env...), ReportKey: key}
 	for _, f := range req.Files {
@@ -1045,6 +1414,9 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	// steps (review, 2026-10-26). A session that ended meanwhile says so on its next call.
 	res, reported := RunnerReport(fail, out.stdout, key)
 	if !reported {
+		if refusal := s.callRefusal(out, err, started); refusal != nil {
+			return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, refusal
+		}
 		if _, ran := afterMarker(out.stderr, started); ended == context.DeadlineExceeded && ran && s.Err() == nil {
 			fail.Outcome, fail.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
 			return fail, nil
@@ -1114,13 +1486,18 @@ func (a *dockerAttached) Close() {
 }
 
 // attach starts argv in the container, non-dumpable under the runner guard so no
-// other process of the session can open its stdin or stdout, and keeps its pipes.
+// other process of the session can open its stdin or stdout once it has started (in
+// the moment before, one can, which is why nothing a relay says is trusted with
+// anything that matters: docs/sessions.md), and keeps its pipes.
 //
 // A relay is one of plimsoll's own programs: its frames carry every cell's result. It
 // starts under sessionkit.ControlArgv, with env as its only variables (docker_cli.go).
 func (s *dockerSession) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
-	inner, err := sessionkit.ControlArgv(env, guarded(argv)...)
+	inner, err := sessionControlArgv(env, argv)
 	if err != nil {
+		return nil, err
+	}
+	if inner, err = guardFirst(inner); err != nil {
 		return nil, err
 	}
 	args := append([]string{"exec", "-i", "-w", dockerSessionWork, s.name}, inner...)
@@ -1129,6 +1506,9 @@ func (s *dockerSession) attach(argv []string, env map[string]string) (sessionkit
 		return nil, err
 	}
 	cmd := dockerCommand(context.Background(), full...)
+	if refused := refusedCommand(cmd); refused != nil {
+		return nil, s.refused(refused)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -1137,8 +1517,8 @@ func (s *dockerSession) attach(argv []string, env map[string]string) (sessionkit
 	if err != nil {
 		return nil, err
 	}
-	var stderr cappedBuffer
-	stderr.limit = 4096
+	var stderr providerkit.Capture
+	stderr.Limit = 4096
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -1164,10 +1544,7 @@ func (s *dockerSession) RunCell(ctx context.Context, req CellRequest) (CellResul
 	}
 	defer done()
 	start := time.Now()
-	out, err := s.life.Interps.RunRelayed(runCtx, s.execFunc, s.attach, sessionkit.Cell{
-		Language: string(req.Language), Code: req.Code, Files: cellFiles(req.Files),
-		Work: dockerSessionWork, OutCap: s.d.maxOutput(), ErrCap: s.d.maxOutput(),
-	})
+	out, err := s.life.Interps.RunRelayed(runCtx, s.execFunc, s.attach, SessionCell(req, s.Environments().Project, dockerSessionWork, s.d.maxOutput()))
 	res, err := SessionCellResult(runCtx, fail, out, err, time.Since(start), s.manifest, dockerImageIdentity(s.imageID), s.Err, func() error {
 		if s.stoppedWithin(runCtx, dockerEndGrace) {
 			return s.Err()
@@ -1230,25 +1607,23 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	if n := reapDeadHostDirs(os.TempDir(), time.Now()); n > 0 {
 		slog.Info("docker: removed host directories that stopped processes left", "count", n)
 	}
-	// The pinned daemon is all reaping needs: an image the smoke test did not prove
-	// stops runs, not the cleanup of what earlier ones left.
-	state, err := d.verifiedState()
-	if err != nil || state.host == "" {
-		return 0, nil // not preflighted yet: nothing is known to reap
+	// The pinned daemon is all reaping needs: an image the smoke test did not prove, or a
+	// Preflight that failed since, stops runs, not the cleanup of what earlier ones left.
+	// A failed Preflight never changes the pinned daemon, so the pass goes on against it;
+	// before one was ever pinned there is no daemon the pass may run docker against, and
+	// the pass says so once (hunt-quality-100: it read the whole verified state, so any
+	// failed Preflight stopped every removal and quarantine retry, silently).
+	host := d.pinnedDaemon()
+	d.noteReapSkipped(host == "")
+	if host == "" {
+		return 0, nil
 	}
-	// The label listing first, so one quarantined container whose removal hangs cannot
-	// eat the whole pass before anything else is reaped (review, 2026-10-26); the
-	// quarantined names are skipped here and retried below, each within a slice of
-	// what the pass has left.
-	args, err := dockerArgs(state.host, "ps", "-a", "--filter", "label="+dockerExpiresLabel,
-		"--format", `{{.Names}}	{{.Label "`+dockerExpiresLabel+`"}}`)
-	if err != nil {
-		return 0, err
-	}
-	out, err := dockerOutput(ctx, args...)
-	if err != nil {
-		return 0, fmt.Errorf("docker ps: %w", err)
-	}
+	quarantined := d.quarantine.Names()
+	// The listing is bounded like one removal try, so a daemon that does not answer it
+	// leaves the quarantine retries their time.
+	lctx, lcancel := context.WithTimeout(ctx, removeAttemptBudget)
+	out, listErr := dockerReapListing(lctx, host)
+	lcancel()
 	held := map[string]bool{}
 	for _, l := range d.sessions.Open() {
 		held[l.Name] = true
@@ -1256,10 +1631,10 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	for _, name := range d.pool.Load().Members() {
 		held[name] = true
 	}
-	for _, name := range d.quarantine.Names() {
+	for _, name := range quarantined {
 		held[name] = true
 	}
-	reaped := 0
+	var expired []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		name, exp, ok := strings.Cut(line, "\t")
 		if !ok || held[name] {
@@ -1269,32 +1644,88 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 		if err != nil || time.Since(time.Unix(unix, 0)) < dockerReapMargin {
 			continue
 		}
-		// Counted only once confirmed gone; one that is not is tried again next pass.
-		if removeContainer(ctx, state.host, name) == nil {
-			reaped++
-		}
+		expired = append(expired, name)
 	}
-	// Quarantined containers, whatever their age: each still holds the capacity of the
-	// call that made it, given back once its removal is confirmed. Each retry gets an
-	// equal slice of the pass's remaining time, at most a removal's own budget, so a
-	// removal that hangs costs its slice, not every other name's attempt.
+	// One rule for every removal of the pass (hunt-quality-101): each name gets an equal
+	// share of what the pass has left, at most a removal's own budget, so a removal that
+	// hangs costs its share and never another name's try. The quarantined names go first,
+	// whatever their age: each still holds the capacity of the call that made it, given
+	// back once its removal is confirmed. Before, only the quarantined names had shares,
+	// and one expired container whose removal hung took the whole pass, every pass.
+	share := reapShares(ctx, len(quarantined)+len(expired))
 	var confirmed int
 	var stillHeld error
-	if names := d.quarantine.Names(); len(names) > 0 {
-		slice := dockerRemoveBudget
-		if dl, ok := ctx.Deadline(); ok {
-			slice = min(slice, time.Until(dl)/time.Duration(len(names)))
-		}
+	if len(quarantined) > 0 {
 		confirmed, stillHeld = d.quarantine.Retry(func(name string) error {
-			rctx, cancel := context.WithTimeout(ctx, slice)
+			rctx, cancel := share()
 			defer cancel()
-			return removeContainer(rctx, state.host, name)
+			return removeContainer(rctx, host, name)
 		})
 		if stillHeld != nil {
 			slog.Error("docker: quarantined containers still not confirmed gone; their capacity stays held", "error", stillHeld)
 		}
 	}
-	return confirmed + reaped, stillHeld
+	reaped := 0
+	for _, name := range expired {
+		// Counted only once confirmed gone; one that is not is tried again next pass.
+		rctx, cancel := share()
+		if removeContainer(rctx, host, name) == nil {
+			reaped++
+		}
+		cancel()
+	}
+	if listErr != nil {
+		listErr = fmt.Errorf("docker ps: %w", listErr)
+	}
+	return confirmed + reaped, errors.Join(listErr, stillHeld)
+}
+
+// dockerReapListing lists every container carrying the lifetime label, paused ones
+// included, with its label: the orphan pass's candidates.
+func dockerReapListing(ctx context.Context, host string) ([]byte, error) {
+	args, err := dockerArgs(host, "ps", "-a", "--filter", "label="+dockerExpiresLabel,
+		"--format", `{{.Names}}	{{.Label "`+dockerExpiresLabel+`"}}`)
+	if err != nil {
+		return nil, err
+	}
+	return dockerOutput(ctx, args...)
+}
+
+// reapShares hands out the contexts of n removals that share ctx: each call returns one
+// bounded by an equal share of what ctx has left for the removals not yet started, and at
+// most dockerRemoveBudget, so time a fast removal leaves goes to the ones after it.
+func reapShares(ctx context.Context, n int) func() (context.Context, context.CancelFunc) {
+	left := n
+	return func() (context.Context, context.CancelFunc) {
+		slice := dockerRemoveBudget
+		if dl, ok := ctx.Deadline(); ok && left > 0 {
+			slice = min(slice, time.Until(dl)/time.Duration(left))
+		}
+		left = max(left-1, 0)
+		return context.WithTimeout(ctx, slice)
+	}
+}
+
+// pinnedDaemon is the daemon address Preflight pinned, "" before one was. A failed
+// Preflight leaves it as it was: only a Preflight that succeeds sets it.
+func (d *DockerSandbox) pinnedDaemon() string {
+	d.stateMu.RLock()
+	defer d.stateMu.RUnlock()
+	return d.daemonHost
+}
+
+// noteReapSkipped logs when the orphan pass starts or stops being skipped for want of
+// a pinned daemon: once per change, not once a pass. It reports whether it logged.
+func (d *DockerSandbox) noteReapSkipped(skipped bool) bool {
+	if d.reapSkipped.Swap(skipped) == skipped {
+		return false
+	}
+	if skipped {
+		slog.Warn("docker: orphan pass skipped: no docker daemon has been pinned yet (no Preflight has succeeded), so it removes nothing and retries no quarantined removal until one is")
+	} else {
+		slog.Info("docker: orphan pass running again against the pinned docker daemon")
+	}
+	return true
 }
 
 // dockerSessionBroker is a session's broker socket: mounted at open, it serves the
@@ -1318,13 +1749,4 @@ func startDockerSessionBroker() (*dockerSessionBroker, error) {
 func (b *dockerSessionBroker) Close() {
 	b.set(nil)
 	b.unixBroker.close()
-}
-
-// cellFiles is a cell's files in the interpreter driver's form.
-func cellFiles(files []File) []sessionkit.File {
-	out := make([]sessionkit.File, 0, len(files))
-	for _, f := range files {
-		out = append(out, sessionkit.File{Path: f.Path, Content: f.Content})
-	}
-	return out
 }

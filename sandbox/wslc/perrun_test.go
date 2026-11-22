@@ -614,7 +614,7 @@ func TestModeFromEnv(t *testing.T) {
 		"cap in shared":    {env("SANDBOX_WSLC_MODE", "shared", "SANDBOX_WSLC_MAX_SESSIONS", "2"), "per-run only"},
 		"root in shared":   {env("SANDBOX_WSLC_MODE", "shared", "SANDBOX_WSLC_RUN_ROOT", "/mnt/c/x"), "per-run only"},
 		"cap too high":     {env("SANDBOX_WSLC_MODE", "per-run", "SANDBOX_WSLC_MAX_SESSIONS", "17"), "between 1 and 16"},
-		"cap not a number": {env("SANDBOX_WSLC_MODE", "per-run", "SANDBOX_WSLC_MAX_SESSIONS", "two"), "whole number"},
+		"cap not a number": {env("SANDBOX_WSLC_MODE", "per-run", "SANDBOX_WSLC_MAX_SESSIONS", "two"), "must be an integer"},
 		"relative root":    {env("SANDBOX_WSLC_MODE", "per-run", "SANDBOX_WSLC_RUN_ROOT", "mnt/c/x"), "clean absolute"},
 		"unclean root":     {env("SANDBOX_WSLC_MODE", "per-run", "SANDBOX_WSLC_RUN_ROOT", "/mnt/c/x/../y"), "clean absolute"},
 	} {

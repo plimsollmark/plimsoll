@@ -157,7 +157,14 @@ func says(r *runFacts, g group) string {
 	case "check":
 		return "The command plimsoll sends before any of the run's code: it reads the kernel's first log line (gVisor's boot line), the boot ID, the seccomp mode (the kernel's filter on which calls a process may make) and the mount table."
 	case "runner":
-		return "plimsoll's in-sandbox runner, node /runner.mjs: it writes the run's files, checks that a step cannot open its descriptors, then starts each step in its own shell."
+		// The run's own log says which runner it was: the Node runner until 2026-11-21 (the
+		// published run), the native helper since.
+		for _, p := range g.Processes {
+			if p.Command == "node /runner.mjs" {
+				return "plimsoll's in-sandbox runner, node /runner.mjs: it writes the run's files, checks that a step cannot open its descriptors, then starts each step in its own shell."
+			}
+		}
+		return "plimsoll's in-sandbox runner, the native helper (" + runnerPath + " run-project): it writes the run's files, checks that a step cannot open its descriptors, then starts each step in its own shell."
 	case "script":
 		return "npm runs this when it installs the package: package.json says \"" + g.Script + "\": \"" + r.Scripts[g.Script] + "\". Everything here is the package's own code."
 	case "step":

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -24,7 +25,6 @@ func TestBuildProviderRoutes(t *testing.T) {
 			built = true
 			return sandbox.Provider{Sandbox: sandbox.Disabled{}}, nil
 		},
-		usage: "\n  SANDBOX_PROVIDER=test-built a provider this test registers\n",
 	})
 	if _, err := buildProvider(getenvFrom(map[string]string{"SANDBOX_PROVIDER": " Test-Built "})); err != nil || !built {
 		t.Fatalf("daemon-built provider: built=%v err=%v", built, err)
@@ -40,8 +40,8 @@ func TestBuildProviderRoutes(t *testing.T) {
 		t.Fatalf("unknown provider: err = %v, want a refusal naming Build's providers and the daemon-built ones", err)
 	}
 	help := helpText()
-	if !strings.Contains(help, "| test-built |") || !strings.Contains(help, "a provider this test registers") {
-		t.Fatalf("-h does not name the registered provider or carry its section:\n%s", help)
+	if !strings.Contains(help, "| test-built |") {
+		t.Fatalf("-h does not name the registered provider:\n%s", help)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestBuildProviderRoutes(t *testing.T) {
 // pin rule replace the defaults, so hardened mode never demands a variable its
 // configuration rejects.
 func TestHardenedPolicyDaemonBuiltProvider(t *testing.T) {
-	registerTestProvider(t, providerDescriptor{hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"}, pinnedImages: true})
+	registerTestProvider(t, providerDescriptor{hardenedEnvelope: []settings.Size{settings.MemoryMB}, pinnedImages: true})
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "test-built", sandbox.IsolationVM
 	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}

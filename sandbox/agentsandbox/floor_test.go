@@ -14,6 +14,7 @@ import (
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 )
 
 // serviceRuns are a snippet and a project sent through the daemon's service, with no
@@ -250,7 +251,7 @@ func TestTheRuntimeClassCannotChangeWhileTheSmokeTestProvesIt(t *testing.T) {
 			answer := sd.run
 			sd.run = func(argv []string, stdin []byte) (string, string, int32) {
 				out, stderr, exit := answer(argv, stdin)
-				if strings.Contains(strings.Join(argv, " "), runnerPath) == duringRunner {
+				if strings.Contains(strings.Join(argv, " "), nativehelper.InContainer) == duringRunner {
 					api.mu.Lock()
 					api.classUID = "recreated-during-smoke"
 					api.mu.Unlock()

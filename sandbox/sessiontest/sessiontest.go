@@ -7,8 +7,6 @@ package sessiontest
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -17,6 +15,8 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // Config is what the suite needs besides the provider.
@@ -414,7 +414,7 @@ func pythonChildUnreaped(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 
 func cellFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	s := open(t, p, cfg.Lifetime)
-	tok := token(t)
+	tok := token()
 	res := cell(t, s, sandbox.LanguageJavaScript, `require("fs").readFileSync("in/data.csv", "utf8")`, 30*time.Second,
 		sandbox.File{Path: "in/data.csv", Content: "a,b\n" + tok})
 	if res.ExitCode != 0 || !strings.Contains(res.Stdout, tok) {
@@ -540,7 +540,7 @@ func grantNeedsSessionOptIn(t *testing.T, p sandbox.SessionProvider, cfg Config)
 	defer cancel()
 	_, jsErr := s.RunJavaScript(ctx, sandbox.Request{Code: `require("fs").writeFileSync("granted-snippet-ran", "1")`, Timeout: 10 * time.Second, Grant: grant})
 	_, projectErr := s.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "a.js", Content: `require("fs").writeFileSync("granted-project-ran", "1")`}},
-		Steps: []string{"node a.js"}, Timeout: 30 * time.Second, Grant: grant})
+		Steps: []string{sessionkit.GuestNode + " a.js"}, Timeout: 30 * time.Second, Grant: grant})
 	for name, err := range map[string]error{"snippet": jsErr, "project": projectErr} {
 		reason, ok := sandbox.NotDispatchedReason(err)
 		if !errors.Is(err, sandbox.ErrGrantNotForSessions) || !ok || reason != sandbox.RefusalPermission {
@@ -588,13 +588,7 @@ func js(t *testing.T, s sandbox.Session, code string, timeout time.Duration) san
 	return res
 }
 
-func token(t *testing.T) string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-	return hex.EncodeToString(b)
-}
+func token() string { return providerkit.RandHex(8) }
 
 // procsRunning is a snippet that prints the command lines of every process whose
 // command line contains one of the markers.
@@ -608,7 +602,7 @@ console.log(JSON.stringify(hits))`, strings.Join(markers, ","))
 
 func filesPersist(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	s := open(t, p, cfg.Lifetime)
-	tok := token(t)
+	tok := token()
 	res := js(t, s, fmt.Sprintf(`require("fs").mkdirSync("/tmp/st",{recursive:true});require("fs").writeFileSync("/tmp/st/a.txt",%q);console.log("wrote")`, tok), 10*time.Second)
 	if res.ExitCode != 0 {
 		t.Fatalf("write: exit %d, stderr %q", res.ExitCode, res.Stderr)
@@ -689,7 +683,7 @@ func heldOutput(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 
 func suspendKeepsFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	s := open(t, p, cfg.Lifetime)
-	tok := token(t)
+	tok := token()
 	js(t, s, fmt.Sprintf(`require("fs").writeFileSync("/tmp/s.txt",%q)`, tok), 10*time.Second)
 	// A live interpreter tells a real suspend from a no-op: a suspend that gives up the
 	// memory (a stopped container) must end it, one that holds the memory (a pause) must

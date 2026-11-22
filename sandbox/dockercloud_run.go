@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // RunJavaScript runs one snippet with node from a staged CommonJS file.
@@ -63,7 +65,7 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (res Resul
 		return fail, fmt.Errorf("dockercloud write snippet: %w", err)
 	}
 	start := time.Now()
-	out, err := d.execGuarded(runCtx, vm, []string{"node", snippetPath}, "")
+	out, err := d.execGuarded(runCtx, vm, sessionkit.GuestNodeArgv(snippetPath), "")
 	res = Result{
 		Stdout:          out.stdout,
 		Stderr:          out.stderr,
@@ -288,16 +290,11 @@ func runCeiling(max time.Duration) time.Duration {
 	return max
 }
 
-// clampRunTimeout applies a provider's default and ceiling to a requested budget.
+// clampRunTimeout applies an E2B or Docker Cloud provider's default (30 seconds when none
+// is set) and ceiling (runCeiling) to a requested budget.
 func clampRunTimeout(req, def, max time.Duration) time.Duration {
-	if req <= 0 {
-		req = def
-		if req <= 0 {
-			req = 30 * time.Second
-		}
+	if def <= 0 {
+		def = 30 * time.Second
 	}
-	if max = runCeiling(max); req > max {
-		req = max
-	}
-	return req
+	return providerkit.ClampTimeout(req, def, runCeiling(max))
 }

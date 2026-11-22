@@ -34,6 +34,7 @@ type Remote struct {
 	jsGrant      string
 	projectGrant string
 	recorder     Recorder
+	daemonName   string
 }
 
 // Recorder receives every run exchange whose record checked (record.Check: the
@@ -77,14 +78,16 @@ type config struct {
 	projectGrant string
 	insecureHTTP bool
 	recorder     Recorder
+	daemonName   string
 	opts         []connect.ClientOption
 }
 
-// maxResponseBytes is above the largest legitimate project response (bounded
+// MaxResponseBytes is above the largest legitimate project response (bounded
 // step output plus the aggregate artifact cap) while preventing a compromised or
 // misconfigured server from making an embedding client buffer an unlimited unary
-// response.
-const maxResponseBytes = 32 << 20
+// response. The Python and TypeScript clients cap an answer at the same size
+// (internal/wiretables writes it there).
+const MaxResponseBytes = 32 << 20
 
 // WithHTTPClient overrides the HTTP client (default: a 6-minute timeout client that
 // never follows a redirect). An *http.Client is used as a copy that refuses
@@ -125,6 +128,15 @@ func WithInsecureHTTP() Option {
 // and keep it.
 func WithRecorder(r Recorder) Option {
 	return func(cfg *config) { cfg.recorder = r }
+}
+
+// WithDaemonName names the daemon this client talks to, in the application's own words
+// (DaemonNamePattern: never a URL). A session's Checkpoint states it, and AttachSession
+// takes only a checkpoint that names it, so a checkpoint read from a store can only reach a
+// daemon the application configured. Without it, sessions cannot be checkpointed or
+// attached.
+func WithDaemonName(name string) Option {
+	return func(cfg *config) { cfg.daemonName = name }
 }
 
 // WithConnectOptions passes extra connect client options (e.g. gRPC, gzip).
@@ -169,6 +181,8 @@ var (
 	// ErrInsecureHTTP marks a non-loopback cleartext endpoint that was not
 	// explicitly authorized with WithInsecureHTTP.
 	ErrInsecureHTTP = errors.New("client: cleartext HTTP to a non-loopback plimsoll requires WithInsecureHTTP")
+	// ErrInvalidDaemonName marks a WithDaemonName outside DaemonNamePattern.
+	ErrInvalidDaemonName = errors.New("client: a daemon name is 1 to 64 of [A-Za-z0-9._-], never a URL")
 )
 
 // refuseRedirect keeps the default client from following a redirect. A Connect call
@@ -194,7 +208,10 @@ func New(baseURL string, opts ...Option) (*Remote, error) {
 	if err != nil {
 		return nil, err
 	}
-	connectOpts := []connect.ClientOption{connect.WithReadMaxBytes(maxResponseBytes)}
+	if cfg.daemonName != "" && !daemonNameForm.MatchString(cfg.daemonName) {
+		return nil, ErrInvalidDaemonName
+	}
+	connectOpts := []connect.ClientOption{connect.WithReadMaxBytes(MaxResponseBytes)}
 	connectOpts = append(connectOpts, cfg.opts...)
 	// Last, so innermost: the binding sees each HTTP request and its answer.
 	connectOpts = append(connectOpts, connect.WithInterceptors(bindAnswers()))
@@ -204,6 +221,7 @@ func New(baseURL string, opts ...Option) (*Remote, error) {
 		jsGrant:      cfg.jsGrant,
 		projectGrant: cfg.projectGrant,
 		recorder:     cfg.recorder,
+		daemonName:   cfg.daemonName,
 	}, nil
 }
 
@@ -696,14 +714,32 @@ func restoreSandboxError(err error) error {
 	if end, ok := sessionEndedDetail(err); ok {
 		sentinel = end
 	}
-	switch connect.CodeOf(err) {
-	case connect.CodeCanceled:
-		sentinel = context.Canceled
-	case connect.CodeDeadlineExceeded:
-		sentinel = context.DeadlineExceeded
+	switch code := connect.CodeOf(err); code {
+	case connect.CodeCanceled, connect.CodeDeadlineExceeded:
+		ctxErr := context.Canceled
+		if code == connect.CodeDeadlineExceeded {
+			ctxErr = context.DeadlineExceeded
+		}
+		// A session's end stated beside the code is kept: the call was canceled or ran
+		// out of time, and the session ended too (finding release-89).
+		if sentinel != nil {
+			sentinel = errors.Join(ctxErr, sentinel)
+		} else {
+			sentinel = ctxErr
+		}
 	case connect.CodeFailedPrecondition:
 		switch {
 		case sentinel != nil: // the session ended
+		case reason == sandbox.RefusalPermission:
+			// Another worker attached the session (or its generation is spent); the
+			// session has not ended.
+			sentinel = ErrStaleOwner
+		case reason == sandbox.RefusalRequest:
+			// An attach whose checkpoint is not the head, told by the daemon's constant
+			// text; any other refusal with this reason is left without a sentinel.
+			if checkpointMismatch(err) {
+				sentinel = ErrCheckpointMismatch
+			}
 		case reason == sandbox.RefusalIsolation:
 			sentinel = sandbox.ErrInsufficientIsolation
 		case reason == sandbox.RefusalEnvironment:

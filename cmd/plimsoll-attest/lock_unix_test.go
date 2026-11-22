@@ -44,6 +44,7 @@ func TestAppendWaitsForTheBundleLock(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("the append did not wait for the lock: %v", err)
+	// fixed-wait: 200 ms without the append returning stands for "it waits for the lock"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(200 * time.Millisecond):
 	}
 	unlock()

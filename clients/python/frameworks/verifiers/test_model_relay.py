@@ -315,7 +315,9 @@ class RelayBudget(Case):
         totals = relay.totals()
         self.assertTrue(totals["budget_reached"])
         self.assertGreaterEqual(totals["refused"], 2)
-        self.assertEqual([r.get("refused") for r in self.logged()][-1], "budget")
+        # Four calls were made; each line is written after its answer, so wait for all four (under load the
+        # last line landed after a read that waited for one, and the read saw an earlier call's line).
+        self.assertEqual([r.get("refused") for r in self.logged(at_least=4)][-1], "budget")
 
     def cached_ok(self, prompt: int, cached: int, completion: int) -> Callable[[BaseHTTPRequestHandler, Dict[str, Any]], None]:
         def answer(handler: BaseHTTPRequestHandler, body: Dict[str, Any]) -> None:

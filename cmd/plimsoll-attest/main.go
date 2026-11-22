@@ -14,7 +14,7 @@
 // order, into a fresh session.
 //
 // The request file is a plimsoll.v1.RunRequest in protobuf JSON, for example
-// {"protocol": 5, "javascript": {"code": "console.log(1)"}}. The daemon's
+// {"protocol": 7, "javascript": {"code": "console.log(1)"}}. The daemon's
 // bearer token is read from PLIMSOLL_CALLER_TOKEN, and the signing key from
 // -key or, when that is absent, from PLIMSOLL_ATTEST_KEY (the PEM itself), so
 // neither appears in a process listing. The key never goes to the daemon.
@@ -42,6 +42,8 @@ import (
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/client"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/printable"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -53,16 +55,22 @@ const usage = `usage:
                                                 no lock on Windows, Solaris, illumos or AIX:
                                                 run one at a time there); a bundle other
                                                 users can read is refused without -shared-bundle
-  plimsoll-attest verify -pub FILE [-expect FILE | -expect-count N] BUNDLE
+  plimsoll-attest verify -pub FILE [-expect FILE | -expect-count N] [-expect-unanswered M]
+                         [-require-close] BUNDLE
                                                 check signatures, digests, the bundle's chain
                                                 of links and session chains; with -expect, that
                                                 it holds exactly the requests your own log lists,
-                                                one request digest (request_sha256) per line
+                                                one request digest (request_sha256) per line, a
+                                                call sent with no answer as "unanswered DIGEST"; a
+                                                session whose close could not be collected is
+                                                reported as not proven complete, and with
+                                                -require-close the bundle fails instead
   plimsoll-attest verify-entry -pub FILE -line N BUNDLE
                                                 check one call line on its own: its signature,
                                                 its stored request and response, and its link;
                                                 not the bundle around it, nor (for a session
-                                                call) that its session's chain is whole
+                                                call) that its session's chain is whole; on a
+                                                session's ending line, its link and statement
   plimsoll-attest verify-record -pub FILE -line N BUNDLE
                                                 check one call line's signature and its stored
                                                 request and response alone, with no link: for a
@@ -124,10 +132,16 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "plimsoll-attest:", err)
+		fmt.Fprintln(os.Stderr, failure(err))
 		os.Exit(1)
 	}
 }
+
+// failure is the line main prints for err. An error can carry a daemon's words (its error
+// text, the provider a record names), a bundle's or a file's, so its text goes through
+// printable.Text: none may rewrite the operator's screen (the security scan of 2026-11-20,
+// F8 and F11).
+func failure(err error) string { return "plimsoll-attest: " + printable.Text(err.Error()) }
 
 func keygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
@@ -257,9 +271,9 @@ func run(args []string, stdout io.Writer) error {
 	defer cancel()
 	resp, rec, err := r.Exchange(ctx, req)
 	if err != nil {
-		return runFailed(err) // a run that failed has no record, and the bundle is unchanged
+		return runFailed(req, resp, err) // nothing is signed for a failed run, and the bundle is unchanged
 	}
-	fmt.Fprintf(stdout, "ran on %s (%s): %s\n", resp.GetSandbox(), resp.GetIsolation(), summary(resp))
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("ran on %s (%s): %s", resp.GetSandbox(), resp.GetIsolation(), summary(resp))))
 	if err := appendRun(*bundlePath, signer, got.req, got.resp, *shared); err != nil {
 		// The run happened: its signed record is kept beside the bundle, unlinked,
 		// rather than lost.
@@ -269,7 +283,7 @@ func run(args []string, stdout io.Writer) error {
 		}
 		return fmt.Errorf("the run's record could not be appended (%w); its signed entry is in %s, without a link", err, side)
 	}
-	fmt.Fprintf(stdout, "record %s signed into %s; request %s (the line for verify -expect)\n", rec.SHA256, *bundlePath, rec.RequestSHA256)
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("record %s signed into %s; request %s (the line for verify -expect)", rec.SHA256, *bundlePath, rec.RequestSHA256)))
 	return nil
 }
 
@@ -384,14 +398,33 @@ func keepUnsealed(bundle string, signer *attest.Signer, req *plimsollv1.RunReque
 	return path, nil
 }
 
-// runFailed says what a failed run's error means for its caller: a refusal the daemon marked
-// as made before anything was dispatched ran nothing and names its reason; any other error
-// may have come after the code started, so it is never a safe automatic retry. The daemon
-// tells an environment refusal's detail only in its log, so the mark is the caller's one
-// account of it.
-func runFailed(err error) error {
+// runFailed says what a failed run's error means for its caller. A refusal the daemon marked
+// as made before anything was dispatched ran nothing and names its reason; the daemon tells
+// an environment refusal's detail only in its log, so the mark is the caller's one account
+// of it. An answer that came back with a run record that failed the client's check (resp is
+// then not nil) is a run that happened: it says which check failed and what the daemon
+// stated, and nothing is signed. Any other error may have come after the code started, so
+// it is never a safe automatic retry.
+func runFailed(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse, err error) error {
 	if reason, ok := sandbox.NotDispatchedReason(err); ok {
 		return fmt.Errorf("refused before dispatch (reason %s), so nothing ran; the bundle is unchanged: %w", reason, err)
+	}
+	if resp != nil {
+		var check string
+		switch {
+		case errors.Is(err, sandbox.ErrIsolationEvidenceMismatch):
+			check = fmt.Sprintf("its isolation tier %q is below the request's floor %q", resp.GetIsolation(), req.GetMinimumIsolation())
+		case errors.Is(err, record.ErrNoRecord):
+			check = "it carries no run record"
+		case errors.Is(err, record.ErrVersion):
+			check = fmt.Sprintf("its run record is version %d, which this client does not accept from a daemon", resp.GetRecord().GetVersion())
+		case errors.Is(err, record.ErrMismatch):
+			check = "its run record does not match the request sent and the answer received"
+		}
+		if check != "" {
+			return fmt.Errorf("the code ran: the daemon answered that it ran on %s (%s): %s, but the answer failed its check: %s. Nothing was signed and the bundle is unchanged: %w",
+				resp.GetSandbox(), resp.GetIsolation(), summary(resp), check, err)
+		}
 	}
 	return fmt.Errorf("failed with no not-dispatched mark, so the code may have run; no record came back and the bundle is unchanged: %w", err)
 }
@@ -463,6 +496,8 @@ func summary(resp *plimsollv1.RunResponse) string {
 		return fmt.Sprintf("%s, %d steps", r.Project.GetOutcome(), len(r.Project.GetSteps()))
 	case *plimsollv1.RunResponse_Module:
 		return fmt.Sprintf("%s, %d rows", r.Module.GetOutcome(), len(r.Module.GetRuns()))
+	case *plimsollv1.RunResponse_Cell:
+		return fmt.Sprintf("cell, exit %d", r.Cell.GetExitCode())
 	}
 	return "no result"
 }
@@ -496,13 +531,21 @@ func readBundle(path string) ([]attest.Entry, error) {
 func verify(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519)")
-	expectPath := fs.String("expect", "", "a file of the request digests (request_sha256 in each run record) of every call you made through this harness, one per line, from your own log; anything after the digest on a line is a label: the bundle must hold exactly those requests, each as many times as listed")
-	expectCount := fs.Int("expect-count", -1, "how many calls you made through this harness, from your own records: the bundle must hold exactly that many")
+	expectPath := fs.String("expect", "", "a file of the request digests (request_sha256 in each run record) of every call you made through this harness that returned a record, one per line, from your own log; anything after the digest on a line is a label: the bundle must hold exactly those requests, each as many times as listed. A call you sent and got no answer for goes on a line of its own as \"unanswered DIGEST\": it must be named so by a session's statement. Unlisted, such a call is shown and required of nothing")
+	expectCount := fs.Int("expect-count", -1, "how many calls you made through this harness that returned a record, from your own records: the bundle must hold exactly that many call lines")
+	expectUnanswered := fs.Int("expect-unanswered", -1, "how many calls you sent through this harness and got no answer for: the sessions' statements must name exactly that many. Left out, such calls are shown and required of nothing")
+	requireClose := fs.Bool("require-close", false, "fail unless every session ends in the daemon's close, its own count of the session's calls: a session whose close could not be collected fails")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *pubPath == "" || fs.NArg() != 1 {
 		return errors.New("verify needs -pub FILE and one BUNDLE")
+	}
+	if *expectCount < -1 {
+		return fmt.Errorf("-expect-count %d: a count of calls is 0 or more (leave it out to check no count)", *expectCount)
+	}
+	if *expectUnanswered < -1 {
+		return fmt.Errorf("-expect-unanswered %d: a count of calls is 0 or more (leave it out to check no count)", *expectUnanswered)
 	}
 	pub, err := loadPublic(*pubPath)
 	if err != nil {
@@ -512,36 +555,135 @@ func verify(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	rep, err := attest.VerifyBundle(entries, attest.NewVerifier(pub))
-	if err != nil {
-		return err
-	}
 	// The links prove the file is what the harness wrote; whether the harness was
-	// handed every call is the caller's own records' to say.
+	// handed every call is the caller's own records' to say, which VerifyExpected checks
+	// after verifying the bundle itself. A session not proven complete is accepted and
+	// reported as such below (the command accepts it as the session's ending), unless
+	// -require-close; the library refuses it unless told to accept it.
+	v := attest.NewVerifier(pub)
+	var rep attest.Report
 	if *expectPath != "" {
 		raw, err := os.ReadFile(*expectPath)
 		if err != nil {
 			return err
 		}
-		var digests []string
-		for _, line := range strings.Split(string(raw), "\n") {
-			if f := strings.Fields(line); len(f) > 0 {
-				digests = append(digests, f[0])
-			}
+		want, err := parseExpect(raw)
+		if err != nil {
+			return fmt.Errorf("%s: %w", *expectPath, err)
 		}
-		if err := attest.VerifyExpected(entries, digests); err != nil {
+		if rep, err = attest.VerifyExpected(entries, v, want, attest.AcceptNotProvenComplete); err != nil {
 			return err
 		}
+	} else if rep, err = attest.VerifyBundle(entries, v, attest.AcceptNotProvenComplete); err != nil {
+		return err
 	}
-	if *expectCount >= 0 && attest.CountCalls(entries) != *expectCount {
-		return fmt.Errorf("%w: the bundle holds %d calls, you expected %d", attest.ErrExpected, attest.CountCalls(entries), *expectCount)
+	// Each count is exact: a call sent with no answer is in no line, so it is counted only
+	// by -expect-unanswered, against the statements, and never makes up for a line cut from
+	// the bundle (the security scan of 2026-11-20, F9 and F10: a range of counts let one recorded call be cut off).
+	sent := len(rep.Unanswered())
+	if held := attest.CountCalls(entries); *expectCount >= 0 && held != *expectCount {
+		also := ""
+		if sent > 0 {
+			also = fmt.Sprintf("; its sessions' statements name %d more sent with no answer (each may have run), which -expect-count does not count: count them with -expect-unanswered", sent)
+		}
+		return fmt.Errorf("%w: the bundle holds %d calls that returned a record, you expected %d%s", attest.ErrExpected, held, *expectCount, also)
 	}
-	fmt.Fprintf(stdout, "verified %d entries signed by key %s, whole to its last checkpoint: %d single runs", len(entries), attest.KeyID(pub), rep.Runs)
+	if *expectUnanswered >= 0 && sent != *expectUnanswered {
+		return fmt.Errorf("%w: the bundle's sessions' statements name %d calls sent with no answer, you expected %d", attest.ErrExpected, sent, *expectUnanswered)
+	}
+	if *requireClose {
+		if err := rep.Complete(); err != nil {
+			return fmt.Errorf("%w (-require-close)", err)
+		}
+	}
+	var incomplete []attest.SessionReport
 	for _, s := range rep.Sessions {
-		fmt.Fprintf(stdout, "; session %s…, %d calls, chain closed", prefix(s.Session, 12), s.Calls)
+		if !s.Closed {
+			incomplete = append(incomplete, s)
+		}
+	}
+	// A reader who stops at the first words must not take a session without the daemon's
+	// count for a complete one.
+	lead := "verified"
+	if len(incomplete) > 0 {
+		lead = "verified, NOT PROVEN COMPLETE:"
+	}
+	fmt.Fprint(stdout, printable.Text(fmt.Sprintf("%s %d entries signed by key %s, whole to its last checkpoint: %d single runs", lead, len(entries), attest.KeyID(pub), rep.Runs)))
+	for _, s := range rep.Sessions {
+		if s.Closed {
+			fmt.Fprint(stdout, printable.Text(fmt.Sprintf("; session %s…, %s, chain closed", prefix(s.Session, 12), calls(s.Calls))))
+			continue
+		}
+		fmt.Fprint(stdout, printable.Text(fmt.Sprintf("; session %s…, %s%s, %s", prefix(s.Session, 12), calls(s.Calls), firstCalls(s.Calls), s.NotCollected.Describe())))
 	}
 	fmt.Fprintln(stdout)
+	if len(incomplete) > 0 {
+		fmt.Fprintln(stdout, printable.Text(notProvenComplete(incomplete)))
+	}
 	return nil
+}
+
+// unansweredMark begins a line of an -expect file that names a call sent with no answer.
+const unansweredMark = "unanswered"
+
+// parseExpect reads an -expect file: one request digest per line, anything after it a
+// label; a line "unanswered DIGEST" names a call sent with no answer. Blank lines are
+// skipped.
+func parseExpect(raw []byte) (attest.Expected, error) {
+	var want attest.Expected
+	for i, line := range strings.Split(string(raw), "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) == 0:
+		case f[0] != unansweredMark:
+			want.Requests = append(want.Requests, f[0])
+		case len(f) == 1:
+			return attest.Expected{}, fmt.Errorf("%w: line %d: %q with no request digest after it", attest.ErrExpected, i+1, unansweredMark)
+		default:
+			want.Unanswered = append(want.Unanswered, f[1])
+		}
+	}
+	return want, nil
+}
+
+// calls is a count of calls in words: "1 call", "2 calls".
+func calls(n int) string {
+	if n == 1 {
+		return "1 call"
+	}
+	return fmt.Sprintf("%d calls", n)
+}
+
+// firstCalls is what the session's chain proves of its n calls in a bundle (numbered from
+// 1 with no gap, each naming the one before): they are its first n, with none between them.
+func firstCalls(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return " (the session's first)"
+	}
+	return fmt.Sprintf(" (the session's first %d, none between them)", n)
+}
+
+// notProvenComplete is what verify says a session that is not proven complete means: what
+// the chain proves (the calls are the session's first ones, in order, with nothing between
+// them) and what it does not (calls after the last).
+func notProvenComplete(sessions []attest.SessionReport) string {
+	what, after := "each such session's calls, as its line counts them, are its first ones, in order, none removed and none between them", "after the last"
+	if len(sessions) == 1 {
+		switch n := sessions[0].Calls; n {
+		case 0:
+			what, after = "the bundle holds no call of the session", "in it"
+		case 1:
+			what = "this is the session's first call, and none was removed"
+		default:
+			what = fmt.Sprintf("these are the session's first %d calls, in order, none removed and none between them", n)
+		}
+	}
+	return "not proven complete means: " + what + "; the daemon may have run more " + after +
+		" (made by another holder of the session ID, by the worker that took the session over, or a call this program sent whose answer was lost), " +
+		"and only the daemon's count, which could not be collected, would show them; -require-close refuses such a bundle"
 }
 
 // verifyEntry checks one line of a bundle on its own (attest.VerifyEntry), for a line
@@ -565,10 +707,14 @@ func verifyEntry(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// A checkpoint and a session's close statement carry no call; VerifyEntry would
-	// refuse them as a link over other content, which reads as tampering.
+	// A session's ending is checked on its own as a call line is (attest.VerifyEnding); a
+	// checkpoint carries nothing but its link, and VerifyEntry would refuse it as a link
+	// over other content, which reads as tampering.
 	if len(entry.Request) == 0 && len(entry.Response) == 0 {
-		return fmt.Errorf("line %d of %s holds no call: it is a checkpoint or a session's close statement, which plimsoll-attest verify checks with the whole bundle", *line, fs.Arg(0))
+		if entry.Envelope.Payload == "" {
+			return fmt.Errorf("line %d of %s holds no call: it is a checkpoint, which plimsoll-attest verify checks with the whole bundle", *line, fs.Arg(0))
+		}
+		return verifyEnding(attest.NewVerifier(pub), entry, *line, attest.KeyID(pub), stdout)
 	}
 	rec, link, err := attest.VerifyEntry(attest.NewVerifier(pub), entry)
 	if err != nil {
@@ -585,10 +731,35 @@ func verifyEntry(args []string, stdout io.Writer) error {
 	if rec.Unanswered != "" {
 		what += fmt.Sprintf(", which ended without an answer (%s) and may have run", rec.Unanswered)
 	}
-	fmt.Fprintf(stdout, "entry verified: line %d, signed by key %s: record %s, %s; the signed record states provider %s and isolation %q. "+
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry verified: line %d, signed by key %s: record %s, %s; the signed record states provider %s and isolation %q. "+
 		"It authenticates the recorded messages, not that what the guest printed is true. "+
-		"Not established by this check: the bundle around the line, and for a session call that its session's chain is whole; plimsoll-attest verify checks a whole bundle\n",
-		*line, attest.KeyID(pub), rec.SHA256, what, rec.Provider, rec.Isolation)
+		"Not established by this check: the bundle around the line, and for a session call that its session's chain is whole; plimsoll-attest verify checks a whole bundle",
+		*line, attest.KeyID(pub), rec.SHA256, what, rec.Provider, rec.Isolation)))
+	return nil
+}
+
+// verifyEnding is verify-entry on a session's ending line: its link and its statement,
+// and what neither establishes.
+func verifyEnding(v *attest.Verifier, entry attest.Entry, line int, keyID string, stdout io.Writer) error {
+	end, link, err := attest.VerifyEnding(v, entry)
+	if err != nil {
+		return err
+	}
+	if link.Index != uint64(line) {
+		return fmt.Errorf("%w: line %d's link says it was written as line %d", attest.ErrLink, line, link.Index)
+	}
+	var what string
+	if c := end.Close; c != nil {
+		what = fmt.Sprintf("the daemon's close of session %s…: its own count is %s, ending in record %q", prefix(c.Session, 12), calls(int(c.Calls)), c.LastRecordSHA256)
+	} else {
+		n := end.NotCollected
+		what = fmt.Sprintf("the harness's statement that session %s…'s close could not be collected (%s), after %s the client saw ending in record %q%s. "+
+			"It is the harness's word, not the daemon's: the daemon's count of the session's calls is unknown",
+			prefix(n.Session, 12), attest.NotCollectedReasonText(n.Reason), calls(int(n.CallsSeen)), n.LastRecordSHA256, n.DescribeUnanswered())
+	}
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry verified: line %d, signed by key %s: %s. "+
+		"Not established by this check: the bundle around the line, and that the session's chain is whole; plimsoll-attest verify checks a whole bundle",
+		line, keyID, what)))
 	return nil
 }
 
@@ -666,7 +837,7 @@ func signStatement(args []string, stdout io.Writer) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "signed a statement of type %s about %d subject(s) with key %s\n", *predicateType, len(in.Subject), signer.KeyID())
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("signed a statement of type %s about %d subject(s) with key %s", *predicateType, len(in.Subject), signer.KeyID())))
 	return nil
 }
 
@@ -708,14 +879,10 @@ func openStatement(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = stdout.Write(append(data, '\n'))
+	_, err = stdout.Write(printable.JSON(append(data, '\n')))
 	return err
 }
 
-// readLine reads line n of a bundle and nothing after it, parsing that line alone with
-// the bundle reader's strict rules: a line being written after it, or a malformed line
-// elsewhere, does not stop a stored line from being checked. Lines before it are only
-// counted, in bounded memory.
 // readRawLine reads line n of path, newline included, bounded as a bundle line is.
 func readRawLine(path string, n int) ([]byte, error) {
 	f, err := os.Open(path)
@@ -744,7 +911,7 @@ func readRawLine(path string, n int) ([]byte, error) {
 		chunk, err := br.ReadSlice('\n')
 		line = append(line, chunk...)
 		if len(line) > attest.MaxLineBytes {
-			return nil, fmt.Errorf("%w: line %d of %s is longer than a bundle line may be", attest.ErrLine, n, path)
+			return nil, fmt.Errorf("%w: line %d of %s is longer than %d bytes", attest.ErrLineTooLong, n, path, attest.MaxLineBytes)
 		}
 		if err == nil {
 			break
@@ -763,7 +930,10 @@ func readRawLine(path string, n int) ([]byte, error) {
 	return line, nil
 }
 
-// readLine reads line n of a bundle as ReadBundle reads it: a link is required.
+// readLine reads line n of a bundle and nothing after it, parsing that line alone with
+// the bundle reader's strict rules (ReadBundle's, so a link is required): a line being
+// written after it, or a malformed line elsewhere, does not stop a stored line from being
+// checked. Lines before it are only counted, in bounded memory.
 func readLine(path string, n int) (attest.Entry, error) {
 	line, err := readRawLine(path, n)
 	if err != nil {
@@ -835,10 +1005,10 @@ func verifyRecord(args []string, stdout io.Writer) error {
 	if entry.Link != nil {
 		linked = "The line carries a link this check did not read (plimsoll-attest verify-entry reads it)"
 	}
-	fmt.Fprintf(stdout, "record verified: line %d, signed by key %s: a version %d record %s, %s; it states provider %s and isolation %q. "+
+	fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("record verified: line %d, signed by key %s: a version %d record %s, %s; it states provider %s and isolation %q. "+
 		"It authenticates the recorded request and response, not that what the guest printed is true. %s. "+
-		"Not established by this check: the line's place in any bundle, so a holder could have dropped or reordered such lines unseen\n",
-		*line, attest.KeyID(pub), rec.Version, rec.SHA256, what, rec.Provider, rec.Isolation, linked)
+		"Not established by this check: the line's place in any bundle, so a holder could have dropped or reordered such lines unseen",
+		*line, attest.KeyID(pub), rec.Version, rec.SHA256, what, rec.Provider, rec.Isolation, linked)))
 	return nil
 }
 
@@ -863,8 +1033,10 @@ func replay(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// Verify before dialing: a bundle that does not verify sends nothing anywhere.
-	if _, err := attest.VerifyBundle(entries, v); err != nil {
+	// Verify before dialing: a bundle that does not verify sends nothing anywhere. A session
+	// not proven complete is accepted, as attest.Replay accepts it: a replay re-sends what
+	// the bundle holds and claims nothing about what it lacks.
+	if _, err := attest.VerifyBundle(entries, v, attest.AcceptNotProvenComplete); err != nil {
 		return err
 	}
 	r, err := remote(*daemon)
@@ -898,22 +1070,22 @@ func replay(args []string, stdout io.Writer) error {
 		switch {
 		case errors.Is(res.Err, attest.ErrNotReplayable):
 			skipped++
-			fmt.Fprintf(stdout, "entry %d: not replayed: %v\n", res.Entry, res.Err)
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d: not replayed: %v", res.Entry, res.Err)))
 		case res.Err != nil:
 			differ++
-			fmt.Fprintf(stdout, "entry %d: the replay failed: %v\n", res.Entry, res.Err)
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d: the replay failed: %v", res.Entry, res.Err)))
 		case res.Unanswered != "":
 			// The recorded call ended without a result, so there is nothing to compare;
 			// it used to print as a different result (review, 2026-10-26).
 			skipped++
-			fmt.Fprintf(stdout, "entry %d: the recorded call ended without a result (%s), nothing to compare; the replay gave %s\n", res.Entry, res.Unanswered, prefix(res.Replayed, 16))
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d: the recorded call ended without a result (%s), nothing to compare; the replay gave %s", res.Entry, res.Unanswered, prefix(res.Replayed, 16))))
 		case res.Match() && res.Session != "":
-			fmt.Fprintf(stdout, "entry %d (session %s…): same result (%s)\n", res.Entry, prefix(res.Session, 12), prefix(res.Recorded, 16))
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d (session %s…): same result (%s)", res.Entry, prefix(res.Session, 12), prefix(res.Recorded, 16))))
 		case res.Match():
-			fmt.Fprintf(stdout, "entry %d: same result (%s)\n", res.Entry, prefix(res.Recorded, 16))
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d: same result (%s)", res.Entry, prefix(res.Recorded, 16))))
 		default:
 			differ++
-			fmt.Fprintf(stdout, "entry %d: different result: recorded %s, replayed %s\n", res.Entry, prefix(res.Recorded, 16), prefix(res.Replayed, 16))
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("entry %d: different result: recorded %s, replayed %s", res.Entry, prefix(res.Recorded, 16), prefix(res.Replayed, 16))))
 		}
 	}
 	if skipped > 0 {

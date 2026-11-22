@@ -101,6 +101,20 @@ func TestAlteredEvidenceFailsToVerify(t *testing.T) {
 			}
 			ex.seedResponse = raw
 		}},
+		// The stored check reads a record of any published version and leaves session fields to its caller, so this
+		// one is refused only by the page's own rule that the clean call is a single run.
+		{"the clean call's stored record states a session", func(_ *Evidence, ex *exchange) {
+			var resp plimsollv1.RunResponse
+			if err := protojson.Unmarshal(ex.response, &resp); err != nil {
+				t.Fatal(err)
+			}
+			resp.Record = withSession(resp.Record)
+			raw, err := protojson.Marshal(&resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ex.response = raw
+		}},
 		{"the tier stated as vm", func(ev *Evidence, _ *exchange) { ev.Isolation = "vm" }},
 		{"an entry dropped", func(ev *Evidence, _ *exchange) { ev.Entries = ev.Entries[1:] }},
 		{"a refusal with more text", func(ev *Evidence, _ *exchange) {

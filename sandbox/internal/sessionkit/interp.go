@@ -51,9 +51,20 @@ const (
 	cellEnded         = 76
 )
 
-// ErrLaunch is an interpreter that could not start: its language is not in the
-// image, or it exited at once. No code of the cell ran.
+// ErrLaunch is an interpreter that could not start in a sandbox that runs its
+// language (or whose environment states no languages, Cell.Stated): its launch, its
+// relay or the identity check failed or could not run, or it exited at once. A
+// failed command of the provider's (one docker exec) gives it as well as the
+// session's own code can, so it says nothing about whether the image runs the
+// language; that is ErrNoInterpreter. No code of the cell ran.
 var ErrLaunch = errors.New("the interpreter could not start")
+
+// ErrNoInterpreter is a cell in a language the sandbox runs no interpreter for: its
+// environment's smoke test found none (Cell.Stated lacks the language), or the open
+// found no program for it on the sandbox's root (Interpreters.Bins). It is decided
+// before anything is started for the cell, so no command's failure can give it, and no
+// code of the cell ran.
+var ErrNoInterpreter = errors.New("the sandbox runs no interpreter for the language")
 
 // ErrFiles is a cell whose files could not all be written into the work directory
 // (a directory in the way, a full disk). Its code did not run and its interpreter is
@@ -98,7 +109,7 @@ const interpRoot = "/tmp/.plimsoll-interp/"
 // command is how each language's interpreter starts. Package sandbox's LanguageSpecs
 // names the languages; a test there requires one entry here for each, and no other.
 var command = map[string][]string{
-	"javascript": {"node", "--expose-internals", "-e", kernelJS},
+	"javascript": GuestNodeArgv("--expose-internals", "-e", kernelJS),
 	"python":     {"python3", "-I", "-c", kernelPy},
 }
 
@@ -139,6 +150,11 @@ type Cell struct {
 	// interpreter starts.
 	Work           string
 	OutCap, ErrCap int
+	// Stated are the languages the sandbox's environment states, as its smoke test
+	// found them: a cell in another is ErrNoInterpreter before anything starts. Empty
+	// when the environment states none, and then every language is tried, so an image
+	// without the interpreter answers ErrLaunch.
+	Stated []string
 }
 
 // CellOutcome is what one cell produced.
@@ -169,6 +185,13 @@ type Interpreters struct {
 	// RelayParent is the PID the Checker requires as every relay's parent: 0, the
 	// default, for one docker exec started; envd's on E2B.
 	RelayParent int
+	// Bins, when set, names each program an interpreter or a relay starts with
+	// ("node", "python3") by the full path the provider found for it on the sandbox's
+	// root, so no search path chooses it; a language whose program it lacks cannot
+	// start. Unset, the programs are named as command has them, found through the
+	// launcher's PATH, as on the providers whose root is plimsoll's own image. E2B
+	// sets it: its machine image is the operator's (e2b_session.go).
+	Bins map[string]string
 
 	mu   sync.Mutex
 	live map[string]string
@@ -305,7 +328,11 @@ var identityPattern = regexp.MustCompile(`^[0-9]+:-?[0-9]+:[0-9a-f]+$`)
 // trusts no file for it: a PID read from a writable file let a cell make the sweep
 // keep a process of its choosing.
 func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work string) error {
-	argv := append(append([]string{"sh", "-c", launchScript, "sh"}, in.Start...), command[lang]...)
+	interp, err := in.interpArgv(lang)
+	if err != nil {
+		return err
+	}
+	argv := append(append([]string{"sh", "-c", launchScript, "sh"}, in.Start...), interp[:len(interp)-1]...)
 	env := map[string]string{"PLIMSOLL_INTERP_DIR": interpRoot + lang, "PLIMSOLL_WORK": work}
 	out, err := exec(ctx, argv, env, nil, 1<<20, 4096)
 	if err != nil {
@@ -317,7 +344,7 @@ func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work st
 	if !identityPattern.MatchString(out.Stdout) {
 		return fmt.Errorf("%w: the launcher printed no identity", ErrLaunch)
 	}
-	if reportedCmd(out.Stdout) != argvHex(interpArgv(lang)) {
+	if reportedCmd(out.Stdout) != argvHex(interp) {
 		return fmt.Errorf("%w: the launcher reported a process that is not the %s interpreter", ErrLaunch, lang)
 	}
 	if err := in.check(ctx, "interp:"+out.Stdout); err != nil {
@@ -327,10 +354,22 @@ func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work st
 	return nil
 }
 
-// interpArgv is lang's interpreter as the launcher starts it: its command, then its
-// directory.
-func interpArgv(lang string) []string {
-	return append(append([]string(nil), command[lang]...), interpRoot+lang)
+// interpArgv is lang's interpreter as the launcher starts it: its command, its program
+// named as Bins has it, then its directory.
+func (in *Interpreters) interpArgv(lang string) ([]string, error) {
+	return in.pinned(append(append([]string(nil), command[lang]...), interpRoot+lang))
+}
+
+// pinned is argv with its program named as Bins has it; argv itself when Bins is unset.
+func (in *Interpreters) pinned(argv []string) ([]string, error) {
+	if in.Bins == nil {
+		return argv, nil
+	}
+	bin, ok := in.Bins[argv[0]]
+	if !ok || !strings.HasPrefix(bin, "/") {
+		return nil, fmt.Errorf("%w: the sandbox has no %s plimsoll found on its root", ErrNoInterpreter, argv[0])
+	}
+	return append([]string{bin}, argv[1:]...), nil
 }
 
 // argvHex is a command line as /proc/<pid>/cmdline holds it, in hex: each argument

@@ -24,7 +24,7 @@ service SandboxService {
   // daemon serves exactly one: a request that omits it is InvalidArgument and a
   // request on any other number is Unimplemented, in both cases before the
   // payload is read. The number is bumped when such a field is added; an
-  // informational field does not bump it. Current number: 5 (the Go constant
+  // informational field does not bump it. Current number: 6 (the Go constant
   // protocol.Number, which Describe reports).
   rpc Run(RunRequest) returns (RunResponse);
   // Describe reports the protocol number, the active provider, current isolation
@@ -34,11 +34,22 @@ service SandboxService {
   rpc Describe(DescribeRequest) returns (DescribeResponse);
   // OpenSession starts a session: one sandbox kept for many calls, in which files
   // a call writes persist for later calls and no process a call starts outlives
-  // it. The session belongs to the principal that opened it; its ID is a
-  // capability that only that principal can use. Each request states the
-  // protocol number and gets Run's check. A daemon without sessions answers
-  // Unimplemented, marked not dispatched.
+  // it. The session belongs to the principal that opened it, and its ID is a
+  // capability for that principal. Ownership can move: any holder of that
+  // principal's credential who has the session's fingerprint and its exact head
+  // (the generation, the count of calls and the last record's digest) may take
+  // it over with AttachSession, after which the previous holder's calls and close
+  // are refused. Each request states the protocol number and gets Run's check. A
+  // daemon without sessions answers Unimplemented, marked not dispatched.
   rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  // AttachSession transfers ownership to an authenticated worker whose trusted
+  // checkpoint matches the current generation and record chain, or is exactly one call
+  // behind it when the caller names that call's request digest
+  // (AttachSessionRequest.lost_request_sha256). It runs no code.
+  // Every attach costs one of the caller's rate tokens, a refused one included. A
+  // session that is unknown, another caller's, closed, ended or past its lifetime is
+  // NotFound, all with the same text.
+  rpc AttachSession(AttachSessionRequest) returns (AttachSessionResponse);
   // SessionRun runs one call in an open session. Its record is chained to the
   // session's previous call (RunRecord's session fields).
   rpc SessionRun(SessionRunRequest) returns (SessionRunResponse);
@@ -112,8 +123,8 @@ message DescribeResponse {
   // WSL containers provider's per-run mode says there that Microsoft states WSL is not a
   // security sandbox for untrusted code, and names gVisor's position when it is on.
   // Informational, like the tier: configuration and provider evidence, never runtime
-  // attestation. A client reads it and must not require it: run records and the protocol
-  // number do not carry it.
+  // attestation. Every run's answer and record state the sentence that went with that
+  // run's tier (RunResponse.isolation_qualification, record version 5, protocol 6).
   string isolation_qualification = 22;
 }
 
@@ -287,9 +298,24 @@ message RunResponse {
   // warm is true when a cell run with prefer_warm ran in a waiting pool member: a
   // sandbox made before the call, which had run only plimsoll's own programs (its
   // interpreters), handed to this call alone and deleted after it. False when the
-  // call ran in a sandbox made for it. Informational, like duration_ms: the record
-  // does not cover it.
+  // call ran in a sandbox made for it. The record repeats it (from record version 5)
+  // so the client checks both statements.
   bool warm = 8;
+  // isolation_qualification is the sentence the provider's vendor or design requires to
+  // stand beside the tier, as DescribeResponse.isolation_qualification states it, empty
+  // for a provider with none (every provider but WSL containers so far). At most 1024
+  // bytes of UTF-8 with no control character, no bidirectional control (U+061C, U+200E,
+  // U+200F, U+202A to U+202E, U+2066 to U+2069) and no line or paragraph separator
+  // (record.ValidQualification). Like the tier it is configuration and
+  // provider evidence, never runtime attestation. The record repeats it so the client
+  // checks both statements, and every surface that states this answer's tier states it.
+  string isolation_qualification = 9;
+  // daemon_version is the plimsoll module version of the daemon that answered, from its
+  // build information: a release tag such as "v0.28.0", a Go pseudo-version for a build
+  // from an untagged commit, or "(devel)" when the build states none; empty when the
+  // daemon could read no build information or the version it read is outside that form. The daemon's own statement about itself,
+  // like every other field here. The record repeats it so the client checks both.
+  string daemon_version = 14;
   // Exactly one result, of the payload's kind.
   oneof result {
     JavaScriptResult javascript = 10;
@@ -309,7 +335,7 @@ message RunResponse {
 // any language can reproduce it without a protobuf or JSON canonicalization
 // library.
 message RunRecord {
-  // version is the encoding version, 4: every field below, every time. A
+  // version is the encoding version, 5: every field below, every time. A
   // session call that may have run but ended in an error sets unanswered and
   // leaves result_sha256 empty. A live answer must carry this version; a verifier
   // of stored evidence reads every published version (record.published).
@@ -342,6 +368,12 @@ message RunRecord {
   // error text. Empty on an answered call's record.
   string unanswered = 16;
   string instance = 17; // RunResponse.instance
+  // From record version 5: RunResponse.isolation_qualification, RunResponse.warm and
+  // RunResponse.daemon_version. An unanswered call's record states the qualification
+  // the session stated at open, warm false, and the daemon's version.
+  string isolation_qualification = 18;
+  bool warm = 19;
+  string daemon_version = 20;
   // record_sha256 covers every field above.
   string record_sha256 = 13;
 }
@@ -493,8 +525,9 @@ message ModuleResult {
 message OpenSessionRequest {
   uint32 protocol = 1; // see Run
   // The floor for the whole session, checked at open against the provider's
-  // evidence; each call may state its own, checked against the tier measured
-  // at open.
+  // evidence. Every call must state at least this floor: a call that omits it or
+  // states a weaker one is InvalidArgument, not dispatched. A call may state a
+  // stronger floor, checked against the tier measured at open.
   string minimum_isolation = 2;
   string trace_id = 3; // see RunRequest.trace_id
   // Shorter than the daemon's own, or 0 for the daemon's.
@@ -546,6 +579,46 @@ message OpenSessionResponse {
   // named by then is closed instead (SESSION_END_UNCLAIMED).
   uint32 idle_timeout_ms = 6;
   string software_identity = 7; // selected image, when the provider can establish it
+  // The sentence the provider states beside the tier at open
+  // (RunResponse.isolation_qualification), empty when it states none. An unanswered
+  // call's record states this one.
+  string isolation_qualification = 8;
+  uint64 generation = 9; // positive ownership number; every run and close must carry it
+  string minimum_isolation = 10; // floor requested at open; empty means no requested floor
+  SoftwareRule software_rule = 11; // immutable rule established at open
+}
+
+// SessionCheckpoint is public chain state, never a credential. Applications must
+// protect its integrity separately from conversation history.
+message SessionCheckpoint {
+  uint64 generation = 1;
+  uint64 calls = 2;
+  string last_record_sha256 = 3;
+}
+
+message AttachSessionRequest {
+  uint32 protocol = 1;
+  string session = 2; // public lowercase SHA-256 fingerprint, never the secret ID
+  SessionCheckpoint checkpoint = 3; // required, including before the first call
+  string trace_id = 4;
+  // The request digest (RunRecord.request_sha256) of the call the caller believes ran
+  // after the checkpoint with no answer reaching it, or empty. With it, a checkpoint
+  // exactly one call behind the head is taken over when the session's last record
+  // follows the checkpoint and carries this request digest (the "explained gap"); that
+  // record comes back in lost_record. Any other difference from the head is still a
+  // checkpoint mismatch, and nothing moves.
+  string lost_request_sha256 = 5;
+}
+
+message AttachSessionResponse {
+  // The existing session's identity and immutable policy, with its new generation.
+  // session_info.session_id is secret and must remain in memory only.
+  OpenSessionResponse session_info = 1;
+  SessionCheckpoint checkpoint = 2; // the new head
+  // Set only on an attach taken over from a checkpoint one call behind: the record of
+  // the call that ran after the checkpoint, which the caller checks against the
+  // checkpoint and the digest it named before carrying the chain on.
+  RunRecord lost_record = 3;
 }
 
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
@@ -561,6 +634,10 @@ message SessionRunRequest {
   int32 timeout_ms = 4;
   string session_id = 5;
   SoftwareRule software_rule = 6;
+  // The current ownership number (OpenSessionResponse.generation, or the one
+  // AttachSession returned). Zero is InvalidArgument; any other number but the
+  // current one is FailedPrecondition, reason permission. Both are not dispatched.
+  uint64 generation = 7;
   oneof payload {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
@@ -609,6 +686,9 @@ message SessionRunResponse {
 message CloseSessionRequest {
   uint32 protocol = 1;
   string session_id = 2;
+  // The current ownership number, checked as SessionRunRequest.generation is,
+  // before anything of the session is closed.
+  uint64 generation = 3;
 }
 
 message CloseSessionResponse {

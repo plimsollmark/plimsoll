@@ -12,7 +12,11 @@ something with side effects.
 **A non-zero exit code is a normal result, not a Go error.** The user's code failed;
 nothing went wrong with the sandbox. Errors cover refusals (`ErrInvalidRequest`,
 `ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`, `ErrInsufficientIsolation`),
-cancellation, and infrastructure faults that match none of those.
+cancellation, and infrastructure faults that match none of those. A backend that
+crashes with a Go panic in the middle of a run is one: the caller is answered
+`Internal`, `internal error <id>`, never marked as refused before it ran (the code may
+have run), and the run's audit line says the backend panicked, with where, never what
+the panic carried.
 
 ### Did anything run? The error says so
 
@@ -50,6 +54,18 @@ and the client turns it back into the same Go error. A failure while authenticat
 that is not a refusal (the caller cancelled, the token verifier was unreachable) is not
 marked either.
 
+**On the docker provider, a run's own output never marks it.** A mark there is never
+decided from what the run's command wrote or the code it exited with, since the run's code
+could have written both. When the <dfn>*guest guard*</dfn>
+(plimsoll's own filter in front of every program it starts in a container,
+[INTERNAL · the guest guard →](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)) refuses
+to start a run's command, it says so on that command's standard error with an exit code of
+its own, and the run's own code can write the same line and exit with the same code. So a
+fresh run that ends that way is an `Internal` error without the mark, and a session's call
+ends its session (`boundary_failed`) without the mark; the words the daemon logs say that
+whether the code ran is not known. Only the opening of a session, before any code of the
+caller's exists, is marked from it.
+
 A few refusals happen before the daemon's own code sees the request: the RPC library
 refuses a body it cannot parse, one over its size cap, or an unsupported content type,
 and the HTTP server answers 404 for a procedure it does not serve. Nothing can have run
@@ -67,6 +83,13 @@ Go: `client.ErrAnswerNotBound`), and an error keeps its code but loses its mark,
 session end and anything else it said about the call. A daemon older than protocol 3
 does not echo the ID, and protocol 3 is what makes it refuse a newer client before
 running anything.
+
+**An error whose details list holds a `null` is believed in nothing too.** The daemon writes
+each error detail as a JSON object, so such a body did not come from a daemon. Every
+official client reads it as an answer it cannot read: the code comes from the HTTP status,
+as for any error body in some other shape, and neither the details nor the
+`Plimsoll-Not-Dispatched` header is believed, so the call reads "may have run". (The Go
+client used to crash on it.)
 
 For projects, per-step failures live in `Steps` and the run's conclusion is a typed
 `ProjectResult.Outcome`, a stable value to decide retries on rather than a message to
@@ -118,7 +141,8 @@ that suite; its own tests: [wslc.md](wslc.md#tests)):
 - Each step keeps the first 1 MiB of each output stream and flags the rest as cut; the
   step runs on, and its exit code is its own. Only a step that writes past 32 MiB is
   ended, reported as flooded: exit 153 (128 plus SIGXFSZ, the file-size signal) with
-  both streams flagged. Two differences remain on `dockercloud`, whose output limits
+  both streams flagged, and the project stops there as after any failed step, also when
+  the output came from a program the step left running after its shell exited 0. Two differences remain on `dockercloud`, whose output limits
   run inside the VM: the 32 MiB is counted for each stream separately rather than for
   both together, and past it the step is stopped by its next write to that stream, so
   a step that stops writing may still run to its end (it is reported as flooded all the

@@ -21,6 +21,13 @@
 //	-global  JS global the typed SDK attaches to (default "host")
 //	-emit    all | allow | catalog | preamble | description | health | batch | json (default "all", stdout)
 //	-outdir  write allow.json, preamble.js, description.txt (+ health_check.txt, batch_of.json) into this dir
+//	-only    the profile's trimmed allow list (FILE, a JSON array as -emit allow writes it): the
+//	         preamble, the description and allow name only its routes; a route the document
+//	         has no operation for fails
+//
+// An operator who trims allow, as a profile should, runs specgen again with -only on the
+// trimmed list, so the description an agent kit's code tool shows its model names exactly
+// the routes the broker lets through.
 //
 // The `catalog` emit is the full route list for a profile's `catalog` field, which
 // Prospector reads to name an ungranted batch route worth adding; `allow` is the same
@@ -57,6 +64,7 @@ import (
 	"strings"
 
 	"github.com/plimsollmark/plimsoll/internal/specgen"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 func main() {
@@ -70,7 +78,19 @@ func run() error {
 	global := flag.String("global", "host", "JS global the typed SDK attaches to")
 	emit := flag.String("emit", "all", "all | allow | catalog | preamble | description | health | batch | json")
 	outdir := flag.String("outdir", "", "write generated profile artifacts into this dir")
+	onlyFile := flag.String("only", "", "the profile's trimmed allow list (a JSON array of \"METHOD /path\", as -emit allow writes it): the preamble, the description and allow then name only its routes")
 	flag.Parse()
+
+	var keep []sandbox.HostRoute
+	if *onlyFile != "" {
+		b, err := os.ReadFile(*onlyFile)
+		if err != nil {
+			return fmt.Errorf("read -only list: %w", err)
+		}
+		if keep, err = specgen.ParseOnly(b); err != nil {
+			return err
+		}
+	}
 
 	var (
 		in     io.Reader = os.Stdin
@@ -89,7 +109,7 @@ func run() error {
 		return fmt.Errorf("read %s: %w", inName, err)
 	}
 
-	res, err := specgen.Generate(spec, specgen.Options{Global: *global})
+	res, err := specgen.Generate(spec, specgen.Options{Global: *global, Only: keep})
 	if err != nil {
 		return err
 	}

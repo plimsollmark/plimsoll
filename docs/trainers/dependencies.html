@@ -378,7 +378,7 @@
     generated-code drift check, and a vulnerability scan.
     <pre><code>make audit</code></pre></li>
     <li><strong>The container suite.</strong> Adds the real isolation tests: a container
-    comes up read-only, every writable mount is a sized no-execute temporary filesystem,
+    comes up read-only, every writable mount it starts with is a sized no-execute temporary filesystem,
     the profile of allowed <dfn>system calls</dfn> (the requests a program makes to the
     kernel) loads, and the broker refuses what it should. The profile allows
     <code>mknod</code> only for the named pipes a session's interpreters use, never for a

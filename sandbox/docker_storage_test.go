@@ -105,18 +105,23 @@ func TestCheckTmpfsMount(t *testing.T) {
 // the ID binds the volume verdict to exact image content, so malformed output
 // must fail closed rather than degrade to an unverified tag run.
 func TestParseImageIDAndVolumes(t *testing.T) {
-	id, vols, env, err := parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{}}` + "\n"))
-	if err != nil || id != "sha256:abc" || len(vols) != 0 || len(env) != 0 {
+	const imageID = "sha256:abc0000000000000000000000000000000000000000000000000000000000000"
+	id, vols, env, err := parseImageIDAndVolumes([]byte(`{"Id":"` + imageID + `","Config":{}}` + "\n"))
+	if err != nil || id != imageID || len(vols) != 0 || len(env) != 0 {
 		t.Fatalf("volume-free image: id=%q vols=%v env=%q err=%v", id, vols, env, err)
 	}
-	id, vols, env, err = parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{"Volumes":{"/data":{},"/cache":{}},"Env":["PATH=/usr/bin","A=1"]}}`))
-	if err != nil || id != "sha256:abc" || !slices.Equal(env, []string{"PATH=/usr/bin", "A=1"}) {
+	id, vols, env, err = parseImageIDAndVolumes([]byte(`{"Id":"` + imageID + `","Config":{"Volumes":{"/data":{},"/cache":{}},"Env":["PATH=/usr/bin","A=1"]}}`))
+	if err != nil || id != imageID || !slices.Equal(env, []string{"PATH=/usr/bin", "A=1"}) {
 		t.Fatalf("volume image: id=%q env=%q err=%v", id, env, err)
 	}
 	if len(vols) != 2 || vols[0] != "/cache" || vols[1] != "/data" {
 		t.Fatalf("volumes = %v, want sorted [/cache /data]", vols)
 	}
-	for _, bad := range []string{"null", "", "{broken", `{"Config":{}}`, `{"Id":"abc","Config":{}}`, `{"Id":"sha256:abc","Config":{"Env":["NOVALUE"]}}`} {
+	// The ID by providerkit.ValidDigest, the one digest rule (finding release-43): a prefix
+	// alone, a short digest and upper-case hexadecimal are refused.
+	for _, bad := range []string{"null", "", "{broken", `{"Config":{}}`, `{"Id":"abc","Config":{}}`, `{"Id":"sha256:abc","Config":{}}`,
+		`{"Id":"` + strings.ToUpper(imageID[len("sha256:"):]) + `","Config":{}}`, `{"Id":"sha256:` + strings.ToUpper(imageID[len("sha256:"):]) + `","Config":{}}`,
+		`{"Id":"` + imageID + `","Config":{"Env":["NOVALUE"]}}`} {
 		if _, _, _, err := parseImageIDAndVolumes([]byte(bad)); err == nil {
 			t.Errorf("parseImageIDAndVolumes(%q) accepted malformed inspect output", bad)
 		}
@@ -201,6 +206,7 @@ func TestDockerExecutionStateRequiresVerifiedImages(t *testing.T) {
 	d.daemonHost = "unix:///run/docker.sock"
 	d.verifiedRuntime = d.Runtime
 	d.verifiedGuestUID = d.guestUID()
+	d.verifiedGuard = fakeGuestGuardPath // a faked Preflight: the guard file it would have written
 	d.verifiedImageIDs = map[string]string{
 		d.Image:        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		d.ProjectImage: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
@@ -222,7 +228,7 @@ func TestDockerPreflightRejectsImageWithVolumes(t *testing.T) {
 	requireDocker(t)
 	// Tag the throwaway image: under BuildKit with attestations the -q digest is
 	// a manifest-list ID the daemon cannot always inspect directly.
-	const img = "crsbx-test-volume-image:local"
+	img := throwawayTag("volume-image")
 	build := exec.Command("docker", "build", "-q", "-t", img, "-")
 	build.Stdin = strings.NewReader("FROM scratch\nVOLUME /data\n")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -290,7 +296,7 @@ func TestDockerSmokeTestChecksModuleRunner(t *testing.T) {
 // the verified content and succeed.
 func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 
-	const tag = "crsbx-test-tag-swap:local"
+	tag := throwawayTag("tag-swap")
 	if out, err := exec.Command("docker", "tag", "node:22-alpine", tag).CombinedOutput(); err != nil {
 		infraSkip(t, "cannot tag throwaway image: %v: %s", err, out)
 	}

@@ -3,6 +3,7 @@ package record
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -42,6 +43,34 @@ type golden struct {
 		SessionID string `json:"sessionId"`
 		SHA256    string `json:"sha256"`
 	} `json:"sessionFingerprints"`
+	// Refused are records whose digest matches their fields and which every reader must
+	// refuse anyway: a qualification or daemon version outside its bounds, or a field
+	// the record's version does not cover.
+	Refused []struct {
+		Name   string          `json:"name"`
+		Record json.RawMessage `json:"record"`
+		SHA256 string          `json:"sha256"`
+		Why    string          `json:"why"`
+	} `json:"refused"`
+	// Malformed are records with a field of the wrong JSON type, which no reader reads.
+	Malformed []struct {
+		Name   string          `json:"name"`
+		Record json.RawMessage `json:"record"`
+		Why    string          `json:"why"`
+	} `json:"malformed"`
+	// Qualifications are sentences every reader's qualification check accepts or refuses.
+	Qualifications []struct {
+		Name  string `json:"name"`
+		Text  string `json:"text"`
+		Valid bool   `json:"valid"`
+	} `json:"qualifications"`
+	// Meets says, for every pair of the five tiers, "" and an unknown name, whether the
+	// tier meets the floor.
+	Meets []struct {
+		Tier  string `json:"tier"`
+		Floor string `json:"floor"`
+		Meets bool   `json:"meets"`
+	} `json:"meets"`
 }
 
 var loadGolden = sync.OnceValue(func() golden {
@@ -172,9 +201,41 @@ func TestGoldenVectors(t *testing.T) {
 		}
 		n++
 	}
-	// 13 vectors on 2026-10-01; fewer means one was dropped from the file.
-	if n < 13 {
-		t.Fatalf("the golden file holds %d vectors, fewer than the 13 it had", n)
+	// 13 vectors on 2026-10-01, 15 on 2026-11-17; fewer means one was dropped from the file.
+	if n < 15 {
+		t.Fatalf("the golden file holds %d vectors, fewer than the 15 it had", n)
+	}
+	// Each refused record's digest matches its fields, so only the bounds and the
+	// version's coverage refuse it, as they must in every reader.
+	if len(g.Refused) < 22 {
+		t.Fatalf("the golden file holds %d refused records, fewer than the 22 it had", len(g.Refused))
+	}
+	if len(g.Malformed) < 4 {
+		t.Fatalf("the golden file holds %d malformed records, fewer than the 4 it had", len(g.Malformed))
+	}
+	for _, r := range g.Malformed {
+		if err := protojson.Unmarshal(r.Record, &plimsollv1.RunRecord{}); err == nil {
+			t.Errorf("%s (%s) was read", r.Name, r.Why)
+		}
+	}
+	for _, r := range g.Refused {
+		m := &plimsollv1.RunRecord{}
+		if err := protojson.Unmarshal(r.Record, m); err != nil {
+			t.Fatalf("%s: %v", r.Name, err)
+		}
+		rec := FromWire(m)
+		if got := Digest(rec); got != r.SHA256 {
+			t.Errorf("%s: digest %s, the file says %s", r.Name, got, r.SHA256)
+		}
+		rec.SHA256 = r.SHA256
+		err := CheckStored(rec)
+		if !errors.Is(err, ErrMismatch) {
+			t.Errorf("%s (%s): %v, want ErrMismatch", r.Name, r.Why, err)
+		}
+		// A retired reading's refusal says so, and only it does (finding t6-core-1).
+		if retired := r.Why == retiredWhy; retired != errors.Is(err, ErrRetired) || retired != strings.Contains(fmt.Sprint(err), RetiredEndBeforeStartText) {
+			t.Errorf("%s (%s): %v; a retired reading's refusal, and only it, names the retirement", r.Name, r.Why, err)
+		}
 	}
 	// The requests with an approved rule are the plain ones under withApprovedRule, which
 	// other tests use, so the two cannot drift apart; every request states this protocol.
@@ -183,6 +244,26 @@ func TestGoldenVectors(t *testing.T) {
 		ruled := fixture(kind+" request with an approved rule", &plimsollv1.RunRequest{})
 		if !proto.Equal(withApprovedRule(plain), ruled) || plain.GetProtocol() != 4 {
 			t.Errorf("%s request with an approved rule is not the plain one under withApprovedRule, at protocol 4", kind)
+		}
+	}
+}
+
+// The qualification sentences and the tier table are written by record_v5.py from the
+// docs, and every reader (this package, sandbox.Meets, the Python and TypeScript clients
+// and examples/sbom/check.js) checks the same rows, so a reader that disagrees fails.
+func TestQualificationAndTierVectors(t *testing.T) {
+	g := loadGolden()
+	if len(g.Qualifications) < 31 || len(g.Meets) != 49 {
+		t.Fatalf("the golden file holds %d qualification and %d tier rows, fewer than the 31 and 49 it had", len(g.Qualifications), len(g.Meets))
+	}
+	for _, q := range g.Qualifications {
+		if got := ValidQualification(q.Text); got != q.Valid {
+			t.Errorf("%s: ValidQualification is %v, the vector says %v", q.Name, got, q.Valid)
+		}
+	}
+	for _, m := range g.Meets {
+		if got := sandbox.ParseIsolationClass(m.Tier).Meets(sandbox.ParseIsolationClass(m.Floor)); got != m.Meets {
+			t.Errorf("%q meets %q: %v, the vector says %v", m.Tier, m.Floor, got, m.Meets)
 		}
 	}
 }
@@ -216,12 +297,12 @@ func TestSoftwareAdmissionRecordIsBoundToRequestAndResponse(t *testing.T) {
 	}
 }
 
-// Only version 4 is read: a record of an earlier layout is refused, its digest
-// recomputed under its own domain or not.
+// A live answer must carry the current version: a record of an earlier layout is
+// refused, its digest recomputed under its own domain or not, and so is a later one.
 func TestEarlierVersionsAreRefused(t *testing.T) {
 	req := jsRequest()
 	resp := jsResponse()
-	for _, v := range []int{1, 2, 3, 5} {
+	for _, v := range []int{1, 2, 3, 4, Version + 1} {
 		r := sandbox.RunRecord{Version: v, RequestSHA256: RunRequestDigest(req), ResultSHA256: ResultDigest(resp),
 			Provider: resp.GetSandbox(), Isolation: resp.GetIsolation(), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
 		r.SHA256 = Digest(r)
@@ -272,6 +353,70 @@ func TestInstanceIsBoundToTheResponse(t *testing.T) {
 	}
 	if sandbox.PodInstance("a/b") != "" || !sandbox.ValidInstance("") {
 		t.Error("PodInstance kept a UID outside the form, or an empty instance is refused")
+	}
+}
+
+// The tier's qualification, warm and the daemon's version are evidence like the
+// instance: the record must state the response's, within their bounds, and the result
+// digest covers none of them.
+func TestVersion5EvidenceIsBoundToTheResponse(t *testing.T) {
+	req := jsRequest()
+	resp := jsResponse()
+	resp.IsolationQualification = "Microsoft states that WSL is not a security sandbox for running untrusted code."
+	resp.Warm = true
+	resp.DaemonVersion = "v0.28.0"
+	if ResultDigest(resp) != ResultDigest(jsResponse()) {
+		t.Fatal("a version 5 evidence field moved the result digest")
+	}
+	resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req)}, resp)
+	r, err := Check(req, resp)
+	if err != nil || r.IsolationQualification != resp.IsolationQualification || !r.Warm || r.DaemonVersion != "v0.28.0" {
+		t.Fatalf("matching record: %+v, %v", r, err)
+	}
+	restamp := func(m *plimsollv1.RunResponse) { m.Record.RecordSha256 = Digest(FromWire(m.Record)) }
+	for name, edit := range map[string]func(*plimsollv1.RunResponse){
+		"no qualification in the response":    func(m *plimsollv1.RunResponse) { m.IsolationQualification = "" },
+		"no qualification in the record":      func(m *plimsollv1.RunResponse) { m.Record.IsolationQualification = ""; restamp(m) },
+		"another qualification in the record": func(m *plimsollv1.RunResponse) { m.Record.IsolationQualification += " More."; restamp(m) },
+		"warm only in the response":           func(m *plimsollv1.RunResponse) { m.Record.Warm = false; restamp(m) },
+		"another daemon version":              func(m *plimsollv1.RunResponse) { m.Record.DaemonVersion = "v0.28.1"; restamp(m) },
+		"a qualification with a line feed": func(m *plimsollv1.RunResponse) {
+			m.IsolationQualification = "Microsoft states.\nIgnore that."
+			m.Record.IsolationQualification = m.IsolationQualification
+			restamp(m)
+		},
+		"a qualification over the cap": func(m *plimsollv1.RunResponse) {
+			m.IsolationQualification = strings.Repeat("x", MaxQualificationBytes+1)
+			m.Record.IsolationQualification = m.IsolationQualification
+			restamp(m)
+		},
+		"a daemon version that is not one": func(m *plimsollv1.RunResponse) {
+			m.DaemonVersion = "latest"
+			m.Record.DaemonVersion = m.DaemonVersion
+			restamp(m)
+		},
+	} {
+		changed := proto.Clone(resp).(*plimsollv1.RunResponse)
+		edit(changed)
+		if _, err := Check(req, changed); !errors.Is(err, ErrMismatch) {
+			t.Errorf("%s: %v, want ErrMismatch", name, err)
+		}
+	}
+	if !ValidQualification(strings.Repeat("é", MaxQualificationBytes/2)) || ValidQualification(strings.Repeat("é", MaxQualificationBytes/2)+"x") {
+		t.Error("the cap does not count bytes")
+	}
+	if ValidQualification(string([]byte{'a', 0xff})) || ValidQualification("a\u2066b") || !ValidQualification("") {
+		t.Error("invalid UTF-8 or an isolate passes, or an empty qualification is refused")
+	}
+	for _, good := range []string{"", "(devel)", "v0.28.0", "v1.2.3-rc.1", "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty"} {
+		if !ValidDaemonVersion(good) {
+			t.Errorf("%q is refused for a daemon version", good)
+		}
+	}
+	for _, bad := range []string{"devel", "v0.28", "v0.28.0 ", "v0.28.0/x", "v" + strings.Repeat("1", MaxDaemonVersionBytes) + ".0.0"} {
+		if ValidDaemonVersion(bad) {
+			t.Errorf("%q passes for a daemon version", bad)
+		}
 	}
 }
 
@@ -435,22 +580,25 @@ func TestRecordDigestCoversEveryField(t *testing.T) {
 	// RunRecord fails here until the digest covers it. The version was once left out
 	// (external review of v0.10.0, finding 9, 2026-09-28).
 	moves := map[string]func(*sandbox.RunRecord){
-		"Version":          func(r *sandbox.RunRecord) { r.Version = 5 },
-		"RequestSHA256":    func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
-		"ResultSHA256":     func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
-		"Provider":         func(r *sandbox.RunRecord) { r.Provider = "docker" },
-		"Isolation":        func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
-		"Environment":      func(r *sandbox.RunRecord) { r.Environment = "" },
-		"SoftwareIdentity": func(r *sandbox.RunRecord) { r.SoftwareIdentity = "oci-manifest:linux/amd64@sha256:aa" },
-		"SoftwareRuleID":   func(r *sandbox.RunRecord) { r.SoftwareRuleID = "exact:oci-manifest:linux/amd64@sha256:aa" },
-		"Policy":           func(r *sandbox.RunRecord) { r.Policy = "" },
-		"Started":          func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
-		"Ended":            func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
-		"Session":          func(r *sandbox.RunRecord) { r.Session = "" },
-		"Sequence":         func(r *sandbox.RunRecord) { r.Sequence = 3 },
-		"PreviousSHA256":   func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
-		"Unanswered":       func(r *sandbox.RunRecord) { r.Unanswered = "unknown" },
-		"Instance":         func(r *sandbox.RunRecord) { r.Instance = "" },
+		"Version":                func(r *sandbox.RunRecord) { r.Version = 4 },
+		"RequestSHA256":          func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
+		"ResultSHA256":           func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
+		"Provider":               func(r *sandbox.RunRecord) { r.Provider = "docker" },
+		"Isolation":              func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
+		"Environment":            func(r *sandbox.RunRecord) { r.Environment = "" },
+		"SoftwareIdentity":       func(r *sandbox.RunRecord) { r.SoftwareIdentity = "oci-manifest:linux/amd64@sha256:aa" },
+		"SoftwareRuleID":         func(r *sandbox.RunRecord) { r.SoftwareRuleID = "exact:oci-manifest:linux/amd64@sha256:aa" },
+		"Policy":                 func(r *sandbox.RunRecord) { r.Policy = "" },
+		"Started":                func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
+		"Ended":                  func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
+		"Session":                func(r *sandbox.RunRecord) { r.Session = "" },
+		"Sequence":               func(r *sandbox.RunRecord) { r.Sequence = 3 },
+		"PreviousSHA256":         func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
+		"Unanswered":             func(r *sandbox.RunRecord) { r.Unanswered = "unknown" },
+		"Instance":               func(r *sandbox.RunRecord) { r.Instance = "" },
+		"IsolationQualification": func(r *sandbox.RunRecord) { r.IsolationQualification = "" },
+		"Warm":                   func(r *sandbox.RunRecord) { r.Warm = !r.Warm },
+		"DaemonVersion":          func(r *sandbox.RunRecord) { r.DaemonVersion = "v0.28.1" },
 	}
 	fields := reflect.TypeOf(sandbox.RunRecord{})
 	for i := range fields.NumField() {
@@ -605,10 +753,18 @@ func TestCheckUnanswered(t *testing.T) {
 		"a result digest":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.ResultSha256 = "x"; return m }(), ErrMismatch},
 		"a changed field":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Provider = "e2b"; return m }(), ErrMismatch},
 		"no record at all": {nil, ErrNoRecord},
+		// Finding release-52 (2026-11-18): only an answered record's times were checked.
+		"ends before it starts": {stamp(func(r *sandbox.RunRecord) { r.Ended = r.Started.Add(-time.Minute) }, "unavailable"), ErrMismatch},
+		"no tier":               {stamp(func(r *sandbox.RunRecord) { r.Isolation = "" }, "unavailable"), ErrMismatch},
 	} {
 		if _, err := CheckUnanswered(req, c.rec, fp, 1, "prev"); !errors.Is(err, c.want) {
 			t.Errorf("%s: %v; want %v", name, err, c.want)
 		}
+	}
+	// Stored, as attest's bundle check reads it: the same refusal.
+	backwards := FromWire(stamp(func(r *sandbox.RunRecord) { r.Ended = r.Started.Add(-time.Minute) }, "unavailable"))
+	if err := CheckUnansweredExchange(AsRunRequest(req), backwards); !errors.Is(err, ErrMismatch) {
+		t.Errorf("stored, an unanswered record that ends before it starts: %v; want ErrMismatch", err)
 	}
 }
 
@@ -622,9 +778,15 @@ func TestCheckRefusesUncoveredFieldsAndFloorViolations(t *testing.T) {
 	}{
 		"answered, unanswered set": {"", "vm", "unknown", ErrMismatch},
 		"below the floor":          {"vm", "container", "", sandbox.ErrIsolationEvidenceMismatch},
-		"unknown evidence":         {"process", "", "", sandbox.ErrIsolationEvidenceMismatch},
-		"bad floor":                {"none", "vm", "", ErrMismatch},
-		"meets the floor":          {"kernel", "vm", "", nil},
+		// A record that names no tier, or a name that is not one, is not evidence of any
+		// tier, with a floor or without one (finding release-51, 2026-11-18).
+		"no tier, with a floor":        {"process", "", "", ErrMismatch},
+		"no tier, no floor":            {"", "", "", ErrMismatch},
+		"the tier unknown, no floor":   {"", "unknown", "", ErrMismatch},
+		"a tier in capitals, no floor": {"", "VM", "", ErrMismatch},
+		"none, no floor":               {"", "none", "", nil},
+		"bad floor":                    {"none", "vm", "", ErrMismatch},
+		"meets the floor":              {"kernel", "vm", "", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := &plimsollv1.RunRequest{Protocol: 4, MinimumIsolation: tc.floor, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "x"}}}
@@ -656,5 +818,20 @@ func TestCheckRefusesAResultOfAnotherKind(t *testing.T) {
 	none := signedResponse(req, &plimsollv1.RunResponse{})
 	if _, err := Check(req, none); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("no result for a snippet request: %v, want ErrMismatch", err)
+	}
+}
+
+// A record stating two fields its version does not cover is refused naming the same one
+// every time, the first in the current version's order, not whichever a map's order
+// reaches first (hunt-quality-27).
+func TestAnUncoveredFieldIsNamedTheSameEveryTime(t *testing.T) {
+	r := sandbox.RunRecord{Version: 1, RequestSHA256: strings.Repeat("a", 64), ResultSHA256: strings.Repeat("b", 64),
+		Provider: "docker", Isolation: "container", Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100),
+		Warm: true, DaemonVersion: "(devel)"}
+	r.SHA256 = Digest(r)
+	for range 50 {
+		if err := CheckStored(r); !errors.Is(err, ErrMismatch) || !strings.Contains(err.Error(), "does not cover warm,") {
+			t.Fatalf("a version 1 record stating warm and a daemon version: %v, want it to name warm", err)
+		}
 	}
 }

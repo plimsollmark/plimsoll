@@ -20,11 +20,16 @@ import (
 // on that runs it twice.
 
 // NewHandler is plimsollv1connect.NewSandboxServiceHandler behind BindAnswers, with
-// HandlerReached first among the interceptors. Every server of the procedures uses
-// it, fakes in tests included, since the official clients refuse an answer that does
-// not carry their request's ID.
+// HandlerReached first among the interceptors and, for a *SandboxService, its refusal
+// interceptor next (refusals.go), outside every interceptor opts add, so it sees their
+// refusals too. Every server of the procedures uses it, fakes in tests included, since
+// the official clients refuse an answer that does not carry their request's ID.
 func NewHandler(svc plimsollv1connect.SandboxServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	opts = append([]connect.HandlerOption{connect.WithInterceptors(HandlerReached())}, opts...)
+	first := []connect.Interceptor{HandlerReached()}
+	if s, ok := svc.(*SandboxService); ok {
+		first = append(first, refusalInterceptor(s))
+	}
+	opts = append([]connect.HandlerOption{connect.WithInterceptors(first...)}, opts...)
 	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, opts...)
 	return path, BindAnswers(h)
 }

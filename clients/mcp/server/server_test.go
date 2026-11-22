@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -454,6 +456,37 @@ func TestServerInfoShowsTheIsolationQualification(t *testing.T) {
 	}
 }
 
+// Every result that names the tier names the sentence beside it, as the record version 5
+// change requires: a fresh run_code, open_sandbox and a run in that sandbox, and get_record,
+// which also shows the record's version 5 fields. A daemon that states none adds nothing.
+func TestEveryResultThatNamesTheTierNamesTheQualification(t *testing.T) {
+	const sentence = "Hyper-V VM per run. Microsoft states that WSL is not a security sandbox for running untrusted code."
+	c := connect(t, local(fakedaemon.Serve(t, fakedaemon.Options{Qualification: sentence, Sessions: 2}).URL))
+	beside := "The daemon states beside that tier: " + sentence
+	fresh := c.ok("run_code", map[string]any{"code": "1"})
+	if fresh["isolationQualification"] != sentence || !strings.Contains(fresh["summary"].(string), beside) {
+		t.Errorf("a fresh run: %v", fresh)
+	}
+	open := c.ok("open_sandbox", nil)
+	if open["isolationQualification"] != sentence || !strings.Contains(open["summary"].(string), beside) {
+		t.Errorf("open_sandbox: %v", open)
+	}
+	in := c.ok("run_code", map[string]any{"code": "1", "sandbox": open["sandbox"]})
+	if in["isolationQualification"] != sentence || !strings.Contains(in["summary"].(string), beside) {
+		t.Errorf("a run in the sandbox: %v", in)
+	}
+	rec := c.ok("get_record", map[string]any{"recordSha256": fresh["recordSha256"]})
+	r := rec["record"].(map[string]any)
+	if r["version"] != float64(5) || r["isolationQualification"] != sentence || r["daemonVersion"] != "(devel)" || r["warm"] != false ||
+		!strings.Contains(rec["summary"].(string), beside) || !strings.Contains(rec["summary"].(string), "by plimsoll (devel)") {
+		t.Errorf("get_record: %v", rec)
+	}
+	none := connect(t, local(fakedaemon.Serve(t, fakedaemon.Options{}).URL)).ok("run_code", map[string]any{"code": "1"})
+	if _, ok := none["isolationQualification"]; ok || strings.Contains(none["summary"].(string), "beside that tier") {
+		t.Errorf("a daemon that states none: %v", none)
+	}
+}
+
 func TestADaemonThatDoesNotAnswer(t *testing.T) {
 	c := connect(t, local(fakedaemon.DownURL(t)))
 	if f := c.fail("run_code", map[string]any{"code": "1"}); f.Ran != "no" {
@@ -499,6 +532,43 @@ func TestFromEnv(t *testing.T) {
 	}
 	if _, err := server.New(server.Config{URL: "http://plimsoll.example"}); err == nil {
 		t.Error("cleartext to another host is refused without InsecureHTTP")
+	}
+}
+
+// The two numbers of the timeout rules (how far the run timeout sits under the call
+// timeout, and what a run needs beyond its budget) are stated in the config refusal and
+// in the README's settings table. Both carry the constants the checks use, and the gap the
+// words name is the gap checked, to the millisecond (hunt-quality-58: the words held
+// their own copies).
+func TestTimeoutWordsCarryTheChecksNumbers(t *testing.T) {
+	gap, margin := server.RunTimeoutGap, server.RunAnswerMargin
+	run := time.Minute
+	_, err := server.New(server.Config{URL: "http://127.0.0.1:1", RunTimeout: run, CallTimeout: run + gap - time.Millisecond})
+	if err == nil {
+		t.Fatalf("a call timeout %s over the run timeout was accepted; the gap is %s", gap-time.Millisecond, gap)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("at least %d s under the call timeout", gap/time.Second),
+		fmt.Sprintf("the run timeout plus %d s remains", margin/time.Second),
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	}
+	if _, err := server.New(server.Config{URL: "http://127.0.0.1:1", RunTimeout: run, CallTimeout: run + gap}); err != nil {
+		t.Errorf("a call timeout exactly %s over the run timeout: %v", gap, err)
+	}
+	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("At least %d s over the run budget", gap/time.Second),
+		fmt.Sprintf("the run budget plus %d s remains", margin/time.Second),
+	} {
+		if !strings.Contains(string(readme), want) {
+			t.Errorf("clients/mcp/README.md does not say %q; its settings table states the numbers the checks use", want)
+		}
 	}
 }
 
@@ -778,6 +848,37 @@ func TestASchemaRefusalIsAStructuredFailure(t *testing.T) {
 	}
 	if answers != 2 {
 		t.Errorf("found %d refusals on the wire, want 2:\n%s", answers, c.wire.String())
+	}
+}
+
+// A call that must replace an ended sandbox, whose open leaves less than the run budget plus
+// the answer margin, is refused before dispatch rather than cut off: it used to be checked
+// only for a call that waited for its turn (hunt-quality-44). The sandbox opened for it is
+// kept, and the next call runs there, told it is new.
+func TestAReopenShortOfTheRunBudgetIsRefusedNotCutOff(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 2, OpenDelay: 6 * time.Second})
+	cfg := local(d.URL)
+	cfg.RunTimeout, cfg.CallTimeout = time.Second, 11*time.Second
+	c := connect(t, cfg)
+	h := c.ok("open_sandbox", nil)["sandbox"]
+	c.ok("run_code", map[string]any{"code": "x = 1", "sandbox": h})
+	for _, s := range d.Provider.Opened() {
+		s.End(sandbox.SessionExpired)
+	}
+	runs := d.Calls("SessionRun")
+	f := c.fail("run_code", map[string]any{"code": "x", "sandbox": h})
+	if f.Ran != "no" || f.Refusal != "capacity" || f.SandboxUsable == nil || *f.SandboxUsable ||
+		!strings.Contains(f.Summary, "opening a new sandbox for it") || !strings.Contains(f.Summary, "call again") {
+		t.Fatalf("a call whose reopen left too little time: %+v", f)
+	}
+	// One SessionRun reached the daemon: the one it refused because the sandbox had ended.
+	if got := d.Calls("SessionRun"); got != runs+1 {
+		t.Fatalf("%d session runs, then %d: want only the one the ended sandbox refused", runs, got)
+	}
+	// The new sandbox's first cell is the next call's: the refused call ran nothing there.
+	out := c.ok("run_code", map[string]any{"code": "y", "sandbox": h})
+	if out["stdout"] != "python 1: y" || out["freshSandbox"] != true || !strings.Contains(fmt.Sprint(out["sandboxReplaced"]), "expired") {
+		t.Errorf("the call after the refusal, in the sandbox opened for it: %v", out)
 	}
 }
 

@@ -10,6 +10,7 @@ import unittest
 
 from plimsoll_client import (
     AtCapacityError,
+    CheckpointMismatchError,
     DisabledError,
     InsufficientIsolationError,
     InvalidRequestError,
@@ -18,8 +19,10 @@ from plimsoll_client import (
     ProtocolMismatchError,
     SessionEndedError,
     SoftwareMismatchError,
+    StaleOwnerError,
     UnsupportedError,
 )
+from plimsoll_client._tables import CHECKPOINT_MISMATCH_TEXT
 from plimsoll_client._wire import INT32, INT64, Msg, b64decode, decode_enum_and_string, error_from_wire, loads
 
 
@@ -104,6 +107,21 @@ class Errors(unittest.TestCase):
                 self.assertEqual(e.not_dispatched, name)
                 self.assertEqual(e.http_status, 400)
 
+    def test_stale_and_mismatch_map_to_their_errors(self) -> None:
+        # The daemon's ownership refusals (protocol 6): a stale generation on a run,
+        # close or attach, and an attach whose checkpoint is not the head. Neither is a
+        # provider that refuses to run anything.
+        stale = bound_error(400, answer("failed_precondition", not_dispatched(2), message="session ownership generation is stale"))
+        self.assertIs(type(stale), StaleOwnerError)
+        self.assertEqual(stale.not_dispatched, "permission")
+        mismatch = bound_error(400, answer("failed_precondition", not_dispatched(1), message=CHECKPOINT_MISMATCH_TEXT))
+        self.assertIs(type(mismatch), CheckpointMismatchError)
+        self.assertEqual(mismatch.not_dispatched, "request")
+        # Reason request with any other text is not a mismatch.
+        self.assertIs(type(bound_error(400, answer("failed_precondition", not_dispatched(1)))), DisabledError)
+        # An unbound answer's mark is not this call's, so it names no owner change.
+        self.assertIs(type(error_from_wire(400, answer("failed_precondition", not_dispatched(2)), bound=False)), DisabledError)
+
     def test_an_unmarked_error_never_claims_nothing_ran(self) -> None:
         for body in (
             answer("internal"),
@@ -125,7 +143,12 @@ class Errors(unittest.TestCase):
         # Other codes keep their own class, as the Go client's switch does.
         self.assertIs(type(bound_error(400, answer("invalid_argument", session_ended(2, "")))), InvalidRequestError)
         self.assertIsInstance(bound_error(404, answer("not_found", session_ended(2, ""))), SessionEndedError)
-        self.assertIs(type(bound_error(499, answer("canceled", session_ended(2, "")))), PlimsollError)
+        # A session's end beside canceled or deadline_exceeded is kept, the code with it
+        # (finding release-89; the daemon's mapSandboxErr writes such an answer).
+        for code, status in (("canceled", 499), ("deadline_exceeded", 504)):
+            e = bound_error(status, answer(code, session_ended(2, "")))
+            assert isinstance(e, SessionEndedError)
+            self.assertEqual((e.code, e.reason, e.not_dispatched), (code, "expired", None))
         # An end a newer daemon has and this client does not is still an end.
         e = bound_error(400, answer("failed_precondition", not_dispatched(1), session_ended(99, "")))
         assert isinstance(e, SessionEndedError)

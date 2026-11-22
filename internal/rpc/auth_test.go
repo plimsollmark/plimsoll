@@ -242,6 +242,7 @@ func TestLimitHTTPConcurrencyLeavesRoomForOtherCallers(t *testing.T) {
 		}
 		go func() { h.ServeHTTP(httptest.NewRecorder(), withPrincipal(req, "greedy")); done <- struct{}{} }()
 	}
+	// fixed-wait: 100 ms stands for "the greedy caller's requests hold their slots"; not shown safe: if they do not yet, the other caller is served anyway and the limit is not what was tested
 	time.Sleep(100 * time.Millisecond)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}")), "other"))

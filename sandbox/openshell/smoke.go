@@ -13,10 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/boundary"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/egress"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 const (
@@ -85,11 +88,13 @@ func (p *Provider) lastSmoke() *smokeEvidence {
 //     cancelled, confirmed gone by a second exec: the mechanism behind every timeout.
 //
 // It creates one sandbox and deletes it afterwards, so the daemon runs it once at
-// startup, never on a poll path.
+// startup, never on a poll path. Each claim is recorded as its check passes, and the
+// record must match claims (claims.go) before the evidence is kept.
 func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err := p.cfg.validate(); err != nil {
 		return err
 	}
+	proof := claims.Start()
 	ctx, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()
 	tier, err := p.checkDriver(ctx)
@@ -101,19 +106,24 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("openshell smoke: %w", err)
 	}
 	defer p.deleteLater(ctx, b)
+	// The driver's report and the sandbox's policy and limits, read back by create.
+	proof.Proved(boundary.SetupReadBack, "SmokeTest")
 	ev := smokeEvidence{GatewayVersion: p.gatewayVersion(), Sandbox: b.name, PolicyHash: p.policyHash}
 
-	if err := p.smokeProbe(ctx, b, &ev); err != nil {
+	if err := p.smokeProbe(ctx, b, &ev, proof); err != nil {
 		return fmt.Errorf("openshell smoke: %w", err)
 	}
-	if err := p.smokeRunner(ctx, b, tier, &ev); err != nil {
+	if err := p.smokeRunner(ctx, b, tier, &ev, proof); err != nil {
 		return fmt.Errorf("openshell smoke: runner round trip: %w", err)
 	}
-	if err := p.smokeKill(ctx, b, &ev); err != nil {
+	if err := p.smokeKill(ctx, b, &ev, proof); err != nil {
 		return fmt.Errorf("openshell smoke: %w", err)
 	}
-	if err := p.smokeLanguages(ctx, b, &ev); err != nil {
+	if err := p.smokeLanguages(ctx, b, &ev, proof); err != nil {
 		return fmt.Errorf("openshell smoke: %w", err)
+	}
+	if err := proof.Done(); err != nil {
+		return err
 	}
 
 	p.mu.Lock()
@@ -130,7 +140,7 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 
 // smokeLanguages runs each interpreter once (sandbox.LanguageProbe); node must answer,
 // since the runner is node, and the others may.
-func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence) error {
+func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence, proof *boundary.Proof) error {
 	argv := []string{"sh", "-c", sandbox.LanguageProbe()}
 	out, err := p.exec(ctx, b, argv, nil, nil, 4096, 4096)
 	if err != nil {
@@ -143,6 +153,7 @@ func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence)
 	if !slices.Contains(ev.Languages, sandbox.LanguageJavaScript) {
 		return errors.New("language probe: node did not answer")
 	}
+	proof.Proved(boundary.Languages, "smokeLanguages")
 	return nil
 }
 
@@ -153,8 +164,8 @@ func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence)
 // gets a file created and removed; a regular file an append-open that writes nothing.
 // Device nodes are skipped: a write to one (/dev/null) discards, it does not store.
 // Then it tries to leave the sandbox, and reads its own cgroup limits.
-const smokeProbeScript = `const fs = require("fs"), net = require("net"), dns = require("dns");
-const report = { node: process.version };
+const smokeProbeScript = `const fs = require("fs"), net = require("net"), dns = require("dns"), cr = require("crypto");
+const report = { node: process.version, helper: ` + nativehelper.CheckExpr + ` };
 const mounts = fs.readFileSync("/proc/mounts", "utf8").trim().split("\n").map(l => l.split(" ")[1].replace(/\\040/g, " "));
 const mountSet = new Set(mounts);
 const kernel = p => p === "/proc" || p.startsWith("/proc/") || p === "/sys" || p.startsWith("/sys/");
@@ -212,24 +223,25 @@ const read = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) 
 
 // smokeReport is what smokeProbeScript prints.
 type smokeReport struct {
-	Node          string            `json:"node"`
-	Swept         int               `json:"swept"`
-	Writable      []string          `json:"writable"`
-	WritableFiles []string          `json:"writableFiles"`
-	Egress        map[string]string `json:"egress"`
-	DNS           string            `json:"dns"`
-	MemoryMax     string            `json:"memoryMax"`
-	CPUMax        string            `json:"cpuMax"`
-	TmpMount      string            `json:"tmpMount"`
-	PidsMax       string            `json:"pidsMax"`
-	Interfaces    []string          `json:"interfaces"`
+	Node          string                  `json:"node"`
+	Helper        nativehelper.FileReport `json:"helper"` // the project runner's file, as the probe reads it
+	Swept         int                     `json:"swept"`
+	Writable      []string                `json:"writable"`
+	WritableFiles []string                `json:"writableFiles"`
+	Egress        map[string]string       `json:"egress"`
+	DNS           string                  `json:"dns"`
+	MemoryMax     string                  `json:"memoryMax"`
+	CPUMax        string                  `json:"cpuMax"`
+	TmpMount      string                  `json:"tmpMount"`
+	PidsMax       string                  `json:"pidsMax"`
+	Interfaces    []string                `json:"interfaces"`
 }
 
 // smokeProbe runs the probe and checks the writable set, egress and limits.
-func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) error {
+func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence, proof *boundary.Proof) error {
 	pctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	out, err := p.exec(pctx, b, []string{"node", "-"}, nil, []byte(smokeProbeScript), 1<<20, maxOutputBytes)
+	out, err := p.exec(pctx, b, sessionkit.StartupNodeArgv("-"), nil, []byte(smokeProbeScript), 1<<20, maxOutputBytes)
 	if err != nil {
 		return fmt.Errorf("probe: %w", err)
 	}
@@ -240,22 +252,41 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 	if err := json.Unmarshal(out.stdout, &report); err != nil {
 		return fmt.Errorf("unparseable probe report %q: %w", truncate(out.stdout, 200), err)
 	}
+	// The relays and the session programs start with sessionkit.NodeSignalFlag.
+	if err := sessionkit.CheckNodeVersion(report.Node); err != nil {
+		return fmt.Errorf("image %q: %w", p.cfg.Image, err)
+	}
+	// The project runner is the native helper this plimsolld carries, or the image is
+	// refused here, before any project runs through it. The sandbox runs on the gateway's
+	// machine, not plimsolld's, so the check is against the one helper built (x86-64).
+	if err := report.Helper.CheckBuilt(); err != nil {
+		return fmt.Errorf("image %q: %w; plimsoll starts that file as the project runner of every project, so the image must carry the native helper of this plimsolld's release (docs/openshell.md says how)", p.cfg.Image, err)
+	}
 	ev.Node, ev.Swept, ev.Writable, ev.WritableFiles = report.Node, report.Swept, report.Writable, report.WritableFiles
 	ev.Egress, ev.DNS, ev.Interfaces = report.Egress, report.DNS, report.Interfaces
 	ev.MemoryMax, ev.CPUMax, ev.PidsMax, ev.TmpMount = report.MemoryMax, report.CPUMax, report.PidsMax, report.TmpMount
-	if err := checkWritable(report.Swept, report.Writable, report.WritableFiles); err != nil {
+	if err := proof.Check(boundary.WritablePlaces, "smokeProbe", checkWritable(report.Swept, report.Writable, report.WritableFiles)); err != nil {
 		return err
 	}
-	if err := checkEgress(report.Egress); err != nil {
+	if err := proof.Check(boundary.NoEgress, "smokeProbe", checkEgress(report.Egress)); err != nil {
 		return err
 	}
-	if err := checkInterfaces(report.Interfaces); err != nil {
+	if err := proof.Check(boundary.LoopbackOnly, "smokeProbe", checkInterfaces(report.Interfaces)); err != nil {
 		return err
 	}
-	if err := checkTmpMount(report.TmpMount, p.cfg.DiskMB); err != nil {
+	if p.cfg.DiskMB > 0 {
+		if err := proof.Check(boundary.WritableBounds, "smokeProbe", checkTmpMount(report.TmpMount, p.cfg.DiskMB)); err != nil {
+			return err
+		}
+	} else {
+		proof.Skipped(boundary.WritableBounds)
+	}
+	if err := checkLimits(report.MemoryMax, report.CPUMax, p.cfg.memoryMB(), p.cfg.cpus()); err != nil {
 		return err
 	}
-	return checkLimits(report.MemoryMax, report.CPUMax, p.cfg.memoryMB(), p.cfg.cpus())
+	proof.Proved(boundary.MemoryLimit, "smokeProbe")
+	proof.Proved(boundary.CPULimit, "smokeProbe")
+	return nil
 }
 
 // checkTmpMount proves the disk cap from inside the sandbox: with DiskMB set, /tmp
@@ -370,12 +401,12 @@ const b=fs.readFileSync("data/blob.txt");` +
 	blob := strings.Repeat(line, size/len(line)+1)[:size]
 	return sandbox.ProjectRequest{
 		Files:     []sandbox.File{{Path: "main.js", Content: mainJS}, {Path: "data/blob.txt", Content: blob}},
-		Steps:     []string{"node main.js"},
+		Steps:     []string{sessionkit.GuestNode + " main.js"},
 		Artifacts: []string{"out.txt"},
 	}, fmt.Sprintf("%d %x", len(blob), sha256.Sum256([]byte(blob)))
 }
 
-func (p *Provider) smokeRunner(ctx context.Context, b box, tier sandbox.IsolationClass, ev *smokeEvidence) error {
+func (p *Provider) smokeRunner(ctx context.Context, b box, tier sandbox.IsolationClass, ev *smokeEvidence, proof *boundary.Proof) error {
 	req, want := smokeProject()
 	if err := sandbox.ValidateProjectRequest(req); err != nil {
 		return err
@@ -411,15 +442,20 @@ func (p *Provider) smokeRunner(ctx context.Context, b box, tier sandbox.Isolatio
 	if len(res.Artifacts) != 1 || string(res.Artifacts[0].Content) != want {
 		return fmt.Errorf("the step's artifact does not match the %d-byte plan's content", len(planJSON))
 	}
+	// The step completed, so each of its opens of the runner's descriptors and memory
+	// was refused (it throws on any that opens).
+	proof.Proved(boundary.RunPath, "smokeRunner")
+	proof.Proved(boundary.ControlChannel, "smokeRunner")
 	return nil
 }
 
 // smokeKill starts a command that never ends and forks a second that never ends,
 // waits until both run, cancels the exec stream, and requires a second exec to find
 // neither left.
-func (p *Provider) smokeKill(ctx context.Context, b box, ev *smokeEvidence) error {
-	marker := "plimsoll-hang-" + randHex(6)
-	hang := []string{"sh", "-c", "node -e 'setInterval(() => {}, 1000)' " + marker + " & exec node -e 'setInterval(() => {}, 1000)' " + marker}
+func (p *Provider) smokeKill(ctx context.Context, b box, ev *smokeEvidence, proof *boundary.Proof) error {
+	marker := "plimsoll-hang-" + providerkit.RandHex(6)
+	// The two hanging processes stand in for a guest's, so they are the guest's node.
+	hang := []string{"sh", "-c", sessionkit.GuestNode + " -e 'setInterval(() => {}, 1000)' " + marker + " & exec " + sessionkit.GuestNode + " -e 'setInterval(() => {}, 1000)' " + marker}
 	// The counting script reaches the sandbox on stdin, so its own command line does
 	// not carry the marker it counts.
 	countScript := []byte(`const fs = require("fs"); let n = 0;
@@ -431,7 +467,7 @@ process.stdout.write(String(n));`)
 	count := func() (int, error) {
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		out, err := p.exec(cctx, b, []string{"node", "-"}, nil, countScript, 64, maxOutputBytes)
+		out, err := p.exec(cctx, b, sessionkit.StartupNodeArgv("-"), nil, countScript, 64, maxOutputBytes)
 		if err != nil {
 			return 0, fmt.Errorf("process count: %w", err)
 		}
@@ -491,6 +527,7 @@ process.stdout.write(String(n));`)
 		}
 		if n == 0 {
 			ev.KillConfirmed = time.Since(cancelled)
+			proof.Proved(boundary.DeadlineKill, "smokeKill")
 			return nil
 		}
 		if time.Now().After(deadline) {

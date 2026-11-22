@@ -157,8 +157,10 @@ class PlimsollCodeTool(BaseTool):
         if "cache_function" in kwargs:
             raise ValueError("plimsoll: PlimsollCodeTool runs every call; its answers are never cached")
         kwargs["cache_function"] = _never_cache
-        langs = ct.check_languages(languages)
-        kwargs.setdefault("description", ct.description(langs))
+        langs = ct.offered(executor, languages)
+        if executor.grant is not None and "description" in kwargs:
+            raise ValueError("plimsoll: a granted tool's description is plimsoll's, with the API's own; it tells the model what the code can call")
+        kwargs.setdefault("description", ct.description(langs, executor.grant))
         kwargs.setdefault("args_schema", _args_schema(langs))
         super().__init__(**kwargs)
         _never_read_from_cache(self.name)

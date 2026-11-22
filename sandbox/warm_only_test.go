@@ -46,6 +46,7 @@ func TestWarmOnlyOpenOnAProviderWithoutAPoolMakesNothing(t *testing.T) {
 func TestDockerWarmOnlyOpenMakesNoContainer(t *testing.T) {
 	d := DefaultDocker("")
 	d.ready, d.daemonHost, d.verifiedRuntime, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.Runtime, d.guestUID()
+	d.verifiedGuard = fakeGuestGuardPath // a faked Preflight: the guard file it would have written
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}
 	d.projectLanguages = []Language{LanguageJavaScript, LanguagePython}
 	opts := SessionOptions{Lifetime: time.Minute, WarmOnly: true, Languages: []Language{LanguagePython}}

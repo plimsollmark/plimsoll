@@ -7,11 +7,12 @@ import (
 	"log/slog"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/internal/settings"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -30,7 +31,7 @@ type limiterConfig struct {
 // not accepted: a configured security floor must require an actual execution
 // boundary, while an empty value is the only way to request no floor.
 func minimumIsolationWith(getenv func(string) string) (sandbox.IsolationClass, bool, error) {
-	raw := strings.ToLower(strings.TrimSpace(getenv("SANDBOX_MIN_ISOLATION")))
+	raw := settings.MinIsolation.Get(getenv)
 	if raw == "" {
 		return sandbox.IsolationUnknown, false, nil
 	}
@@ -57,6 +58,18 @@ func operatorMinimumError(sb sandbox.Sandbox, want sandbox.IsolationClass, requi
 	return err
 }
 
+// qualificationError is nil when the provider states no qualification or one a run
+// record can carry (record.ValidQualification), else an error saying why not. Every
+// answer and its record state the sentence beside the tier, so the daemon serves none
+// without it.
+func qualificationError(sb sandbox.Sandbox) error {
+	q, ok := sb.(sandbox.Qualifier)
+	if !ok || record.ValidQualification(q.Qualification()) {
+		return nil
+	}
+	return fmt.Errorf("provider %q states an isolation qualification of %d bytes that a run record cannot carry: at most %d bytes of UTF-8 with no control or bidirectional format character", sb.Name(), len(q.Qualification()), record.MaxQualificationBytes)
+}
+
 // tierKnownBeforeChecks reports whether the provider's tier is known from its configuration
 // alone, so SANDBOX_MIN_ISOLATION can be held against it before its startup checks start
 // any work: false only for a provider whose descriptor says its checks establish the tier
@@ -75,7 +88,7 @@ func tierKnownBeforeChecks(sb sandbox.Sandbox) bool {
 // slot, and the pool refills what a session claims, so poolSize is always what waits.
 // It returns a typed error instead of exiting, so callers decide how to fail.
 func loadLimiterConfig(getenv func(string) string, providerName string, perRunMemMB, poolSize int) (limiterConfig, error) {
-	maxConcurrent, err := envIntWith(getenv, "SANDBOX_MAX_CONCURRENT", 8)
+	maxConcurrent, err := settings.MaxConcurrent.Get(getenv)
 	if err != nil {
 		return limiterConfig{}, err
 	}
@@ -83,7 +96,7 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 		return limiterConfig{}, fmt.Errorf("invalid SANDBOX_MAX_CONCURRENT: %w", err)
 	}
 
-	totalMB, err := envIntWith(getenv, "SANDBOX_TOTAL_MEMORY_MB", 0)
+	totalMB, err := settings.TotalMemoryMB.Get(getenv)
 	if err != nil {
 		return limiterConfig{}, err
 	}
@@ -110,15 +123,15 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 		}
 	}
 
-	perKey, err := envIntWith(getenv, "SANDBOX_PER_KEY_CONCURRENT", atLeast1(maxConcurrent/2))
+	perKey, err := settings.PerKeyConcurrent.GetOr(getenv, settings.PerKeyConcurrentDefault(maxConcurrent))
 	if err != nil {
 		return limiterConfig{}, err
 	}
-	ratePerMin, err := envIntWith(getenv, "SANDBOX_RATE_PER_MIN", 30)
+	ratePerMin, err := settings.RatePerMin.Get(getenv)
 	if err != nil {
 		return limiterConfig{}, err
 	}
-	burst, err := envIntWith(getenv, "SANDBOX_RATE_BURST", ratePerMin)
+	burst, err := settings.RateBurst.GetOr(getenv, ratePerMin)
 	if err != nil {
 		return limiterConfig{}, err
 	}
@@ -133,8 +146,8 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 // pair is a startup error, and an unloadable pair fails now rather than on the
 // first handshake. nil means serve cleartext (h2c).
 func tlsConfigFromEnv(getenv func(string) string) (*tls.Config, error) {
-	cert := strings.TrimSpace(getenv("PLIMSOLL_TLS_CERT"))
-	key := strings.TrimSpace(getenv("PLIMSOLL_TLS_KEY"))
+	cert := settings.TLSCert.Get(getenv)
+	key := settings.TLSKey.Get(getenv)
 	if cert == "" && key == "" {
 		return nil, nil
 	}
@@ -161,7 +174,7 @@ const defaultMetricsAddr = "127.0.0.1:9464"
 // The address is checked for a port here, so a bare "9464" fails naming the
 // variable instead of as a listen error.
 func metricsAddrWith(getenv func(string) string) (string, error) {
-	raw := strings.TrimSpace(getenv("PLIMSOLL_METRICS_ADDR"))
+	raw := settings.MetricsAddr.Get(getenv)
 	switch {
 	case raw == "":
 		return defaultMetricsAddr, nil
@@ -183,7 +196,7 @@ func metricsAddrWith(getenv func(string) string) (string, error) {
 // address another network can reach is the operator's decision, not plimsolld's. A
 // value with no guard to serve is refused, so a set variable never does nothing.
 func guardAddrWith(getenv func(string) string, serves bool) (string, error) {
-	raw := strings.TrimSpace(getenv("PLIMSOLL_GUARD_ADDR"))
+	raw := settings.GuardAddr.Get(getenv)
 	switch {
 	case serves && raw == "":
 		return "", errors.New("PLIMSOLL_GUARD_ADDR is required: the provider serves the egress guard (its guard URL is set), and the guard has a listener of its own; set host:port and point the public guard URL at it")
@@ -198,18 +211,42 @@ func guardAddrWith(getenv func(string) string, serves bool) (string, error) {
 	return raw, nil
 }
 
-// loopbackAddr reports whether a listen address can only be reached from this
-// host. An empty host (":8746") binds every interface and is NOT loopback.
+// loopbackAddr reports whether a bound listen address (a listener's Addr().String())
+// can only be reached from this host: a literal loopback IP and a port. Every caller
+// passes the address the listener bound, never the configured string, so a name is
+// never accepted: "localhost" can resolve to an address other hosts reach, and an
+// empty host (":8746") binds every interface (it reads back as "[::]:8746").
 func loopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
-	if err != nil || host == "" {
+	if err != nil {
 		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// loopbackListener reports whether a bound listener can only be reached from this
+// host, judged from the address the kernel bound (net.Listener.Addr), never from the
+// configured name. plimsolld listens on TCP only; any other kind of address is not
+// loopback, so a listener this function does not understand is refused, not served.
+func loopbackListener(bound net.Addr) bool {
+	tcp, ok := bound.(*net.TCPAddr)
+	return ok && tcp.IP.IsLoopback()
+}
+
+// openModeBindError refuses open developer mode (a real provider, no token, no
+// callers file, PLIMSOLL_INSECURE=1) on an RPC listener other hosts can reach. Open
+// mode authenticates no one, so the loopback bind is its one boundary, and this is
+// what enforces it: the Host check in rpc.AuthenticateHTTP answers a browser page's
+// DNS rebinding and nothing else, since any program can write that header. It is
+// judged from the bound address, so PLIMSOLL_ADDR=localhost:8746 passes only when it
+// bound a loopback address, and ":8746" (every interface) is refused. The unset
+// address, 127.0.0.1:8746, is loopback, so this is the second guard behind it.
+func openModeBindError(bound net.Addr) error {
+	if loopbackListener(bound) {
+		return nil
+	}
+	return fmt.Errorf("open mode (PLIMSOLL_INSECURE=1 with no PLIMSOLL_TOKEN or PLIMSOLL_CLIENTS_FILE) serves loopback only, and the RPC listener bound %s, which other hosts can reach: set PLIMSOLL_ADDR=127.0.0.1:8746 (or [::1]:8746) to serve this host only, or set PLIMSOLL_TOKEN or PLIMSOLL_CLIENTS_FILE to require a credential", bound)
 }
 
 // hardenedFacts are the resolved runtime facts the hardened policy checks —
@@ -223,8 +260,13 @@ type hardenedFacts struct {
 	MetricsAddr     string                 // metrics listen address; "" = metrics off
 	GuardAddr       string                 // egress guard listen address; "" = no guard
 	// IsolationPending skips the isolation rule: the early pass, before the smoke
-	// test has produced the evidence it needs, checks every other rule.
+	// test has produced the evidence it needs, checks every other rule. It skips the
+	// guest guard rule too, which waits for the same smoke test.
 	IsolationPending bool
+	// GuestGuard is what the provider states of plimsoll's guest guard after the smoke test
+	// (sandbox.GuestGuarded): its policy word and whether the smoke test proved it in force.
+	GuestGuard       string
+	GuestGuardProven bool
 	MaxConcurrent    int               // effective global concurrency cap
 	RatePerMin       int               // effective per-caller rate limit
 	Burst            int               // effective per-caller rate burst
@@ -234,6 +276,10 @@ type hardenedFacts struct {
 	// callers in PLIMSOLL_CLIENTS_FILE without a paid_seconds_per_day.
 	Metered  bool
 	Uncapped []string
+	// LooseFiles names, one "SETTING: problems" each, the callers, grants and withheld
+	// files a user other than the daemon's own or root could change (configfile), as
+	// read from the descriptors the daemon opened.
+	LooseFiles []string
 }
 
 // hardenedFloor is the weakest isolation hardened mode accepts: kernel, the weaker of
@@ -278,17 +324,34 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 			f.Provider, f.Isolation.String())
 	}
 
+	// The guest guard: on a provider whose commands start behind it, the smoke test must have
+	// proved its filter in force from a program started as the code is (docker's
+	// smokeGuestGuard). Without it, code could make a namespace and a mount of its own under
+	// gVisor, and a folder with no noexec mark in it.
+	if desc := providers[f.Provider]; desc.guestGuard && !f.IsolationPending && !f.GuestGuardProven {
+		fail("hardened mode requires plimsoll's guest guard proven in force on provider %q (the filter in front of every program plimsoll starts in a sandbox, which refuses the code namespaces, mounts, clone3 and tracing), and the startup smoke test did not prove it; restart so the smoke test runs, and read its error",
+			f.Provider)
+	}
+
 	// Identity: a single shared token collapses every caller into one principal,
 	// which defeats per-caller limits, grant ACLs, per-session minting, and audit.
 	if !f.MultiClientAuth {
 		fail("hardened mode requires multi-client auth: set PLIMSOLL_CLIENTS_FILE (a shared PLIMSOLL_TOKEN or open dev mode is not a production identity)")
 	}
-	if strings.TrimSpace(getenv("PLIMSOLL_INSECURE")) != "" {
+	if settings.Insecure.Set(getenv) {
 		fail("PLIMSOLL_INSECURE must not be set in hardened mode")
 	}
 
+	// The files that decide who may call and what a run may reach: one another local user
+	// can change hands that user a caller of their own at the next restart, so hardened
+	// mode holds them to OpenSSH's rule for authorized_keys (internal/settings/configfile).
+	for _, loose := range f.LooseFiles {
+		fail("hardened mode refuses a file another user of this machine could change (%s): make the file and every directory named owned by root or the daemon's user, and remove their group and others write bits (chmod go-w)", loose)
+	}
+
 	// Transport: bearer tokens on cleartext are replayable by anyone on the path.
-	// Exact-loopback listeners are exempt, mirroring the official client's policy.
+	// A listener that bound a loopback address is exempt, mirroring the official
+	// client's policy; main passes the bound addresses, so a name is never exempt.
 	if !f.TLS && !loopbackAddr(f.Addr) {
 		fail("hardened mode requires TLS on the non-loopback listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY or bind a loopback address", f.Addr)
 	}
@@ -314,7 +377,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		desc.hardened(getenv, fail, func(err error) { violations = append(violations, err) })
 	}
 	if desc.pinnedImages {
-		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		pinned, err := settings.RequirePinnedImages.Get(getenv)
 		if err != nil {
 			violations = append(violations, err)
 		} else if !pinned {
@@ -333,16 +396,17 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		required = append(slices.Clone(required), desc.hardenedEnvelopeAt(f.Isolation)...)
 	}
 	var missing, nonPositive []string
-	for _, key := range required {
-		v := strings.TrimSpace(getenv(key))
-		if v == "" {
-			missing = append(missing, key)
+	for _, size := range required {
+		set, positive := size.Positive(getenv)
+		name := settings.NameOf(size)
+		if !set {
+			missing = append(missing, name)
 			continue
 		}
 		// Zero means "provider default" or "no cap" to the factory, which is not an
 		// operator's chosen envelope.
-		if n, err := strconv.ParseFloat(v, 64); err != nil || !(n > 0) {
-			nonPositive = append(nonPositive, key)
+		if !positive {
+			nonPositive = append(nonPositive, name)
 		}
 	}
 	if len(missing) > 0 {
@@ -393,19 +457,19 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 // sandbox.Build constructs: every dimension the provider enforces and none its
 // configuration rejects, since a policy demanding a variable Build refuses could
 // never be satisfied. A daemon-built provider brings its own (daemonProvider).
-var hardenedEnvelopeFor = map[string][]string{
+var hardenedEnvelopeFor = map[string][]settings.Size{
 	// docker enforces the whole envelope, and its runners share this host, so the
 	// aggregate budget that clamps concurrency is required too.
-	"docker": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB", "SANDBOX_PIDS", "SANDBOX_TOTAL_MEMORY_MB"},
+	"docker": {settings.MemoryMB, settings.CPUs, settings.DiskMB, settings.Pids, settings.TotalMemoryMB},
 	// E2B cannot enforce a process limit, so Build rejects SANDBOX_PIDS there.
-	"e2b": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
+	"e2b": {settings.MemoryMB, settings.CPUs, settings.DiskMB},
 	// Docker Cloud Sandboxes expose no disk or process control.
-	"dockercloud": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"},
+	"dockercloud": {settings.MemoryMB, settings.CPUs},
 }
 
 // hardenedEnvelopeDefault applies to a provider in neither table (wasm, disabled),
 // which the isolation rule refuses anyway.
-var hardenedEnvelopeDefault = []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"}
+var hardenedEnvelopeDefault = []settings.Size{settings.MemoryMB, settings.CPUs, settings.DiskMB}
 
 // maxSessionLifetime bounds SANDBOX_SESSION_LIFETIME: a session's sandbox outlives a
 // crashed daemon by its lifetime (plus the reaper's margin), so the setting is also
@@ -424,27 +488,27 @@ const maxSessionLifetime = 12 * time.Hour
 const maxSessionDiskMB = 1 << 20
 
 func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
-	max, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0)
+	max, err := settings.MaxSessions.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
-	perCaller, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS_PER_CALLER", 0)
+	perCaller, err := settings.MaxSessionsPerCaller.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
-	perOwner, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS_PER_OWNER", 0)
+	perOwner, err := settings.MaxSessionsPerOwner.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
-	diskMB, err := envIntWith(getenv, "SANDBOX_SESSION_DISK_MB", 1024)
+	diskMB, err := settings.SessionDiskMB.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
-	lifetime, err := envDurationWith(getenv, "SANDBOX_SESSION_LIFETIME", 30*time.Minute)
+	lifetime, err := settings.SessionLifetime.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
-	idle, err := envDurationWith(getenv, "SANDBOX_SESSION_IDLE", 5*time.Minute)
+	idle, err := settings.SessionIdle.Get(getenv)
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
@@ -472,7 +536,7 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 // cannot exceed SANDBOX_MAX_SESSIONS (more could never all be claimed at once) and
 // needs sessions on.
 func loadSessionPool(getenv func(string) string, sc rpc.SessionConfig) (int, error) {
-	n, err := envIntWith(getenv, "SANDBOX_SESSION_POOL", 0)
+	n, err := settings.SessionPool.Get(getenv)
 	switch {
 	case err != nil:
 		return 0, err
@@ -482,34 +546,6 @@ func loadSessionPool(getenv func(string) string, sc rpc.SessionConfig) (int, err
 		return 0, fmt.Errorf("SANDBOX_SESSION_POOL=%d needs sessions on (SANDBOX_MAX_SESSIONS)", n)
 	case n > sc.MaxSessions:
 		return 0, fmt.Errorf("SANDBOX_SESSION_POOL=%d must not exceed SANDBOX_MAX_SESSIONS=%d", n, sc.MaxSessions)
-	}
-	return n, nil
-}
-
-// envDurationWith reads a Go duration ("30m", "90s") the way envIntWith reads an int.
-func envDurationWith(getenv func(string) string, key string, def time.Duration) (time.Duration, error) {
-	v := strings.TrimSpace(getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, fmt.Errorf("%s=%q must be a duration such as 30m or 90s", key, v)
-	}
-	return d, nil
-}
-
-// envIntWith reads an int env var through an injected getenv. A non-empty but
-// unparseable value is a startup error: admission limits are safety settings, so a
-// typo must never silently weaken or disable one.
-func envIntWith(getenv func(string) string, key string, def int) (int, error) {
-	v := strings.TrimSpace(getenv(key))
-	if v == "" {
-		return def, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, fmt.Errorf("%s=%q must be an integer", key, v)
 	}
 	return n, nil
 }
@@ -524,7 +560,7 @@ func envIntWith(getenv func(string) string, key string, def int) (int, error) {
 // idle time); this used to refuse them outright, from before they were metered
 // (review, 2026-10-23).
 func loadPaidConfig(getenv func(string) string, metered bool) (int64, error) {
-	paid, err := envIntWith(getenv, "SANDBOX_PAID_SECONDS_PER_DAY", 0)
+	paid, err := settings.PaidSecondsPerDay.Get(getenv)
 	if err != nil {
 		return 0, err
 	}
@@ -535,8 +571,8 @@ func loadPaidConfig(getenv func(string) string, metered bool) (int64, error) {
 		return 0, errors.New("SANDBOX_PAID_SECONDS_PER_DAY applies only to a provider billed by the second (e2b, dockercloud): leave it unset")
 	}
 	if metered {
-		n, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0)
-		idle, ierr := envDurationWith(getenv, "SANDBOX_SESSION_IDLE", 5*time.Minute)
+		n, err := settings.MaxSessions.Get(getenv)
+		idle, ierr := settings.SessionIdle.Get(getenv)
 		if err == nil && ierr == nil && n > 0 && idle == 0 {
 			return 0, errors.New("SANDBOX_SESSION_IDLE=0 with sessions on a provider billed by the second: a session that never suspends bills for its whole lifetime, so every open would be refused; set an idle timeout")
 		}

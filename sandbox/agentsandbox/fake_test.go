@@ -8,11 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -25,6 +27,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1"
 	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -76,6 +79,9 @@ type fakeAPI struct {
 	createdAt func() time.Time
 	// neverReady keeps every claim unready.
 	neverReady bool
+	// ips is each claim's pod address, a fresh one per claim as a cluster gives each pod
+	// its own; every address dials the one fake sandboxd (testProviderWith).
+	ips map[string]string
 }
 
 func goodSpec(digest string) podSpec {
@@ -120,7 +126,7 @@ func templatePolicy() networkPolicy {
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
-	f := &fakeAPI{t: t, claims: map[string]*claim{}, handler: "runsc", classUID: "runtime-class-uid", policies: []networkPolicy{templatePolicy()}, nodeBoot: fakeNodeBoot}
+	f := &fakeAPI{t: t, claims: map[string]*claim{}, ips: map[string]string{}, handler: "runsc", classUID: "runtime-class-uid", policies: []networkPolicy{templatePolicy()}, nodeBoot: fakeNodeBoot}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -213,6 +219,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.created = append(f.created, c)
 		f.n++
 		c.Meta.UID = fmt.Sprintf("claim-uid-%d", f.n)
+		f.ips[c.Meta.Name] = fmt.Sprintf("10.244.%d.%d", f.n/200, 10+f.n%200)
 		now := time.Now().Truncate(time.Second)
 		if f.createdAt != nil {
 			now = f.createdAt()
@@ -254,7 +261,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		if !f.neverReady {
 			out.Status.Conditions = []condition{{Type: "Ready", Status: "True"}}
 			out.Status.Sandbox.Name = "sb-" + name
-			out.Status.Sandbox.PodIPs = []string{fakePodIP}
+			out.Status.Sandbox.PodIPs = []string{f.ips[name]}
 		}
 		f.write(w, out)
 	case strings.HasPrefix(path, agentsAPI+ns+"sandboxes/sb-"):
@@ -281,7 +288,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			OwnerReferences: []ownerReference{{Kind: "Sandbox", Name: "sb-" + name, UID: "sandbox-uid-" + name, Controller: &ctl}}},
 			Spec: goodSpec(digestOf(fakeToken))}
 		pd.Spec.NodeName = fakeNode
-		pd.Status.Phase, pd.Status.PodIP = "Running", fakePodIP
+		pd.Status.Phase, pd.Status.PodIP = "Running", f.ips[name]
 		pd.Status.ContainerStatuses = append(pd.Status.ContainerStatuses, struct {
 			Name    string `json:"name"`
 			ImageID string `json:"imageID"`
@@ -333,6 +340,10 @@ type fakeSandboxd struct {
 	cancelled chan struct{}
 	// reached counts requests that completed the TLS handshake and reached the handler.
 	reached atomic.Int64
+	// dialed is the pod address of every connection the provider made, in order; targets
+	// is the last boundary script's list of connection attempts beyond the fixed ones.
+	dialed  []string
+	targets []string
 }
 
 // newFakeSandboxdWith serves the fake over TLS with cert, as a pod's terminator serves
@@ -358,8 +369,17 @@ func newFakeSandboxdWith(t *testing.T, cert tls.Certificate, protos ...string) *
 	return f
 }
 
-// addr is where a pod's terminator would be: every pod IP dials it.
-func (f *fakeSandboxd) addr(string) string { return f.srv.Listener.Addr().String() }
+// addr is where a pod's terminator would be: every pod IP dials it, and each is recorded.
+func (f *fakeSandboxd) addr(ip string) string {
+	f.mu.Lock()
+	f.dialed = append(f.dialed, ip)
+	f.mu.Unlock()
+	return f.srv.Listener.Addr().String()
+}
+
+// boundaryTargets is the boundary script's list of extra connection targets, from its
+// source as the provider sent it on stdin.
+var boundaryTargets = regexp.MustCompile(`const extra = (\[.*?\]), fills = `)
 
 func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1.StartRequest], stream *connect.ServerStream[processv1.StartResponse]) error {
 	f.mu.Lock()
@@ -435,7 +455,7 @@ func (f *fakeSandboxd) WriteStdin(_ context.Context, req *connect.Request[proces
 	return connect.NewResponse(&processv1.WriteStdinResponse{}), nil
 }
 
-// runnerReport answers a runner command the way /runner.mjs does: it reads the plan and
+// runnerReport answers a runner command the way the project runner does: it reads the plan and
 // signs a report of one passing step per plan step, each printing its command.
 func runnerReport(t *testing.T, stdin []byte) string {
 	t.Helper()
@@ -503,7 +523,7 @@ func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *f
 	p.dialAddr = sd.addr
 	p.pf.TTL = 0
 	sd.run = func(argv []string, stdin []byte) (string, string, int32) {
-		if strings.Contains(strings.Join(argv, " "), runnerPath) {
+		if strings.Contains(strings.Join(argv, " "), nativehelper.InContainer) {
 			return runnerReport(t, stdin), "", 0
 		}
 		return "out:" + string(stdin), "", 0
@@ -661,14 +681,30 @@ func fakeSmoke(t *testing.T, p *Provider, sd *fakeSandboxd, edit func(*boundaryR
 		return out
 	}
 	sd.run = func(argv []string, stdin []byte) (string, string, int32) {
-		if strings.Contains(strings.Join(argv, " "), runnerPath) {
+		if strings.Contains(strings.Join(argv, " "), nativehelper.InContainer) {
 			return runnerReport(t, stdin), "", 0
 		}
+		// A snippet other than the boundary script (a later run's) gets the same report,
+		// with no attempts beyond the fixed ones.
+		var targets []string
+		if m := boundaryTargets.FindSubmatch(stdin); m != nil {
+			if err := json.Unmarshal(m[1], &targets); err != nil {
+				t.Error(err)
+				return "", "", 1
+			}
+			sd.mu.Lock()
+			sd.targets = targets
+			sd.mu.Unlock()
+		}
 		ids := strings.Repeat("61000\t", 3) + "61000"
-		r := boundaryReport{Node: "v22.0.0", UID: ids, GID: ids, CapEff: "0000000000000000", CapPrm: "0000000000000000", NoNewPrivs: "1", Seccomp: "2",
-			Sandboxd: map[string]string{"none": "16", "wrong": "16", "front": "ERR_HTTP2_SESSION_ERROR"}, TLSKey: "EACCES",
+		r := boundaryReport{Node: "v22.23.4", UID: ids, GID: ids, CapEff: "0000000000000000", CapPrm: "0000000000000000", NoNewPrivs: "1", Seccomp: "2",
+			Sandboxd: map[string]string{"none": "16", "wrong": "16", "front": "ERR_HTTP2_SESSION_ERROR"}, TLSKey: "EACCES", Helper: goodHelper(),
 			Env: []string{"HOME", "PATH"}, Resolv: "nameserver 127.0.0.1\n", Swept: 1000, Gateway: "10.0.0.1", Egress: map[string]string{"tcp 10.0.0.1:10250": "timeout"},
 			Dmesg: "[   0.000000] Starting gVisor...", Mounts: []string{"none / overlay ro 0 0", "shm /dev/shm tmpfs rw 0 0"},
+		}
+		// Every attempt the script makes goes unanswered, as under a policy that denies egress.
+		for _, target := range targets {
+			r.Egress["tcp "+target] = "timeout"
 		}
 		if p.IsolationClass() == sandbox.IsolationVM {
 			r.Dmesg = kataBoot
@@ -981,7 +1017,7 @@ func TestPoliciesCannotChangeWhileTheSmokeTestProvesThem(t *testing.T) {
 			answer := sd.run
 			sd.run = func(argv []string, stdin []byte) (string, string, int32) {
 				out, stderr, exit := answer(argv, stdin)
-				runner := strings.Contains(strings.Join(argv, " "), runnerPath)
+				runner := strings.Contains(strings.Join(argv, " "), nativehelper.InContainer)
 				if runner == duringRunner {
 					api.mu.Lock()
 					api.policies[0].Meta.UID = "recreated-during-smoke"
@@ -999,6 +1035,44 @@ func TestPoliciesCannotChangeWhileTheSmokeTestProvesThem(t *testing.T) {
 			if proven != "" {
 				t.Fatal("recorded a successful smoke proof across a policy change")
 			}
+		})
+	}
+}
+
+// goodHelper is the boundary test's reading of the image's project runner that passes: the
+// native helper this test binary carries for x86-64 (the one machine it is built for),
+// root's, mode 0755, on an x86-64 node, whatever machine this test runs on.
+func goodHelper() nativehelper.FileReport {
+	sum, err := nativehelper.SHA256(nativehelper.BuiltMachine)
+	if err != nil {
+		panic(err)
+	}
+	zero, mode := 0, 0o755
+	return nativehelper.FileReport{Type: "file", UID: &zero, Mode: &mode, Size: 516768, SHA256: sum, Arch: "x64"}
+}
+
+// The smoke test refuses an image whose project runner is missing, is other bytes or is not
+// root's, before any project runs through it.
+func TestSmokeRefusesAnImageWithoutTheRunner(t *testing.T) {
+	for name, c := range map[string]struct {
+		edit func(*nativehelper.FileReport)
+		want string
+	}{
+		"missing":     {func(h *nativehelper.FileReport) { *h = nativehelper.FileReport{Error: "ENOENT"} }, "there is no file at " + nativehelper.InContainer},
+		"other":       {func(h *nativehelper.FileReport) { h.SHA256 = strings.Repeat("0", 64) }, "has sha256 " + strings.Repeat("0", 64)},
+		"the guest's": {func(h *nativehelper.FileReport) { uid := guestUID; h.UID = &uid }, "it must be root's"},
+		"setgid":      {func(h *nativehelper.FileReport) { mode := 0o2755; h.Mode = &mode }, "no setuid, setgid or sticky bit"},
+		"an arm64 node": {func(h *nativehelper.FileReport) { h.Arch, h.SHA256 = "arm64", strings.Repeat("0", 64) },
+			"the sandbox's machine is arm64 (node's process.arch); the native helper is built for x86-64 (x64) only"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, _, sd := testProvider(t)
+			fakeSmoke(t, p, sd, func(r *boundaryReport) { c.edit(&r.Helper) })
+			err := p.SmokeTest(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.want) || !errors.Is(err, nativehelper.ErrNotTheHelper) {
+				t.Fatalf("got %v; want a refusal naming %q", err, c.want)
+			}
+			drained(t, p)
 		})
 	}
 }

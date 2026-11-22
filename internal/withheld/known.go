@@ -151,7 +151,7 @@ func checkKnownEntry(path string, reason Bound, size int64) error {
 	case len(path) > maxKnownPathBytes:
 		return fmt.Errorf("an entry's path is longer than %d bytes", maxKnownPathBytes)
 	case !utf8.ValidString(path) || strings.ContainsFunc(path, needsEscape):
-		return fmt.Errorf("path %q holds a control character or invalid UTF-8; the list writes them as \\x escapes", CleanWhere(path))
+		return fmt.Errorf("path %q holds a control or bidirectional character or invalid UTF-8; the list writes them as escapes", CleanWhere(path))
 	}
 	if _, ok := boundText[reason]; !ok {
 		return fmt.Errorf("%s: unknown reason %q", CleanWhere(path), CleanWhere(string(reason)))

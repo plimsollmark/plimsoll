@@ -11,12 +11,15 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
-// Paths in plimsoll's sandbox image, the same the other providers that run the runner use.
+// Paths in plimsoll's sandbox image, the same the other providers that run the runner use
+// (the runner itself is nativehelper.InContainer).
 const (
-	runnerPath      = "/runner.mjs"
 	runnerGuardPath = "/usr/local/lib/plimsoll-runner-guard.so"
 	workDir         = "/work"
 	// controlPath is the PATH the runner starts with (the image's own PATH reaches the
@@ -28,12 +31,12 @@ const (
 // the path the smoke test proves.
 const (
 	snippetFile = "snippet.js"
-	snippetStep = "node " + snippetFile
+	snippetStep = sessionkit.GuestNode + " " + snippetFile
 )
 
 // containerName is a fresh name for one run's container: a prefix and 24 random hex
 // digits, so the forced removal after a run that did not end cleanly names only it.
-func containerName() string { return "plimsoll-wslc-" + randHex(12) }
+func containerName() string { return "plimsoll-wslc-" + providerkit.RandHex(12) }
 
 // runArgv is the whole argument list of one run's `wslc container run`: every control
 // WSLC has, the image by the ID the smoke test read, and the runner started under
@@ -43,7 +46,7 @@ func (p *Provider) runArgv(name, imageID string) []string {
 	mb := func(n int) string { return strconv.Itoa(n) + "m" }
 	user := strconv.Itoa(GuestUID) + ":" + strconv.Itoa(GuestUID)
 	nproc := strconv.Itoa(p.cfg.Nproc)
-	return []string{
+	argv := []string{
 		"container", "run",
 		"--rm",          // removed when the runner exits
 		"--interactive", // stdin carries the plan
@@ -77,11 +80,13 @@ func (p *Provider) runArgv(name, imageID string) []string {
 		"--stop-timeout", "1",
 		"--entrypoint", "/usr/bin/env",
 		imageID,
-		// /usr/bin/env's arguments: a clean environment, the guard that makes the runner
-		// unreadable to its own steps, and the runner. The image's environment reaches
+		// /usr/bin/env's arguments: a clean environment and the runner, the native helper,
+		// which makes itself unreadable to its own steps with one call before it reads its
+		// plan (no guard library: it is a static program). The image's environment reaches
 		// the steps through the plan, never this process.
-		"-i", "PATH=" + controlPath, "HOME=/", "LD_PRELOAD=" + runnerGuardPath, "node", runnerPath,
+		"-i", "PATH=" + controlPath, "HOME=/",
 	}
+	return append(argv, nativehelper.RunProject...)
 }
 
 // planRun is one run's outcome as the transport saw it.
@@ -181,8 +186,8 @@ func (p *Provider) runInNamed(ctx context.Context, s *verified, session, name st
 	defer cancel()
 	cmd := hostCommand(runCtx, p.cfg.Path, argv...)
 	cmd.Stdin = bytes.NewReader(planJSON)
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = runnerwire.StdoutCap, errorCap
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = runnerwire.StdoutCap, errorCap
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	// WaitDelay bounds the wait for the streams after the Linux side of interop is
 	// killed: a Windows process that outlives it must not hold this call open.

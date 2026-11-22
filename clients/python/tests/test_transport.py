@@ -22,6 +22,7 @@ from plimsoll_client import (
     PROTOCOL,
     AnswerNotBoundError,
     AsyncClient,
+    ChainError,
     Client,
     MalformedResponseError,
     PlimsollError,
@@ -30,7 +31,7 @@ from plimsoll_client import (
     ResponseTooLargeError,
     TransportError,
 )
-from plimsoll_client._record import session_fingerprint
+from plimsoll_client._record import session_fingerprint, valid_text
 
 Reply = Callable[[BaseHTTPRequestHandler], None]
 
@@ -177,6 +178,29 @@ class Transport(unittest.TestCase):
             Client(self.stub.url).describe()
         self.assertEqual(cm.exception.info.protocol, PROTOCOL + 1)
 
+    def test_this_client_speaks_protocol_7_and_a_protocol_6_daemon_refuses_it(self) -> None:
+        # Protocol 7 came with the provider name's rule (record.ValidText, hunt-security-39,
+        # 2026-11-21): this client refuses a record whose provider holds a
+        # control or bidirectional character, which a protocol 6 client accepted. A daemon of
+        # protocol 6 refuses this client's run before anything runs, and its Describe is
+        # refused here.
+        self.assertEqual(PROTOCOL, 7, "this test pins protocol 7 to the provider name's rule")
+        self.assertFalse(valid_text("docker\x1b[2J"))
+        refusal = {
+            "code": "unimplemented",
+            "message": "this daemon serves protocol 6 and the request states 7; nothing ran",
+            "details": [{"type": "plimsoll.v1.NotDispatched", "value": "CAM"}],
+        }
+        self.stub.reply = lambda h: send(h, 501, json.dumps(refusal).encode())
+        with self.assertRaises(ProtocolMismatchError) as cm:
+            Client(self.stub.url).run_javascript("1")
+        self.assertEqual(cm.exception.not_dispatched, "protocol")
+        self.assertEqual(json.loads(self.stub.seen[0]["body"])["protocol"], 7)
+        self.stub.reply = lambda h: send(h, 200, describe_answer(6))
+        with self.assertRaises(ProtocolMismatchError) as dm:
+            Client(self.stub.url).describe()
+        self.assertEqual(dm.exception.info.protocol, 6)
+
     def test_a_declared_oversized_answer_is_refused_unread(self) -> None:
         self.stub.reply = lambda h: send(h, 200, b"{}", length=MAX_RESPONSE_BYTES + 1)
         with self.assertRaises(ResponseTooLargeError) as cm:
@@ -290,6 +314,24 @@ class Transport(unittest.TestCase):
         info = asyncio.run(AsyncClient(self.stub.url).describe())
         self.assertEqual(info.provider, "stub")
 
+    def test_an_open_answer_without_a_generation_is_refused_and_the_session_closed(self) -> None:
+        sid = "cd" * 16
+        closes: List[Dict[str, Any]] = []
+
+        def reply(h: BaseHTTPRequestHandler) -> None:
+            if h.path.endswith("/OpenSession"):
+                body = {"sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}
+                send(h, 200, json.dumps(body).encode())
+            elif h.path.endswith("/CloseSession"):
+                closes.append(json.loads(self.stub.seen[-1]["body"]))
+                send(h, 200, json.dumps({"session": session_fingerprint(sid), "ended": "SESSION_END_CLOSED"}).encode())
+
+        self.stub.reply = reply
+        with self.assertRaises(ChainError):
+            Client(self.stub.url).open_session()
+        # Closed with generation 1, the one every daemon opens a session at.
+        self.assertEqual([(c.get("sessionId"), c.get("generation")) for c in closes], [(sid, "1")])
+
     def sessions(self, open_delay: float) -> threading.Event:
         """Answers OpenSession after open_delay with one session, and CloseSession
         for it; the event is set when the session is closed."""
@@ -299,7 +341,7 @@ class Transport(unittest.TestCase):
         def reply(h: BaseHTTPRequestHandler) -> None:
             if h.path.endswith("/OpenSession"):
                 time.sleep(open_delay)
-                body = {"sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}
+                body = {"generation": "1", "sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}
                 send(h, 200, json.dumps(body).encode())
             elif h.path.endswith("/CloseSession"):
                 if json.loads(self.stub.seen[-1]["body"]).get("sessionId") == sid:

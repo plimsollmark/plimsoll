@@ -7,7 +7,7 @@ It is administered by the plimsoll maintainers
 ([github.com/plimsollmark](https://github.com/plimsollmark)) and follows that repository's
 grammar: a top-level namespace, a colon, and a name.
 
-Taxonomy version 1, 2026-11-16. Changes are listed under [Changes](#changes).
+Taxonomy version 3, 2026-11-20. Changes are listed under [Changes](#changes).
 
 The key words "MUST", "MUST NOT", "SHOULD" and "MAY" are to be interpreted as described in
 [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
@@ -63,6 +63,7 @@ may add values when a writer maps more runs.
 | provider | The backend that actually runs the code, such as a locked-down `docker run` or a hosted microVM. |
 | isolation tier | How strong the wall between the code and the host is, as the daemon reports it: one of four levels, defined under `plimsoll:isolation`. A reported tier is the provider's configuration and evidence plus a check the daemon runs at startup; it is not a hardware attestation. |
 | floor | The weakest isolation tier the caller accepts. A daemon that cannot meet it refuses the run before any code starts. |
+| isolation qualification | A sentence a provider's vendor or design requires beside its tier wherever the tier is stated. Only the WSL containers provider states one so far: Microsoft states that WSL is not a security sandbox for running untrusted code. From record version 5 the run record carries it, signed with the tier. |
 | run record | The facts the daemon states about one run: the request digest, the result digest, the provider, the isolation tier, the environment, the times, and the record's own digest. The daemon holds no signing key. [Run records](run-records.md) defines every field. |
 | request digest, result digest, record digest | Lowercase hexadecimal SHA-256 over the request as sent, the result as sent, and every field of the record, each over a byte layout defined in [Run records](run-records.md). |
 | harness, bundle | The harness is a program outside the daemon that keeps a file of runs (the *bundle*, one run per line), signs each run's record and links each line to the one before it, so a line cannot be removed or reordered unseen. |
@@ -84,6 +85,11 @@ Every CycloneDX property value is a string. Within it:
 - _Boolean_: `true` or `false`, case sensitive. A boolean property is always written, never
   omitted to mean `false`.
 - _Enumeration_: exactly one of the values listed for the property, case sensitive.
+- _Text_: a sentence exactly as the run record states it: at most 1024 bytes of UTF-8, with
+  no control character (U+0000 to U+001F, U+007F to U+009F) and none of U+061C, U+200E,
+  U+200F, U+2028, U+2029, U+202A to U+202E or U+2066 to U+2069 (Unicode's bidirectional
+  controls, which show text in another order than it is stored, and its line and paragraph
+  separators).
 - _Typed reference_: a kind (lowercase letters, digits and `-`), a colon, and a value, as
   the run record states it, for example `docker-image:sha256:<digest>` or `k8s-pod-uid:<UID>`.
   A reader MUST treat a kind it does not know as opaque, not as an error.
@@ -99,7 +105,7 @@ once" is omitted when it has no value.
 | `$.properties` | The BOM as a whole | `bundle_sha256`, `bundle_line`, `emitter`, `qualification_sha256` |
 | `$.metadata.component` | The program that ran (a component of type `application` holding the request's files) | `request_sha256`, `result_sha256`, `record_sha256`, `trace_id`, `author_kind`, `author_kind_basis` |
 | `$.metadata.component.components[]` | Each file of the request (type `file`) | `bytes` |
-| `$.formulation[].workflows[]` | How the run was done (the workflow ran the program; its output is the run's result, not a built artifact) | `provider`, `isolation`, `minimum_isolation`, `timeout_ms`, `grant`, `outcome`, `policy`, `instance` |
+| `$.formulation[].workflows[]` | How the run was done (the workflow ran the program; its output is the run's result, not a built artifact) | `provider`, `isolation`, `isolation_qualification`, `minimum_isolation`, `timeout_ms`, `grant`, `outcome`, `policy`, `instance` |
 | `$.formulation[].workflows[].outputs[]` | The run's result | `result_sha256` |
 | `$.formulation[].workflows[].tasks[].steps[].commands[]` | Each executed step | `exit_code`, `duration_ms`, `timed_out`, `stdout_truncated`, `stderr_truncated` |
 | `$.components[]`, the component with `bom-ref` `image` | The image the run executed in (type `container`) | `environment`, `software_identity` |
@@ -137,13 +143,14 @@ A `plimsoll` property MUST NOT be used on an element other than the one listed f
 
 | Property | Description |
 |---|---|
-| `plimsoll:provider` | The provider that ran the code, as the daemon reported it. _Enumeration_: `docker` (a locked-down `docker run`), `dockercloud` (a Docker Cloud Sandboxes microVM), `agentsandbox` (a Kubernetes agent-sandbox pod). MUST appear exactly once. |
+| `plimsoll:provider` | The provider that ran the code, as the daemon reported it. _Enumeration_: `docker` (a locked-down `docker run`), `dockercloud` (a Docker Cloud Sandboxes microVM), `agentsandbox` (a Kubernetes agent-sandbox pod), `wslc` (WSL containers on Windows, whose run's tier always comes with `plimsoll:isolation_qualification`). MUST appear exactly once. |
 | `plimsoll:isolation` | The isolation tier the daemon reported for the run, weakest first. _Enumeration_: `process` (the code runs inside the daemon's own process, behind a WebAssembly engine only), `container` (an operating-system container sharing the host's kernel), `kernel` (a container whose system calls are answered by a separate kernel in user space, gVisor's `runsc`, not by the host's kernel), `vm` (a virtual machine with its own kernel, separated by the processor's hardware virtualization). The tier is the provider's configuration and evidence plus a check the daemon runs at startup, not a hardware attestation and not a measurement of this run. `process` is the tier of the `wasm` provider, which runs no projects, so it does not appear here. The meaning of each tier, and what each provider's tier rests on, is in [Isolation tiers](isolation-tiers.md). MUST appear exactly once. |
+| `plimsoll:isolation_qualification` | The sentence the provider's vendor or design requires beside `plimsoll:isolation`, exactly as the run record states it (from record version 5, where it is signed with the tier). Show it wherever the tier is shown. _Text_. MUST appear exactly when the run record states one: then once, with the record's sentence, and never otherwise. A `wslc` run whose record states none (every record before version 5) is not written at all, and a BOM for one fails `-check` and the page's checker, so the tier of a WSL run never reaches a BOM without Microsoft's statement. |
 | `plimsoll:minimum_isolation` | The floor the request set: the weakest tier it accepts. _Enumeration_: one of the `plimsoll:isolation` values, or empty when the request set no floor. MUST appear exactly once. |
 | `plimsoll:timeout_ms` | The time limit the request asked for, in milliseconds, as the caller sent it; `0` or a negative value leaves the limit to the provider's default. The daemon also caps it at its own ceiling, and the limit actually in force is not in the run record. _Integer_, MAY be negative. MUST appear exactly once. |
 | `plimsoll:grant` | The name of the grant profile the request named, or `none` when it named none; a daemon refuses to load a profile named `none`, so the two cannot be confused. Whether the run could reach a network is the provider's configuration, not something the run record measures. MUST appear exactly once. |
 | `plimsoll:outcome` | How the project run ended. _Enumeration_: `completed` (every step ran; each step's exit code says whether it passed), `setup_failed` (preparing the project failed before any step began), `timed_out` (the run exceeded its time limit), `protocol_error` (the program inside the sandbox that runs the steps and the daemon disagreed), `runner_failed` (that program, or a hosted provider's command service, failed after a step began). [Run results](run-results.md) defines each. MUST appear exactly once. |
-| `plimsoll:policy` | The sandbox policy the provider applied, as the run record states it. _Typed reference_, one of: `seccomp:sha256:<digest>` (the system-call filter a docker run applied, the profile file named by the SHA-256 of its bytes), `seccomp:docker-default` (docker's own built-in filter), `seccomp:unconfined` (no system-call filter at all), `seccomp:skipped:runsc` (a run under gVisor's `runsc`, where no host filter is applied and gVisor's own kernel answers the code's system calls). A present policy is not by itself evidence that a filter was applied. MAY appear at most once; present only when the run record states one. |
+| `plimsoll:policy` | The sandbox policy the provider applied, as the run record states it. _Typed reference_: a seccomp form, then, for a run whose commands started behind plimsoll's <dfn>*guest guard*</dfn> (a small program of plimsoll's that the docker provider starts in front of every program it starts in the container, and that puts a second system-call filter of plimsoll's own on it, [seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)), one space and the guest guard's word. The seccomp form is one of: `seccomp:sha256:<digest>` (the system-call filter a docker run applied, the profile file named by the SHA-256 of its bytes), `seccomp:docker-default` (docker's own built-in filter), `seccomp:unconfined` (no system-call filter at all), `seccomp:skipped:runsc` (a run under gVisor's `runsc`, where no host filter is applied and gVisor's own kernel answers the code's system calls). The guest guard's word is `guest-guard:sha256:<digest>`, the digest being the SHA-256 of the guest guard's program file. So a policy reads, for instance, `seccomp:sha256:<digest> guest-guard:sha256:<digest>`, or under gVisor `seccomp:skipped:runsc guest-guard:sha256:<digest>`. A docker daemon with the guest guard writes the word on every run, under either runtime; a docker policy without it was written by a daemon from before the guest guard, and says nothing about one. A present policy is not by itself evidence that a filter was applied. MAY appear at most once; present only when the run record states one. |
 | `plimsoll:instance` | The sandbox instance that ran the code, such as `k8s-pod-uid:` and the UID the Kubernetes API server gave the pod: an opaque join key to evidence kept outside plimsoll, never a name or a path. _Typed reference_, at most 160 bytes. MAY appear at most once; present only when the run record states one. |
 
 ## The run's result: `$.formulation[].workflows[].outputs[]`
@@ -166,8 +173,8 @@ A `plimsoll` property MUST NOT be used on an element other than the one listed f
 
 | Property | Description |
 |---|---|
-| `plimsoll:environment` | The run record's identity of the image selected for the run: `docker-image:sha256:<digest>`, `dockercloud-image:sha256:<digest>` or `agentsandbox-image:sha256:<digest>`. _Typed reference_. MUST appear exactly once. |
-| `plimsoll:software_identity` | The run record's identity of the executable image selected, with its platform, such as `oci-manifest:linux/amd64@sha256:<digest>`. _Typed reference_. MUST appear exactly once: `oci-manifest:<platform>@sha256:<digest>` for a docker run, and empty for a Docker Cloud or agent-sandbox run, whose records state none. |
+| `plimsoll:environment` | The run record's identity of the image selected for the run: `docker-image:sha256:<digest>`, `dockercloud-image:sha256:<digest>`, `agentsandbox-image:sha256:<digest>` or `wslc-image:sha256:<digest>`. For `wslc-image`, the digest is the image ID: the SHA-256 of the image's configuration, by which the provider starts every run, in either mode. It is not a registry manifest digest, and no registry pin is stated: the provider checks a pin only by finding it among the repository digests `wslc image inspect` lists at startup, never against the image's own bytes, and in the per-run mode the copy each run's VM loads holds no manifest whose digest is the pin (measured on wslc 3.0.5.0, 2026-11-17). _Typed reference_. MUST appear exactly once. |
+| `plimsoll:software_identity` | The run record's identity of the executable image selected, with its platform, such as `oci-manifest:linux/amd64@sha256:<digest>`. _Typed reference_. MUST appear exactly once: `oci-manifest:<platform>@sha256:<digest>` for a docker run, and empty for a Docker Cloud, agent-sandbox or WSL containers run, whose records state none. |
 
 ## Evidence property names
 
@@ -235,5 +242,7 @@ it does not know.
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-11-16 | First versioned taxonomy: value formats, placement and how often each property appears. Names unchanged from the unversioned list. |
+| 2 | 2026-11-17 | Added `plimsoll:isolation_qualification` on the workflow (present exactly when the run record, from version 5, states a sentence beside the tier) and the _Text_ format; added `wslc` to `plimsoll:provider` and `wslc-image:sha256:<digest>`, an image ID, to `plimsoll:environment`; a `wslc` run whose record states no sentence is refused. No name changed meaning. |
+| 3 | 2026-11-20 | `plimsoll:policy` may end with one space and the guest guard's word, `guest-guard:sha256:<digest>`, which a docker daemon with the guest guard writes on every run. Every value version 2 allowed is still allowed and means what it meant: a docker policy with no guest guard word comes from a run made before the guest guard, which was not started behind one. A checker written to version 2 rejects a newer docker receipt. No name changed meaning. |
 
 Questions and requests: [plimsoll's issues](https://github.com/plimsollmark/plimsoll/issues).

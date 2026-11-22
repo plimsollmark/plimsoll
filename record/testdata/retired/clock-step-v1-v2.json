@@ -1,0 +1,51 @@
+{
+  "about": [
+    "Built, not shipped. Daemons v0.10.0 to v0.12.0 stamped a record's start and end from two wall-clock",
+    "readings, so a clock step between them could write a genuine record that ends before it starts",
+    "(5d6270398, 2026-10-01, measured one 1.3 s early and made the end the start plus monotonic elapsed",
+    "time). Each record below is a release's own vector (the version 1 record v0.11.1 signed, as",
+    "golden.json copies it, and v0.22.0's version 2 record) with endedUnixMs set 1300 ms before",
+    "startedUnixMs, its digest computed by record/testdata/record_v5.py's digest. Reading such a record",
+    "was retired by the decision of 2026-11-21 (docs/run-records.md): every reader refuses both,",
+    "with the retirement's text (record.RetiredEndBeforeStartText), not the text a current record's",
+    "refusal gives. record_v5.py copies them into golden.json's refused records. Never edited."
+  ],
+  "records": [
+    {
+      "name": "a version 1 record that ends 1.3 s before it starts",
+      "record": {
+        "version": 1,
+        "requestSha256": "9cfd4d94da192691732d4c8ef0d1c04acaa292ed5c27148b7483d7efad5d84d8",
+        "resultSha256": "051833a2c440ce72ad25b5a1a5858e0168f0075e8096d5959c03381a12623fde",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "",
+        "policy": "openshell-policy:sha256:d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871",
+        "startedUnixMs": "1790638038621",
+        "endedUnixMs": "1790638037321",
+        "session": "7388fb93a024d2e80e7f2be09386994002a4a88768a5b2e78f2c09ae994f3d65",
+        "sequence": "1",
+        "previousSha256": ""
+      },
+      "sha256": "d2325ef85d47910fd7f4992c6fd5c5fb6d58be9bf2da8a3c8dc22d00058a04ab"
+    },
+    {
+      "name": "a version 2 record that ends 1.3 s before it starts",
+      "record": {
+        "version": 2,
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1789999998700",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001"
+      },
+      "sha256": "13187d57ee05d4d522166834a662747b7b9fcc9a74dcebb6406e67d5df092eda"
+    }
+  ]
+}

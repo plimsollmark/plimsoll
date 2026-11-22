@@ -5,158 +5,29 @@ package typescript
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
+	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
-	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
-	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
-	"github.com/plimsollmark/plimsoll/internal/answertest"
-	"github.com/plimsollmark/plimsoll/internal/rpc"
-	"github.com/plimsollmark/plimsoll/record"
-	"github.com/plimsollmark/plimsoll/sandbox"
-	"github.com/plimsollmark/plimsoll/sandboxtest"
+	"github.com/plimsollmark/plimsoll/internal/clientcases"
+	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 )
 
-// projectEcho runs nothing: it answers a project with the plan it received (the
-// file paths, the steps, and the code in .plimsoll/cell.*), so the suite can check
-// what a fresh executeCode call sends. It states both languages. A cell holding
-// ECHO:NOSTEP is answered with no step report, as a run whose report was lost is.
-type projectEcho struct{}
-
-func (projectEcho) Name() string                           { return "project-echo" }
-func (projectEcho) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
-func (projectEcho) SupportsProjects() bool                 { return true }
-func (projectEcho) Environments() sandbox.Environments {
-	langs := []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}
-	return sandbox.Environments{Project: sandbox.PayloadEnvironment{Languages: langs}}
-}
-func (projectEcho) RunJavaScript(context.Context, sandbox.Request) (sandbox.Result, error) {
-	return sandbox.Result{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
-}
-func (projectEcho) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
-	return sandbox.ModuleResult{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
-}
-func (projectEcho) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
-	plan := struct {
-		Files []string `json:"files"`
-		Steps []string `json:"steps"`
-		Cell  string   `json:"cell"`
-	}{Steps: req.Steps}
-	for _, f := range req.Files {
-		plan.Files = append(plan.Files, f.Path)
-		if f.Path == ".plimsoll/cell.py" || f.Path == ".plimsoll/cell.js" {
-			plan.Cell = f.Content
-		}
-	}
-	if strings.Contains(plan.Cell, "ECHO:NOSTEP") {
-		return sandbox.ProjectResult{
-			Sandbox: "project-echo", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeProtocolError, Detail: "the runner's report was lost",
-		}, nil
-	}
-	out, _ := json.Marshal(plan)
-	return sandbox.ProjectResult{
-		Sandbox: "project-echo", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
-		Steps: []sandbox.StepResult{{Command: req.Steps[0], Stdout: string(out)}},
-	}, nil
-}
-
-// pooledEcho is a provider with a warm pool: sessions as sandboxtest.Sessions keeps
-// them (its Warm members serve warm-only opens), fresh projects answered as
-// projectEcho answers them and counted, so a test tells a pool member's answer to a
-// Run cell ("<language> <n>: <code>") from a fresh run's (the plan).
-type pooledEcho struct {
-	projectEcho
-	*sandboxtest.Sessions
-	fresh *atomic.Int32
-}
-
-func (pooledEcho) Name() string                           { return "pooled-echo" }
-func (pooledEcho) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
-func (p pooledEcho) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
-	return p.projectEcho.RunJavaScript(ctx, req)
-}
-func (p pooledEcho) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
-	p.fresh.Add(1)
-	return p.projectEcho.RunProject(ctx, req)
-}
-func (p pooledEcho) RunModule(ctx context.Context, req sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
-	return p.projectEcho.RunModule(ctx, req)
-}
-
-func serve(t *testing.T, svc *rpc.SandboxService, extra func(*http.ServeMux)) string {
-	t.Helper()
-	svc.Logger = slog.New(slog.DiscardHandler)
-	mux := http.NewServeMux()
-	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
-	mux.Handle(path, h)
-	if extra != nil {
-		extra(mux)
-	}
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-// bindingDaemons are the daemons test/binding.test.ts uses (failure-injection review,
-// findings 1 and 3): two replaying proxies in front of one daemon, whose run count
-// PLIMSOLL_REPLAY_RUNS_URL reports so a test can show the daemon ran the call it was
-// given another answer for; a daemon that does not echo the request ID; one whose read
-// cap refuses a body before the handler; and one serving no procedure at all.
-func bindingDaemons(t *testing.T) []string {
-	svc := rpc.NewSandboxService(sandboxtest.Wasm())
-	upstream := serve(t, svc, func(mux *http.ServeMux) {
-		mux.HandleFunc("GET /runs", func(w http.ResponseWriter, _ *http.Request) {
-			total, _ := svc.RunCounts()
-			_, _ = fmt.Fprint(w, total)
-		})
-	})
-	unboundSvc := rpc.NewSandboxService(sandboxtest.Wasm())
-	unboundSvc.Logger = slog.New(slog.DiscardHandler)
-	unbound := http.NewServeMux()
-	unbound.Handle(plimsollv1connect.NewSandboxServiceHandler(unboundSvc))
-	unboundSrv := httptest.NewServer(unbound)
-	t.Cleanup(unboundSrv.Close)
-	earlySvc := rpc.NewSandboxService(sandboxtest.Wasm())
-	earlySvc.Logger = slog.New(slog.DiscardHandler)
-	early := http.NewServeMux()
-	early.Handle(rpc.NewHandler(earlySvc, connect.WithReadMaxBytes(256)))
-	earlySrv := httptest.NewServer(early)
-	t.Cleanup(earlySrv.Close)
-	none := httptest.NewServer(rpc.BindAnswers(http.NotFoundHandler()))
-	t.Cleanup(none.Close)
-	return []string{
-		"PLIMSOLL_REPLAY_REFUSAL_URL=" + answertest.Replay(t, upstream),
-		"PLIMSOLL_REPLAY_SUCCESS_URL=" + answertest.Replay(t, upstream),
-		"PLIMSOLL_REPLAY_RUNS_URL=" + upstream + "/runs",
-		"PLIMSOLL_UNBOUND_URL=" + unboundSrv.URL,
-		"PLIMSOLL_EARLY_REFUSAL_URL=" + earlySrv.URL,
-		"PLIMSOLL_NO_PROCEDURE_URL=" + none.URL,
-	}
-}
-
-// TestTypeScript serves three daemons, the wasm provider for single runs, the
-// in-memory session provider for sessions and cells (whose POST /test/end-sessions
-// ends every open session as a lifetime would), and projectEcho for the project a
-// fresh executeCode call sends, and runs three suites against them:
-// the client's own, which needs nothing but node; the add-ons', which need the
-// client's dev dependencies (npm install in clients/typescript); and the
-// Trigger.dev example's, which needs the example's (npm install in
-// examples/trigger-chat). A suite whose dependencies are absent is skipped unless
+// TestTypeScript serves every daemon of internal/clientsuite's table (honest and hostile:
+// its Daemons list says what each one tests) and runs three suites against them: the
+// client's own, which needs nothing but node; the add-ons', which need the client's dev
+// dependencies (npm install in clients/typescript); and the Trigger.dev example's, which
+// needs the example's (npm install in examples/trigger-chat) and finds its daemon, the
+// session one, as PLIMSOLL_URL. A suite whose dependencies are absent is skipped unless
 // PLIMSOLL_REQUIRE_CLIENTS=1, which makes missing prerequisites fail.
 // Files run one at a time because the end-sessions endpoint reaches every session.
 func TestTypeScript(t *testing.T) {
@@ -168,76 +39,13 @@ func TestTypeScript(t *testing.T) {
 		clientSkipOrFail(t, "this node cannot run TypeScript directly (needs >= 22.18): %v %s", err, out)
 	}
 
-	wasmURL := serve(t, rpc.NewSandboxService(sandboxtest.Wasm()), nil)
-	tlsSrv := httptest.NewTLSServer(http.NotFoundHandler())
-	t.Cleanup(tlsSrv.Close)
-	sessions := &sandboxtest.Sessions{}
-	svc := rpc.NewSandboxService(sessions)
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	sessionsURL := serve(t, svc, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /test/end-sessions", func(http.ResponseWriter, *http.Request) {
-			for _, s := range sessions.Opened() {
-				s.End(sandbox.SessionExpired)
-			}
-		})
-	})
-	echoURL := serve(t, rpc.NewSandboxService(projectEcho{}), nil)
-	breaking := rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}})
-	breaking.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	breakingURL := serve(t, breaking, nil)
-	ownerCapped := rpc.NewSandboxService(&sandboxtest.Sessions{})
-	ownerCapped.Sessions = rpc.SessionConfig{MaxSessions: 16, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	ownerCapURL := serve(t, ownerCapped, nil)
-	// The shortest idle timeout the daemon takes, 1 s, so it closes a session no request
-	// named by then as unclaimed. POST /test/wait-ended answers once every session it
-	// opened has ended (200), or after 10 s (504).
-	quickIdleSessions := &sandboxtest.Sessions{}
-	quickIdle := rpc.NewSandboxService(quickIdleSessions)
-	quickIdle.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Second}
-	quickIdleURL := serve(t, quickIdle, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /test/wait-ended", func(w http.ResponseWriter, r *http.Request) {
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			if quickIdleSessions.WaitEnded(ctx) != nil {
-				http.Error(w, "a session is still open", http.StatusGatewayTimeout)
-			}
-		})
-	})
-	// pooled states a pool of 2 and always has a member waiting; drained states the
-	// same pool with none waiting, so a Run cell that prefers one runs fresh there. POST
-	// /test/opened answers with how many members pooled handed over (warm-only opens),
-	// how many it deleted, and the fresh runs it made.
-	pooledSessions := &sandboxtest.Sessions{Warm: 1 << 20}
-	var pooledFresh atomic.Int32
-	pooled := rpc.NewSandboxService(pooledEcho{Sessions: pooledSessions, fresh: &pooledFresh})
-	pooled.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	pooledURL := serve(t, pooled, func(mux *http.ServeMux) {
-		mux.HandleFunc("POST /test/opened", func(w http.ResponseWriter, _ *http.Request) {
-			warmOnly, ended := 0, 0
-			for _, s := range pooledSessions.Opened() {
-				if s.Options.WarmOnly {
-					warmOnly++
-				}
-				if s.Err() != nil {
-					ended++
-				}
-			}
-			_ = json.NewEncoder(w).Encode(map[string]int{"warmOnly": warmOnly, "fresh": int(pooledFresh.Load()), "ended": ended})
-		})
-	})
-	drained := rpc.NewSandboxService(pooledEcho{Sessions: &sandboxtest.Sessions{}, fresh: &atomic.Int32{}})
-	drained.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
-	drainedURL := serve(t, drained, nil)
-	liarMux := http.NewServeMux()
-	liarPath, liarHandler := rpc.NewHandler(unansweredLiar{})
-	liarMux.Handle(liarPath, liarHandler)
-	liarSrv := httptest.NewServer(liarMux)
-	t.Cleanup(liarSrv.Close)
-	env := append(os.Environ(), "PLIMSOLL_WASM_URL="+wasmURL, "PLIMSOLL_SESSIONS_URL="+sessionsURL, "PLIMSOLL_URL="+sessionsURL,
-		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL, "PLIMSOLL_LIAR_URL="+liarSrv.URL, "PLIMSOLL_OWNER_CAP_URL="+ownerCapURL,
-		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL, "PLIMSOLL_POOLED_URL="+pooledURL, "PLIMSOLL_DRAINED_URL="+drainedURL)
-	env = append(env, bindingDaemons(t)...)
-	env = append(env, "PLIMSOLL_TLS_URL="+tlsSrv.URL)
+	daemons := clientsuite.Env(t)
+	env := append(os.Environ(), daemons...)
+	for _, kv := range daemons {
+		if url, ok := strings.CutPrefix(kv, "PLIMSOLL_SESSIONS_URL="); ok {
+			env = append(env, "PLIMSOLL_URL="+url) // the Trigger.dev example's own name for its daemon
+		}
+	}
 
 	suites := []struct{ name, dir, glob, needs string }{
 		{"client", ".", "test/*.test.ts", ""},
@@ -261,13 +69,39 @@ func TestTypeScript(t *testing.T) {
 			cmd := exec.Command(node, append([]string{"--test", "--test-concurrency=1", "--test-reporter=spec"}, files...)...)
 			cmd.Dir = s.dir
 			cmd.Env = env
+			// The client's own suite writes its verdict on each shared case here, and the
+			// judge reads them after it (internal/clientcases): a case the suite skipped, or
+			// answered otherwise than its file states, fails this test even when every
+			// assertion in the suite passed.
+			verdicts := filepath.Join(t.TempDir(), "verdicts.jsonl")
+			if s.name == "client" {
+				cmd.Env = append(append([]string{}, env...), "PLIMSOLL_CASE_VERDICTS="+verdicts)
+			}
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s", out)
+			if s.name == "client" {
+				judgeVerdicts(t, "typescript", verdicts)
+			}
 			if err != nil {
 				t.Fatalf("node --test: %v%s", err, staleClientHint(s.dir, "."))
 			}
 		})
 	}
+}
+
+// judgeVerdicts judges the verdict file a client's suite wrote against every shared case;
+// a file the suite never wrote is every case missing.
+func judgeVerdicts(t *testing.T, client, path string) {
+	t.Helper()
+	a, err := clientcases.Load("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := clientcases.ReadVerdicts(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	clientcases.Judge(t, a, client, vs)
 }
 
 func clientSkipOrFail(t *testing.T, format string, args ...any) {
@@ -280,18 +114,27 @@ func clientSkipOrFail(t *testing.T, format string, args ...any) {
 
 // The package ships its own copy of the license, because a published package carries
 // nothing from outside its directory; it must stay the repository's license.
-func TestLicenseMatchesRepository(t *testing.T) {
-	own, err := os.ReadFile("LICENSE")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(own) != string(root) {
-		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
-	}
+func TestLicenseMatchesRepository(t *testing.T) { clientsuite.LicenseMatchesRepository(t) }
+
+// typescriptDeclined names the daemons of internal/clientsuite's table these suites do not
+// use, and why; TestTypeScriptUsesOrDeclinesEveryDaemon fails a daemon they neither read
+// nor name here.
+var typescriptDeclined = map[string]string{
+	"PLIMSOLL_AUTH_URL":          "the bearer token is checked against a stub fetch (test/client.test.ts), not a daemon",
+	"PLIMSOLL_AUTH_TOKEN":        "the bearer token is checked against a stub fetch (test/client.test.ts), not a daemon",
+	"PLIMSOLL_TAMPER_URL":        "answers are tampered with in the process, by a fetch wrapped around the wasm daemon (tampering in test/client.test.ts)",
+	"PLIMSOLL_SCRIPTED_URL":      "this client sends no module runs, and the awkward values it digests are vectors in record/testdata/golden.json",
+	"PLIMSOLL_SCRIPTED_SOFTWARE": "this client sends no module runs, and the awkward values it digests are vectors in record/testdata/golden.json",
+	"PLIMSOLL_LOSSY_URL":         "not covered here yet: a session call whose answer is lost after it ran is tested in the Python suite only",
+	"PLIMSOLL_ONE_CALL_URL":      "a Run cell's pool member is counted on the pooled and drained daemons (test/sandboxes.test.ts) instead",
+	"PLIMSOLL_NO_POOL_URL":       "not covered here yet: a Run cell that prefers a member on a daemon with no pool is tested in the Python suite only",
+	"PLIMSOLL_CLAIM_MISS_URL":    "not covered here yet: a pool whose provider has no member to hand over is tested in the Python suite only",
+	"PLIMSOLL_TLS_CA":            "the suite checks only that a certificate no trusted authority signed is refused",
+}
+
+func TestTypeScriptUsesOrDeclinesEveryDaemon(t *testing.T) {
+	clientsuite.CheckDeclined(t, typescriptDeclined, filepath.Join("test", "*.ts"), filepath.Join("test", "addons", "*.ts"),
+		filepath.Join("..", "..", "examples", "trigger-chat", "src", "trigger", "*.ts"))
 }
 
 // Both client packages carry the version of the plimsoll release they ship in, so a
@@ -325,16 +168,24 @@ func TestClientVersionsAgree(t *testing.T) {
 		}
 		return string(m[1])
 	}
-	crewai := filepath.Join("crewai-plimsoll", "src", "crewai_plimsoll", "__init__.py")
 	versions := map[string]string{
 		"package.json":                           pkg.Version,
 		"package-lock.json":                      lock.Version,
 		"python/pyproject.toml":                  python("pyproject.toml", `^version = "([^"]+)"$`),
 		"python/src/plimsoll_client/_version.py": python(filepath.Join("src", "plimsoll_client", "_version.py"), `^__version__ = "([^"]+)"$`),
-		// crewai-plimsoll moves with the release and requires the plimsoll-client of the same number.
-		"python/crewai-plimsoll/pyproject.toml":           python(filepath.Join("crewai-plimsoll", "pyproject.toml"), `^version = "([^"]+)"$`),
-		"python/crewai-plimsoll/ its plimsoll-client pin": python(filepath.Join("crewai-plimsoll", "pyproject.toml"), `^\s*"plimsoll-client==([^"]+)",$`),
-		"python/crewai-plimsoll/.../__init__.py":          python(crewai, `^__version__ = "([^"]+)"$`),
+	}
+	// Every framework package (python/<name>-plimsoll: crewai-plimsoll, langchain-plimsoll and
+	// the rest) moves with the release and requires the plimsoll-client of the same number.
+	packages, err := filepath.Glob(filepath.Join("..", "python", "*-plimsoll", "pyproject.toml"))
+	if err != nil || len(packages) == 0 {
+		t.Fatalf("no framework package under python/*-plimsoll (%v)", err)
+	}
+	for _, p := range packages {
+		name := filepath.Base(filepath.Dir(p))
+		module := strings.ReplaceAll(name, "-", "_")
+		versions["python/"+name+"/pyproject.toml"] = python(filepath.Join(name, "pyproject.toml"), `^version = "([^"]+)"$`)
+		versions["python/"+name+"/ its plimsoll-client pin"] = python(filepath.Join(name, "pyproject.toml"), `^\s*"plimsoll-client==([^"]+)",$`)
+		versions["python/"+name+"/.../__init__.py"] = python(filepath.Join(name, "src", module, "__init__.py"), `^__version__ = "([^"]+)"$`)
 	}
 	for _, v := range versions {
 		if v != pkg.Version || v == "" {
@@ -343,75 +194,80 @@ func TestClientVersionsAgree(t *testing.T) {
 	}
 }
 
-// breakingSessions opens fake sessions whose second snippet call runs and then
-// returns an unmarked error, as an exec stream that broke after the code ran does:
-// the daemon sends that call's record with the error.
-type breakingSessions struct{ *sandboxtest.Sessions }
-
-func (p *breakingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
-	s, err := p.Sessions.OpenSession(ctx, opts)
+// TestPeerFloorsAreTheLockedVersions: each optional peer of the add-ons (package.json's
+// peerDependencies: @mastra/core, @trigger.dev/sdk, ai, zod) declares a range whose floor is
+// exactly the version package-lock.json installs, the version every suite runs it at, and
+// keeps an upper bound; the lock's own copy of the ranges is the same; and the README says
+// each range and "tested at exactly" that version, beside every add-on that needs it. A
+// range stays, rather than an exact pin, because the peers are the whole package's: npm
+// refuses to install a package whose optional peer is pinned beside an application's other
+// patch of it (measured 2026-11-20, finding hunt-quality-70; the owner's A that day: "keep
+// ranges, but raise each floor to the version the tests run at, and say 'tested at exactly
+// X' on the page"). The Python adapters are held to their locks the same way, by exact
+// pins (clients/python/frameworks_test.go, TestAdaptersPinTheVersionTheirLockInstalls).
+func TestPeerFloorsAreTheLockedVersions(t *testing.T) {
+	var pkg struct {
+		Peers map[string]string `json:"peerDependencies"`
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Version string            `json:"version"`
+			Peers   map[string]string `json:"peerDependencies"`
+		} `json:"packages"`
+	}
+	for _, f := range []struct {
+		path string
+		into any
+	}{{"package.json", &pkg}, {"package-lock.json", &lock}} {
+		b, err := os.ReadFile(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(b, f.into); err != nil {
+			t.Fatalf("%s: %v", f.path, err)
+		}
+	}
+	if len(pkg.Peers) < 4 {
+		t.Fatalf("package.json declares %d peers, fewer than the four there were: is the scan reading its peerDependencies?", len(pkg.Peers))
+	}
+	if root := lock.Packages[""].Peers; !maps.Equal(root, pkg.Peers) {
+		t.Errorf("package-lock.json's root entry declares the peers %v; package.json declares %v", root, pkg.Peers)
+	}
+	rangeRule := regexp.MustCompile(`^>=(\S+) <(\S+)$`)
+	locked := map[string]string{}
+	for name, rule := range pkg.Peers {
+		locked[name] = lock.Packages["node_modules/"+name].Version
+		m := rangeRule.FindStringSubmatch(rule)
+		switch {
+		case locked[name] == "":
+			t.Errorf("package.json's peer %s is not in package-lock.json, so no suite runs it", name)
+		case m == nil:
+			t.Errorf("package.json's peer %s declares %q; want \">=%s <NEXT-MAJOR\", a floor and an upper bound", name, rule, locked[name])
+		case m[1] != locked[name]:
+			t.Errorf("package.json's peer %s declares %q, whose floor is %s; want the floor %s, the version package-lock.json installs and every suite runs it at", name, rule, m[1], locked[name])
+		}
+	}
+	readme, err := os.ReadFile("README.md")
 	if err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
-	return &breakingSession{Session: s}, nil
-}
-
-type breakingSession struct {
-	sandbox.Session
-	n int
-}
-
-func (s *breakingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
-	res, err := s.Session.RunJavaScript(ctx, req)
-	if s.n++; s.n == 2 {
-		return res, errors.New("the exec stream broke after the code ran")
+	text := strings.Join(strings.Fields(string(readme)), " ")
+	said := map[string]int{}
+	for _, m := range regexp.MustCompile("`([^`]+)` \\(([^,()]+), tested at exactly ([^()]+)\\)").FindAllStringSubmatch(text, -1) {
+		name, rule, version := m[1], m[2], m[3]
+		switch {
+		case pkg.Peers[name] == "":
+			t.Errorf("README.md says %q, but %s is not a peer in package.json", m[0], name)
+		case rule != pkg.Peers[name] || version != locked[name]:
+			t.Errorf("README.md says %q; want (%s, tested at exactly %s), package.json's range and package-lock.json's version", m[0], pkg.Peers[name], locked[name])
+		}
+		said[name]++
 	}
-	return res, err
-}
-
-// RunCell breaks the same way: the session's second call, of either kind.
-func (s *breakingSession) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox.CellResult, error) {
-	res, err := s.Session.RunCell(ctx, req)
-	if s.n++; s.n == 2 {
-		return res, errors.New("the relay was lost after the code ran")
+	for name := range pkg.Peers {
+		if said[name] == 0 {
+			t.Errorf("README.md never says %s's range and the version it is tested at exactly (\"`%s` (%s, tested at exactly %s)\")", name, name, pkg.Peers[name], locked[name])
+		}
 	}
-	return res, err
-}
-
-// unansweredLiar opens a session as provider "liar" at container, and answers every
-// call with the record of a call that may have run, stating evidence the session did
-// not state at open: "weaker" names the tier process, anything else another provider.
-type unansweredLiar struct {
-	plimsollv1connect.UnimplementedSandboxServiceHandler
-}
-
-const liarSessionID = "00112233445566778899aabbccddeeff"
-
-func (unansweredLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
-	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: liarSessionID, Session: record.SessionFingerprint(liarSessionID),
-		Sandbox: "liar", Isolation: "container", ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli()}), nil
-}
-
-func (unansweredLiar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
-	provider, isolation := "liar", "container"
-	if req.Msg.GetJavascript().GetCode() == "weaker" {
-		isolation = "process"
-	} else {
-		provider = "other"
-	}
-	rec := record.StampUnanswered(sandbox.RunRecord{
-		RequestSHA256: record.SessionRunRequestDigest(req.Msg), Provider: provider, Isolation: isolation,
-		Started: time.UnixMilli(1), Ended: time.UnixMilli(2), Session: record.SessionFingerprint(liarSessionID), Sequence: 1,
-	}, "unknown")
-	err := connect.NewError(connect.CodeUnknown, errors.New("the stream broke after the code ran"))
-	if d, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
-		err.AddDetail(d)
-	}
-	return nil, err
-}
-
-func (unansweredLiar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
-	return connect.NewResponse(&plimsollv1.CloseSessionResponse{Session: record.SessionFingerprint(liarSessionID)}), nil
 }
 
 // staleClientHint says why a suite's failure may have nothing to do with the code under

@@ -43,6 +43,7 @@ func TestDockerStatesVerifiedImageIDs(t *testing.T) {
 
 	d.ModuleImage = "plimsoll/sandbox-sim:latest"
 	d.ready, d.daemonHost, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.guestUID()
+	d.verifiedGuard = fakeGuestGuardPath // a faked Preflight: the guard file it would have written
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:aa", d.ProjectImage: "sha256:bb", d.ModuleImage: "sha256:cc"}
 	env = d.Environments()
 	if env.JavaScript.Identity != "docker-image:sha256:aa" || env.Project.Identity != "docker-image:sha256:bb" ||
@@ -63,10 +64,16 @@ func TestCloudProvidersStateOnlyContentAddressedIdentity(t *testing.T) {
 	if env := dc.Environments(); env.Project.Identity != "" || env.Project.MaxTimeout != time.Minute {
 		t.Fatalf("dockercloud tag: %+v", env)
 	}
-	dc.Image = "example/sandbox@sha256:" + digest
+	dc.Image = "example/sandbox@sha256:" + strings.ToLower(digest)
 	want := "dockercloud-image:sha256:" + strings.ToLower(digest)
 	if env := dc.Environments(); env.JavaScript.Identity != want || env.Project.Identity != want {
 		t.Fatalf("dockercloud digest: %+v, want %q", env, want)
+	}
+	// Upper-case hexadecimal is not the OCI form: it pins nothing, so no identity
+	// (until 2026-11-18 it was lower-cased and stated).
+	dc.Image = "example/sandbox@sha256:" + digest
+	if env := dc.Environments(); env.JavaScript.Identity != "" || env.Project.Identity != "" {
+		t.Fatalf("dockercloud upper-case digest: %+v, want no identity", env)
 	}
 }
 

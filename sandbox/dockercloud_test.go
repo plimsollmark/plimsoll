@@ -874,6 +874,7 @@ func TestDockerCloudInGuestTimeout(t *testing.T) {
 		d := f.provider()
 		var sleep time.Duration
 		f.exec = func([]string) (int, string, string) {
+			// fixed-wait: the fake command's own run time, set by each case
 			time.Sleep(sleep)
 			return 137, "partial", ""
 		}
@@ -921,6 +922,7 @@ func TestDockerCloudTimeoutIsTheGuestsMeasure(t *testing.T) {
 		var sleep time.Duration
 		var stderr string
 		f.exec = func([]string) (int, string, string) {
+			// fixed-wait: the fake command's own run time, set by each case
 			time.Sleep(sleep)
 			return 137, "partial", stderr
 		}
@@ -1238,6 +1240,9 @@ func TestBuildDockerCloudValidation(t *testing.T) {
 		"unpinned required": func(e map[string]string) {
 			e["SANDBOX_DOCKERCLOUD_IMAGE"], e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "plimsoll/sandbox:latest", "1"
 		},
+		"upper-case pin required": func(e map[string]string) {
+			e["SANDBOX_DOCKERCLOUD_IMAGE"], e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "plimsoll/sandbox"+"@sha256:"+strings.Repeat("AB", 32), "1"
+		},
 		"bad pinned boolean": func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "yes" },
 		"disk cap":           func(e map[string]string) { e["SANDBOX_DISK_MB"] = "1024" },
 		"pids cap":           func(e map[string]string) { e["SANDBOX_PIDS"] = "64" },
@@ -1326,6 +1331,7 @@ func (g *dcSmokeGuest) exec(argv []string) (int, string, string) {
 	case "sh /tmp/plimsoll-smoke-step.sh":
 		return g.probe()
 	case strings.Join(stepArgv(dcSmokeHangPath), " "):
+		// fixed-wait: the fake step's own run time, just past the 1 s in-guest limit under test
 		time.Sleep(1100 * time.Millisecond) // the in-guest limit is 1s
 		if g.hangEscape {
 			return 0, "", ""
@@ -2057,6 +2063,20 @@ func TestSelectorAnswerBelievesOnlyAFinishedSelection(t *testing.T) {
 	}{{1, false}, {137, false}, {0, true}} {
 		if _, err := selectorAnswer(answer, c.exit, c.cut, []string{"a.txt"}); err == nil {
 			t.Errorf("exit %d, cut %v: believed", c.exit, c.cut)
+		}
+	}
+}
+
+// A store image's digest is the OCI form, lower case: upper case was accepted and
+// lower-cased until 2026-11-18 (providerkit.PinnedDigest is the one rule now).
+func TestStoreImageDigestIsLowerCase(t *testing.T) {
+	lower := "tmpl_abc@sha256:" + strings.Repeat("ab", 32)
+	if id, digest, err := parseStoreImage(lower); err != nil || id != "tmpl_abc" || digest != lower[len("tmpl_abc@"):] {
+		t.Fatalf("parseStoreImage(%q) = %q, %q, %v", lower, id, digest, err)
+	}
+	for _, bad := range []string{"tmpl_abc@sha256:" + strings.Repeat("AB", 32), "tmpl_abc@sha256:" + strings.Repeat("ab", 16) + strings.Repeat("AB", 16)} {
+		if _, _, err := parseStoreImage(bad); err == nil || !strings.Contains(err.Error(), "lower-case") {
+			t.Errorf("parseStoreImage(%q) = %v, want refused for upper-case hexadecimal", bad, err)
 		}
 	}
 }

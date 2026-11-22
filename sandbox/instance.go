@@ -2,9 +2,12 @@ package sandbox
 
 import "regexp"
 
-// instanceForm is a typed instance reference: a kind of lowercase letters, digits and
-// "-", a colon, and an ID in the trace charset, at most 160 bytes in all.
-var instanceForm = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$`)
+// InstancePattern is the grammar of a typed instance reference: a kind of lowercase
+// letters, digits and "-", a colon, and an ID in the trace charset, at most 160 bytes in
+// all. internal/wiretables writes it into the Python and TypeScript clients.
+const InstancePattern = `^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$`
+
+var instanceForm = regexp.MustCompile(InstancePattern)
 
 // ValidInstance reports whether s is a result's instance: "" (the provider names none) or
 // a typed reference such as "k8s-pod-uid:" and a pod's UID. It is never a path or a

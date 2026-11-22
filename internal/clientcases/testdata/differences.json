@@ -1,0 +1,28 @@
+{
+  "about": [
+    "Every place a client may answer a shared case otherwise than its file states, and why",
+    "(internal/clientcases). says: the verdict the client gives instead, or not_checked when it",
+    "gives none. basis: language (the language forces it), design (the code documents it as",
+    "intended) or open (nobody has decided; it is a finding too). The judge fails a difference",
+    "the client no longer shows, so this list cannot outlive what it explains."
+  ],
+  "differences": [
+    {
+      "client": "typescript",
+      "cases": [
+        "golden/requests/module request",
+        "golden/requests/module request with an approved rule",
+        "golden/results/module result",
+        "published/v0.22.0/requests/version 1 module request",
+        "published/v0.22.0/requests/version 2 module request",
+        "published/v0.22.0/results/module result",
+        "published/v0.27.1/requests/module request",
+        "published/v0.27.1/requests/module request with an approved rule",
+        "published/v0.27.1/results/module result"
+      ],
+      "says": "not_checked",
+      "basis": "design",
+      "why": "the TypeScript client sends no module runs (a module run is the docker provider's compiled simulator, which only the Go and Python clients call), so it digests no module request or result; clients/typescript/test/record.test.ts skips them"
+    }
+  ]
+}

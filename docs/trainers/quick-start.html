@@ -37,7 +37,7 @@
         <pre><code>TOKEN="$(go run ./cmd/plimsoll-clients create \
   -file clients.json -id tutorial -token-stdout)"</code></pre>
         <h2>2. Start the daemon on loopback</h2>
-        <p>With <code>SANDBOX_PROVIDER</code> unset nothing runs; setting it to <code>wasm</code> opts in. <code>PLIMSOLL_ADDR</code> makes the daemon listen on this machine only, because the default, <code>:8746</code>, listens on every network interface. The clients file turns authentication on, and it <dfn>fails closed</dfn>: a request it cannot verify is refused.</p>
+        <p>With <code>SANDBOX_PROVIDER</code> unset nothing runs; setting it to <code>wasm</code> opts in. <code>PLIMSOLL_ADDR</code> says where the daemon listens: this machine only, which is also what it does when the variable is unset. A daemon other machines call sets it to an address they can reach, such as <code>0.0.0.0:8746</code> for every network interface. The clients file turns authentication on, and it <dfn>fails closed</dfn>: a request it cannot verify is refused.</p>
         <pre><code>SANDBOX_PROVIDER=wasm \
 PLIMSOLL_ADDR=127.0.0.1:8746 \
 PLIMSOLL_CLIENTS_FILE=clients.json \

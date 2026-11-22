@@ -286,6 +286,7 @@ func TestOpenShellReconcileOtherInstanceLive(t *testing.T) {
 	if _, err := reaper.client.GetSandbox(context.Background(), connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: b.name})); err != nil {
 		t.Fatalf("another instance's sandbox was reaped within its declared lifetime: %v", err)
 	}
+	// fixed-wait: the wait is the thing under test: past the sandbox's 2 s lifetime plus the 3 s margin
 	time.Sleep(6 * time.Second) // past the 2 s lifetime plus the 3 s margin
 	if n, err := reaper.ReconcileOrphans(context.Background()); err != nil || n < 1 {
 		t.Fatalf("ReconcileOrphans after the lifetime = %d, %v; want the abandoned sandbox", n, err)

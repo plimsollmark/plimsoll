@@ -11,11 +11,9 @@ import (
 // the caller's variables. A caller's variable must not be able to undo that. env
 // applies assignments left to right, so a PATH among them replaces ControlPath, and
 // the loader and C library read LD_* and the names checkLoaderEnv refuses on an image
-// before any program runs; NODE_OPTIONS and NODE_PATH make node load code. Every
-// caller today passes only PLIMSOLL_* names; this keeps a later one from passing a
-// name that would turn a control program into a guest-facing one by accident.
+// before any program runs; NODE_OPTIONS and NODE_PATH make node load code.
 func TestControlArgvRefusesNamesThatChooseCode(t *testing.T) {
-	for _, name := range []string{"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "GCONV_PATH", "NODE_OPTIONS", "NODE_PATH"} {
+	for _, name := range []string{"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "GCONV_PATH", "NODE_OPTIONS", "NODE_PATH", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES"} {
 		if _, err := ControlArgv(map[string]string{name: "/work/x"}, "node", "-e", "1"); err == nil {
 			t.Errorf("ControlArgv accepted %s, which would choose what the control program loads or runs", name)
 		}
@@ -23,6 +21,34 @@ func TestControlArgvRefusesNamesThatChooseCode(t *testing.T) {
 	for _, name := range []string{"", "1X", "A-B", "a b", "A=B"} {
 		if _, err := ControlArgv(map[string]string{name: "x"}, "node"); err == nil {
 			t.Errorf("ControlArgv accepted %q as a variable name", name)
+		}
+	}
+}
+
+// The rule is an allow list: a control program takes only names plimsoll itself reads.
+// The names above are other people's lists (the loader's, node's, OpenSSL's), and a
+// list of things to refuse passes whatever its owner adds next. These names choose code
+// for some program and were on no list here: each was accepted until 2026-11-20.
+func TestControlArgvTakesOnlyPlimsollsOwnNames(t *testing.T) {
+	for _, name := range []string{
+		"PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", // python: where modules and a startup file come from
+		"BASH_ENV", "ENV", // a shell: a file it runs at start
+		"PERL5LIB", "RUBYOPT", "JAVA_TOOL_OPTIONS", // other interpreters' own
+		"SSL_CERT_FILE", "TMPDIR", "HOME", // where a program finds certificates, scratch files, settings
+		"MUSL_LOCPATH",                     // musl's own locale path, which the glibc list never had
+		"A_VARIABLE_A_LATER_RELEASE_READS", // and whatever comes next
+		"plimsoll_work", "PLIMSOLL_", "XPLIMSOLL_WORK", "PLIMSOLL_work",
+	} {
+		if _, err := ControlArgv(map[string]string{name: "/work/x"}, "node", "-e", "1"); err == nil {
+			t.Errorf("ControlArgv accepted %s, which is not a name of plimsoll's own", name)
+		}
+		if _, err := ControlArgvClosed(map[string]string{name: "/work/x"}, "/usr/bin/node", "-e", "1"); err == nil {
+			t.Errorf("ControlArgvClosed accepted %s, which is not a name of plimsoll's own", name)
+		}
+	}
+	for _, name := range []string{"PLIMSOLL_WORK", "PLIMSOLL_INTERP_DIR", "PLIMSOLL_RELAY_UID", "PLIMSOLL_X9"} {
+		if _, err := ControlArgv(map[string]string{name: "x"}, "node"); err != nil {
+			t.Errorf("ControlArgv refused %s: %v", name, err)
 		}
 	}
 }

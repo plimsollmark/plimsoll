@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -96,6 +97,31 @@ func TestRunRefusesWrongProtocolBeforeReadingPayload(t *testing.T) {
 				t.Fatalf("runs total = %d, want 0", total)
 			}
 		})
+	}
+}
+
+// This daemon serves protocol 7: its clients refuse a record whose provider name holds a
+// control or bidirectional format character (record.ValidText, finding hunt-security-39), and
+// a client of protocol 6 accepted one, so a protocol 6 request is refused before its payload
+// is read, marked not dispatched for the protocol, and so is one of every earlier number (2026-11-21).
+func TestRunRefusesAProtocol6ClientBeforeReadingPayload(t *testing.T) {
+	if protocol.Number != 7 {
+		t.Fatalf("protocol.Number = %d; this test pins 7, the provider name's rule", protocol.Number)
+	}
+	for n := uint32(1); n < protocol.Number; n++ {
+		fake := &fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake"}}
+		svc := NewSandboxService(fake)
+		_, err := svc.Run(context.Background(), withProtocol(jsReq("1"), n))
+		if connect.CodeOf(err) != connect.CodeUnimplemented {
+			t.Fatalf("protocol %d: code = %v, want Unimplemented (%v)", n, connect.CodeOf(err), err)
+		}
+		wantNotDispatched(t, fmt.Sprintf("a protocol %d request", n), err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL)
+		if fake.lastReq.Code != "" {
+			t.Fatalf("protocol %d: the payload reached the provider", n)
+		}
+		if total, _ := svc.RunCounts(); total != 0 {
+			t.Fatalf("protocol %d: runs total = %d, want 0", n, total)
+		}
 	}
 }
 

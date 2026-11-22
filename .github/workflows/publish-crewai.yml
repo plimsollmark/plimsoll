@@ -9,6 +9,9 @@
 #
 # PyPI side: the crewai-plimsoll project's trusted publisher (owner plimsollmark, repository
 # plimsoll, workflow publish-crewai.yml, environment pypi). Actions are pinned by commit SHA.
+#
+# Everything after this comment is written by internal/publishflows from its table (make
+# publish-workflows); edit the table, not this file.
 name: publish-crewai
 
 on:

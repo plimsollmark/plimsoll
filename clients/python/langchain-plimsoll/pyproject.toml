@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# A LangChain integration package, named as LangChain's integration guide asks (an
+# independent langchain-<provider> package on PyPI; LangChain accepts no new integrations
+# into its own repositories). The tool is plimsoll_client.langchain.PlimsollCodeTool and the
+# Deep Agents backend plimsoll_client.deepagents.PlimsollSandbox; this package depends on
+# that exact plimsoll-client release, and its version moves with plimsoll's releases
+# (TestClientVersionsAgree in clients/typescript checks both). langchain-core and deepagents
+# need Python 3.11 or later.
+[project]
+name = "langchain-plimsoll"
+version = "0.28.0"
+description = "A LangChain tool and a Deep Agents sandbox backend that run agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-core==1.8.0",
+    "plimsoll-client==0.28.0",
+]
+keywords = ["langchain", "langgraph", "deepagents", "sandbox", "code execution", "agents", "gvisor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+deepagents = ["deepagents==0.7.38"]
+
+[project.urls]
+Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/langchain-plimsoll"
+Source = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python/langchain-plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+langchain_plimsoll = ["py.typed"]

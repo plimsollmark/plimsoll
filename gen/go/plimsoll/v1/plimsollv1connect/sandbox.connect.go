@@ -44,6 +44,9 @@ const (
 	// SandboxServiceOpenSessionProcedure is the fully-qualified name of the SandboxService's
 	// OpenSession RPC.
 	SandboxServiceOpenSessionProcedure = "/plimsoll.v1.SandboxService/OpenSession"
+	// SandboxServiceAttachSessionProcedure is the fully-qualified name of the SandboxService's
+	// AttachSession RPC.
+	SandboxServiceAttachSessionProcedure = "/plimsoll.v1.SandboxService/AttachSession"
 	// SandboxServiceSessionRunProcedure is the fully-qualified name of the SandboxService's SessionRun
 	// RPC.
 	SandboxServiceSessionRunProcedure = "/plimsoll.v1.SandboxService/SessionRun"
@@ -68,7 +71,7 @@ type SandboxServiceClient interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 5 (the Go constant
+	// informational field does not bump it. Current number: 6 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation
@@ -78,11 +81,22 @@ type SandboxServiceClient interface {
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 	// OpenSession starts a session: one sandbox kept for many calls, in which files
 	// a call writes persist for later calls and no process a call starts outlives
-	// it. The session belongs to the principal that opened it; its ID is a
-	// capability that only that principal can use. Each request states the
-	// protocol number and gets Run's check. A daemon without sessions answers
-	// Unimplemented, marked not dispatched.
+	// it. The session belongs to the principal that opened it, and its ID is a
+	// capability for that principal. Ownership can move: any holder of that
+	// principal's credential who has the session's fingerprint and its exact head
+	// (the generation, the count of calls and the last record's digest) may take
+	// it over with AttachSession, after which the previous holder's calls and close
+	// are refused. Each request states the protocol number and gets Run's check. A
+	// daemon without sessions answers Unimplemented, marked not dispatched.
 	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
+	// AttachSession transfers ownership to an authenticated worker whose trusted
+	// checkpoint matches the current generation and record chain, or is exactly one call
+	// behind it when the caller names that call's request digest
+	// (AttachSessionRequest.lost_request_sha256). It runs no code.
+	// Every attach costs one of the caller's rate tokens, a refused one included. A
+	// session that is unknown, another caller's, closed, ended or past its lifetime is
+	// NotFound, all with the same text.
+	AttachSession(context.Context, *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error)
 	// SessionRun runs one call in an open session. Its record is chained to the
 	// session's previous call (RunRecord's session fields).
 	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
@@ -121,6 +135,12 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sandboxServiceMethods.ByName("OpenSession")),
 			connect.WithClientOptions(opts...),
 		),
+		attachSession: connect.NewClient[v1.AttachSessionRequest, v1.AttachSessionResponse](
+			httpClient,
+			baseURL+SandboxServiceAttachSessionProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("AttachSession")),
+			connect.WithClientOptions(opts...),
+		),
 		sessionRun: connect.NewClient[v1.SessionRunRequest, v1.SessionRunResponse](
 			httpClient,
 			baseURL+SandboxServiceSessionRunProcedure,
@@ -138,11 +158,12 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // sandboxServiceClient implements SandboxServiceClient.
 type sandboxServiceClient struct {
-	run          *connect.Client[v1.RunRequest, v1.RunResponse]
-	describe     *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
-	openSession  *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
-	sessionRun   *connect.Client[v1.SessionRunRequest, v1.SessionRunResponse]
-	closeSession *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
+	run           *connect.Client[v1.RunRequest, v1.RunResponse]
+	describe      *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
+	openSession   *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
+	attachSession *connect.Client[v1.AttachSessionRequest, v1.AttachSessionResponse]
+	sessionRun    *connect.Client[v1.SessionRunRequest, v1.SessionRunResponse]
+	closeSession  *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
 }
 
 // Run calls plimsoll.v1.SandboxService.Run.
@@ -158,6 +179,11 @@ func (c *sandboxServiceClient) Describe(ctx context.Context, req *connect.Reques
 // OpenSession calls plimsoll.v1.SandboxService.OpenSession.
 func (c *sandboxServiceClient) OpenSession(ctx context.Context, req *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
 	return c.openSession.CallUnary(ctx, req)
+}
+
+// AttachSession calls plimsoll.v1.SandboxService.AttachSession.
+func (c *sandboxServiceClient) AttachSession(ctx context.Context, req *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error) {
+	return c.attachSession.CallUnary(ctx, req)
 }
 
 // SessionRun calls plimsoll.v1.SandboxService.SessionRun.
@@ -186,7 +212,7 @@ type SandboxServiceHandler interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 5 (the Go constant
+	// informational field does not bump it. Current number: 6 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation
@@ -196,11 +222,22 @@ type SandboxServiceHandler interface {
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 	// OpenSession starts a session: one sandbox kept for many calls, in which files
 	// a call writes persist for later calls and no process a call starts outlives
-	// it. The session belongs to the principal that opened it; its ID is a
-	// capability that only that principal can use. Each request states the
-	// protocol number and gets Run's check. A daemon without sessions answers
-	// Unimplemented, marked not dispatched.
+	// it. The session belongs to the principal that opened it, and its ID is a
+	// capability for that principal. Ownership can move: any holder of that
+	// principal's credential who has the session's fingerprint and its exact head
+	// (the generation, the count of calls and the last record's digest) may take
+	// it over with AttachSession, after which the previous holder's calls and close
+	// are refused. Each request states the protocol number and gets Run's check. A
+	// daemon without sessions answers Unimplemented, marked not dispatched.
 	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
+	// AttachSession transfers ownership to an authenticated worker whose trusted
+	// checkpoint matches the current generation and record chain, or is exactly one call
+	// behind it when the caller names that call's request digest
+	// (AttachSessionRequest.lost_request_sha256). It runs no code.
+	// Every attach costs one of the caller's rate tokens, a refused one included. A
+	// session that is unknown, another caller's, closed, ended or past its lifetime is
+	// NotFound, all with the same text.
+	AttachSession(context.Context, *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error)
 	// SessionRun runs one call in an open session. Its record is chained to the
 	// session's previous call (RunRecord's session fields).
 	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
@@ -235,6 +272,12 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sandboxServiceMethods.ByName("OpenSession")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sandboxServiceAttachSessionHandler := connect.NewUnaryHandler(
+		SandboxServiceAttachSessionProcedure,
+		svc.AttachSession,
+		connect.WithSchema(sandboxServiceMethods.ByName("AttachSession")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sandboxServiceSessionRunHandler := connect.NewUnaryHandler(
 		SandboxServiceSessionRunProcedure,
 		svc.SessionRun,
@@ -255,6 +298,8 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 			sandboxServiceDescribeHandler.ServeHTTP(w, r)
 		case SandboxServiceOpenSessionProcedure:
 			sandboxServiceOpenSessionHandler.ServeHTTP(w, r)
+		case SandboxServiceAttachSessionProcedure:
+			sandboxServiceAttachSessionHandler.ServeHTTP(w, r)
 		case SandboxServiceSessionRunProcedure:
 			sandboxServiceSessionRunHandler.ServeHTTP(w, r)
 		case SandboxServiceCloseSessionProcedure:
@@ -278,6 +323,10 @@ func (UnimplementedSandboxServiceHandler) Describe(context.Context, *connect.Req
 
 func (UnimplementedSandboxServiceHandler) OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.OpenSession is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) AttachSession(context.Context, *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.AttachSession is not implemented"))
 }
 
 func (UnimplementedSandboxServiceHandler) SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error) {

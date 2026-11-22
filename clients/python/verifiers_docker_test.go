@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -19,8 +20,9 @@ import (
 // images and the verifiers environment that make py-frameworks builds
 // (tmp/py-frameworks/verifiers; make docker-suite builds it). Skips in -short mode and
 // without either; fails instead under SANDBOX_TEST_REQUIRE_DOCKER=1, as docker-suite runs
-// it. clients-suite excludes it, as it does TestPythonWorkspaceDocker: its CI job has no
-// images. The check is not a test_*.py, so the framework suite's discover run never sees it.
+// it. clients-suite excludes it, as it does the other checks on real docker sessions
+// (DOCKER_PY_TESTS in the Makefile): its CI job has no images. The check is not a test_*.py,
+// so the framework suite's discover run never sees it.
 func TestVerifiersRuntimeDocker(t *testing.T) {
 	t.Parallel()
 	skip := func(format string, args ...any) {
@@ -56,9 +58,9 @@ func TestVerifiersRuntimeDocker(t *testing.T) {
 	if err := (sandbox.Provider{Sandbox: d}).EnsureReady(ctx); err != nil {
 		t.Fatalf("docker provider not ready: %v", err)
 	}
-	svc := quiet(rpc.NewSandboxService(d))
+	svc := clientsuite.Quiet(rpc.NewSandboxService(d))
 	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, Lifetime: 10 * time.Minute, IdleTimeout: 2 * time.Minute}
-	url := serve(t, svc, nil, nil)
+	url := clientsuite.Serve(t, svc, nil, nil)
 	floor := "container"
 	if d.Runtime == "runsc" {
 		floor = "kernel"

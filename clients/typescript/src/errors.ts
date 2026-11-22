@@ -4,7 +4,7 @@
 // execution and is never a safe automatic retry (docs/run-results.md).
 
 import type { RunRecord } from "./record.ts";
-import { REFUSAL_NAMES, SESSION_END_NAMES } from "./tables.gen.ts";
+import { CHECKPOINT_MISMATCH_TEXT, REFUSAL_NAMES, REQUEST_ID_HEADER, SESSION_END_NAMES } from "./tables.gen.ts";
 import { wireBytes, type WireError, type WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
@@ -99,12 +99,47 @@ export class PlimsollError extends Error {
   }
 }
 
-/** The request ID a client sends and the daemon echoes (Go: protocol.RequestIDHeader). */
-export const REQUEST_ID_HEADER = "Plimsoll-Request-Id";
-/** The daemon's mark on an answer written before any handler ran (Go: protocol.NotDispatchedHeader). */
-export const NOT_DISPATCHED_HEADER = "Plimsoll-Not-Dispatched";
+/**
+ * A session call, close or attach the daemon refused because another worker attached the
+ * session (or its ownership generation is spent): nothing ran, and the session goes on for
+ * its new owner. After it on a call or a close, the Session sends nothing more (Go:
+ * client.ErrStaleOwner).
+ */
+export class StaleOwnerError extends PlimsollError {
+  constructor(message: string, opts: ConstructorParameters<typeof PlimsollError>[2] = {}) {
+    super("failed_precondition", message, opts);
+    this.name = "StaleOwnerError";
+  }
+}
+
+/**
+ * An attach the daemon refused because the checkpoint is not the session's head: a call ran
+ * after the checkpoint was saved, its answer perhaps lost. Nothing ran, and ownership did
+ * not move (Go: client.ErrCheckpointMismatch).
+ */
+export class CheckpointMismatchError extends PlimsollError {
+  constructor(message: string, opts: ConstructorParameters<typeof PlimsollError>[2] = {}) {
+    super("failed_precondition", message, opts);
+    this.name = "CheckpointMismatchError";
+  }
+}
+
+/**
+ * The first call of a session taken over across an explained gap repeats the lost call:
+ * that call was already sent once and its answer was lost, so this is a retry of it.
+ * Refused before anything was sent (notDispatched "request"), and never a retry signal.
+ * Only the first call is checked (Go: client.ErrCallAlreadySent, in the same words).
+ * The lost call's record says whether the daemon answered it (session.lostCall).
+ */
+export class CallAlreadySentError extends PlimsollError {
+  constructor(message: string) {
+    super("failed_precondition", message, { notDispatched: "request" });
+    this.name = "CallAlreadySentError";
+  }
+}
+
 const NOT_BOUND =
-  "the answer does not carry this request's Plimsoll-Request-Id back (a daemon older than protocol 3, or an intermediary " +
+  `the answer does not carry this request's ${REQUEST_ID_HEADER} back (a daemon older than protocol 3, or an intermediary ` +
   "that answered with another request's answer or dropped the header), so what it says about the call is ignored";
 
 /** The error for a success answer that is not bound to its request: the call may have run. */
@@ -185,6 +220,7 @@ function bigVarint(b: Uint8Array, i: number): [bigint, number] {
 const RECORD_STRINGS: Record<number, keyof WireRecord> = {
   2: "requestSha256", 3: "resultSha256", 4: "provider", 5: "isolation", 6: "environment", 7: "policy",
   10: "session", 12: "previousSha256", 13: "recordSha256", 14: "softwareIdentity", 15: "softwareRuleId", 16: "unanswered", 17: "instance",
+  18: "isolationQualification", 20: "daemonVersion",
 };
 
 // Decodes an UnansweredCall detail (field 1, a RunRecord) by hand, into the record's
@@ -234,6 +270,7 @@ function decodeRecord(b: Uint8Array): WireRecord {
       else if (field === 8) m.startedUnixMs = BigInt.asIntN(64, v).toString();
       else if (field === 9) m.endedUnixMs = BigInt.asIntN(64, v).toString();
       else if (field === 11) m.sequence = v.toString();
+      else if (field === 19) m.warm = v !== 0n;
     } else if (wire === 2) {
       const [n, k] = varint(b, i);
       if (k + n > b.length) throw new Error("bad length");
@@ -263,13 +300,20 @@ const CODES: ReadonlySet<string> = new Set<Code>([
 // one without a NotDispatched detail is marked by the daemon's header (mark).
 export function errorFromWire(httpStatus: number, body: WireError | undefined, answer: { bound: boolean; mark?: string | null }): PlimsollError {
   const wire = body !== null && typeof body === "object" && !Array.isArray(body) ? body : undefined;
-  const code: Code = wire?.code === undefined ? httpStatusCode(httpStatus) : CODES.has(wire.code) ? (wire.code as Code) : "unknown";
+  // A details list with an element that is not an object (a JSON null, a number) is not a
+  // Connect error this client can read; the Go client panicked on a null (finding
+  // release-88). Nothing in such an answer is believed, its header mark included: the code
+  // is the HTTP status's and the call reads "may have run".
+  const details: unknown[] = Array.isArray(wire?.details) ? wire.details : [];
+  const unreadable = details.some((d) => d === null || typeof d !== "object" || Array.isArray(d));
+  const code: Code =
+    unreadable || wire?.code === undefined ? httpStatusCode(httpStatus) : CODES.has(wire.code) ? (wire.code as Code) : "unknown";
   const message = typeof wire?.message === "string" ? wire.message : `HTTP ${httpStatus}`;
   if (!answer.bound) return new PlimsollError(code, `${message} (${NOT_BOUND})`, { answerNotBound: true });
   let notDispatched: Refusal | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   let unanswered: WireRecord | undefined;
-  for (const d of Array.isArray(wire?.details) ? wire.details : []) {
+  for (const d of (unreadable ? [] : details) as { type?: string; value?: string }[]) {
     try {
       const bytes = wireBytes(d.value);
       if (d.type === "plimsoll.v1.NotDispatched") {
@@ -286,11 +330,19 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
       // An undecodable detail states nothing; in particular not that nothing ran.
     }
   }
-  if (notDispatched === undefined && answer.mark) {
+  if (notDispatched === undefined && !unreadable && answer.mark) {
     const named = REFUSAL_NAMES.find((r) => r !== "unknown" && r === answer.mark);
     if (named) notDispatched = named;
   }
-  return new PlimsollError(code, message, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });
+  const opts = { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered };
+  // The ownership refusals of a session's run, close or attach (protocol 6): reason
+  // permission is a stale worker; reason request with the daemon's constant text is a
+  // checkpoint that is not the head.
+  if (code === "failed_precondition" && !sessionEnded && notDispatched === "permission") return new StaleOwnerError(message, opts);
+  if (code === "failed_precondition" && !sessionEnded && notDispatched === "request" && message === CHECKPOINT_MISMATCH_TEXT) {
+    return new CheckpointMismatchError(message, opts);
+  }
+  return new PlimsollError(code, message, opts);
 }
 
 // Connect's mapping for a response without a Connect error body.

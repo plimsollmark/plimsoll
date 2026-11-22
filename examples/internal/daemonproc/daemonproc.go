@@ -34,10 +34,18 @@ const drainGrace = 2 * time.Minute
 // review, 2026-10-29).
 var passedEnv = []string{"PATH", "HOME", "TMPDIR", "DOCKER_HOST"}
 
+// BuildArgs is the go command that builds plimsolld to output for an example. -buildvcs=false leaves the version
+// control stamp out of the build information, so the daemon's records state daemon_version "(devel)" (decided
+// 2026-11-17 for every program that writes evidence): a build from a repository whose tags are not plimsoll's releases would otherwise state a
+// pseudo-version above whatever tags it holds and a commit a reader of the published page cannot find.
+func BuildArgs(output string) []string {
+	return []string{"build", "-buildvcs=false", "-o", output, "./cmd/plimsolld"}
+}
+
 // Build compiles plimsolld into dir and returns the binary's path.
 func Build(ctx context.Context, dir string) (string, error) {
 	binary := filepath.Join(dir, "plimsolld")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/plimsolld")
+	cmd := exec.CommandContext(ctx, "go", BuildArgs(binary)...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)

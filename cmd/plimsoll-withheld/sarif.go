@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/internal/printable"
 	"github.com/plimsollmark/plimsoll/internal/withheld"
 )
 
@@ -307,7 +308,10 @@ func (w *sarifWriter) bytes(ctx context.Context) ([]byte, error) {
 	if err := enc.Encode(sarifLog{Schema: sarifSchema, Version: sarifVersion, Runs: []sarifRun{w.run}}); err != nil {
 		return nil, err
 	}
-	res, err := w.set.Scan(ctx, []withheld.Part{{Where: "the SARIF report", Data: buf.Bytes()}})
+	// A name's characters that could rewrite a terminal are written as JSON escapes (the
+	// same value to a reader) before the scan, so what is scanned is what is written.
+	data := printable.JSON(buf.Bytes())
+	res, err := w.set.Scan(ctx, []withheld.Part{{Where: "the SARIF report", Data: data}})
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +326,7 @@ func (w *sarifWriter) bytes(ctx context.Context) ([]byte, error) {
 	if len(res.Incomplete) > 0 {
 		return nil, errors.New("the SARIF report could not be scanned whole against the set; nothing written")
 	}
-	return buf.Bytes(), nil
+	return data, nil
 }
 
 // sarifURI is p as a URI reference: every byte but an unreserved one (RFC 3986 section

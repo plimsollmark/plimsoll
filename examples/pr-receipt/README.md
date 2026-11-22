@@ -21,7 +21,9 @@ No future release hash is invented here.
 
 The workflow builds trusted tools and the trusted project image from that pin,
 installs gVisor using plimsoll's checksum-verified installer, and starts its own
-loopback daemon. Project code is never run directly on the host. The workflow
+loopback daemon. It also fetches the release tags that name the pinned commit, and no
+other tag, so a receipt made at a release states that release as the daemon's version
+(`buildvcs.sh` says when; any other pin states `(devel)`). Project code is never run directly on the host. The workflow
 checks out the PR head, includes its changed files and the rest of its tracked
 text files as test context, then runs `npm test` inside the sandbox. Override
 `PLIMSOLL_TEST_COMMAND` with the project's command. The default image provides

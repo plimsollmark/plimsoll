@@ -1,26 +1,15 @@
 package python
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"net/http"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"connectrpc.com/connect"
-
-	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
-	"github.com/plimsollmark/plimsoll/internal/rpc"
-	"github.com/plimsollmark/plimsoll/sandbox"
-	"github.com/plimsollmark/plimsoll/sandboxtest"
+	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 )
 
 // TestPythonFrameworks runs each framework adapter's suite, frameworks/<name>/, with
@@ -30,36 +19,24 @@ import (
 // own conflict. A framework is a directory, so adding one needs no change here.
 //
 // The suites call each tool through the framework's own tool-call path, with no model,
-// against two daemons behind the real RPC handler:
-//
-//   - echo: a container-tier provider that runs nothing and answers each project
-//     with what it was asked to run, or with the failure a marker in the code names;
-//     its handler can hold a Describe or a Run until a test releases it (holds);
-//   - wasm: the real wasm provider, which runs no projects.
+// against the daemons of internal/clientsuite's table, the ones every client driver
+// serves (P7b of the refactor plan of 2026-11-18; until then this driver served three of
+// its own, one under the name the table gives another daemon). The suites read three:
+// tool-echo, a container-tier provider that runs nothing and answers each project with
+// what it was asked to run, or with the failure a marker in the code names, whose handler
+// can hold a Describe or a Run until a test releases it; wasm, the real wasm provider,
+// which runs no projects; and sessions, the in-memory session provider.
+// frameworksDeclined says why they use no other.
 func TestPythonFrameworks(t *testing.T) {
 	dirs, err := filepath.Glob("frameworks/*/requirements.txt")
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no framework suites under frameworks/: %v", err)
 	}
-	env := append(os.Environ(),
-		"PLIMSOLL_ECHO_URL="+serve(t, echoService{quiet(rpc.NewSandboxService(projectEcho{}))}, nil, func(mux *http.ServeMux) {
-			// How many projects the echo provider was handed: a test that says a call
-			// was not retried counts dispatches instead of trusting a note.
-			mux.HandleFunc("GET /test/project-runs", func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(strconv.FormatInt(echoRuns.Load(), 10)))
-			})
-			// Every Describe from now on waits until /test/release.
-			mux.HandleFunc("POST /test/hold-describe", func(http.ResponseWriter, *http.Request) { echoHolds.holdDescribe() })
-			mux.HandleFunc("POST /test/release", func(http.ResponseWriter, *http.Request) { echoHolds.releaseAll() })
-			mux.HandleFunc("GET /test/holds", func(w http.ResponseWriter, _ *http.Request) {
-				_ = json.NewEncoder(w).Encode(echoHolds.state())
-			})
-		}),
-		"PLIMSOLL_WASM_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), nil, nil),
-		"PLIMSOLL_SESSIONS_URL="+fakeSessionsURL(t),
+	env := append(withoutTracing(os.Environ()), clientsuite.Env(t)...)
+	env = append(env,
 		"PLIMSOLL_INTEGRATION_REQUIRED=1",
-		// crewai-plimsoll/src: the crewai-plimsoll package, which the CrewAI suite imports.
-		"PYTHONPATH=src"+string(os.PathListSeparator)+filepath.Join("crewai-plimsoll", "src"),
+		// plimsoll-client, and every framework package (<name>-plimsoll/src) a suite imports.
+		"PYTHONPATH="+strings.Join(append([]string{"src"}, frameworkPackages(t)...), string(os.PathListSeparator)),
 		"PYTHONDONTWRITEBYTECODE=1",
 	)
 	for _, req := range dirs {
@@ -73,172 +50,256 @@ func TestPythonFrameworks(t *testing.T) {
 			if _, err := os.Stat(python); err != nil {
 				clientSkipOrFail(t, "no environment for %s at %s: run make clients-suite", name, python)
 			}
-			cmd := exec.Command(python, "-B", "-m", "unittest", "discover", "-s", dir, "-t", ".", "-v")
+			// A suite whose directory has a pytest.ini runs under pytest (LangChain's
+			// standard tests are pytest classes); every other under unittest.
+			args, runner, skipped := []string{"-B", "-m", "unittest", "discover", "-s", dir, "-t", ".", "-v"}, "unittest", pythonSkip
+			if _, err := os.Stat(filepath.Join(dir, "pytest.ini")); err == nil {
+				args, runner, skipped = []string{"-B", "-m", "pytest", "-p", "no:cacheprovider", "-v", "-rsxX", dir}, "pytest", pytestSkip
+			}
+			cmd := exec.Command(python, args...)
 			cmd.Env = env
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s", out)
 			if err != nil {
-				t.Fatalf("%s: python -m unittest: %v", name, err)
+				t.Fatalf("%s: python -m %s: %v", name, runner, err)
 			}
-			if pythonSkip.Match(out) {
+			if skipped.Match(out) {
 				t.Fatalf("the %s suite skipped a case; under this test every case must run", name)
+			}
+			// The environment holds no LangSmith key (withoutTracing), so an upload a suite
+			// set off fails, and LangSmith's client logs the failure with its URL.
+			if bytes.Contains(out, []byte("api.smith.langchain.com")) {
+				t.Fatalf("the %s suite tried to send runs to LangSmith; no test may", name)
 			}
 		})
 	}
 }
 
-// echoService is the echo daemon's handler: the real one, with Describe held while a
-// test holds it and every Run request counted as it arrives, before any check.
-type echoService struct{ *rpc.SandboxService }
-
-func (s echoService) Describe(ctx context.Context, req *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
-	if echoHolds.describing() {
-		echoHolds.wait(ctx, "describe")
+// frameworkPackages is the src directory of every framework package beside plimsoll-client
+// (clients/python/<name>-plimsoll, each a thin package over a module of plimsoll-client), so a
+// suite imports the package it tests, and a package is added by adding its directory. It
+// fails when it finds none: crewai-plimsoll and langchain-plimsoll are always there.
+func frameworkPackages(t *testing.T) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join("*-plimsoll", "src"))
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("no framework package under clients/python/*-plimsoll/src (%v)", err)
 	}
-	return s.SandboxService.Describe(ctx, req)
+	return dirs
 }
 
-func (s echoService) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
-	echoHolds.runRequests.Add(1)
-	return s.SandboxService.Run(ctx, req)
-}
-
-// holds keeps calls on the echo daemon waiting until a test releases them, and counts
-// the waits that ended because the call's context did: for a Run, the context the
-// handler passes the provider, which ends when the client hangs up.
-type holds struct {
-	runRequests atomic.Int64 // Run requests the handler received
-
-	mu       sync.Mutex
-	describe bool          // Describe waits
-	release  chan struct{} // closed by releaseAll
-	waiting  map[string]int
-	canceled map[string]int
-}
-
-var echoHolds = &holds{release: make(chan struct{}), waiting: map[string]int{}, canceled: map[string]int{}}
-
-func (h *holds) holdDescribe() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.describe = true
-}
-
-func (h *holds) describing() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.describe
-}
-
-func (h *holds) releaseAll() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	close(h.release)
-	h.release, h.describe = make(chan struct{}), false
-}
-
-// wait blocks until releaseAll or until ctx ends, which it counts.
-func (h *holds) wait(ctx context.Context, kind string) {
-	h.mu.Lock()
-	release := h.release
-	h.waiting[kind]++
-	h.mu.Unlock()
-	select {
-	case <-release:
-		h.mu.Lock()
-	case <-ctx.Done():
-		h.mu.Lock()
-		h.canceled[kind]++
+// TestAdaptersPinTheVersionTheirLockInstalls: every framework package beside plimsoll-client
+// (clients/python/<name>-plimsoll, found by listing them) requires exactly the version of
+// each framework package that its suite's lock file installs
+// (frameworks/<name>/requirements.txt), and each of its extras exactly what the extra's own
+// suite installs (frameworks/<extra>/requirements.txt). So what pip installs beside an
+// adapter is what the adapter was tested with: a range, a different version, or a
+// requirement its lock does not install fails here. Each adapter is pinned to the exact
+// version it is tested at since 2026-11-20 (finding hunt-quality-65: four of the five
+// declared a range of framework versions and were tested at one). plimsoll-client's own
+// extras (clients/python/pyproject.toml, one per framework adapter it carries) are held
+// the same way, each to its extra's suite, since the same day (hunt-quality-74: they still
+// declared ranges, and five adapters are installed only through them). It reads the files
+// as text and needs no Python.
+func TestAdaptersPinTheVersionTheirLockInstalls(t *testing.T) {
+	dirs, err := filepath.Glob("*-plimsoll")
+	if err != nil || len(dirs) < 5 {
+		t.Fatalf("found %d framework packages under clients/python/*-plimsoll, fewer than the five there were (%v)", len(dirs), err)
 	}
-	h.waiting[kind]--
-	h.mu.Unlock()
-}
-
-func (h *holds) state() map[string]int64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return map[string]int64{
-		"describe_waiting": int64(h.waiting["describe"]), "run_waiting": int64(h.waiting["run"]),
-		"describe_canceled": int64(h.canceled["describe"]), "run_canceled": int64(h.canceled["run"]),
-		"run_requests": h.runRequests.Load(),
-	}
-}
-
-// projectEcho answers a project with a JSON account of what it was asked to run (the
-// files and their contents, the steps) as the step's stdout, unless the code the
-// framework tool sent holds one of these markers:
-//
-//	ECHO:HOLD       the run waits until /test/release or until its context ends
-//	ECHO:EXIT       the step exits 3 with "boom" on stderr, a failing guest
-//	ECHO:TIMEOUT    the step and the run time out
-//	ECHO:SETUP      setup_failed with no step's report: no step began, so the code did not run
-//	ECHO:PROTOCOL   protocol_error with no step's report: the sandbox answered nothing readable
-//	ECHO:LOUD       20,000 characters on stdout, past a tool's cut
-//	ECHO:LOST       an error with no not-dispatched mark: the code may have run
-//	ECHO:WARN       the step exits 0 with "RESULT 42" on stdout and a warning on stderr
-type projectEcho struct{}
-
-var _ sandbox.Sandbox = projectEcho{}
-
-// echoRuns counts the projects projectEcho has been handed, across every test.
-var echoRuns atomic.Int64
-
-func (projectEcho) Name() string                           { return "project-echo" }
-func (projectEcho) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
-func (projectEcho) SupportsProjects() bool                 { return true }
-func (projectEcho) Environments() sandbox.Environments {
-	langs := []sandbox.Language{sandbox.LanguagePython, sandbox.LanguageJavaScript}
-	return sandbox.Environments{Project: sandbox.PayloadEnvironment{Identity: "echo-image:sha256:0002", MaxTimeout: 5 * time.Minute, Languages: langs}}
-}
-func (projectEcho) RunJavaScript(context.Context, sandbox.Request) (sandbox.Result, error) {
-	return sandbox.Result{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
-}
-func (projectEcho) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
-	return sandbox.ModuleResult{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
-}
-
-func (projectEcho) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
-	echoRuns.Add(1)
-	out := sandbox.ProjectResult{Sandbox: "project-echo", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
-		EnvironmentIdentity: "echo-image:sha256:0002"}
-	plan := struct {
-		Files   map[string]string `json:"files"`
-		Steps   []string          `json:"steps"`
-		Timeout float64           `json:"timeout_s"`
-	}{Files: map[string]string{}, Steps: req.Steps, Timeout: req.Timeout.Seconds()}
-	all := ""
-	for _, f := range req.Files {
-		plan.Files[f.Path] = f.Content
-		all += f.Content
-	}
-	step := sandbox.StepResult{Command: strings.Join(req.Steps, " && "), Duration: time.Millisecond}
-	switch {
-	case strings.Contains(all, "ECHO:HOLD"):
-		echoHolds.wait(ctx, "run")
-		if err := ctx.Err(); err != nil {
-			return sandbox.ProjectResult{}, err
+	// "." is plimsoll-client itself: no dependencies, and an extra per framework adapter.
+	for _, dir := range append(dirs, ".") {
+		pkg := dir
+		deps, extras := pyprojectRequirements(t, filepath.Join(dir, "pyproject.toml"))
+		switch {
+		case dir == ".":
+			pkg = "plimsoll-client"
+			if len(deps) != 0 {
+				t.Errorf("plimsoll-client declares the dependencies %q; it has none, and each framework comes through its extra", deps)
+			}
+			if len(extras) < 8 {
+				t.Errorf("plimsoll-client declares %d extras, fewer than the eight there were: is the scan reading clients/python/pyproject.toml?", len(extras))
+			}
+		case len(deps) == 0:
+			t.Errorf("%s declares no dependencies: is the scan reading its pyproject.toml?", dir)
 		}
-	case strings.Contains(all, "ECHO:LOST"):
-		return sandbox.ProjectResult{}, errors.New("the attach stream broke after the step started")
-	case strings.Contains(all, "ECHO:PROTOCOL"):
-		out.Outcome, out.Detail = sandbox.ProjectOutcomeProtocolError, "the runner's report was cut"
-		return out, nil
-	case strings.Contains(all, "ECHO:SETUP"):
-		out.Outcome, out.Detail = sandbox.ProjectOutcomeSetupFailed, "a file could not be written"
-		return out, nil
-	case strings.Contains(all, "ECHO:TIMEOUT"):
-		out.Outcome = sandbox.ProjectOutcomeTimedOut
-		step.TimedOut, step.ExitCode = true, 124
-	case strings.Contains(all, "ECHO:EXIT"):
-		step.ExitCode, step.Stderr = 3, "boom"
-	case strings.Contains(all, "ECHO:WARN"):
-		step.Stdout, step.Stderr = "RESULT 42\n", "DeprecationWarning: this call is old\n"
-	case strings.Contains(all, "ECHO:LOUD"):
-		step.Stdout = strings.Repeat("x", 20_000)
-	default:
-		b, _ := json.Marshal(plan)
-		step.Stdout = string(b)
+		pinned := 0
+		check := func(what, suite string, reqs []string) {
+			lockFile := filepath.Join("frameworks", strings.ReplaceAll(suite, "-", "_"), "requirements.txt")
+			lock := lockedVersions(t, lockFile)
+			for _, req := range reqs {
+				m := pyRequirement.FindStringSubmatch(req)
+				if m == nil {
+					t.Errorf("%s: %s: cannot read the requirement %q", pkg, what, req)
+					continue
+				}
+				name, spec := pyName(m[1]), strings.ReplaceAll(m[2], " ", "")
+				if name == "plimsoll-client" {
+					continue // the client itself, pinned to the package's own version (each suite checks it)
+				}
+				locked, ok := lock[name]
+				switch {
+				case !ok:
+					t.Errorf("%s: %s requires %s, which its suite's lock file %s does not install", pkg, what, name, lockFile)
+				case spec != "=="+locked:
+					t.Errorf("%s: %s declares %q; want %s==%s, exactly the version its suite's lock file %s installs", pkg, what, req, m[1], locked, lockFile)
+				default:
+					pinned++
+				}
+			}
+		}
+		if len(deps) > 0 {
+			check("its dependencies", strings.TrimSuffix(dir, "-plimsoll"), deps)
+		}
+		for extra, reqs := range extras {
+			check("its extra "+extra, extra, reqs)
+		}
+		if pinned == 0 && !t.Failed() {
+			t.Errorf("%s pins no framework: is the scan reading its pyproject.toml?", pkg)
+		}
 	}
-	out.Steps = []sandbox.StepResult{step}
-	return out, nil
+}
+
+// pyRequirement is a requirement as these packages write one: a name, extras or none, and
+// the version rule (no environment marker).
+var pyRequirement = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*([^;]*)$`)
+
+// pyName is a package name as pip compares names: lowercase, with each run of "-", "_"
+// and "." one "-".
+func pyName(name string) string {
+	return regexp.MustCompile(`[-_.]+`).ReplaceAllString(strings.ToLower(name), "-")
+}
+
+// pyprojectRequirements reads a pyproject.toml's [project] dependencies (an empty list
+// included) and each list of its [project.optional-dependencies], as these packages
+// write them: one quoted requirement per line, or a list on one line.
+func pyprojectRequirements(t *testing.T, path string) (deps []string, extras map[string][]string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted := regexp.MustCompile(`"([^"]+)"`)
+	extras = map[string][]string{}
+	section, inDeps, sawDeps := "", false, false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		code, _, _ := strings.Cut(trimmed, "#")
+		switch {
+		case strings.HasPrefix(trimmed, "[") && !inDeps:
+			section = trimmed
+		case section == "[project]" && strings.HasPrefix(code, "dependencies"):
+			inDeps, sawDeps = !strings.Contains(code, "]"), true
+			for _, m := range quoted.FindAllStringSubmatch(code, -1) {
+				deps = append(deps, m[1])
+			}
+		case inDeps:
+			for _, m := range quoted.FindAllStringSubmatch(code, -1) {
+				deps = append(deps, m[1])
+			}
+			inDeps = !strings.Contains(code, "]")
+		case section == "[project.optional-dependencies]" && strings.Contains(code, "="):
+			key, list, _ := strings.Cut(code, "=")
+			if !strings.Contains(list, "]") {
+				t.Fatalf("%s: the extra %s is not a list on one line, which this reader takes", path, strings.TrimSpace(key))
+			}
+			for _, m := range quoted.FindAllStringSubmatch(list, -1) {
+				extras[strings.TrimSpace(key)] = append(extras[strings.TrimSpace(key)], m[1])
+			}
+		}
+	}
+	// An empty list is read (plimsoll-client's own is empty); a missing one is not.
+	if !sawDeps {
+		t.Fatalf("%s: found no [project] dependencies", path)
+	}
+	return deps, extras
+}
+
+// lockedVersions reads a pip-compile lock file: each package it installs, by pip's form of
+// its name, with the one version it is locked to.
+func lockedVersions(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no lock file for the suite: %v", err)
+	}
+	out := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s\\]+)`).FindAllStringSubmatch(string(raw), -1) {
+		out[pyName(m[1])] = m[2]
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s locks no package", path)
+	}
+	return out
+}
+
+// withoutTracing drops LangSmith's and LangChain's settings from the environment the
+// suites run in: with LANGSMITH_TRACING set, LangChain would upload every traced test
+// call, the model-free tool calls of these suites included, to LangSmith. The LangSmith
+// cases (frameworks/langchain/test_langsmith.py) keep their tracer's runs in memory.
+// OpenAI's settings go too: the OpenAI Agents SDK exports its traces to OpenAI whenever
+// OPENAI_API_KEY is set, and its suites keep their spans in memory.
+func withoutTracing(environ []string) []string {
+	out := environ[:0:0]
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, "LANGSMITH_") && !strings.HasPrefix(kv, "LANGCHAIN_") && !strings.HasPrefix(kv, "OPENAI_") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// pytestSkip finds a skipped, expected-to-fail or unexpectedly passing case in a pytest
+// run's report: under this test every case must run and pass.
+var pytestSkip = regexp.MustCompile(`(?m)\b(SKIPPED|XFAIL|XPASS)\b|\b[0-9]+ (skipped|xfailed|xpassed)\b`)
+
+// The reasons the framework suites decline a daemon of the table: an adapter calls
+// plimsoll through the client, so what the client checks of an answer, a session or a
+// connection is the client suite's (tests/), and an adapter's suite tests what the adapter
+// does with what the client returned or raised.
+const (
+	declinedClientsCheck = "a check the client makes of a hostile or broken answer, tested in the client's suite (tests/); an adapter gets what the client raised, which the tool-echo daemon's markers produce"
+	declinedSessionEdge  = "a session edge case the client handles (tests/); the adapters' unanswered and ended-session paths are tested against fakes and the tool-echo daemon"
+	declinedPool         = "no adapter sends a Run cell that prefers a pool member (prefer_warm is the client's alone)"
+)
+
+// frameworksDeclined names the daemons of internal/clientsuite's table the framework
+// suites do not use, and why; TestPythonFrameworksUseOrDeclineEveryDaemon fails a daemon
+// they neither read nor name here.
+var frameworksDeclined = map[string]string{
+	"PLIMSOLL_AUTH_URL":           "authentication is the client's (tests/); no adapter takes a token of its own",
+	"PLIMSOLL_AUTH_TOKEN":         "authentication is the client's (tests/); no adapter takes a token of its own",
+	"PLIMSOLL_TAMPER_URL":         declinedClientsCheck,
+	"PLIMSOLL_SCRIPTED_URL":       "values a JSON client is likely to get wrong are the client's to read (tests/); no adapter parses an answer",
+	"PLIMSOLL_SCRIPTED_SOFTWARE":  "values a JSON client is likely to get wrong are the client's to read (tests/); no adapter parses an answer",
+	"PLIMSOLL_LIAR_URL":           declinedClientsCheck,
+	"PLIMSOLL_OWNER_CAP_URL":      declinedSessionEdge,
+	"PLIMSOLL_BREAKING_URL":       declinedSessionEdge,
+	"PLIMSOLL_LOSSY_URL":          declinedSessionEdge,
+	"PLIMSOLL_QUICK_IDLE_URL":     declinedSessionEdge,
+	"PLIMSOLL_POOLED_URL":         declinedPool,
+	"PLIMSOLL_DRAINED_URL":        declinedPool,
+	"PLIMSOLL_ONE_CALL_URL":       declinedPool,
+	"PLIMSOLL_NO_POOL_URL":        declinedPool,
+	"PLIMSOLL_CLAIM_MISS_URL":     declinedPool,
+	"PLIMSOLL_ECHO_URL":           "the plan echo of an executeCode call, for the TypeScript tools; a framework tool is checked against tool-echo, whose answer carries the files' contents and the budget",
+	"PLIMSOLL_REPLAY_REFUSAL_URL": declinedClientsCheck,
+	"PLIMSOLL_REPLAY_SUCCESS_URL": declinedClientsCheck,
+	"PLIMSOLL_REPLAY_RUNS_URL":    declinedClientsCheck,
+	"PLIMSOLL_UNBOUND_URL":        declinedClientsCheck,
+	"PLIMSOLL_EARLY_REFUSAL_URL":  declinedClientsCheck,
+	"PLIMSOLL_NO_PROCEDURE_URL":   declinedClientsCheck,
+	"PLIMSOLL_TLS_URL":            "TLS is the client's transport (tests/); no adapter opens a connection of its own",
+	"PLIMSOLL_TLS_CA":             "TLS is the client's transport (tests/); no adapter opens a connection of its own",
+	"PLIMSOLL_REATTACH_URL":       declinedAttach,
+	"PLIMSOLL_REATTACH_TOKEN":     declinedAttach,
+	"PLIMSOLL_ATTACH_LIAR_URL":    declinedAttach,
+}
+
+// declinedAttach: the one adapter that attaches, the Deep Agents backend, is checked over a
+// fake client here and on a real docker session (TestDeepAgentsDocker); the client's attach
+// against these daemons is checked in tests/.
+const declinedAttach = "the Deep Agents attach is checked over a fake client here and on docker; the client's attach in tests/"
+
+func TestPythonFrameworksUseOrDeclineEveryDaemon(t *testing.T) {
+	clientsuite.CheckDeclined(t, frameworksDeclined, filepath.Join("frameworks", "*.py"), filepath.Join("frameworks", "*", "*.py"))
 }

@@ -27,7 +27,7 @@ SESSION_ID = "00112233445566778899aabbccddeeff"
 
 
 def _open_answer() -> Msg:
-    return Msg({"sessionId": SESSION_ID, "session": session_fingerprint(SESSION_ID), "sandbox": "s", "isolation": "container"}, "r")
+    return Msg({"generation": "1", "sessionId": SESSION_ID, "session": session_fingerprint(SESSION_ID), "sandbox": "s", "isolation": "container"}, "r")
 
 
 class _RaisingTransport:

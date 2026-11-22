@@ -19,14 +19,18 @@ type fullProvider struct {
 	called map[string]bool
 }
 
-func (f *fullProvider) mark(name string)                  { f.called[name] = true }
-func (f *fullProvider) IsolationClass() IsolationClass    { return IsolationVM }
-func (f *fullProvider) SupportsProjects() bool            { f.mark("ProjectCapable"); return true }
-func (f *fullProvider) SupportsModules() bool             { f.mark("ModuleCapable"); return true }
-func (f *fullProvider) SupportsJavaScriptGrants() bool    { f.mark("GrantCapable"); return true }
-func (f *fullProvider) SupportsProjectGrants() bool       { return true }
-func (f *fullProvider) Environments() Environments        { f.mark("Describer"); return Environments{} }
-func (f *fullProvider) Qualification() string             { f.mark("Qualifier"); return "stated" }
+func (f *fullProvider) mark(name string)               { f.called[name] = true }
+func (f *fullProvider) IsolationClass() IsolationClass { return IsolationVM }
+func (f *fullProvider) SupportsProjects() bool         { f.mark("ProjectCapable"); return true }
+func (f *fullProvider) SupportsModules() bool          { f.mark("ModuleCapable"); return true }
+func (f *fullProvider) SupportsJavaScriptGrants() bool { f.mark("GrantCapable"); return true }
+func (f *fullProvider) SupportsProjectGrants() bool    { return true }
+func (f *fullProvider) Environments() Environments     { f.mark("Describer"); return Environments{} }
+func (f *fullProvider) Qualification() string          { f.mark("Qualifier"); return "stated" }
+func (f *fullProvider) GuestGuard() (string, bool) {
+	f.mark("GuestGuarded")
+	return "guest-guard:sha256:x", true
+}
 func (f *fullProvider) Preflight(context.Context) error   { f.mark("Preflighter"); return nil }
 func (f *fullProvider) SmokeTest(context.Context) error   { f.mark("SmokeTester"); return nil }
 func (f *fullProvider) Drain(context.Context) error       { f.mark("Drainer"); return nil }
@@ -91,7 +95,15 @@ func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 			}
 			return ok
 		},
-		"Qualifier":   func(s Sandbox) bool { c, ok := s.(Qualifier); return ok && c.Qualification() == "stated" },
+		"Qualifier": func(s Sandbox) bool { c, ok := s.(Qualifier); return ok && c.Qualification() == "stated" },
+		"GuestGuarded": func(s Sandbox) bool {
+			c, ok := s.(GuestGuarded)
+			if !ok {
+				return false
+			}
+			p, proven := c.GuestGuard()
+			return proven && p == "guest-guard:sha256:x"
+		},
 		"Preflighter": func(s Sandbox) bool { c, ok := s.(Preflighter); return ok && c.Preflight(ctx) == nil },
 		"SmokeTester": func(s Sandbox) bool { c, ok := s.(SmokeTester); return ok && c.SmokeTest(ctx) == nil },
 		"Drainer":     func(s Sandbox) bool { c, ok := s.(Drainer); return ok && c.Drain(ctx) == nil },

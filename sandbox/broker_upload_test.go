@@ -118,6 +118,37 @@ func (zeros) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// uploadPrefix and uploadSuffix wrap an upload's file data as one multipart part: the
+// broker reads a multipart body's part headers, so an upload must be one.
+func uploadPrefix(boundary string) string {
+	return "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n" +
+		"Content-Type: application/octet-stream\r\n\r\n"
+}
+
+func uploadSuffix(boundary string) string { return "\r\n--" + boundary + "--\r\n" }
+
+// wrapUpload is data as the one file part of a multipart body with boundary.
+func wrapUpload(boundary string, data []byte) []byte {
+	return append(append([]byte(uploadPrefix(boundary)), data...), uploadSuffix(boundary)...)
+}
+
+// uploadReaderOf is a multipart body of exactly n bytes, boundary "x", its file data
+// zeros, read without allocating it; under the envelope's size it is n zeros, for a call
+// a test expects refused before a byte is read.
+func uploadReaderOf(n int64) io.Reader {
+	pre, suf := uploadPrefix("x"), uploadSuffix("x")
+	if n < int64(len(pre)+len(suf)) {
+		return io.LimitReader(zeros{}, n)
+	}
+	return io.MultiReader(strings.NewReader(pre), io.LimitReader(zeros{}, n-int64(len(pre)+len(suf))), strings.NewReader(suf))
+}
+
+// uploadBodyOf is uploadReaderOf held in memory.
+func uploadBodyOf(n int) []byte {
+	b, _ := io.ReadAll(uploadReaderOf(int64(n)))
+	return b
+}
+
 func randomBytes(t *testing.T, n int) []byte {
 	t.Helper()
 	b := make([]byte, n)
@@ -140,7 +171,7 @@ func TestBrokerPassesAnUploadThroughWithinTheRouteLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	body := randomBytes(t, 3<<20)
+	body := wrapUpload("plimsoll-7f3a9c", randomBytes(t, 3<<20))
 	half := len(body) / 2
 	pr, pw := io.Pipe()
 	go func() {
@@ -156,7 +187,7 @@ func TestBrokerPassesAnUploadThroughWithinTheRouteLimit(t *testing.T) {
 	}()
 	req, _ := http.NewRequest(http.MethodPost, "http://broker/v1/files", pr)
 	req.ContentLength = int64(len(body))
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=plimsoll-7f3a9c; charset=utf-8; extra=dropped")
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=plimsoll-7f3a9c; charset=UTF-8")
 	req.Header.Set("Authorization", "Bearer dummy-from-the-guest")
 	resp, err := socketClient(b.sock).Do(req)
 	if err != nil {
@@ -168,7 +199,7 @@ func TestBrokerPassesAnUploadThroughWithinTheRouteLimit(t *testing.T) {
 		t.Fatalf("answer = %d %q %q", resp.StatusCode, resp.Header.Get(brokerNoRetryHeader), answer)
 	}
 	s := seen.last(t)
-	if s.contentType != "multipart/form-data; boundary=plimsoll-7f3a9c; charset=utf-8" {
+	if s.contentType != "multipart/form-data; boundary=plimsoll-7f3a9c" { // the broker's own text: the boundary alone
 		t.Errorf("Content-Type at the API = %q", s.contentType)
 	}
 	if s.declared != int64(len(body)) || s.read != int64(len(body)) || s.digest != sha256.Sum256(body) || s.readErr != nil {
@@ -235,7 +266,7 @@ func TestBrokerCutsAnUndeclaredUploadAtTheRouteLimit(t *testing.T) {
 	defer b.Close()
 	pr, pw := io.Pipe()
 	go func() {
-		_, _ = io.Copy(pw, bytes.NewReader(make([]byte, limit+1<<20)))
+		_, _ = io.Copy(pw, uploadReaderOf(limit+1<<20))
 		pw.Close()
 	}()
 	req, _ := http.NewRequest(http.MethodPost, "http://broker/v1/files", pr)
@@ -317,15 +348,22 @@ func TestBrokerRefusesABodyTypeTheRouteDoesNotTake(t *testing.T) {
 }
 
 // TestHostAPIGrantRequestContentType: the rule for the Content-Type the broker sends,
-// case by case: the guest's type with its boundary and charset alone when the route
-// lists it, application/json for JSON or no header, application/json whatever the guest
-// said on a route that lists nothing, and a refusal for a type not listed or a parameter
-// that is not a boundary or a charset in form.
+// case by case: the broker's own text, the guest's media type with only a multipart
+// boundary, or a charset from a short list on a type that is neither JSON nor
+// multipart (a form among them); application/json for JSON or no header,
+// application/json whatever the guest said on a route that lists nothing, and a
+// refusal for a type not listed, any other parameter, a charset other than utf-8 on
+// JSON or multipart, and a header Laravel would read as JSON on a body the broker does
+// not read as JSON (hunt-security-11 and -16).
 func TestHostAPIGrantRequestContentType(t *testing.T) {
 	t.Parallel()
 	files := HostRoute{Method: "POST", Path: "/v1/files"}
 	jsonRoute := HostRoute{Method: "POST", Path: "/v1/json"}
-	g := &HostAPIGrant{RouteContentTypes: map[HostRoute][]string{files: {"multipart/form-data", "text/csv"}}}
+	form := HostRoute{Method: "POST", Path: "/v1/form"}
+	g := &HostAPIGrant{RouteContentTypes: map[HostRoute][]string{
+		files: {"multipart/form-data", "text/csv"},
+		form:  {"application/x-www-form-urlencoded", "application/vnd.api+json", "text/plain"},
+	}}
 	cases := []struct {
 		route HostRoute
 		guest string
@@ -338,8 +376,21 @@ func TestHostAPIGrantRequestContentType(t *testing.T) {
 		{files, "multipart/form-data; boundary=abc", "multipart/form-data; boundary=abc", true},
 		{files, "MULTIPART/FORM-DATA; BOUNDARY=abc", "multipart/form-data; boundary=abc", true},
 		{files, `multipart/form-data; boundary="a'()+_,-./:=? b"`, `multipart/form-data; boundary="a'()+_,-./:=? b"`, true},
-		{files, "multipart/form-data; boundary=x; name=injected; filename=y", "multipart/form-data; boundary=x", true},
+		{files, "multipart/form-data; boundary=x; name=injected; filename=y", "", false},
+		{files, "multipart/form-data; boundary=x; charset=UTF-8", "multipart/form-data; boundary=x", true},
+		{files, "multipart/form-data; boundary=x; charset=utf-16", "", false},
+		{files, "multipart/form-data; boundary=x; charset=x+json", "", false},
+		{files, "multipart/form-data; boundary=a+json", "", false},
+		{files, "multipart/form-data; boundary=/json", "", false},
 		{files, "text/csv; charset=utf-8", "text/csv; charset=utf-8", true},
+		{files, "text/csv; charset=ISO-8859-1", "text/csv; charset=iso-8859-1", true},
+		{files, "text/csv; charset=x+json", "", false},
+		{files, "text/csv; charset=windows-1252", "", false},
+		{files, "text/csv; header=present", "", false},
+		{files, "text/csv; boundary=x", "", false},
+		{files, "application/json; charset=utf-16", "", false},
+		{files, "application/json; charset=utf-16le", "", false},
+		{files, "application/json; x=y", "", false},
 		{files, "multipart/form-data; boundary=" + strings.Repeat("a", 70), "multipart/form-data; boundary=" + strings.Repeat("a", 70), true},
 		{files, "multipart/form-data; boundary=" + strings.Repeat("a", 71), "", false},
 		{files, "multipart/form-data; boundary=", "", false},
@@ -356,11 +407,53 @@ func TestHostAPIGrantRequestContentType(t *testing.T) {
 		{jsonRoute, "text/plain", "application/json", true},
 		{jsonRoute, "multipart/form-data; boundary=a", "application/json", true},
 		{jsonRoute, "", "application/json", true},
+		{jsonRoute, "application/json; charset=utf-16", "application/json", true}, // a route that lists no type sends JSON, whose bytes must be UTF-8
+		{form, "application/x-www-form-urlencoded; charset=x+json", "", false},
+		{form, "application/x-www-form-urlencoded; charset=UTF-8", "application/x-www-form-urlencoded; charset=utf-8", true},
+		{form, "application/x-www-form-urlencoded; charset=iso-8859-1", "application/x-www-form-urlencoded; charset=iso-8859-1", true},
+		{form, "application/x-www-form-urlencoded; charset=windows-1252", "", false},
+		{form, "application/x-www-form-urlencoded, application/json", "", false},
+		{form, "application/vnd.api+json; charset=utf-8", "application/vnd.api+json", true},
+		{form, "application/vnd.api+json; ext=x", "", false},
+		{form, "application/vnd.api+json; charset=utf-16le", "", false},
+		{form, "text/plain; charset=x+json", "", false},
+		{form, "text/plain;charset=utf-8;", "text/plain; charset=utf-8", true},
 	}
 	for _, tc := range cases {
 		got, ok := g.requestContentType(tc.route, tc.guest)
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("requestContentType(%s, %q) = %q, %v; want %q, %v", tc.route.Path, tc.guest, got, ok, tc.want, tc.ok)
+		}
+		// One rule (holdsJSONMark) says what is JSON to both readers of a header the broker
+		// sends: the override check, which reads the media type (isJSONContentType), and a
+		// framework that searches the whole header.
+		if ok && isJSONContentType(got) != holdsJSONMark(strings.ToLower(got)) {
+			t.Errorf("requestContentType(%s, %q) sent %q, which the override check reads as JSON=%v and a whole-header search as JSON=%v",
+				tc.route.Path, tc.guest, got, isJSONContentType(got), holdsJSONMark(strings.ToLower(got)))
+		}
+	}
+}
+
+// The one rule for what is JSON (hunt-quality-66: it was written twice), on a media type
+// and on a whole header.
+func TestHoldsJSONMark(t *testing.T) {
+	t.Parallel()
+	for text, want := range map[string]bool{
+		"application/json":                     true,
+		"text/json":                            true,
+		"application/vnd.api+json":             true,
+		"application/problem+json":             true,
+		"application/jsonl":                    true, // "/json" is in it, and Laravel reads it so
+		"application/x-ndjson":                 false,
+		"application/x-www-form-urlencoded":    false,
+		"multipart/form-data":                  false,
+		"multipart/form-data; boundary=a+json": true, // the whole header, as a framework searches it
+		"text/csv; charset=x/json":             true,
+		"text/plain; charset=utf-8":            false,
+		"":                                     false,
+	} {
+		if got := holdsJSONMark(text); got != want {
+			t.Errorf("holdsJSONMark(%q) = %v, want %v", text, got, want)
 		}
 	}
 }
@@ -379,7 +472,11 @@ func TestBrokerChargesEveryBodyToTheRunsRequestBudget(t *testing.T) {
 	defer b.Close()
 	client := socketClient(b.sock)
 	post := func(target, contentType string, n int) (int, string) {
-		req, _ := http.NewRequest(http.MethodPost, "http://broker"+target, bytes.NewReader(make([]byte, n)))
+		body := uploadBodyOf(n) // a multipart body is read, so it must be multipart
+		if contentType == "application/json" {
+			body = jsonBodyOf(n) // a buffered JSON body is read, so it must be JSON
+		}
+		req, _ := http.NewRequest(http.MethodPost, "http://broker"+target, bytes.NewReader(body))
 		req.Header.Set("Content-Type", contentType)
 		resp, err := client.Do(req)
 		if err != nil {
@@ -435,7 +532,7 @@ func TestBrokerSettlesAnUndeclaredUploadToWhatWasSent(t *testing.T) {
 	client := socketClient(b.sock)
 	pr, pw := io.Pipe()
 	go func() {
-		_, _ = pw.Write(make([]byte, 1<<20))
+		_, _ = pw.Write(uploadBodyOf(1 << 20))
 		pw.Close()
 	}()
 	req, _ := http.NewRequest(http.MethodPost, "http://broker/v1/files", pr)
@@ -452,7 +549,7 @@ func TestBrokerSettlesAnUndeclaredUploadToWhatWasSent(t *testing.T) {
 	if got := b.core.sent.Load(); got != 1<<20 {
 		t.Fatalf("the run's request bytes after a chunked 1 MiB upload = %d, want 1 MiB (the limit was held, then settled)", got)
 	}
-	req, _ = http.NewRequest(http.MethodPost, "http://broker/v1/files", bytes.NewReader(make([]byte, 2<<20)))
+	req, _ = http.NewRequest(http.MethodPost, "http://broker/v1/files", bytes.NewReader(uploadBodyOf(2<<20)))
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
 	resp, err = client.Do(req)
 	if err != nil {
@@ -518,7 +615,7 @@ func TestBrokerChargesEveryByteAnEarlyAnswerLetsThrough(t *testing.T) {
 			Method:        "POST",
 			RawTarget:     "/v1/files",
 			Headers:       map[string][]string{"Content-Type": {"multipart/form-data; boundary=x"}},
-			Body:          io.LimitReader(zeros{}, n),
+			Body:          uploadReaderOf(n),
 			ContentLength: length,
 		})
 	}
@@ -563,7 +660,7 @@ func TestBrokerChargesEveryByteAnEarlyAnswerLetsThrough(t *testing.T) {
 		return core2.Call(context.Background(), brokerCall{
 			Method: "POST", RawTarget: "/v1/files",
 			Headers:       map[string][]string{"Content-Type": {"multipart/form-data; boundary=x"}},
-			Body:          io.LimitReader(zeros{}, n),
+			Body:          uploadReaderOf(n),
 			ContentLength: n,
 		})
 	}
@@ -598,7 +695,7 @@ func TestBrokerBuffersAJSONRouteWithinTheDefaultLimit(t *testing.T) {
 	post := func(target string, n int) *http.Response {
 		pr, pw := io.Pipe()
 		go func() {
-			_, _ = pw.Write(make([]byte, n))
+			_, _ = pw.Write(jsonBodyOf(n))
 			pw.Close()
 		}()
 		req, _ := http.NewRequest(http.MethodPost, "http://broker"+target, pr)
@@ -718,7 +815,7 @@ func TestEgressGuardRawRouteStreamsAnUpload(t *testing.T) {
 	defer cleanup()
 	guard := httptest.NewServer(EgressGuardHTTPHandler(&registryGuard{reg: reg}, "/v1/e2b/guard", 0, 0))
 	defer guard.Close()
-	body := randomBytes(t, 3<<20)
+	body := wrapUpload("plimsoll-7f3a9c", randomBytes(t, 3<<20))
 	half := len(body) / 2
 	pr, pw := io.Pipe()
 	go func() {
@@ -775,4 +872,15 @@ func TestEgressGuardRawRouteStreamsAnUpload(t *testing.T) {
 	if seen.calls.Load() != 1 {
 		t.Errorf("the API saw %d requests, want the one that fit", seen.calls.Load())
 	}
+}
+
+// jsonBodyOf is a valid JSON body of exactly n bytes (n >= 1): a buffered JSON body is
+// read for the override field (broker_override.go), so one that is not JSON is refused.
+func jsonBodyOf(n int) []byte {
+	if n == 1 {
+		return []byte("0")
+	}
+	b := bytes.Repeat([]byte("a"), n)
+	b[0], b[n-1] = '"', '"'
+	return b
 }

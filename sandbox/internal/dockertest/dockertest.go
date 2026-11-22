@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/plimsollmark/plimsoll/internal/settings"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -32,8 +33,8 @@ func Sandbox(t testing.TB) *sandbox.DockerSandbox {
 		skip("docker not available")
 	}
 	d := sandbox.DefaultDocker("")
-	d.Runtime = os.Getenv("SANDBOX_DOCKER_RUNTIME")
-	d.Seccomp = os.Getenv("SANDBOX_DOCKER_SECCOMP")
+	d.Runtime = settings.DockerRuntime.Get(os.Getenv)
+	d.Seccomp = settings.DockerSeccomp.Get(os.Getenv)
 	for _, img := range []string{d.Image, d.ProjectImage} {
 		if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
 			skip("image %s is not present (run `make docker-images`)", img)

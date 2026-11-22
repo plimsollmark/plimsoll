@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// DescribeCached reports whether s holds a Describe it would use without asking again.
+func DescribeCached(s *Server) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.info != nil
+}
+
 // RetireBudget sets the background close budget, returning a reset.
 func RetireBudget(d time.Duration) func() {
 	old := retireBudget
@@ -28,6 +35,13 @@ func BlockReceiptWriteAfter(s *Server, skip int) (blocked <-chan struct{}, relea
 	s.receipts.mu.Unlock()
 	return waiting, func() { close(ch) }
 }
+
+// The two numbers the timeout checks use, for the test that holds the refusal's words
+// and the README to them.
+const (
+	RunAnswerMargin = runAnswerMargin
+	RunTimeoutGap   = runTimeoutGap
+)
 
 // CallTimeout sets s's whole-call budget, below the floor New checks, so a test can
 // reach a wait that budget once bounded.
@@ -149,7 +163,7 @@ func ChecksAtOnce(s *Server, n int) (walks int64, errs []error) {
 	errs = make([]error, n)
 	for i := range n {
 		done.Add(1)
-		go func() { defer done.Done(); errs[i] = r.Full() }()
+		go func() { defer done.Done(); errs[i] = r.Full("") }()
 	}
 	joined.Wait()
 	r.mu.Unlock()
@@ -167,7 +181,7 @@ func MeasureWithTickingClock(s *Server, step time.Duration) (first, measuredAt t
 	r.now = func() time.Time { n++; return t0.Add(time.Duration(n) * step) }
 	r.measuredAt = time.Time{}
 	r.mu.Unlock()
-	_ = r.Full()
+	_ = r.Full("")
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return t0.Add(step), r.measuredAt

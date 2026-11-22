@@ -138,11 +138,11 @@ func TestDecodeModuleResults(t *testing.T) {
 		{"row count", rec, 5, "describes 4 rows"},
 		{"zero width", func() []byte { c := append([]byte(nil), rec...); c[12] = 0; return c }(), 4, "width 0"},
 		{"truncated outputs", rec[:len(rec)-8], 4, "ends inside row 3's outputs"},
-		{"truncated status", rec[:moduleResultHeader+2], 4, "ends inside row 0's status"},
+		{"truncated status", rec[:ModuleResultHeaderBytes+2], 4, "ends inside row 0's status"},
 		{"trailing", append(append([]byte(nil), rec...), 0), 4, "1 trailing bytes"},
 		{"huge status", func() []byte {
 			c := append([]byte(nil), rec...)
-			binary.LittleEndian.PutUint32(c[moduleResultHeader:], math.MaxInt32)
+			binary.LittleEndian.PutUint32(c[ModuleResultHeaderBytes:], math.MaxInt32)
 			return c
 		}(), 4, "ends inside row 0's outputs"},
 	}

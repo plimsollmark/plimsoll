@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -92,6 +93,9 @@ func (s *SandboxService) check(ctx context.Context, env envelope, k kind, t targ
 		}
 	}
 	k.setGrant(grant)
+	if t.qualificationErr != nil {
+		return ctx, t.qualificationErr
+	}
 	if err := sandbox.CheckMinimumIsolation(t.tier, env.minimum); err != nil {
 		return ctx, mapSandboxErr(err)
 	}
@@ -144,7 +148,7 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	// (sandbox.WatchTeardownUntil, SpendCap.leak).
 	runCtx, teardownGaveUp := sandbox.WatchTeardownUntil(runCtx)
 	started := time.Now()
-	err = k.dispatch(runCtx, t)
+	panicked, err := s.dispatch(runCtx, k, t)
 	billed := time.Since(started)
 	gaveUp, billsUntil := teardownGaveUp()
 	leaked := whole > 0 && gaveUp
@@ -175,10 +179,12 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			errAttr(err))
 		attrs = append(attrs, hostCallAttrs(k.trace())...)
+		attrs = append(attrs, panicked...)
 		// A failed run is exactly the one an operator will go looking for, so it
 		// carries the join key too.
 		attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
 		s.logger().LogAttrs(ctx, slog.LevelError, k.msg()+" failed", attrs...)
+		markRefusalLogged(ctx)
 		return nil, mapSandboxErr(err)
 	}
 	ev := k.ran()
@@ -192,6 +198,12 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	}
 	took := k.took(started)
 	attrs = append(attrs, slog.String("sandbox", provider), slog.String("isolation", isolation.String()))
+	// The policy the provider states this run ran under (docker: the seccomp profile and the
+	// guest guard, each by digest), as the run's record names it: a trusted label, never the
+	// caller's text, so the metadata-only line can say which filter stood in front of the code.
+	if ev.policy != "" {
+		attrs = append(attrs, slog.String("policy", ev.policy))
+	}
 	attrs = append(attrs, k.resultAttrs()...)
 	attrs = append(attrs, slog.Int64("duration_ms", took.Milliseconds()))
 	if t, ok := k.(trailer); ok {
@@ -223,9 +235,37 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 		SoftwareIdentity: t.ranSoftware(software, described.SoftwareIdentity),
 		Environment:      describedEnvironment(environment, described.Identity),
 		Instance:         instance,
+		// The sentence the provider states beside its tier, checked before dispatch (a
+		// session's, as it stated it at open), and this daemon's version: the record
+		// repeats both, so they are signed with the tier.
+		IsolationQualification: t.qualification,
+		DaemonVersion:          daemonVersion(),
 	}
 	k.answer(resp, adviceWire(caller))
 	return resp, nil
+}
+
+// errProviderPanicked is a run whose provider panicked: an internal fault, answered as
+// "internal error <id>" and unmarked, since the code may have run.
+var errProviderPanicked = errors.New("the provider failed during the run")
+
+// dispatch is the one guarded provider call of every run and session call: a provider
+// that panics is a failed run, not an unwound handler. Before, a single run's panic
+// reached net/http, which printed it outside the audit stream and dropped the
+// connection: the run had no audit line and runs_failed did not count it, while session
+// calls recovered theirs (finding hunt-quality-3, 2026-11-20). The panic becomes
+// errProviderPanicked, so the failed run's audit line, runs_failed and the caller's
+// unmarked "internal error <id>" follow as for any infrastructure fault, and a session
+// call chains it as unanswered. panicked is what the audit line adds: that it panicked,
+// with the panic's type and stack, never its value (panicAttrs).
+func (s *SandboxService) dispatch(ctx context.Context, k kind, t target) (panicked []slog.Attr, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = append([]slog.Attr{slog.Bool("provider_panicked", true)}, panicAttrs(r)...)
+			err = errProviderPanicked
+		}
+	}()
+	return nil, k.dispatch(ctx, t)
 }
 
 // evidence is what a result states it ran under: the provider, the tier, the selected
@@ -237,8 +277,10 @@ type evidence struct {
 	environment string
 	instance    string
 	// policy is the sandbox policy this run was dispatched under, when the provider
-	// states one per run (docker names the seccomp profile a run applied); "" means
-	// the provider's one policy, which the daemon states (SandboxService.policy).
+	// states one per run (docker names the seccomp profile a run applied and the guest
+	// guard it started behind); "" means
+	// the provider's one policy, which the daemon states (SandboxService.policy), or for
+	// a session call the one its session stated at open (recordPolicy).
 	policy string
 }
 

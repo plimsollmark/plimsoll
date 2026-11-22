@@ -177,9 +177,17 @@ pod on a kind cluster under the `gvisor-receipt` runtime class and writes its lo
 `runsclog/testdata`; `-install` first puts the handler in `fixtures/handler.toml` and the
 runsc options in `fixtures/runsc-receipt.toml` into the node.
 
+Before a new runsc release goes into `runsclog.Supported`, the reader is checked against
+that release's real log: `fixtures/capture-runsc.sh NAME` runs one fixture under the host's
+own runsc with the same options, through `runsc --rootless run` with no network, and writes
+`runsclog/testdata/NAME-RELEASE.boot.json.gz`. It needs docker and runsc, not root or a
+cluster. Its guest has no network and gets some errors from `/proc` that the kind path does
+not, so only the canary is kept that way, for release-20261116.0.
+
 ```sh
 go test ./examples/dependency-receipt/...
 examples/dependency-receipt/fixtures/capture.sh -install   # needs a kind cluster with gVisor
+examples/dependency-receipt/fixtures/capture-runsc.sh canary   # needs docker and runsc on PATH
 ```
 
 On an offline install of express and esbuild, the log made the install 1.6 times slower

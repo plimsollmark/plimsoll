@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // Language is an interpreter's language: a cell's, and one an environment states.
@@ -34,7 +36,7 @@ type LanguageSpec struct {
 
 // LanguageSpecs are the languages plimsoll keeps an interpreter for, JavaScript first.
 var LanguageSpecs = []LanguageSpec{
-	{LanguageJavaScript, `node -e 'console.log("javascript")'`, "globalThis.plimsollSmoke = 41", "plimsollSmoke + 1"},
+	{LanguageJavaScript, sessionkit.GuestNode + ` -e 'console.log("javascript")'`, "globalThis.plimsollSmoke = 41", "plimsollSmoke + 1"},
 	{LanguagePython, `{ python3 -I -c 'print("python")' 2>/dev/null || true; }`, "plimsoll_smoke = 41", "plimsoll_smoke + 1"},
 }
 

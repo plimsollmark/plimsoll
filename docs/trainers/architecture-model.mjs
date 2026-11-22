@@ -137,7 +137,7 @@ add('launch-grant', 'provider', 'guest', 'request', 'Inject a calling interface,
 add('launch-project', 'provider', 'guest', 'request', 'Write the files, then run the project steps',
   'Files and ordered build/lint/run commands inside the selected provider.',
   'Steps stop at the first failure. Docker preloads the host client into step processes with node --import; E2B’s client sends through the guard. File and artifact paths are checked and size-capped.',
-  'write files → build → lint → run\nstop on first failed step\ncollect only requested, bounded artifacts', 'docker/runner.mjs');
+  'write files → build → lint → run\nstop on first failed step\ncollect only requested, bounded artifacts', 'sandbox/internal/nativehelper/program/src/runner.rs');
 add('guest-call', 'guest', 'adapter', 'api', 'The guest asks for an API operation',
   'Method, path, and optional body. No downstream bearer.',
   '{{channel}} The route /items/42 is just an illustrative request; the grant’s /items/* is the pattern that will authorize it.',

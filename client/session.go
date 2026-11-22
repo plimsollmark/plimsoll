@@ -72,18 +72,30 @@ func ownerDigest(token, owner string) string {
 type Session struct {
 	r           *Remote
 	id          string
+	generation  uint64
 	fingerprint string
 	provider    string // the provider, tier and software the daemon stated at open,
 	isolation   sandbox.IsolationClass
 	identity    string // which an unanswered call's record must repeat
-	software    sandbox.SoftwareRule
-	floor       sandbox.IsolationClass // the floor given at open, sent with every call
-	expires     time.Time
-	idle        time.Duration
+	// qualification is the sentence the daemon stated beside the tier at open, which an
+	// unanswered call's record must repeat too.
+	qualification string
+	software      sandbox.SoftwareRule   // the rule given at open
+	openFloor     sandbox.IsolationClass // the floor given at open, as the daemon echoed it
+	floor         sandbox.IsolationClass // the floor sent with every call: the open's
+	expires       time.Time
+	idle          time.Duration
 
 	mu    sync.Mutex
 	calls uint64
 	last  string
+	// lostCall is the request digest the session's next call is refused for repeating,
+	// set by an attach across an explained gap (or inherited with a checkpoint), spent by
+	// that refusal or by the next call that may have run (a call the daemon refuses with
+	// the not-dispatched mark leaves it); lostRecord is that attach's record of the lost
+	// call. Under mu.
+	lostCall   string
+	lostRecord *sandbox.RunRecord
 
 	// State accessors must not wait for mu, held across a network exchange.
 	stateMu sync.Mutex
@@ -93,8 +105,29 @@ type Session struct {
 	// chains for such a call (lost with the answer, or failing its check). That call
 	// may have run and moved the daemon's chain on, so every later call would run and
 	// then fail the chain check; they are refused here instead, before anything is
-	// sent.
+	// sent. A call or close refused because another worker attached the session stops
+	// it the same way (ErrStaleOwner).
 	unanswered error
+	// closed: the daemon answered this client's close, or the recorder signed that it
+	// could not be collected (signedEnd), so Checkpoint refuses.
+	closed bool
+	// signedEnd: the recorder signed that this session's close could not be collected,
+	// which ends it in the bundle; no later close is sent.
+	signedEnd bool
+	// answered is the first close the daemon answered with its count, and what Close
+	// returned for it (a count that differs from this client's chain included): every
+	// later close returns the same, and sends and signs nothing (finding hunt-quality-97).
+	// Under mu.
+	answered *closeAnswer
+	// lostRequest is the request digest of the call after which the session stopped with
+	// no answer this client could check: the call an attach may name as lost.
+	lostRequest string
+	// checkFailed: the session stopped over an answer this client received and refused,
+	// because its record or the chain failed the check (a record that does not match the
+	// call, a call numbered after a gap, a result of another kind): proof that the
+	// daemon's chain holds something this client did not send, or that its answers are
+	// not to be believed. A close that cannot be collected then signs nothing.
+	checkFailed bool
 }
 
 // UnansweredCallError is a session call that may have run but ended in Err. Its
@@ -130,6 +163,50 @@ var ErrSessionUnanswered = errors.New("client: an earlier call of this session e
 type SessionRecorder interface {
 	Recorder
 	RecordClose(session string, calls uint64, lastRecordSHA256 string) error
+}
+
+// CloseNotCollectedRecorder is a SessionRecorder that also signs its own statement that a
+// session's close could not be collected: the daemon refused the close with no count, and
+// never will give one (CloseNotFound, CloseStaleOwner). The session then ends in the
+// bundle with the calls this client saw, reported as not proven complete.
+// unansweredRequestSHA256 is the request digest of a call this client sent after those and
+// got no answer for (it may have run), "" when there is none: at most one, since the first
+// call left without an answer stops the session and every later one is refused before it
+// is sent. attest.Harness is one. A SessionRecorder that is not one leaves such a session
+// without an ending, and its bundle does not verify.
+type CloseNotCollectedRecorder interface {
+	SessionRecorder
+	RecordCloseNotCollected(session string, callsSeen uint64, lastRecordSHA256, unansweredRequestSHA256, reason string) error
+}
+
+// The reasons Close hands a CloseNotCollectedRecorder, as attest's statement names them.
+const (
+	// CloseNotFound: the daemon that answered the close said NotFound, marked not
+	// dispatched, "no such session for this caller": after a restart, after the time it
+	// keeps an ended session's count, after another holder of the session ID closed it, or
+	// from a daemon behind a load balancer that never had the session.
+	CloseNotFound = "not_found"
+	// CloseStaleOwner: the daemon refused the close because another worker took the
+	// session over (ErrStaleOwner).
+	CloseStaleOwner = "stale_owner"
+)
+
+// ErrCloseNotCollected is a close the daemon refused with no count and never will answer
+// (CloseNotFound, CloseStaleOwner). When the Remote's Recorder is a
+// CloseNotCollectedRecorder it has signed that, and the session ends there: this client
+// sends nothing more on it, its close included.
+var ErrCloseNotCollected = errors.New("client: the session's close could not be collected, so the daemon's count of its calls is unknown")
+
+// notCollected names why a failed close can never be collected, or "" when it might be
+// (a timeout, a dropped connection, any error without the daemon's mark).
+func notCollected(err error) string {
+	if errors.Is(err, ErrStaleOwner) {
+		return CloseStaleOwner
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); marked && connect.CodeOf(err) == connect.CodeNotFound {
+		return CloseNotFound
+	}
+	return ""
 }
 
 // ErrRecorderCannotKeepSessions refuses a session, before anything is sent, on a
@@ -175,23 +252,39 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 	}
 	m := resp.Msg
 	s := &Session{
-		r:           r,
-		id:          m.GetSessionId(),
-		fingerprint: m.GetSession(),
-		provider:    m.GetSandbox(),
-		isolation:   sandbox.ParseIsolationClass(m.GetIsolation()),
-		identity:    m.GetSoftwareIdentity(),
-		software:    opts.Software,
-		floor:       opts.MinimumIsolation,
-		expires:     time.UnixMilli(m.GetExpiresUnixMs()),
-		idle:        time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
+		r:             r,
+		id:            m.GetSessionId(),
+		generation:    m.GetGeneration(),
+		fingerprint:   m.GetSession(),
+		provider:      m.GetSandbox(),
+		isolation:     sandbox.ParseIsolationClass(m.GetIsolation()),
+		identity:      m.GetSoftwareIdentity(),
+		qualification: m.GetIsolationQualification(),
+		software:      opts.Software,
+		openFloor:     opts.MinimumIsolation,
+		floor:         opts.MinimumIsolation,
+		expires:       time.UnixMilli(m.GetExpiresUnixMs()),
+		idle:          time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
 	}
 	// A session refused here is closed (it exists on the daemon either way, and nothing
 	// else holds its ID), but its close is not signed: it names whatever fingerprint the
 	// daemon chose.
+	if s.generation != 1 {
+		// Every daemon opens a session at generation 1, so that is the number its close
+		// must carry, whatever this answer said.
+		s.generation = 1
+		s.closeRejected(ctx)
+		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's answer to the open states an ownership generation other than 1", record.ErrChain))
+	}
 	if s.fingerprint != record.SessionFingerprint(s.id) {
 		s.closeRejected(ctx)
 		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's session fingerprint does not match its session ID", record.ErrChain))
+	}
+	if m.GetMinimumIsolation() != minimumIsolationWire(opts.MinimumIsolation) || softwarewire.FromWire(m.GetSoftwareRule()).ID() != opts.Software.ID() {
+		// The floor and rule the daemon keeps for the session are what an attach answer
+		// repeats and a checkpoint states, so they must be the ones sent.
+		s.closeRejected(ctx)
+		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's answer to the open states another floor or software rule than the open sent", record.ErrChain))
 	}
 	if err := sandbox.CheckResultIsolation(s.isolation, opts.MinimumIsolation); err != nil {
 		s.closeRejected(ctx)
@@ -231,6 +324,10 @@ func (s *Session) Fingerprint() string { return s.fingerprint }
 // Isolation is the tier the daemon measured when the session opened.
 func (s *Session) Isolation() sandbox.IsolationClass { return s.isolation }
 
+// IsolationQualification is the sentence the daemon stated beside that tier at open, ""
+// when the provider states none. Every call's record states it too.
+func (s *Session) IsolationQualification() string { return s.qualification }
+
 // ExpiresAt is when the session's lifetime ends.
 func (s *Session) ExpiresAt() time.Time { return s.expires }
 
@@ -248,9 +345,12 @@ func (s *Session) Ended() error {
 	return s.end
 }
 
-// Stopped returns why this client sends no more calls after an answer it could not
-// check, or nil until it stops. It wraps ErrSessionUnanswered and the original cause;
-// it is distinct from Ended, which reports an end the daemon stated.
+// Stopped returns why this client sends no more calls, or nil until it stops: after an
+// answer it could not check (wrapping ErrSessionUnanswered and the original cause), or
+// after the daemon refused a call or close because another worker attached the session
+// (wrapping ErrStaleOwner), or after its recorder signed that its close could not be
+// collected (wrapping ErrCloseNotCollected). It is distinct from Ended, which reports an
+// end the daemon stated.
 func (s *Session) Stopped() error {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
@@ -263,6 +363,73 @@ func (s *Session) setStopped(cause error) {
 	if s.unanswered == nil {
 		s.unanswered = fmt.Errorf("%w: %w; open a new session", ErrSessionUnanswered, cause)
 	}
+}
+
+// setStale stops the session because another worker owns it now.
+func (s *Session) setStale(cause error) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.unanswered == nil {
+		s.unanswered = fmt.Errorf("%w: %w; this worker must not use the session again", ErrStaleOwner, cause)
+	}
+}
+
+// LostRequestSHA256 is the request digest of the call after which this session stopped
+// with no answer it could check (Stopped wraps ErrSessionUnanswered), or "": the call that
+// may have run, for another worker's AttachSession to name (AttachOptions) together with a
+// checkpoint saved before it.
+func (s *Session) LostRequestSHA256() string {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.lostRequest
+}
+
+// LostCall is the record of the call that was sent once and whose answer was lost, on a
+// session attached across an explained gap (AttachOptions.LostRequestSHA256), or nil: what
+// the attach learned of it. Its output is lost. The record says whether the daemon
+// answered it: a result digest when the daemon answered, which does not show that the call
+// ran to its end (a step stopped at its time limit and a setup that failed are answers
+// too), an unanswered code when it ended without an answer, so that it may have done none,
+// part or all of its work.
+func (s *Session) LostCall() *sandbox.RunRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lostRecord
+}
+
+// stopAfter stops the session after sending the call whose request digest is digest
+// without an answer this client could check: checkFailed when an answer came and failed
+// the record or chain check, not when none came.
+func (s *Session) stopAfter(digest string, cause error, checkFailed bool) {
+	s.stateMu.Lock()
+	if s.unanswered == nil {
+		s.lostRequest, s.checkFailed = digest, checkFailed
+	}
+	s.stateMu.Unlock()
+	s.setStopped(cause)
+}
+
+// stoppedByFailedCheck returns why this client stopped the session over an answer that
+// failed its record or chain check, or nil.
+func (s *Session) stoppedByFailedCheck() error {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if !s.checkFailed {
+		return nil
+	}
+	return s.unanswered
+}
+
+func (s *Session) endingSigned() bool {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.signedEnd
+}
+
+func (s *Session) isClosed() bool {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.closed
 }
 
 func (s *Session) setEnd(end *sandbox.SessionEndedError) {
@@ -365,6 +532,7 @@ func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum s
 		TraceId:          TraceIDFrom(ctx),
 		TimeoutMs:        timeoutMs(timeout),
 		SessionId:        s.id,
+		Generation:       s.generation,
 		SoftwareRule:     softwarewire.ToWire(software),
 	}
 }
@@ -379,6 +547,17 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 	if stopped := s.Stopped(); stopped != nil {
 		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, stopped)
 	}
+	// The first call after an attach across an explained gap: a repeat of the lost call is
+	// a retry of a call that was already sent once, refused here with nothing sent, and the
+	// refusal spends the note. Only the first call is checked: any other call spends the
+	// note once it is sent, unless the daemon refuses it with the not-dispatched mark,
+	// since then nothing ran, the head is where it was, and the next call is still the
+	// first.
+	digest := record.SessionRunRequestDigest(msg)
+	if s.lostCall != "" && digest == s.lostCall {
+		s.lostCall = ""
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, ErrCallAlreadySent)
+	}
 	req := connect.NewRequest(msg)
 	s.r.auth(req)
 	resp, err := s.r.client.SessionRun(ctx, req)
@@ -390,21 +569,25 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 			s.setEnd(se)
 		}
 		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			if errors.Is(err, ErrStaleOwner) {
+				s.setStale(err)
+			}
 			return nil, nil, err
 		}
+		s.lostCall = ""
 		if rec == nil {
-			s.setStopped(err)
+			s.stopAfter(digest, err, false)
 			return nil, nil, err
 		}
 		r, cerr := record.CheckUnanswered(msg, rec, s.fingerprint, s.calls, s.last)
-		if cerr == nil && (r.Provider != s.provider || r.Isolation != s.isolation.String() || r.SoftwareIdentity != s.identity) {
+		if cerr == nil && (r.Provider != s.provider || r.Isolation != s.isolation.String() || r.SoftwareIdentity != s.identity || r.IsolationQualification != s.qualification) {
 			// With no response to compare it with, the record's evidence must be what
 			// the session stated at open.
-			cerr = fmt.Errorf("%w: the unanswered call's record names %s at %q running %q, the session opened as %s at %q running %q",
+			cerr = fmt.Errorf("%w: the unanswered call's record names %s at %q running %q, the session opened as %s at %q running %q (or the tier's qualification differs from the one stated at open)",
 				record.ErrMismatch, r.Provider, r.Isolation, r.SoftwareIdentity, s.provider, s.isolation, s.identity)
 		}
 		if cerr != nil {
-			s.setStopped(cerr)
+			s.stopAfter(digest, cerr, true)
 			return nil, nil, connect.NewError(connect.CodeDataLoss, cerr)
 		}
 		s.calls, s.last = r.Sequence, r.SHA256
@@ -415,9 +598,10 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 		}
 		return nil, nil, &UnansweredCallError{Record: r, Err: err}
 	}
+	s.lostCall = ""
 	run := resp.Msg.GetRun()
 	if run == nil {
-		s.setStopped(ErrResultKindMismatch)
+		s.stopAfter(digest, ErrResultKindMismatch, true)
 		return nil, nil, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
 	if e := resp.Msg.GetEnded(); e != plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED {
@@ -425,7 +609,7 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 	}
 	rec, err := record.CheckSessionCall(msg, run, s.fingerprint, s.calls, s.last)
 	if err != nil {
-		s.setStopped(err)
+		s.stopAfter(digest, err, true)
 		return run, nil, connect.NewError(connect.CodeDataLoss, err)
 	}
 	s.calls, s.last = rec.Sequence, rec.SHA256
@@ -450,19 +634,95 @@ type SessionSummary struct {
 // record differs from the chain this client has seen, some call it did not make
 // ran in the session: that is DataLoss wrapping record.ErrChain, with the summary,
 // and nothing is signed. A SessionRecorder signs the daemon's statement only when it
-// matches the chain this client has seen.
+// matches the chain this client has seen. Once the daemon has answered a close with its
+// count, every later Close returns that same summary and error, and sends and signs
+// nothing.
+//
+// A close the daemon refuses with no count and never will answer (NotFound with the
+// not-dispatched mark, or ErrStaleOwner) is ErrCloseNotCollected. When the Recorder is a
+// CloseNotCollectedRecorder, it has then signed its own statement of that, with the
+// calls this client saw (the summary returned), and the session ends there: Stopped
+// reports it, and every later call and close is refused, not dispatched. Any other
+// failure (a timeout, a dropped connection) signs nothing, and the close may be tried
+// again. A session this client stopped over an answer that failed its record or chain
+// check (another holder's call between two of its own, a record that does not match the
+// call) signs nothing either, whatever the close's error: the client has proof that
+// something it did not send ran, so its bundle keeps no ending for the session and does
+// not verify, and the error says why.
 func (s *Session) Close(ctx context.Context) (SessionSummary, error) { return s.close(ctx, true) }
 
 func (s *Session) close(ctx context.Context, sign bool) (SessionSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	req := connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: Protocol, SessionId: s.id})
+	if a := s.answered; a != nil {
+		// The daemon has answered this session's close: it holds the session no longer, so
+		// a close sent again would be NotFound, which must not read as a close that could
+		// not be collected (and be signed so, when this client caught a call it did not
+		// make), nor be signed as a second ending.
+		return a.sum, a.err
+	}
+	if s.endingSigned() {
+		// The harness has signed this session's ending: a daemon close after it would be a
+		// second ending, which no bundle verifies with, so none is asked for.
+		return SessionSummary{Session: s.fingerprint}, sandbox.NotDispatched(sandbox.RefusalRequest,
+			fmt.Errorf("%w: its ending is already signed", ErrCloseNotCollected))
+	}
+	req := connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: Protocol, SessionId: s.id, Generation: s.generation})
 	s.r.auth(req)
 	resp, err := s.r.client.CloseSession(ctx, req)
 	if err != nil {
-		return SessionSummary{Session: s.fingerprint}, restoreSandboxError(err)
+		err = restoreSandboxError(err)
+		if errors.Is(err, ErrStaleOwner) {
+			s.setStale(err)
+		}
+		sum := SessionSummary{Session: s.fingerprint, Calls: s.calls, LastRecordSHA256: s.last}
+		reason := notCollected(err)
+		ncr, ok := s.r.recorder.(CloseNotCollectedRecorder)
+		if reason == "" || !ok || !sign {
+			return SessionSummary{Session: s.fingerprint}, err
+		}
+		if caught := s.stoppedByFailedCheck(); caught != nil {
+			// This client caught something it did not send in the session's chain, or an
+			// answer it could not believe; the statement would read as an ordinary daemon
+			// restart. Nothing is signed, so the bundle has no ending for the session and
+			// fails verify, as it did before the statement existed.
+			return SessionSummary{Session: s.fingerprint}, fmt.Errorf("client: the session's close could not be collected (%s), and nothing was signed: "+
+				"this client stopped the session over an answer that failed its record or chain check, so the bundle holds no ending for the session and does not verify (%w): %w",
+				reason, caught, err)
+		}
+		// The daemon will never state this session's count. The harness signs that, with
+		// the calls this client saw, so the bundle ends the session as not proven complete
+		// rather than not at all, and this client sends nothing more on it. A call sent after
+		// those with no answer (the session stopped on it: LostRequestSHA256) is named too,
+		// since it may have run and no line of the bundle holds it.
+		if rerr := ncr.RecordCloseNotCollected(s.fingerprint, s.calls, s.last, s.LostRequestSHA256(), reason); rerr != nil {
+			return sum, fmt.Errorf("%w: the statement that the close could not be collected: %w (%w: %w)", ErrNotRecorded, rerr, ErrCloseNotCollected, err)
+		}
+		s.stateMu.Lock()
+		s.closed, s.signedEnd = true, true
+		if s.unanswered == nil {
+			s.unanswered = fmt.Errorf("%w; its ending is signed: open a new session", ErrCloseNotCollected)
+		}
+		s.stateMu.Unlock()
+		return sum, fmt.Errorf("%w (%s), and the harness signed that: %w", ErrCloseNotCollected, reason, err)
 	}
-	m := resp.Msg
+	s.stateMu.Lock()
+	s.closed = true
+	s.stateMu.Unlock()
+	sum, err := s.closeAnswered(resp.Msg, sign)
+	s.answered = &closeAnswer{sum: sum, err: err}
+	return sum, err
+}
+
+// closeAnswer is a close the daemon answered with its count, and what Close made of it.
+type closeAnswer struct {
+	sum SessionSummary
+	err error
+}
+
+// closeAnswered checks the daemon's answer to a close against the chain this client saw,
+// and signs it when it matches.
+func (s *Session) closeAnswered(m *plimsollv1.CloseSessionResponse, sign bool) (SessionSummary, error) {
 	sum := SessionSummary{Session: m.GetSession(), Calls: m.GetCalls(), LastRecordSHA256: m.GetLastRecordSha256(), End: wireenum.SessionEndFromWire(m.GetEnded())}
 	if sum.Session != s.fingerprint || sum.Calls != s.calls || sum.LastRecordSHA256 != s.last {
 		return sum, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon counts %d calls ending %q, this client saw %d ending %q",
@@ -487,6 +747,7 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		TraceId:          req.GetTraceId(),
 		TimeoutMs:        req.GetTimeoutMs(),
 		SessionId:        s.id,
+		Generation:       s.generation,
 		SoftwareRule:     req.GetSoftwareRule(),
 	}
 	switch p := req.GetPayload().(type) {

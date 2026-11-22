@@ -1,23 +1,27 @@
 {
-  "//": "plimsoll audited default seccomp profile — deny-by-default allowlist for the",
+  "//": "plimsoll audited default seccomp profile: a deny-by-default allowlist for the",
   "//1": "sandbox workload (node runtime + TS toolchain: tsc/tsx/eslint, plus child-process",
   "//2": "spawning by the project runner). Everything not listed returns EPERM. This is",
   "//3": "TIGHTER than docker's built-in default: it additionally denies ptrace, process_vm_*,",
   "//4": "bpf, perf_event_open, userfaultfd, io_uring, mount/pivot_root/chroot, namespace",
   "//5": "creation (unshare/setns and CLONE_NEW* flags), keyring, module/kexec/reboot,",
-  "//6": "swap, modify_ldt, *_handle_at, clock/time mutation, and SysV IPC — none of which",
+  "//6": "swap, modify_ldt, *_handle_at, clock/time mutation, and SysV IPC, none of which",
   "//7": "the workload uses, all of which are kernel-escape or introspection surface.",
   "//8": "See docs/seccomp.md for the audit rationale. Reference via SANDBOX_DOCKER_SECCOMP.",
   "defaultAction": "SCMP_ACT_ERRNO",
   "defaultErrnoRet": 1,
+  "//archMap": "Each machine's native architecture alone, no sub-architectures: a call through the",
+  "//archMap1": "32-bit entry (int 0x80) or x32 on x86-64, or 32-bit ARM on aarch64, is killed. Listing them",
+  "//archMap2": "let socketcall through, which libseccomp writes for the 32-bit entry without the socket",
+  "//archMap3": "family check (docs/seccomp.md, Architectures).",
   "archMap": [
     {
       "architecture": "SCMP_ARCH_X86_64",
-      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+      "subArchitectures": []
     },
     {
       "architecture": "SCMP_ARCH_AARCH64",
-      "subArchitectures": ["SCMP_ARCH_ARM"]
+      "subArchitectures": []
     }
   ],
   "syscalls": [

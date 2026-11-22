@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // The docker provider applies one of two seccomp profiles to a run (docs/seccomp.md),
@@ -68,17 +69,27 @@ func seccompProfileWord(setting string) bool {
 // tighter than docker's.
 func verifySeccomp(defaultSetting, sdkSetting, dir string) (dockerSeccomp, error) {
 	var s dockerSeccomp
+	var defaultRaw []byte // the default profile file's bytes, when it is a file
 	switch {
 	case defaultSetting == "" || defaultSetting == "default":
 		s.defaultPath, s.defaultID = "", seccompPolicyDockerDefault
 	case defaultSetting == "unconfined":
 		s.defaultPath, s.defaultID = "unconfined", seccompPolicyUnconfined
 	default:
-		path, id, err := pinSeccompProfile(defaultSetting, dir)
+		// The bytes checked are the bytes pinned and the bytes a derived variant is made
+		// from, so the file cannot change between the three.
+		raw, err := os.ReadFile(defaultSetting)
 		if err != nil {
 			return dockerSeccomp{}, fmt.Errorf("seccomp profile %q: %w", defaultSetting, err)
 		}
-		s.defaultPath, s.defaultID = path, id
+		if err := checkSeccompEntries(raw); err != nil {
+			return dockerSeccomp{}, fmt.Errorf("seccomp profile %q: %w", defaultSetting, err)
+		}
+		path, id, err := pinSeccompBytes(raw, dir)
+		if err != nil {
+			return dockerSeccomp{}, fmt.Errorf("seccomp profile %q: %w", defaultSetting, err)
+		}
+		s.defaultPath, s.defaultID, defaultRaw = path, id, raw
 	}
 	switch {
 	case sdkSetting == "":
@@ -87,11 +98,7 @@ func verifySeccomp(defaultSetting, sdkSetting, dir string) (dockerSeccomp, error
 	case seccompProfileWord(sdkSetting):
 		return dockerSeccomp{}, fmt.Errorf("SANDBOX_DOCKER_SECCOMP_SDK must be %q or name a profile file, not %q", SeccompSDKDerived, sdkSetting)
 	case sdkSetting == SeccompSDKDerived:
-		raw, err := os.ReadFile(defaultSetting)
-		if err != nil {
-			return dockerSeccomp{}, fmt.Errorf("seccomp profile %q: %w", defaultSetting, err)
-		}
-		derived, err := deriveSDKSeccomp(raw)
+		derived, err := deriveSDKSeccomp(defaultRaw)
 		if err != nil {
 			return dockerSeccomp{}, fmt.Errorf("SANDBOX_DOCKER_SECCOMP_SDK=%s: %w", SeccompSDKDerived, err)
 		}
@@ -120,11 +127,12 @@ func verifySeccomp(defaultSetting, sdkSetting, dir string) (dockerSeccomp, error
 
 // checkSDKSeccompShape refuses an operator's own sdk_env variant that does not keep the
 // derived variant's floor: deny by default, a syscalls list, socket allowed only with its
-// address family compared, and socketcall (the 32-bit multiplexer, whose arguments a
-// filter cannot read) not allowed at all. Without it a wide file, docker's own default
-// saved to disk for example, would silently become the profile of every run whose grant
-// sets sdk_env (release review, 2026-10-29). What a variant allows beyond that is the
-// operator's choice, and its digest is in every record.
+// address family compared, socketcall (the 32-bit multiplexer, whose arguments a filter
+// cannot read) not allowed at all, and no architecture listed under which libseccomp writes
+// the socket rule for socketcall anyway (checkSeccompEntries). Without it a wide file,
+// docker's own default saved to disk for example, would silently become the profile of
+// every run whose grant sets sdk_env (release review, 2026-10-29). What a variant allows
+// beyond that is the operator's choice, and its digest is in every record.
 func checkSDKSeccompShape(raw []byte) error {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -154,6 +162,85 @@ func checkSDKSeccompShape(raw []byte) error {
 		}
 		if slices.Contains(names, "socket") && !seccompComparesFamily(rule["args"]) {
 			return errors.New("it allows socket without comparing the address family")
+		}
+	}
+	return checkSeccompEntries(raw)
+}
+
+// seccompMultiplexingArches are the architectures whose kernel entry also takes socket's and
+// SysV IPC's calls through one multiplexer each (socketcall and ipc), as docker's profiles
+// name them: the ones libseccomp adds a rule to through abi_rule_add (its src/arch-*.c).
+// seccompMultiplexedCalls are the calls behind those multiplexers (src/syscalls.c,
+// _abi_syscall_demux).
+var (
+	seccompMultiplexingArches = []string{
+		"SCMP_ARCH_X86", "SCMP_ARCH_PPC", "SCMP_ARCH_PPC64", "SCMP_ARCH_PPC64LE", "SCMP_ARCH_S390", "SCMP_ARCH_S390X",
+		"SCMP_ARCH_MIPS", "SCMP_ARCH_MIPSEL", "SCMP_ARCH_SH", "SCMP_ARCH_SHEB", "SCMP_ARCH_M68K",
+	}
+	seccompMultiplexedCalls = []string{
+		"socket", "bind", "connect", "listen", "accept", "getsockname", "getpeername", "socketpair", "send", "recv",
+		"sendto", "recvfrom", "shutdown", "setsockopt", "getsockopt", "sendmsg", "recvmsg", "accept4", "recvmmsg", "sendmmsg",
+		"semop", "semget", "semctl", "semtimedop", "msgsnd", "msgrcv", "msgget", "msgctl", "shmat", "shmdt", "shmget", "shmctl",
+	}
+)
+
+// checkSeccompEntries refuses a profile whose argument comparisons the kernel's other entries
+// would void. For an architecture listed in the profile whose entry multiplexes (the 32-bit
+// x86 entry, int 0x80, foremost), libseccomp writes an allow rule on one of the multiplexed
+// calls a second time, for socketcall or ipc, with the comparison on the first argument
+// replaced by the multiplexer's call number and the others applied to the multiplexer's own
+// arguments, a pointer among them (src/syscalls.c, abi_rule_add): socket(AF_UNIX, ...)
+// becomes socketcall(SYS_SOCKET, any), a socket of any family. runc adds rules through
+// seccomp_rule_add_array, whose manual page says it may rewrite them that way. The shipped
+// profile until 2026-11-19 listed SCMP_ARCH_X86 beside its AF_UNIX rule, and a guest made a
+// vsock socket through int 0x80 (finding release-78); a copy of it an operator made then is
+// refused here rather than applied with a rule that does not hold. docs/seccomp.md,
+// "Architectures".
+func checkSeccompEntries(raw []byte) error {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("not valid JSON: %w", err)
+	}
+	var listed []string
+	add := func(v any) {
+		if s, ok := v.(string); ok && slices.Contains(seccompMultiplexingArches, s) && !slices.Contains(listed, s) {
+			listed = append(listed, s)
+		}
+	}
+	flat, _ := doc["architectures"].([]any)
+	for _, a := range flat {
+		add(a)
+	}
+	archMap, _ := doc["archMap"].([]any)
+	for _, e := range archMap {
+		entry, _ := e.(map[string]any)
+		add(entry["architecture"])
+		subs, _ := entry["subArchitectures"].([]any)
+		for _, a := range subs {
+			add(a)
+		}
+	}
+	if len(listed) == 0 {
+		return nil
+	}
+	rules, _ := doc["syscalls"].([]any)
+	for _, r := range rules {
+		rule, ok := r.(map[string]any)
+		if !ok {
+			return errors.New("a syscalls entry is not an object")
+		}
+		names, err := seccompRuleNames(rule)
+		if err != nil {
+			return err
+		}
+		args, _ := rule["args"].([]any)
+		if !seccompActionAllows(rule["action"]) || len(args) == 0 {
+			continue
+		}
+		for _, n := range names {
+			if slices.Contains(seccompMultiplexedCalls, n) {
+				return fmt.Errorf("it lists %s, whose kernel entry also takes %s through a multiplexer (socketcall or ipc), and libseccomp writes the profile's allow rule on %s a second time for that multiplexer without its argument comparisons, so the rule does not hold there; list only each machine's native architecture (docs/seccomp.md, Architectures); a copy of docker/seccomp.json from a release up to v0.27.2 is such a profile: copy it again", strings.Join(listed, ", "), n, n)
+			}
 		}
 	}
 	return nil
@@ -228,6 +315,11 @@ func deriveSDKSeccomp(raw []byte) ([]byte, error) {
 	}
 	if doc["defaultAction"] != "SCMP_ACT_ERRNO" {
 		return nil, errors.New("the default profile is not deny-by-default (defaultAction SCMP_ACT_ERRNO), so no variant is derived from it")
+	}
+	// The variant inherits the default's architectures, and its own rules compare socket's
+	// and the socket options' arguments, which an architecture that multiplexes would void.
+	if err := checkSeccompEntries(raw); err != nil {
+		return nil, fmt.Errorf("the default profile: %w, so no variant is derived from it", err)
 	}
 	rules, ok := doc["syscalls"].([]any)
 	if !ok {
@@ -443,10 +535,11 @@ func (s dockerSeccomp) seccompFor(grant *HostAPIGrant, runtime string) (path, id
 
 // sessionPolicy is the identity of the profile a session's container applies for its
 // life: the default's, since a session never gets the sdk_env variant
-// (CheckSessionGrant), or skipped under runsc. Every call in the session states it.
+// (CheckSessionGrant), or skipped under runsc; then the guest guard every command in the
+// container starts behind (withGuard). Every call in the session states it.
 func (st dockerExecutionState) sessionPolicy() string {
 	_, id, _ := st.seccomp.seccompFor(nil, st.runtime)
-	return id
+	return st.withGuard(id)
 }
 
 // describe is what Describe states as the provider's policy: the default profile's

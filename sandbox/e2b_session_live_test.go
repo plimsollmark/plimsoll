@@ -89,6 +89,22 @@ console.log(JSON.stringify({ uid: f("Uid"), nnp: f("NoNewPrivs"),
 			}
 		}
 	})
+	// The measurement behind the fix for finding hunt-quality-55, on the real machine: (a) as
+	// the session's user, nothing under /usr/local can be created, replaced or renamed
+	// after the open, and a step still runs the image's node; (b) as root, for the
+	// record, every process of root's whose program is under /usr/local and every
+	// scheduled job or service file that names a program there, logged and never failed
+	// on; (c) the machine still serves a call with the folder closed.
+	t.Run("UsrLocalClosed", func(t *testing.T) {
+		s := openE2B(t, e)
+		u := sandbox.E2BSessionUsrLocal(s)
+		t.Logf("the open closed /usr/local: %d files and folders checked, %d changed, in %.1f ms", u.Entries, u.Changed, u.MS)
+		checkE2BUsrLocalClosed(t, s)
+		logE2BRootUsesOfUsrLocal(t, ctx, s)
+		if res := e2bSnippet(t, s, `console.log("still serving")`); strings.TrimSpace(res.Stdout) != "still serving" {
+			t.Fatalf("a call after /usr/local was closed: %+v", res)
+		}
+	})
 	t.Run("PausedSessionIsListed", func(t *testing.T) {
 		other := &sandbox.E2B{APIKey: key, Template: os.Getenv("E2B_TEMPLATE")}
 		s := openE2B(t, e)
@@ -137,4 +153,26 @@ func requireNothingLeft(t *testing.T, e *sandbox.E2B) {
 		time.Sleep(3 * time.Second)
 	}
 	t.Errorf("the run left sandboxes behind, still billing until their own timeout: %v", left)
+}
+
+// TestLiveE2BSessionRoads plants, in a live session's machine, the two roads by which a
+// program comes to load a file the session wrote (a relative library search folder,
+// and OpenSSL's settings file naming a module in the work folder), shows each is live
+// for the guest's own node, and fails if any control program of plimsoll's takes one
+// (e2b_session_roads_test.go). It spends: one session's microVM for a few minutes, under
+// 2 cents at the template's size, so it runs only with E2B_SESSION_LIVE=1 and
+// E2B_API_KEY (make e2b-session-live). It needs a C compiler on this host (the session's
+// library is built here) and python3 in the template (a cell starts the launcher and a
+// relay).
+func TestLiveE2BSessionRoads(t *testing.T) {
+	if os.Getenv("E2B_SESSION_LIVE") != "1" {
+		t.Skip("set E2B_SESSION_LIVE=1 (make e2b-session-live): this spends E2B credits")
+	}
+	key := os.Getenv("E2B_API_KEY")
+	if key == "" {
+		t.Fatal("E2B_SESSION_LIVE=1 but E2B_API_KEY is not set")
+	}
+	e := &sandbox.E2B{APIKey: key, Template: os.Getenv("E2B_TEMPLATE"), DefaultTimeout: 60 * time.Second, MaxTimeout: 90 * time.Second}
+	t.Cleanup(func() { requireNothingLeft(t, e) })
+	checkE2BRoads(t, openE2B(t, e))
 }

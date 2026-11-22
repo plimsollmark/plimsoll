@@ -87,6 +87,15 @@ func (s *Server) RegisterGrant(id, group string) error {
 	if !s.roomLocked() {
 		return errors.New("connector workspace limit reached: every place is a live workspace or one still being cleaned up")
 	}
+	// The app's daemon clients, recording into its share of the receipts, are built with
+	// its first grant and kept: one per approved app, of which there are a handful.
+	if _, ok := s.shares[group]; !ok && s.receipts != nil && s.receipts.shared {
+		c, err := s.newClients(group)
+		if err != nil {
+			return err
+		}
+		s.shares[group] = c
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.grants[id] = &connectorGrant{group: group, ctx: ctx, cancel: cancel}
 	return nil
@@ -185,17 +194,7 @@ func (s *Server) RevokeGrant(ctx context.Context, id string) error {
 				closings = append(closings, s.closeBoxLocked(b))
 			}
 		}
-		prefix := id + "\x00"
-		var kept []string
-		for _, key := range s.order {
-			if strings.HasPrefix(key, prefix) {
-				s.recordBytes -= recordText(s.records[key])
-				delete(s.records, key)
-			} else {
-				kept = append(kept, key)
-			}
-		}
-		s.order = kept
+		s.forgetRecordsLocked(id)
 		go func() {
 			g.calls.Wait()
 			var errs []error

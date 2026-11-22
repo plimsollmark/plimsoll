@@ -1,0 +1,4 @@
+# Tests that skip in every gate on purpose and are run by hand: the short pass's check (make race, suiterun
+# unselected) accepts these and no other skipped test that no suite selects. One per line: the package's import
+# path, the test's name, a colon, then what it needs and how it is run. A line whose test did not skip fails the pass.
+github.com/plimsollmark/plimsoll/examples/sdk-grants TestLivePlumbing: needs docker and the example's own image, which no suite builds; run it with PLIMSOLL_SDK_GRANTS_LIVE_STUB=1 after building the image as the example's page says

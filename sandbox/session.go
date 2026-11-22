@@ -110,6 +110,16 @@ func SessionLanguages(hint, stated []Language) ([]Language, error) {
 	return out, nil
 }
 
+// SuspendBound is the most a provider's own stop or pause takes inside Session.Suspend
+// before it gives up. A provider bounds that step by this or less: each in-tree provider
+// holds its own number under it where that number is declared, so a larger one does not
+// compile. A session layer derives its budget for an idle suspend from this and adds a
+// margin (plimsolld: internal/rpc, sessionSuspendBudget), so a slow stop stays the
+// provider's to report, never the layer's failed suspend, which ends the session. Until
+// 2026-11-20 the layer's budget was a number of its own beside a comment naming one
+// provider's bound (hunt-quality-58).
+const SuspendBound = 60 * time.Second
+
 // Session is one open session. Calls are serialized: a call waits (bounded by
 // its context) until the previous one has finished and the boundary between
 // them has been established.
@@ -117,9 +127,14 @@ type Session interface {
 	// Isolation is the tier the provider measured when the session opened.
 	Isolation() IsolationClass
 	// Environments is what this session runs: its snippet and project environments,
-	// identities included, as of the artifact the sandbox was created from. A session
-	// layer checks a software rule against it after the open (review F10): what the
-	// provider stated before the open can name an earlier artifact.
+	// identities included, as of the artifact the sandbox was created from, and Policy,
+	// the sandbox policy the session's sandbox applies for its life ("" when the
+	// provider has none). A session layer checks a software rule against it after the
+	// open (review F10): what the provider stated before the open can name an earlier
+	// artifact. Every record of the session's calls states this Policy when the call's
+	// result states none, the record of a call that ended without an answer included, so
+	// a provider whose Describe policy differs from what a session applies (docker with
+	// the sdk_env variant) states the session's here.
 	Environments() Environments
 	// ExpiresAt is when the session's lifetime ends.
 	ExpiresAt() time.Time
@@ -232,7 +247,7 @@ func sessionRefusals() sessionkit.Refusals {
 // here, not beside a provider, because a "-e" written in a file named docker* reads as a
 // hand-built docker env flag to TestDockerCLIIsStartedOnlyThroughDockerCommand.
 func nodeScriptArgv(script string, args ...string) []string {
-	return append([]string{"node", "-e", script}, args...)
+	return append(sessionkit.NodeArgv("-e", script), args...)
 }
 
 // RefuseGaveUp is the error a session call returns when its context ends before any
@@ -246,23 +261,30 @@ func RefuseGaveUp(ctx context.Context) error {
 // RefuseCell is the refusal for a cell none of whose code ran, from the error the
 // session's interpreters returned (end is the session's Err); ok is false for any
 // other error, which means the code may have run.
+//   - A language the sandbox runs no interpreter for (sessionkit.ErrNoInterpreter,
+//     decided before anything starts): ErrUnsupported, reason unsupported, as a cell
+//     run by itself is refused (CheckRunCell).
 //   - An interpreter that could not start (sessionkit.ErrLaunch): on a session that
 //     has ended the end is why, and is what the caller is told; when ctx, the call's
-//     context, has ended, the caller gave up; otherwise the image cannot run the
-//     language.
+//     context, has ended, the caller gave up; otherwise the launch failed in a
+//     sandbox that runs the language (one docker exec, the identity check, the relay),
+//     reason environment, never ErrUnsupported: a retry starts the interpreter again.
 //   - Files that could not be written (sessionkit.ErrFiles): a request this session's
 //     work directory cannot take. The interpreter and the session go on.
 //   - A deadline before the code was sent (sessionkit.ErrUnsent): DeadlineExceeded,
 //     marked; the next cell starts a fresh interpreter and says so.
 func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 	switch {
+	case errors.Is(err, sessionkit.ErrNoInterpreter):
+		return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: %w", ErrUnsupported, err)), true
 	case errors.Is(err, sessionkit.ErrLaunch) && end != nil:
 		return RefuseEndedSession(end), true
 	case errors.Is(err, sessionkit.ErrLaunch) && ctx.Err() != nil:
 		return RefuseGaveUp(ctx), true
 	case errors.Is(err, sessionkit.ErrLaunch):
-		// The launch error can carry the text of a failed docker or gateway exec.
-		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v: %w", ErrUnsupported, sessionkit.ErrLaunch, Private(err))), true
+		// The launch error can carry the text of a failed docker or gateway exec. It
+		// starts with sessionkit.ErrLaunch's words, so it is said once.
+		return NotDispatched(RefusalEnvironment, Private(err)), true
 	case errors.Is(err, sessionkit.ErrFiles):
 		return NotDispatched(RefusalRequest, fmt.Errorf("%w: %v", ErrInvalidRequest, err)), true
 	case errors.Is(err, sessionkit.ErrUnsent):
@@ -271,6 +293,22 @@ func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 		return NotDispatched(RefusalCapacity, fmt.Errorf("%w: %v", context.DeadlineExceeded, err)), true
 	}
 	return nil, false
+}
+
+// SessionCell is req as the interpreter driver runs it in a session's sandbox whose
+// project environment is env, with work its work directory and limit the cap on each
+// of stdout and stderr: every provider builds its cells here, so each one carries the
+// languages its environment states (sessionkit.Cell.Stated), and a cell in another is
+// refused as unsupported before anything starts.
+func SessionCell(req CellRequest, env PayloadEnvironment, work string, limit int) sessionkit.Cell {
+	files := make([]sessionkit.File, 0, len(req.Files))
+	for _, f := range req.Files {
+		files = append(files, sessionkit.File{Path: f.Path, Content: f.Content})
+	}
+	return sessionkit.Cell{
+		Language: string(req.Language), Code: req.Code, Files: files,
+		Work: work, OutCap: limit, ErrCap: limit, Stated: languageNames(env.Languages),
+	}
 }
 
 // SessionCellResult turns the interpreter driver's outcome into a session cell's

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/settings"
 )
 
 // dcGuardDefaultPath is the guard route when SANDBOX_DOCKERCLOUD_GUARD_URL names no
@@ -30,7 +32,7 @@ func (d *DockerCloud) policyURL() string {
 }
 
 func (d *DockerCloud) guardConfig() *guardEndpoint {
-	g, err := parseGuardURL(d.GuardURL, "SANDBOX_DOCKERCLOUD_GUARD_URL", dcGuardDefaultPath)
+	g, err := parseGuardURL(d.GuardURL, settings.DockercloudGuardURL.Name, dcGuardDefaultPath)
 	if err != nil {
 		return nil
 	}

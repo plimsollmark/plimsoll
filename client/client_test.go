@@ -161,14 +161,16 @@ type weakEvidenceServer struct {
 }
 
 // Run answers with forged evidence of the request's kind: a daemon that ran the
-// code behind a weaker boundary than the floor and says so.
+// code behind a weaker boundary than the floor and says so. (A record naming no tier,
+// or "unknown", is refused as a record mismatch before any floor is compared: record's
+// TestCheckRefusesUncoveredFieldsAndFloorViolations.)
 func (weakEvidenceServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
 	switch req.Msg.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:
 		return stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "container",
 			Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("already executed")}}}), nil
 	case *plimsollv1.RunRequest_Project:
-		return stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "unknown",
+		return stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "kernel",
 			Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{}}}), nil
 	}
 	return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("no payload"))
@@ -263,6 +265,35 @@ func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testin
 	}
 	if backend.dispatched != 0 {
 		t.Fatalf("a daemon on another number dispatched %d runs", backend.dispatched)
+	}
+}
+
+// This client refuses a record whose provider name holds a control or bidirectional format
+// character (record.ValidText), so it states protocol 7, and a daemon of the release before
+// (protocol 6, whose clients accepted such a record) refuses it before anything runs. So
+// does a daemon of protocol 5 (record version 4): without that bump, it would run the code,
+// billed by the second on e2b and dockercloud, and the client would then refuse its version 4
+// answer (finding cyclonedx-20). The provider name's rule is finding hunt-security-39 (2026-11-21).
+func TestAnOlderDaemonRefusesThisClientBeforeDispatch(t *testing.T) {
+	if Protocol != 7 || record.Version != 5 {
+		t.Fatalf("protocol %d with record version %d; this test pins protocol 7 to version 5 and the provider name's rule", Protocol, record.Version)
+	}
+	if record.ValidText("wslc\x1b[2Jdocker") {
+		t.Fatal("record.ValidText accepts a provider name with an escape; protocol 7 is the client's refusal of one")
+	}
+	for _, serves := range []uint32{5, 6} {
+		backend := &otherProtocolServer{serves: serves}
+		mux := http.NewServeMux()
+		mux.Handle(rpc.NewHandler(backend))
+		server := httptest.NewServer(mux)
+		t.Cleanup(server.Close)
+		_, err := newRemote(t, server.URL).RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+		if !errors.Is(err, ErrProtocolMismatch) || backend.dispatched != 0 {
+			t.Fatalf("protocol %d: err = %v, %d dispatched; want ErrProtocolMismatch and nothing run", serves, err, backend.dispatched)
+		}
+		if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalProtocol {
+			t.Fatalf("protocol %d: the refusal is not marked not dispatched for the protocol: %v, %v", serves, reason, ok)
+		}
 	}
 }
 

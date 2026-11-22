@@ -30,10 +30,17 @@ interpreter, a timer it left running. Use a session only where every call in it 
 and change what every earlier call did, because they all act for the same person or job.
 
 - **plimsoll ties a session to the authenticated caller, not to that caller's own
-  customers.** Only the credential that opened a session can call it or close it, and an
+  customers.** Only the credential that opened a session can call it, close it or take it
+  over from another process ([below](#carrying-a-session-on-from-another-worker)), and an
   unknown session ID and another caller's get the same refusal. If your service sends many
   customers' code through one plimsoll credential, plimsoll cannot tell those customers
   apart: keeping each customer in a session of their own is your service's job.
+- **The credential is the only gate on a takeover.** A session's run records name the
+  session and its latest call, so anyone who holds the caller's credential and has a
+  session's records can take the session over. An application that
+  shares one credential among its users, and shows them run records, must keep the takeover
+  behind its own authorization, keyed by identities it verified. Open development mode (no
+  callers file, no token) refuses every takeover.
 - **Key sessions by identities you verified, never by a string your users or a model
   choose.** Derive the key from the customer and the conversation (or job) your own
   authentication established. A key built from user or model input lets one user's call
@@ -158,12 +165,16 @@ the lifetime and the idle timeout.
 
 ## The API
 
-Three procedures beside `Run`, which also runs a cell by itself (below, "A cell for one
+Four procedures beside `Run`, which also runs a cell by itself (below, "A cell for one
 call"):
 
 - `OpenSession` returns a session ID (128 random bits), the session's
   <dfn>*fingerprint*</dfn> (the SHA-256 hash of the ID), the tier measured at open, and
-  when the session expires. The request may name the languages the session's cells will
+  when the session expires. The request's floor is checked twice: against the tier the
+  provider states, before anything is made, and against the tier the opened session
+  measured, before the open answers. An opened session below the floor is closed and the
+  open refused, `FailedPrecondition`, marked not dispatched, reason `isolation`: an open
+  carries none of the caller's code, so nothing of the caller's has run in it. The request may name the languages the session's cells will
   use (`languages`), as a hint: a daemon with a warm pool then hands over a
   sandbox with those interpreters already running ([Docker](#docker), "A warm pool"). A
   hint changes how fast the first cell answers, never what runs: a cell in any language
@@ -192,6 +203,18 @@ call"):
   the next call.
 - `CloseSession` ends the session, or collects one that ended by itself. It states how
   many calls ran and the <dfn>*digest*</dfn> (the SHA-256 hash) of the last call's record.
+  Closing a session again in any of the official clients, once the daemon has answered a
+  close with that count, returns the first close's answer and sends nothing, while a close
+  that got no count back (lost on the way, timed out, or refused) is sent again.
+- `AttachSession` lets another process take an open session over
+  ([below](#carrying-a-session-on-from-another-worker)). It runs no code.
+
+Every `SessionRun` and `CloseSession` carries the session's
+<dfn>*ownership generation*</dfn>, a number that starts at 1 when the session opens and
+goes up by one each time a process takes the session over. A request with an older number
+is refused before anything runs; one with no number (zero) is refused as malformed. Because
+a daemon that predates the field would ignore it and run an old worker's call, the field
+came with protocol 6.
 
 Each request carries the <dfn>*protocol number*</dfn>, the protocol version the client
 speaks, and gets the same check as `Run`: a daemon serving a different version refuses it
@@ -256,13 +279,148 @@ conversation (no key) unless `sessions` is `"never"`, and the
 server's `run_code` without a sandbox handle. What it costs: a pool sandbox runs the cell in
 the session image (on docker the project image, which a fresh cell uses too), in a sandbox
 that waited up to the pool's 30-minute bound with plimsoll's interpreters running in it.
-The record is a single run's on either path, with no session fields, and it does not cover
-`warm`: which sandbox ran the call is stated in the answer but not signed (no record
-format changed). A deterministic cell answers the same on both paths with two exceptions:
+The record is a single run's on either path, with no session fields, and from record
+version 5 it covers `warm`: which sandbox ran the call is stated in the answer and signed in
+the record. A deterministic cell answers the same on both paths with two exceptions:
 a traceback names the cell's file `cell` in a fresh sandbox and `<cell 1>` in a pool one,
 and a fresh cell passes on an exit code its code chose (`sys.exit(3)` is 3), where a pool
 sandbox's interpreter reports 1. The Python client's `CodeExecutor` does not use the path:
 its fresh run is a script (Python through `runpy`, JavaScript as an ES module), not a cell.
+
+## Carrying a session on from another worker
+
+A worker here is any process of your application that sends plimsoll calls:
+a job runner, a web server, a durable workflow's step. A session belongs to the worker that
+opened it until another worker of the same caller takes it over with `AttachSession`; the
+first one's later calls and close are then refused, so two workers never run code in one
+session at once. This is for a job that moves: a workflow step retried on another machine,
+a conversation picked up by another server.
+
+**What the second worker needs: a checkpoint.** A <dfn>*session checkpoint*</dfn>, or
+checkpoint for short, is what the first worker saves after each call: the session's fingerprint, its ownership generation, the
+number of calls it has seen, the digest of the last call's record, and the policy the
+session stated at open (provider, tier, the sentence beside the tier, software, the floor
+and software rule the open asked for, the lifetime and idle timeout), plus the
+application's own short name for the daemon. The daemon's own count and last digest are the
+session's head. A checkpoint holds no secret: not the session ID, not the
+credential. Keep it where only your application can write, because a checkpoint someone
+else wrote could point your worker at the wrong session. The three official clients read
+and write one JSON form of it, so a checkpoint a Python worker saved can be used by a Go or
+TypeScript worker.
+
+**What the daemon checks.** The attach names the session by its fingerprint and sends the
+checkpoint's generation, count and last digest. Under the session's turn (the same one
+calls wait for, so an attach waits for a call in flight), the daemon compares them with its
+own. An equal generation and head takes the session over: the generation goes up by one,
+and the answer returns the session ID, for use in memory only, with the session's policy.
+A generation that is not the current one is refused as a stale owner
+(`FailedPrecondition`, marked not dispatched, reason `permission`); a head that is not the
+checkpoint's is a checkpoint mismatch (`FailedPrecondition`, marked, reason `request`).
+Neither moves anything. An unknown session, another caller's, a closed one, an ended one and
+one past its lifetime all get the same `NotFound`, with the same text. Every attach costs
+one of the caller's rate tokens, a refused one included.
+
+**What the client checks.** The answer must repeat the checkpoint exactly: the
+fingerprint (and the SHA-256 of the returned session ID), a generation one past the
+checkpoint's, the checkpoint's head, and every policy field. Any difference is data loss,
+and the client does not close the session: a bad answer gives it no right to destroy a
+session another worker may be using. A failed or canceled attach is never retried, since the
+daemon may have taken the session over already.
+
+**A call whose answer was lost.** An <dfn>*explained gap*</dfn> is a
+takeover across one call whose answer never reached its worker, which the attach names. A
+worker that sends a call and then
+dies, is canceled or times out leaves the daemon one call ahead of its last checkpoint:
+the call may have run. A plain attach from that checkpoint is a mismatch, and nothing moves.
+If the attach names the call, by the digest of its request (the request digest every run
+record carries), the daemon takes the session over when, and only when, the checkpoint is
+exactly one call behind, the session's last record follows the checkpoint's last record,
+and that record carries the named request digest. It returns that record: the call was
+dispatched once, and its output is lost. The record says whether the daemon answered it: a
+result digest when the daemon answered (the answer then never reached the worker), which
+does not show that the call ran to its end (a step stopped at its time limit and a setup
+that failed are answers too), or an unanswered code when the call ended without an answer
+(for example `canceled`, when the worker that sent it went away), which does not show that
+it started: it may have done none, part or all of its work.
+The client checks the record itself (its own digest, its version, that it states a result
+digest or an unanswered code and not both, a code from the closed set, the session, its
+place right after the checkpoint, the named request digest and the evidence the session
+stated at open) and refuses an answer that carries such a record unasked. Every other gap,
+a digest named or not, stays a mismatch, so a gap nobody can explain never moves ownership. A digest named when the head equals the checkpoint attaches
+as usual: the call never ran.
+
+**The first call after such an attach.** The attached session refuses its first call,
+before sending anything, if that call's request digest equals the lost call's: it would be
+a retry of a call that was already sent once. The refusal says only that (all three clients
+use the same words); the lost call's record says whether the daemon answered it. Only the first
+call is checked, and it spends the note when the client refuses it as that retry or when it
+is sent, except that a call the daemon refuses with the not-dispatched mark leaves the note:
+nothing ran, so the call after it is still the first. A checkpoint saved before the note is
+spent carries it, so a retry on yet another worker is refused too. This rule is the
+clients', not the daemon's: the daemon does not know which call is a retry, and a client
+that does not follow the rule can run the call again.
+
+The limit, in plain words: a repeat is refused only when it is the first call after the
+takeover. Any other first call, an adapter's own included, spends the note, and the lost
+call can then run a second time. An agent framework's file tools send calls of their own
+(a working directory, a stat, a read check) before their read or write, so the rule never
+covers a lost file operation there. The PydanticAI adapter sends no call of its own before
+its shell tool's command: when that first command repeats the lost one, it tells the model
+what the lost call's record says, and the run goes on.
+
+**The Python client keeps a store; the Go and TypeScript clients do not.** A Python
+session opened or taken over with a <dfn>*checkpoint store*</dfn>, an object of your
+application's with `load` and an atomic `compare_and_set`, passes every call through it: before
+the call the stored record is marked pending with the call's request digest, after a
+checked answer it is set ready at the new head, after a refusal ready as it was. A worker
+that dies mid-call leaves a pending record, and the next worker's attach sends its
+checkpoint and names its call, so the daemon's comparison decides: the call was never
+dispatched (the heads match), or it was dispatched and is the explained gap. No timeout ever clears a pending record.
+The Go and TypeScript clients take an explicit checkpoint and the store is the
+application's. Their limit: a Go or TypeScript worker can name a lost call only when the
+answer was lost in the same process (`Session.LostRequestSHA256` in Go,
+`session.lostRequestSha256` in TypeScript), so a worker that died mid-call leaves a gap the
+next worker cannot explain unless the application recorded the request digest before
+sending.
+
+From Go, two workers:
+
+```go
+remote, _ := client.New(url, client.WithToken(token), client.WithDaemonName("prod"))
+s, _ := remote.OpenSession(ctx, client.SessionOptions{})
+s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "x = 1"})
+cp, _ := s.Checkpoint() // save cp where only the application can write
+// In another process, with the same token and daemon name:
+t, err := other.AttachSession(ctx, cp, client.AttachOptions{})
+```
+
+From Python, with a store:
+
+```python
+from plimsoll_client import Client, MemoryCheckpointStore
+
+store = MemoryCheckpointStore()  # for tests only: use storage only your app can write
+key = f"{user_id}/{thread_id}"   # from identities your app verified, never model or user text
+c = Client(url, token, daemon_name="prod")
+s = c.open_session(checkpoint_store=store, checkpoint_key=key)
+s.run_cell("x = 1")
+# In another process, with the same token, store and daemon name:
+t = Client(url, token, daemon_name="prod").attach_session(key, store=store)
+t.run_cell("x")  # the same interpreter
+```
+
+**What taking a session over does not do.** It does not survive a daemon restart, recover
+a lost call's output, or make a call run exactly once beyond the first-call rule above. It
+neither extends the session's lifetime nor wakes a suspended sandbox (the next call does,
+as always), and it does not move a session between copies of the daemon. A client with a
+signing recorder cannot take a session over, since the recorder cannot resume a chain it
+did not sign from the first call. An attach whose answer was lost (a dropped connection, a
+cancel, a timeout) may still have taken the session over, and then no official client can
+use or close it: the old worker's calls are refused as stale, and the new worker never
+learned the session ID. The attach claimed it, so it is not closed as unclaimed: until its
+lifetime runs out (or an open for the same end user at `SANDBOX_MAX_SESSIONS_PER_OWNER`
+replaces it) it keeps its place under the session caps, and until a suspend its concurrency
+slot and any paid time.
 
 ## Interpreters: state between calls
 
@@ -305,7 +463,10 @@ interpreter per language, a Python or Node.js process that stays alive between c
 - **Which languages.** `Describe` states the languages its startup checks proved, on the
   project environment (`languages`). JavaScript is always there; Python needs `python3` in
   the image, as `plimsoll/sandbox-python` has (with NumPy and SciPy). A cell in a language
-  the image lacks is refused, marked not dispatched.
+  `Describe` does not state is refused before anything starts, `Unimplemented`, marked not
+  dispatched with reason `unsupported`. An interpreter that could not start in a session
+  whose image has the language (one docker command or the identity check failed) is refused
+  with reason `environment`, never as unsupported, since the next cell starts it again.
 - **Records.** A cell's record has its own kind ([run-records.md](run-records.md)). A
   cell's result depends on the cells before it, so a cell is replayed only as part of its
   session, in order.
@@ -319,8 +480,8 @@ takes from the identities the interpreters and their relays print as they start.
 where code of the session can write into a process's output while it starts (below), an
 identity is kept only once its command line is the very program plimsoll started and a
 check run as a second user confirms it: a relay must be a process with no parent in the
-container, which only `docker exec` and the container's own init have (the command line
-rules out the init), and an interpreter must be the only live process with its command
+container, which only `docker exec` and the container's process 1 have (the command line
+rules out process 1), and an interpreter must be the only live process with its command
 line. Otherwise the cell is refused before
 its code is sent, marked not dispatched. A session that never runs a cell keeps no
 process between calls, as before.
@@ -401,6 +562,10 @@ whose step is `python3 main.py`.
 - **The end has its own error.** A call on an ended session is refused
   `FailedPrecondition`, marked not dispatched, with a `SessionEnded` detail; the Go client
   restores it as `sandbox.SessionEndedError` (`errors.Is(err, sandbox.ErrSessionEnded)`).
+  The detail is believed whatever the code: a call answered `Canceled` or
+  `DeadlineExceeded` with a `SessionEnded` detail was canceled or ran out of time, and its
+  session ended too, and every client reports both (in Go, `errors.Is` matches the context
+  error and `sandbox.ErrSessionEnded`).
   A session ends when it is closed, when its lifetime runs out, when its files pass the disk
   budget, when its sandbox's main process ends, when the provider cannot give the next call
   a clean sandbox, when the sandbox changed under it, when the daemon closed it for a newer
@@ -418,9 +583,24 @@ whose step is `python3 main.py`.
   never suspends (`SANDBOX_SESSION_IDLE=0`) waits 5 minutes, the idle timeout's default.
   The cost falls on a client that opens a session ahead of use and makes its first call
   after the idle timeout: that call is refused, not dispatched, with the end `unclaimed`.
+  A close the provider fails is tried again (below, "A close the daemon makes by itself"),
+  and the session stays unclaimed meanwhile, so the answer is the same.
   Nothing ran in the closed session, so a new one loses nothing; `CodeSandboxes` opens it
   by itself, so a `warm` that its conversation does not use within the idle timeout costs
   one more open.
+- **A close the daemon makes by itself is tried again until it takes.** The daemon closes
+  a session by itself when nobody claimed it, when it could neither suspend nor pay for
+  another idle period (E2B, below), when its open cannot hand it over (the caller gave up,
+  or what opened does not meet the floor or the software rule), and when a pool sandbox
+  has served its one call. Each close gets a time budget of its own (90 seconds), never
+  one a caller or a pause has spent. A close the provider fails, with the session still
+  open, is logged as a failed close naming the provider, never as a close, and counted in
+  `plimsoll_session_close_failures_total`; it is tried again after 10 seconds, then 20,
+  40, 80 and 160, and after six failed tries the daemon logs an error, counts it in
+  `plimsoll_session_close_gave_up_total` and leaves the session to the provider's lifetime
+  for it. While the session may still bill, its paid time is held to the end of that
+  lifetime ("Its time is paid", below), and settled, when it is gone, to the time it was
+  running.
 - **Capacity.** A running session holds one of the daemon's concurrency slots (the runs
   allowed at once), and with it its share of the total memory budget,
   `SANDBOX_TOTAL_MEMORY_MB`. A suspended session whose sandbox was stopped holds none; the
@@ -438,15 +618,44 @@ A docker session is the container a project run gets, kept for the session:
 
 - **The same walls.** The project image, launched by the content ID the startup checks
   inspected, with the run's flags: a read-only root, no network, every writable directory
-  (`/tmp`, `/dev/shm`, `/work`) a size-capped in-memory filesystem, all capabilities
-  dropped, the process limit, plimsoll's fixed read-only `/etc/resolv.conf` (so no
+  (`/tmp`, `/dev/shm`, `/work`) a size-capped in-memory filesystem on which a stored file
+  cannot be started as a program (the session's code cannot mount another without that mark,
+  under `runc` or gVisor: the <dfn>*guest guard*</dfn>, plimsoll's own filter in front of every
+  command started in the container, refuses it, [seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)),
+  all capabilities dropped, the process limit, plimsoll's fixed read-only `/etc/resolv.conf` (so no
   resolver setting of the host, such as its search domains, reaches the session's
   code), and gVisor when `SANDBOX_DOCKER_RUNTIME=runsc`.
-- **A main process that does nothing.** Docker's own init runs as process 1 and starts
-  `sleep`. The init matters: a process killed between calls whose parent is gone becomes
-  process 1's child, and a process 1 that never collects its dead children would keep
-  them, each counting against the process limit, for the session's whole life.
+- **What that mark means for the session's work.** A program built or written in the
+  session is stored under `/work` or `/tmp`, so the kernel refuses to start it. Measured
+  2026-11-19: `cargo test` on a Rust crate (a Rust package) with a build script or a derive
+  macro (both are small programs Cargo compiles and then starts during the build), a C
+  build that runs what it compiled, and `./script.sh` are refused in a docker session. Go
+  tests work when they are built to <dfn>*WebAssembly*</dfn> (a portable program format: a runner reads
+  the `.wasm` file as data, so the kernel is never asked to start it).
+- **A main process that does nothing.** The guest guard runs as process 1, in its process-1
+  mode, in place of docker's own init (`--init`), which docker started outside the guest guard
+  and which plimsoll no longer uses ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
+  It puts its filter on itself and starts `sleep` as its child, so every process in the
+  container runs behind the guest guard. Process 1 matters: a process killed between calls
+  whose parent is gone becomes process 1's child, and a process 1 that never collects its dead
+  children would keep them, each counting against the process limit, for the session's whole
+  life; the guest guard collects every one. It passes no signal on to any process, and it ends
+  the container when `sleep` ends or on a signal recorded as coming from outside the container,
+  such as the one `docker stop` sends. Code of the session can still end or stall its own
+  session, as it always could by ending `sleep`: it can cause a signal recorded as from outside
+  (the I/O signal of a descriptor it makes process 1 the owner of, or the signal that follows a
+  CPU limit it sets on process 1); under gVisor it can stop process 1, which then collects
+  nothing, or end it; and while it keeps sending process 1 a stop signal, an outside `docker
+  stop` waits its whole timeout before docker kills the container. plimsoll's own close removes
+  the container (`docker rm -f`) and does not wait. A session refuses to open unless process 1
+  has exactly the command line plimsoll started it with.
 - **Every call is a `docker exec`** into the container, in `/work`.
+- **Over the memory limit.** Under runc the kernel kills the one process over the limit and
+  the session goes on; under gVisor the whole sandbox dies, and the session ends
+  (`main_process_ended`) naming the limit, except that docker sometimes records no
+  out-of-memory kill there (1 container in 40, measured 2026-11-21, [the outside fact](../internal/outsidefacts/facts.json)
+  `docker-oomkilled-under-runsc`), so an exit status of 137 with none recorded is reported as
+  probably the memory limit, not certainly, since any forced kill gives 137.
 - **After every call, the sweep** kills every process the call left behind, by the same
   program the `openshell` provider runs, and measures the session's files against
   `SANDBOX_SESSION_DISK_MB`. It runs after the answer has gone back: the next call or a
@@ -454,14 +663,19 @@ A docker session is the container a project run gets, kept for the session:
   hides it (a warm call took about 95 ms under runc instead of about 180 ms, measured
   2026-10-01). So a session that the sweep ends, over its disk budget for instance, is
   reported to the next call rather than in the answer of the call that caused it. Its verdict is its exit status, which another process could
-  change only by attaching to the sweep as a debugger does; the sweep loads a small library
+  change only by attaching to the sweep as a debugger does, a request the guest guard refuses
+  the session's code; the sweep also loads a small library
   that forbids that once it has started, and in the moment before, only a host whose Yama
-  `ptrace_scope` is 0 lets a process attach to one it did not start. When it cannot prove the boundary, the session ends: the one
+  `ptrace_scope` is 0 lets a process attach to one it did not start, and a session does not
+  open on such a host (gVisor keeps its own setting, 1, whatever the host's). In that moment
+  code of the session can open the sweep's input and output, which carry nothing plimsoll
+  reads: the verdict is the exit status alone. When it cannot prove the boundary, the session ends: the one
   recovery that kills everything, a restart, would erase the files.
 - **A project call in a session starts with nothing of the session's running.** Every
   program of plimsoll's starts in the container as the user the session's code runs as,
   and until it has loaded the small library that makes it unreadable, a process of that
-  same user can open its input, its output and its memory; a descriptor opened in that
+  same user can open its input and its output (its memory too, on a host whose Yama
+  `ptrace_scope` is 0, where a session does not open); a descriptor opened in that
   moment keeps working afterwards. A project call's input carries the plan, with the key
   the runner signs its report with. So before a project call, plimsoll kills every
   process of the session's, the interpreters it keeps included. **An interpreter is
@@ -483,6 +697,14 @@ A docker session is the container a project run gets, kept for the session:
 - **A suspend is a pause.** `docker pause` freezes every process; the files and the
   processes' memory stay. That is why a paused session keeps its concurrency slot.
   Resuming takes about 20 milliseconds (measured 2026-10-01 under runc and gVisor).
+  A paused session that ends (closed, at its lifetime, at shutdown) has its container
+  removed as any other, in about 0.2 s. Under gVisor plimsoll unpauses it first: docker
+  cannot kill a paused gVisor container and waits 10 seconds before ending it another
+  way. So under gVisor the session's code runs again for a moment before the kill (about
+  22 milliseconds, measured 2026-11-20), after its relays and the socket its host API
+  calls went through have been closed, with no network and nothing it writes surviving
+  the removal. Under runc
+  the kill reaches the paused processes and nothing runs again.
 - **A read-back before every call.** Anyone who can reach the docker daemon can change a
   running container, for example raise its memory limit with `docker update`. Before each
   call the session compares the container's security settings (image, resource limits,
@@ -493,6 +715,22 @@ A docker session is the container a project run gets, kept for the session:
   stopped or gone ends the session; docker's exit status is never reported as the call's.
   A read-back after a call that docker does not answer ends the session (`boundary_failed`):
   what the code left running cannot be proved contained, so the session is not kept.
+- **A command the guest guard refuses.** The guest guard writes one line naming the step that
+  failed when it refuses to start a command. At open, plimsoll reads that line from `docker run`,
+  which it keeps attached only until the main process has started (the container still keeps no
+  output), so a refused open names the guest guard's own step; no code of the caller's exists yet, so
+  it is marked not dispatched. In a session a caller holds, a call's own command (the snippet's
+  program, or the runner a project's steps run under) that ends as the guest guard ends when it
+  refuses ends the session (`boundary_failed`), and the call is not marked: what shows that
+  refusal is the command's standard error and exit code, and code of the session can shape
+  both (under `runc` a thread left in a kept interpreter can read the start marker off the new
+  command's standard error before docker does, and the call's own code then writes the
+  guest guard's line), so the end says whether the call ran is not known. Only a call whose own command
+  plimsoll refused before docker started is marked (reason `environment`). A refusal after the
+  call's code started, such as of the sweep that follows it, leaves the call unmarked, and the
+  session's end reaches the next call. A project's steps all run inside
+  the runner, so a step that fails after another ran is part of the runner's report, never a
+  refusal.
 - **API access.** A grant reaches its API routes through the <dfn>*broker*</dfn>, a part of plimsoll outside the sandbox that adds the
   credential, so the credential never enters the sandbox. A running container cannot gain
   a mount, so the session mounts the broker's socket at open. It serves a call's grant
@@ -528,7 +766,7 @@ A docker session is the container a project run gets, kept for the session:
   51 and 32 ms under gVisor instead of 817 and 891 ms
   ([warm pool page](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html),
   with the data and the programs).
-  - A waiting container has run only plimsoll's own programs: init, `sleep`, and the
+  - A waiting container has run only plimsoll's own programs: the guest guard as process 1, `sleep`, and the
     interpreters with their relays. It goes to one session, or to one cell a `Run` asked
     for it ("A cell for one call"), and its first cell in each language still says its
     interpreter is new. Closing that session, or that cell's answer, removes the
@@ -600,7 +838,29 @@ container runs every call. The answer to `OpenSession` and every call's record s
 ## E2B
 
 An E2B session is one E2B sandbox, booted from the configured template, kept for the
-session. E2B's base template gives its default user `sudo` without a password and leaves
+session. **It needs a template whose node is v22.14.0 or later** (v23.7.0 or later in the
+23 line, or any v24): plimsoll's own programs in the session start with node's
+`--disable-sigusr1` option, so the session's code cannot open their debugger (the part of
+node that runs whatever code it is sent to it) with a signal, and an older node refuses
+the option. E2B's own `base` template carried node v20.9.0 when a live check read it on
+2026-11-20; on a template whose node is that old a session is refused at its open as
+unsupported, marked as never run, in words that name the version needed, before any of the
+session's code runs; when
+the daemon's startup check has already read the version, no sandbox is made for the
+refused open. Single runs, which start none of plimsoll's own programs inside the machine,
+work on `base`. **It also needs a node outside `/usr/local`.** E2B's template build leaves
+`/usr/local` and everything in it writable by every user in the machine (measured on
+2026-11-20, on `base` and on a template built from plimsoll's recipe), and node's own
+images and `base` keep node there, so the session's code could replace it. plimsoll's own
+programs in an E2B session therefore look for `node`, `sh`, `setpriv` and `python3` only in
+`/usr/sbin`, `/usr/bin`, `/sbin` and `/bin`; on a template with no node there (`base` is
+one) a session is refused at its open as unsupported, marked as never run, in words that
+say so.
+[e2b/README.md](../e2b/README.md) builds a template that serves both single runs and
+sessions, with node 24 (and a copy of it in `/usr/bin`), util-linux's `setpriv` and
+`python3`.
+
+E2B's base template gives its default user `sudo` without a password and leaves
 root reachable, so before any of the session's code runs, the open makes the machine one
 where that code cannot become root:
 
@@ -615,16 +875,87 @@ where that code cannot become root:
   process start and a reset of its access token at every address the machine has (or
   listens at none of them). A template whose `setpriv` is not util-linux's is refused at
   open (BusyBox's cannot change user).
+- **The session's code cannot write `/usr/local`.** E2B's template build ends by making
+  `/usr/local` and everything in it writable by every user in the machine (mode 777, the
+  permission setting that lets any user write a file or a folder), and programs that run
+  as root live and look there: E2B's own helper programs are in `/usr/local/bin`, and the
+  system's usual search path (the list of folders a program's name is looked up in)
+  starts with `/usr/local`. Code that could replace such a program could make itself root
+  in its machine. So the open, as root and before any of the session's code runs, takes
+  the write permission for each file's group and for every other user off every file and
+  folder under `/usr/local` (the reverse of E2B's step; a link is left as it is, since the
+  folder that holds a link decides whether it can be replaced). Then a process dropped
+  exactly as the session's code is asks the kernel, for each of those and for every folder
+  above `/usr/local`, whether it may write it. If it may write any, because the template
+  made something there that a permission change cannot close (a file owned by the
+  session's uid, a mount that ignores permissions), the session is refused at its open as
+  unsupported, marked as never run, in words that name the first such path. The session's
+  code still reads and runs everything there (node, the TypeScript tools of plimsoll's
+  recipe); what it can no longer do is install into it (`npm install -g`, a `pip install`
+  that writes there): install into `/work` instead. What it costs per open, measured
+  2026-11-20 on containers of plimsoll's recipe image with its 4,605 files and folders
+  under `/usr/local`: about 70 ms where a permission change is written in place (28 ms
+  for the changes, 40 to 90 ms for the check), and 4.4 to 5.2 s on a fresh container under
+  docker's ordinary runtime, whose storage copies each file whole the first time its
+  permissions change (0.5 to 0.8 s under gVisor). E2B's own time is not measured yet: the
+  open reports it, and the paid live suite logs it. plimsoll's own
+  programs still never look in `/usr/local` (below), so they do not rest on this alone.
+  A single run is not a session and is left as E2B builds it: its code runs as E2B's own
+  default user, `user`, which can write `/usr/local`, and its machine is deleted after it.
+- **A program the session writes can be started.** An E2B session's work folder `/work` is
+  on the machine's own disk, which carries no no-execute mark (the mark that makes the
+  kernel refuse to start any file stored in a folder, as on a docker session's `/work`),
+  so a program the session builds or writes there can be started. Measured 2026-11-20 on a
+  template built from plimsoll's recipe: as the session's user, a program copied into
+  `/work` and a shell script written there both ran. plimsoll's recipe carries no Rust or C
+  toolchain (the compilers and build tools for those languages), so such builds need a
+  template of the operator's own that has one, and plimsoll has not measured such a build.
 - **plimsoll's own programs run as root.** The process lister, the sweep after every call
   and the check of each relay's identity run as root through the agent E2B runs
   inside each machine, out of reach of the session's code. The sweep spares every
   process the machine had when the session opened (its system services, E2B's agent included;
   the open refuses a listing with a process already running as the session's user) and
   the interpreters the session keeps, kills the rest, and skips kernel threads.
+- **plimsoll's own programs start where the session's files cannot reach them.** On
+  E2B the work folder `/work` carries no no-execute mark (a mark on a folder that stops
+  the kernel from running or loading any file in it), so a program that goes looking for
+  a file to load could find one the session's code put there. So every program of
+  plimsoll's in the machine (the open, the stager, the process lister, the sweep, the
+  identity check, the relays, the artifact reader, the interpreter launcher, and the
+  `setpriv` that drops to the session's user) is started three ways. It starts in `/`,
+  which the session's user cannot write, so a library folder a template names
+  relatively (`lib` rather than `/usr/lib`, read against the folder a program starts in)
+  is a folder of the root, never one of `/work`. It starts with an empty environment
+  (the variables a program reads when it starts): E2B's agent hands every process its
+  own `PATH`, `HOME`, `USER`, `LOGNAME`, the sandbox's environment variables and the
+  request's, and plimsoll's programs start through `/usr/bin/env -i`, which clears all of
+  them and sets only plimsoll's fixed `PATH`, plus `OPENSSL_CONF=/dev/null`, an empty
+  settings file for OpenSSL (the cryptography library node uses, whose settings file can
+  name a module, a library it then loads, by its path). And it is named by its full
+  path, never found through a search: before any of the session's code runs, the open
+  finds `node`, `sh`, `setpriv` and, where the template has it, `python3` in the root's
+  system folders (`/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`; never `/usr/local`, which E2B's
+  template build leaves writable by every user), follows every link on the way to each, and refuses the session when
+  any folder, link or file on the way is one the session's user could change, so a link
+  into a folder the session writes is refused, not followed later. Every later start
+  names the path the open found. The session's own code still runs with the template's
+  environment: the open reads the agent's environment once, and each call's processes
+  are handed it and change into `/work` themselves, as the session's user. The docker
+  suite writes two such routes into its stand-in for E2B as a template could carry them
+  (a library folder named relatively, and an OpenSSL settings file naming a module in
+  `/work`), puts the session's own library where they lead, shows each route is taken by
+  the session's own `node`, and fails if any program of plimsoll's takes one;
+  `make e2b-session-live`, which is paid, has the same check for E2B itself. What
+  plimsoll does not check is the template itself
+  ([limitations.md](limitations.md)).
 - **Files are written as the session's user.** A call's files go into a staging
   directory only root can read, and a helper that has dropped to the session's user
   writes them under `/work`, refusing a path that leads out of it through a link, as
-  docker's runner does. A project's artifacts are read back as that user too.
+  docker's runner does. A project's artifacts are read back as that user too. Because the
+  helper is the session's user while it writes, code of the session can read a call's
+  files as they land, stop the helper and run them; so a call is marked not dispatched only
+  when it failed before the helper started, and never for anything the helper did or
+  suffered.
 - **A relay belongs to root until it drops.** A cell's relay starts as root and changes
   to the session's user itself; the kernel then marks it as a process another process of
   the same user cannot inspect, so the session's code cannot open its pipes or read its
@@ -648,7 +979,12 @@ where that code cannot become root:
   resumes it, to its next suspend or its end. It reserves ahead the call's timeout, the
   idle timeout and the time a delete takes; a call the allowances cannot cover is refused,
   not dispatched, reason `capacity`, and the session goes on; a session that can neither
-  suspend nor pay for another idle period is closed.
+  suspend nor pay for another idle period is closed, and its calls are refused from then
+  on, not dispatched, with the end `closed`. Should that close fail (it is tried again,
+  above, "A close the daemon makes by itself"), the session's time from then to the end of
+  its lifetime and its delete is charged at once, past the allowance if need be, since a
+  sandbox nothing has closed bills whether or not an allowance has room; when it is gone
+  the charge comes down to the time it ran.
 - **Grants are off unless chosen; both ways pass against the live service.** With
   `E2B_GUARD_URL` and `E2B_SESSION_GRANTS` set, a granted call reaches its grant through
   the [guard (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guard),

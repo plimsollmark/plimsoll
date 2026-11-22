@@ -7,7 +7,7 @@ import (
 )
 
 // RunnerReport reads the project runner's authenticated report out of its stdout and
-// returns the project result it states: what every provider that runs /runner.mjs with a
+// returns the project result it states: what every provider that runs the project runner with a
 // runnerwire plan does once the runner has exited. base is the result as the provider
 // knows it (sandbox, tier, instance, image, policy, trace): the report fills in only what
 // it states (steps, artifacts, outcome and detail), so a provider cannot lose a field of

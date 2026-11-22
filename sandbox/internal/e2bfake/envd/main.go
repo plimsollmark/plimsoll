@@ -249,7 +249,11 @@ func (s *server) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd := exec.Command("/bin/sh", append([]string{"-c", `exec "$@"`, "--", req.Process.Cmd}, req.Process.Args...)...)
-	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + home}
+	// envd's base environment (its process handler's baseEnv: its own PATH, then the
+	// user's HOME, USER and LOGNAME), a variable standing for the sandbox's environment
+	// variables envd adds after it, then the request's.
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + home,
+		"USER=" + s.user(r), "LOGNAME=" + s.user(r), "E2BFAKE_TEMPLATE=1"}
 	for k, v := range req.Process.Envs {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

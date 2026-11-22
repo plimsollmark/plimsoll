@@ -7,10 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 )
 
 // The fake wslc is internal/fakewslc, built once by TestMain and started through a link
@@ -156,6 +159,16 @@ const fakeBootID = "0f0e0d0c-0b0a-4908-8706-050403020100"
 func goodProbe() map[string]any { return goodProbeFor(Config{}) }
 
 // goodProbeFor is the report a container built by runArgv with cfg gives.
+// goodHelper is the probe's reading of an image's project runner that passes: the native
+// helper this test binary carries, root's, mode 0755.
+func goodHelper() map[string]any {
+	sum, err := nativehelper.SHA256(runtime.GOARCH)
+	if err != nil {
+		panic(err)
+	}
+	return map[string]any{"type": "file", "uid": 0, "mode": 0o755, "size": 516768, "sha256": sum}
+}
+
 func goodProbeFor(cfg Config) map[string]any {
 	cfg.withDefaults()
 	uid := "61000\t61000\t61000\t61000"
@@ -183,6 +196,7 @@ func goodProbeFor(cfg Config) map[string]any {
 		"resolv":    "nameserver 127.0.0.1\noptions ndots:0\n",
 		"envNames":  []string{"HOME", "NODE_VERSION", "PATH", "PLIMSOLL_RUNNER_PID", "PWD", "SHLVL", "YARN_VERSION"},
 		"runnerMem": "EACCES",
+		"helper":    goodHelper(),
 		"gpu":       "absent",
 	}
 }

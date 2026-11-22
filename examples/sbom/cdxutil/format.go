@@ -33,6 +33,43 @@ var schemas embed.FS
 var selectedImagePattern = regexp.MustCompile(`^oci-manifest:[a-z0-9._/-]+@sha256:[a-f0-9]{64}$`)
 var dockerCloudImagePattern = regexp.MustCompile(`^dockercloud-image:sha256:[a-f0-9]{64}$`)
 var agentSandboxImagePattern = regexp.MustCompile(`^agentsandbox-image:sha256:[a-f0-9]{64}$`)
+var wslcImagePattern = regexp.MustCompile(`^wslc-image:sha256:[a-f0-9]{64}$`)
+
+// WSLCImageClaim is how a bill of materials names a WSL containers run's image: by its
+// image ID, which is what the record's environment holds, never as a registry pin. The
+// image ID is the SHA-256 of the image's configuration; measured on wslc 3.0.5.0
+// (2026-11-17), it equals the configuration digest the registry's manifest names. The
+// provider checks a configured pin only by finding it among the repository digests wslc
+// lists at startup, and the tar the per-run mode loads into each run's VM holds no
+// manifest whose digest is the pin, so nothing the provider holds checks a pin from bytes
+// and none is stated. A pin could be checked through the registry, by fetching the pinned
+// manifest by its digest and following it to the configuration digest; the provider does
+// not do that.
+const WSLCImageClaim = "a WSL containers run started by the image whose image ID is sha256:%s (environment %s): the SHA-256 of the image's configuration, which the provider read with wslc image inspect at startup and starts every run by. It is not a registry manifest digest, and no registry pin is stated"
+
+// qualifiedProviders are the providers whose tier always comes with a sentence its vendor
+// or design requires (sandbox.Qualifier): a record of one that states none (any record
+// before version 5, or a daemon that dropped it) is refused, so a bill of materials never
+// restates the tier without the sentence.
+var qualifiedProviders = map[string]bool{"wslc": true}
+
+// CheckQualification refuses a record whose provider states a sentence beside its tier
+// when the record carries none.
+func CheckQualification(r sandbox.RunRecord) error {
+	if qualifiedProviders[r.Provider] && r.IsolationQualification == "" {
+		return fmt.Errorf("run %s is a %s run whose record states no isolation qualification (a record before version 5, or a daemon that dropped it): its tier would reach the bill of materials without the sentence its provider requires, such as Microsoft's statement that WSL is not a security sandbox", r.SHA256, r.Provider)
+	}
+	return nil
+}
+
+// ImageTitle is the requirement the image claim answers: the image's manifest digest,
+// except for a WSL run, whose image is named by its image ID.
+func ImageTitle(r sandbox.RunRecord) string {
+	if r.SoftwareIdentity == "" && wslcImagePattern.MatchString(r.Environment) {
+		return "the image is identified by its image ID"
+	}
+	return "the image is identified by its manifest digest"
+}
 
 // ValidatePages refuses a base URL that is not absolute HTTP(S) and ending in /, or that
 // carries credentials, a query or a fragment; flag names the option in the message.
@@ -162,6 +199,8 @@ func ImageDigest(r sandbox.RunRecord) (digest, how string, ok bool) {
 		return strings.TrimPrefix(r.Environment, "dockercloud-image:sha256:"), "a Docker Cloud microVM booted from the image whose linux/amd64 manifest digest is sha256:%s (environment %s), the provider's pin, which it compares with the digest the cloud reports each sandbox booted and refuses to run on a difference", true
 	case r.SoftwareIdentity == "" && agentSandboxImagePattern.MatchString(r.Environment):
 		return strings.TrimPrefix(r.Environment, "agentsandbox-image:sha256:"), "a Kubernetes agent-sandbox pod running the image pinned by sha256:%s (environment %s), the digest the pod's template names, which the provider compares with the image ID the kubelet reports for the run's own pod and refuses to run on a difference", true
+	case r.SoftwareIdentity == "" && wslcImagePattern.MatchString(r.Environment):
+		return strings.TrimPrefix(r.Environment, "wslc-image:sha256:"), WSLCImageClaim, true
 	}
 	return "", "", false
 }

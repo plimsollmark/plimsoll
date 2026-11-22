@@ -55,7 +55,9 @@ provider that does not support it. See [isolation tiers](isolation-tiers.md),
 
 A deployed Trigger.dev worker needs a reachable `plimsolld` URL over TLS and a
 caller token with `code:run`. `localhost` on the worker is the worker, not the
-operator's daemon. Keep the daemon's listener private or behind an authenticated
+operator's daemon. With `PLIMSOLL_ADDR` unset the daemon listens on its own machine only
+(`127.0.0.1:8746`), so a daemon a worker calls sets `PLIMSOLL_ADDR` to an address the
+worker or the ingress in front of it can reach. Keep the daemon's listener private or behind an authenticated
 TLS ingress where possible. Grant the task only its own caller token, and set
 the daemon's session, concurrency, rate and resource caps before admitting
 outside traffic. The add-on's own caps (`maxSessionsPerOwner`, `maxSessions`) count
@@ -65,3 +67,13 @@ set the daemon's `SANDBOX_MAX_SESSIONS_PER_OWNER` and name each run's user in th
 `clientData`, which the browser sets), to hold each user to a cap across all of them
 (each open names the user to the daemon as a digest under a key derived from the caller token), beside `SANDBOX_MAX_SESSIONS` and `SANDBOX_MAX_SESSIONS_PER_CALLER`. A public URL without the caller token still exposes an auth
 surface, so monitor and rotate that token as an operational credential.
+
+## A tool whose code calls one web API
+
+The run's kept sandbox takes no grant: a cell carries none. A chat whose code calls an API
+the operator granted builds the AI SDK add-on's `plimsollGrantedCodeTool` inside its run,
+with the profile and the description `plimsoll-specgen` wrote for it, and passes it to
+`streamText` beside, or instead of, this tool; each of its calls runs in a sandbox of its
+own. `plimsollCodeSandbox` refuses a grant
+([the grant, INTERNAL · capability grants →](capability-grants.md#from-an-agent-kits-code-tool);
+[the granted tool, INTERNAL · AI SDK guide →](ai-sdk.md#a-tool-whose-code-calls-one-web-api)).

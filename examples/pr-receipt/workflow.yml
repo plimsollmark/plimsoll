@@ -40,6 +40,31 @@ jobs:
           ref: ${{ env.PLIMSOLL_REF }}
           path: tools/plimsoll
           persist-credentials: false
+      # Given a commit SHA, the checkout fetches that one commit and no tag, so the daemon would state (devel). This
+      # step adds the release tags that name exactly that commit, and no other tag: it lists the repository's tags,
+      # keeps each vMAJOR.MINOR.PATCH whose commit is PLIMSOLL_REF (an annotated tag's ^{} line names its commit) and
+      # fetches those. It changes no file and does not move HEAD, so the code that runs is still the pinned commit, which
+      # receipt.sh checks again. A tag shows only that plimsoll's repository named that commit with that release when
+      # the job ran; tags can be moved and added, so the commit SHA alone decides what code runs, and a tag decides only
+      # whether the receipt states the release (buildvcs.sh keeps the stamp only for a release tag naming HEAD) or
+      # (devel).
+      - name: Fetch the release tags that name the pinned commit
+        shell: bash
+        working-directory: tools/plimsoll
+        run: |
+          listed="$(git ls-remote --tags origin 'refs/tags/v*')"
+          refs=()
+          while read -r object ref; do
+            tag="${ref#refs/tags/}"
+            tag="${tag%'^{}'}"
+            if [ "$object" = "$PLIMSOLL_REF" ] && [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              refs+=("+refs/tags/$tag:refs/tags/$tag")
+            fi
+          done <<< "$listed"
+          if [ "${#refs[@]}" -gt 0 ]; then
+            git fetch --no-tags --no-recurse-submodules --depth=1 origin "${refs[@]}"
+          fi
+          echo "Release tags naming $PLIMSOLL_REF: $(git tag --points-at HEAD | tr '\n' ' ')"
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:

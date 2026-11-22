@@ -1,6 +1,9 @@
 package agentsandbox
 
 import (
+	"context"
+	"net"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,6 +135,134 @@ func TestSmokeHoldsTheChannelFromInside(t *testing.T) {
 		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
 			t.Errorf("key %q, front %q: %v, want %q", c.key, c.front, err, c.want)
 		}
+	}
+}
+
+// The cross-pod check alone: the attempt on the other sandbox's terminator must be in the
+// report and unanswered, from a pod other than that sandbox's.
+func TestCrossPodCheckRefuses(t *testing.T) {
+	const target = "10.244.0.11:9090"
+	for _, c := range []struct {
+		name        string
+		outcomes    map[string]string
+		ranIn, peer string
+		want        string // "" passes
+	}{
+		{"unanswered", map[string]string{"tcp " + target: "timeout"}, "k8s-pod-uid:a", "k8s-pod-uid:b", ""},
+		{"no route", map[string]string{"tcp " + target: "EHOSTUNREACH"}, "k8s-pod-uid:a", "k8s-pod-uid:b", ""},
+		{"open", map[string]string{"tcp " + target: "open"}, "k8s-pod-uid:a", "k8s-pod-uid:b", "reached another sandbox's TLS terminator"},
+		{"refused by the other pod", map[string]string{"tcp " + target: "ECONNREFUSED"}, "k8s-pod-uid:a", "k8s-pod-uid:b", "reached another sandbox's TLS terminator"},
+		{"reset", map[string]string{"tcp " + target: "ECONNRESET"}, "k8s-pod-uid:a", "k8s-pod-uid:b", "reached another sandbox's TLS terminator"},
+		{"not tried", map[string]string{"tcp 1.1.1.1:443": "timeout"}, "k8s-pod-uid:a", "k8s-pod-uid:b", "did not try"},
+		{"another port of that pod", map[string]string{"tcp 10.244.0.11:9091": "timeout"}, "k8s-pod-uid:a", "k8s-pod-uid:b", "did not try"},
+		{"from the same pod", map[string]string{"tcp " + target: "timeout"}, "k8s-pod-uid:a", "k8s-pod-uid:a", "needs two pods"},
+		{"from an unnamed pod", map[string]string{"tcp " + target: "timeout"}, "", "k8s-pod-uid:b", "needs two pods"},
+		{"to an unnamed pod", map[string]string{"tcp " + target: "timeout"}, "k8s-pod-uid:a", "", "needs two pods"},
+	} {
+		err := checkCrossPod(c.outcomes, target, c.ranIn, c.peer)
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+// The smoke test claims a third sandbox, the peer, before the boundary test; the boundary
+// script dials the peer's terminator port; plimsolld reaches the peer (its tier check, and
+// nothing else) only after the boundary command; and all three sandboxes are deleted.
+func TestSmokeDialsAnotherSandboxsTerminator(t *testing.T) {
+	p, api, sd := testProvider(t)
+	fakeSmoke(t, p, sd, nil)
+	if err := p.SmokeTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drained(t, p)
+	api.mu.Lock()
+	var ips []string
+	for _, c := range api.created {
+		ips = append(ips, api.ips[c.Meta.Name])
+	}
+	deleted := len(api.deleted)
+	api.mu.Unlock()
+	if len(ips) != 3 || deleted != 3 {
+		t.Fatalf("claims made %v, deleted %d; want three, all deleted", ips, deleted)
+	}
+	peer, boundaryPod, runnerPod := ips[0], ips[1], ips[2]
+	sd.mu.Lock()
+	targets, dialed := slices.Clone(sd.targets), slices.Clone(sd.dialed)
+	sd.mu.Unlock()
+	if want := net.JoinHostPort(peer, "9090"); !slices.Contains(targets, want) {
+		t.Fatalf("the boundary script's targets %v leave out the peer's terminator %s", targets, want)
+	}
+	// The boundary pod's tier check and its command, then the peer's tier check (the
+	// positive control), then the runner pod's tier check and its command.
+	if want := []string{boundaryPod, boundaryPod, peer, runnerPod, runnerPod}; !slices.Equal(dialed, want) {
+		t.Fatalf("pods dialed in order %v, want %v (peer %s)", dialed, want, peer)
+	}
+}
+
+// A guest that reaches the other sandbox's terminator, or a report that never tried it,
+// fails the smoke test, proves nothing, and still deletes every sandbox it claimed. So does
+// a peer plimsolld cannot reach after the attempt: the guest's silence then proves nothing.
+func TestSmokeRefusesWhatTheCrossPodAttemptDoesNotProve(t *testing.T) {
+	peerOutcome := func(outcome string) func(*boundaryReport) {
+		return func(r *boundaryReport) {
+			for k := range r.Egress {
+				if strings.HasSuffix(k, ":9090") {
+					if outcome == "" {
+						delete(r.Egress, k)
+					} else {
+						r.Egress[k] = outcome
+					}
+				}
+			}
+		}
+	}
+	for _, c := range []struct {
+		name        string
+		edit        func(*boundaryReport)
+		unreachable bool
+		want        string
+	}{
+		{"open", peerOutcome("open"), false, "reached another sandbox's TLS terminator"},
+		{"refused", peerOutcome("ECONNREFUSED"), false, "reached another sandbox's TLS terminator"},
+		{"not tried", peerOutcome(""), false, "did not try another sandbox's TLS terminator"},
+		{"peer unreachable afterwards", nil, true, "plimsolld could not reach it either"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p, api, sd := testProvider(t)
+			fakeSmoke(t, p, sd, c.edit)
+			if c.unreachable {
+				l, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				dead := l.Addr().String()
+				l.Close()
+				p.dialAddr = func(ip string) string {
+					api.mu.Lock()
+					peer := api.ips[api.created[0].Meta.Name]
+					api.mu.Unlock()
+					if ip == peer {
+						return dead
+					}
+					return sd.addr(ip)
+				}
+			}
+			err := p.SmokeTest(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+			drained(t, p)
+			p.mu.Lock()
+			proven := p.proven
+			p.mu.Unlock()
+			api.mu.Lock()
+			made, deleted := len(api.created), len(api.deleted)
+			api.mu.Unlock()
+			if proven != "" || made != 2 || deleted != made {
+				t.Fatalf("proven %q, %d claims made, %d deleted; want nothing proven, the peer and the boundary pod made, both deleted", proven, made, deleted)
+			}
+		})
 	}
 }
 

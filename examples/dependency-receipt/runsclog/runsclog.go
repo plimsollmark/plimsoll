@@ -41,7 +41,14 @@ import (
 // Supported lists the runsc releases whose log this reader has been checked against. The
 // entries it relies on (the strace layout, the loader's stack line, the closing line) are
 // debug output with no stability promise, so another release is refused until it is checked.
-var Supported = []string{"release-20260907.0"}
+//
+// release-20261116.0 was checked 2026-11-21: the five fixture installs, captured under it and
+// under release-20260907.0 the same way (fixtures/capture-runsc.sh), read as the same events
+// with nothing unclear. What differed was the log's line numbers, ten more Config lines, and
+// one error the guest got (an open for writing in /proc: EACCES before, ENOENT now), which is
+// gVisor's behavior and not its log format. testdata/canary-release-20261116.0.boot.json.gz
+// is one of those logs.
+var Supported = []string{"release-20260907.0", "release-20261116.0"}
 
 // Errors that refuse a log whole.
 var (

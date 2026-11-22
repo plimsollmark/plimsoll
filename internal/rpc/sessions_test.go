@@ -85,17 +85,69 @@ func testSessionSoftwareRuleCannotBeDropped(t *testing.T, mode string) {
 	}
 }
 
+// twoIdentitySessions states a session whose snippets and projects run different
+// software, before the open (stated) or only once the sandbox is made (opened).
+type twoIdentitySessions struct {
+	*sandboxtest.Sessions
+	stated bool
+}
+
+func twoIdentities() sandbox.Environments {
+	js := sandbox.PayloadEnvironment{Identity: "outer:test", SoftwareIdentity: "oci-manifest:linux/amd64@sha256:aaaa"}
+	project := sandbox.PayloadEnvironment{Identity: "outer:test", SoftwareIdentity: "oci-manifest:linux/amd64@sha256:bbbb"}
+	return sandbox.Environments{JavaScript: js, Project: project}
+}
+
+func (p *twoIdentitySessions) SessionEnvironments() sandbox.Environments {
+	if p.stated {
+		return twoIdentities()
+	}
+	return p.Sessions.SessionEnvironments()
+}
+
+// A session's open answer states one software identity, which every client compares
+// with the record of a call that ended without an answer, while that record names the
+// project identity for a project or cell call and the snippet identity for a snippet.
+// A session whose two differ is refused at open, marked not dispatched, and whatever
+// sandbox was made is closed: no client could check its unanswered project calls
+// (assumption 1 of the review of the unread half, 2026-11-18).
+func TestASessionWithTwoSoftwareIdentitiesIsRefusedAtOpen(t *testing.T) {
+	for name, stated := range map[string]bool{"stated before the open": true, "found once opened": false} {
+		t.Run(name, func(t *testing.T) {
+			inner := &sandboxtest.Sessions{}
+			if !stated {
+				opened := twoIdentities()
+				inner.OpenedEnvironments = &opened
+			}
+			svc := NewSandboxService(&twoIdentitySessions{Sessions: inner, stated: stated})
+			svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+			_, err := svc.OpenSession(authenticatedContext("alice"), openReq())
+			if reason, marked := sandbox.NotDispatchedReason(err); !marked || reason != sandbox.RefusalEnvironment {
+				t.Fatalf("open: %v (marked %v, %v); want a refusal marked not dispatched, environment", err, marked, reason)
+			}
+			for _, s := range inner.Opened() {
+				if s.Err() == nil {
+					t.Fatal("the refused session's sandbox was left open")
+				}
+			}
+			if stated && len(inner.Opened()) != 0 {
+				t.Fatalf("%d sandboxes made for a session refused before its open", len(inner.Opened()))
+			}
+		})
+	}
+}
+
 func openReq() *connect.Request[plimsollv1.OpenSessionRequest] {
 	return connect.NewRequest(&plimsollv1.OpenSessionRequest{Protocol: protocol.Number})
 }
 
 func callReq(id, code string) *connect.Request[plimsollv1.SessionRunRequest] {
-	return connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id,
+	return connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id,
 		Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}})
 }
 
 func closeReq(id string) *connect.Request[plimsollv1.CloseSessionRequest] {
-	return connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: protocol.Number, SessionId: id})
+	return connect.NewRequest(&plimsollv1.CloseSessionRequest{Generation: 1, Protocol: protocol.Number, SessionId: id})
 }
 
 // claimSession names the session in a call the daemon refuses before anything runs (it
@@ -103,7 +155,7 @@ func closeReq(id string) *connect.Request[plimsollv1.CloseSessionRequest] {
 // closing it as unclaimed, and spends no rate, slot or idle time.
 func claimSession(t *testing.T, svc *SandboxService, ctx context.Context, id string) {
 	t.Helper()
-	_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id}))
+	_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id}))
 	if _, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeInvalidArgument || !marked {
 		t.Fatalf("a call with no payload: %v; want InvalidArgument, not dispatched", err)
 	}
@@ -165,6 +217,63 @@ func TestSessionBelongsToItsPrincipal(t *testing.T) {
 	}
 	if _, err := svc.SessionRun(authenticatedContext("alice"), callReq(id, "1")); err != nil {
 		t.Fatalf("the owner's call: %v", err)
+	}
+}
+
+// ownCommandRefusedSessions hands out sessions whose snippet calls are answered as a docker
+// session answers a call whose own command was refused (finding guest-guard-24, 24 B): the
+// session ends, boundary failed, and the call is marked not dispatched, reason environment.
+type ownCommandRefusedSessions struct{ *sandboxtest.Sessions }
+
+func (p *ownCommandRefusedSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &ownCommandRefused{FakeSession: s.(*sandboxtest.FakeSession)}, nil
+}
+
+type ownCommandRefused struct{ *sandboxtest.FakeSession }
+
+func (s *ownCommandRefused) RunJavaScript(context.Context, sandbox.Request) (sandbox.Result, error) {
+	s.End(sandbox.SessionBoundaryFailed)
+	return sandbox.Result{}, sandbox.NotDispatched(sandbox.RefusalEnvironment, s.Err())
+}
+
+// A session call its provider marks not dispatched as it ends the session reaches the caller
+// with both: the NotDispatched detail (environment) and the SessionEnded detail (boundary
+// failed). Nothing ran, so the session's chain does not count it.
+func TestASessionCallRefusedAsItEndsArrivesMarked(t *testing.T) {
+	p := &ownCommandRefusedSessions{Sessions: &sandboxtest.Sessions{}}
+	svc := NewSandboxService(p)
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeFailedPrecondition || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT {
+		t.Fatalf("the refused call: %v (reason %v, marked %v); want FailedPrecondition, not dispatched, environment", err, reason, marked)
+	}
+	var ce *connect.Error
+	sawEnd := false
+	if errors.As(err, &ce) {
+		for _, d := range ce.Details() {
+			if v, _ := d.Value(); v != nil {
+				if end, ok := v.(*plimsollv1.SessionEnded); ok {
+					sawEnd = end.GetReason() == plimsollv1.SessionEnd_SESSION_END_BOUNDARY_FAILED
+				}
+			}
+		}
+	}
+	if !sawEnd {
+		t.Fatalf("the refused call: %v; want a SessionEnded detail, boundary failed", err)
+	}
+	closed, err := svc.CloseSession(ctx, closeReq(id))
+	if err != nil || closed.Msg.GetCalls() != 0 || closed.Msg.GetEnded() != plimsollv1.SessionEnd_SESSION_END_BOUNDARY_FAILED {
+		t.Fatalf("close: %+v, %v; want no call counted and the session's end", closed, err)
 	}
 }
 
@@ -592,7 +701,7 @@ func TestCellRunsInASession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: cell}}))
 	if err != nil {
 		t.Fatal(err)
@@ -605,7 +714,7 @@ func TestCellRunsInASession(t *testing.T) {
 		t.Fatalf("record: %+v", resp.Msg.GetRun().GetRecord())
 	}
 	bad := &plimsollv1.CellRun{Language: "cobol", Code: "1"}
-	_, err = svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+	_, err = svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: bad}}))
 	wantNotDispatched(t, "an unknown language", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
 }
@@ -631,10 +740,17 @@ func TestIdleSuspendFindingTheTurnBusyTriesAgain(t *testing.T) {
 	e.mu.Unlock()
 	e.mu.Lock()
 	gen := e.idleGen // the current timer's
+	idleAt := e.idleAt
 	e.mu.Unlock()
 	e.turn <- struct{}{} // a call holds the turn
 	svc.suspend(e, gen)  // the idle timer fires now
-	<-e.turn             // the call gives the turn back
+	e.mu.Lock()
+	unchanged := e.idleAt == idleAt && e.idleGen == gen
+	e.mu.Unlock()
+	if !unchanged {
+		t.Fatal("a busy turn extended the idle deadline")
+	}
+	e.giveTurn() // the call gives the turn back
 	deadline := time.Now().Add(3 * time.Second)
 	for p.Opened()[0].Suspends() == 0 {
 		if time.Now().After(deadline) {
@@ -768,7 +884,7 @@ func TestSessionsPerCallerCap(t *testing.T) {
 	if _, err := svc.OpenSession(bob, openReq()); err != nil {
 		t.Fatalf("another caller's first session: %v", err)
 	}
-	if _, err := svc.CloseSession(alice, connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: protocol.Number, SessionId: ids[0]})); err != nil {
+	if _, err := svc.CloseSession(alice, connect.NewRequest(&plimsollv1.CloseSessionRequest{Generation: 1, Protocol: protocol.Number, SessionId: ids[0]})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.OpenSession(alice, openReq()); err != nil {
@@ -1040,7 +1156,7 @@ func TestEndedSessionKeepsItsSlotUntilItsSandboxIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{
 			Cell: &plimsollv1.CellRun{Language: "python", Code: sandboxtest.CellEndsSession}}}))
 	if err != nil {
@@ -1310,6 +1426,7 @@ func TestSessionsPerOwnerReplacedPlacePassesToTheOpen(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("the open did not wait for the delete: %v", err)
+	// fixed-wait: 50 ms without the open returning stands for "it waits for the delete"; nothing can signal that a thing did not happen, so this is a bounded look: a late one would be missed, and a slow machine cannot fail it
 	case <-time.After(50 * time.Millisecond):
 	}
 	p.Opened()[1].FinishDelete()
@@ -1700,6 +1817,7 @@ func TestRefusedSessionCallKeepsTheSuspendDeadline(t *testing.T) {
 	if before.IsZero() {
 		t.Fatal("the open armed no idle timer")
 	}
+	// fixed-wait: a measured gap, not a wait for an event: 20 ms so that a refused call moving the idle deadline would show as a later time
 	time.Sleep(20 * time.Millisecond)
 	for range 3 {
 		if _, err := svc.SessionRun(ctx, timedCall(id, 125000)); !refusedCapacity(err) {
@@ -1852,6 +1970,7 @@ func TestASessionThatNeverSuspendsHasAClaimWindow(t *testing.T) {
 	}() {
 		t.Fatalf("a call on it: %v; want the end unclaimed", err)
 	}
+	// fixed-wait: the wait is the thing under test: four claim windows, after which a session that was going to be suspended or ended would have been
 	time.Sleep(4 * sessionClaimWindow)
 	for i, s := range p.Opened()[1:] {
 		if s.Err() != nil || s.Suspends() != 0 {
@@ -1860,10 +1979,13 @@ func TestASessionThatNeverSuspendsHasAClaimWindow(t *testing.T) {
 	}
 }
 
-// A close that fails without ending the unclaimed session keeps it, claimable, and is
-// tried again after another period, since nobody else will close it.
+// A close that fails without ending the unclaimed session is tried again by closeOwn,
+// with backoff, until its tries run out; meanwhile the session stays unclaimed, so a call
+// naming it is refused as one naming a closed unclaimed session is, and nothing runs in
+// it. The log never says it was closed.
 func TestAFailedUnclaimedCloseIsTriedAgain(t *testing.T) {
 	svc, p := sessionService()
+	svc.closeRetry = closeRetry{first: 10 * time.Millisecond, attempts: 3}
 	var log lockedLog
 	svc.Logger = slog.New(slog.NewJSONHandler(&log, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	svc.Sandbox = &closeFailing{p}
@@ -1875,22 +1997,25 @@ func TestAFailedUnclaimedCloseIsTriedAgain(t *testing.T) {
 	}
 	e, _ := svc.sessions.get(open.Msg.GetSessionId(), "alice")
 	e.mu.Lock()
-	e.idleTimeout = 20 * time.Millisecond // below the floor an open applies, so retries come quickly
 	gen := e.idleGen
 	e.mu.Unlock()
 	svc.suspend(e, gen) // the first idle timeout
-	deadline := time.Now().Add(10 * time.Second)
-	for strings.Count(log.String(), "unclaimed session close failed") < 2 {
-		if time.Now().After(deadline) {
-			t.Fatalf("a failed close of an unclaimed session was not tried again:\n%s", log.String())
-		}
-		time.Sleep(10 * time.Millisecond)
+	waitLog(t, &log, "session close gave up")
+	if n := strings.Count(log.String(), `"why":"unclaimed"`); n < 4 { // three failed tries and the give-up
+		t.Fatalf("%d lines name the unclaimed close; want each try's and the give-up:\n%s", n, log.String())
 	}
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
-		t.Fatalf("a call on the session whose close failed: %v", err)
+	if failed, gaveUp := svc.SessionCloseCounts(); failed != 3 || gaveUp != 1 {
+		t.Fatalf("close counts %d failed, %d gave up; want 3 and 1", failed, gaveUp)
 	}
-	if strings.Contains(log.String(), "session closed unclaimed") {
-		t.Fatalf("a close that failed was logged as done:\n%s", log.String())
+	_, err = svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1"))
+	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED {
+		t.Fatalf("a call on the session whose close failed: %v; want the end unclaimed", err)
+	}
+	if _, marked := notDispatchedOf(err); !marked || p.Opened()[0].Calls() != 0 {
+		t.Fatalf("a call on the session whose close failed: marked %v, %d ran; want not dispatched, none", marked, p.Opened()[0].Calls())
+	}
+	if strings.Contains(log.String(), "session closed unclaimed") || p.Opened()[0].Err() != nil {
+		t.Fatalf("a close that failed was logged as done, or the fake ended:\n%s", log.String())
 	}
 }
 
@@ -1953,5 +2078,47 @@ func TestSessionOpenAuditCarriesTheUnreadCount(t *testing.T) {
 	}
 	if !strings.Contains(opened, `"unread_listeners":0`) {
 		t.Fatalf("the open's audit line %q does not carry its unread count", opened)
+	}
+}
+
+// Even before attach is offered, no caller may omit ownership or guess a different
+// generation. Neither a refused run nor a refused close changes the kept sandbox.
+func TestSessionRequiresCurrentGeneration(t *testing.T) {
+	svc, p := sessionService()
+	ctx := authenticatedContext("alice")
+	opened, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Msg.GetGeneration() != 1 {
+		t.Fatal("open must start at generation 1")
+	}
+	id := opened.Msg.GetSessionId()
+	// Zero is a malformed request, not a stale owner: TestZeroGenerationIsAnInvalidRequestEverywhere.
+	for _, generation := range []uint64{2, ^uint64(0)} {
+		run := callReq(id, "1")
+		run.Msg.Generation = generation
+		_, err = svc.SessionRun(ctx, run)
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			t.Fatalf("run: %v", err)
+		}
+		wantNotDispatched(t, "obsolete run", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION)
+		close := closeReq(id)
+		close.Msg.Generation = generation
+		_, err = svc.CloseSession(ctx, close)
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			t.Fatalf("close: %v", err)
+		}
+		wantNotDispatched(t, "obsolete close", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION)
+	}
+	if p.Opened()[0].Calls() != 0 || p.Opened()[0].Err() != nil {
+		t.Fatal("refusal changed the sandbox")
+	}
+	if _, err = svc.SessionRun(ctx, callReq(id, "1")); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := svc.CloseSession(ctx, closeReq(id))
+	if err != nil || closed.Msg.GetCalls() != 1 {
+		t.Fatalf("current owner: %v, %v", closed, err)
 	}
 }
