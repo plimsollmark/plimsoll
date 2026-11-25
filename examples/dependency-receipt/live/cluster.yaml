@@ -51,15 +51,21 @@ metadata: {name: {{.Namespace}}-runtimeclasses}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{.Namespace}}-runtimeclasses}
 subjects: [{kind: ServiceAccount, name: plimsoll, namespace: {{.Namespace}}}]
 ---
-# The TLS key pair sandboxd's terminator serves, signed by a CA the program makes for this
-# run alone; plimsolld pins that CA (docs/agentsandbox.md, "The control channel is TLS").
+# The CA that signs each pod's own key pair, made by the program for this run alone, and
+# cert-manager's CA issuer on it; plimsolld pins that CA (docs/agentsandbox.md, "The
+# control channel is TLS"). The cluster needs cert-manager and its CSI driver.
 apiVersion: v1
 kind: Secret
-metadata: {name: plimsoll-sandboxd-tls, namespace: {{.Namespace}}}
+metadata: {name: plimsoll-ca, namespace: {{.Namespace}}}
 type: kubernetes.io/tls
 data:
-  tls.crt: {{.TLSCert}}
-  tls.key: {{.TLSKey}}
+  tls.crt: {{.CACert}}
+  tls.key: {{.CAKey}}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: plimsoll-ca, namespace: {{.Namespace}}}
+spec: {ca: {secretName: plimsoll-ca}}
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
@@ -103,7 +109,19 @@ spec:
       volumes:
       - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
       - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
-      - {name: sandboxd-tls, secret: {secretName: plimsoll-sandboxd-tls, defaultMode: 0400}}
+      - name: sandboxd-tls
+        csi:
+          driver: csi.cert-manager.io
+          readOnly: true
+          volumeAttributes:
+            csi.cert-manager.io/issuer-name: plimsoll-ca
+            csi.cert-manager.io/issuer-kind: Issuer
+            csi.cert-manager.io/dns-names: {{.ServerName}}
+            csi.cert-manager.io/uri-sans: "spiffe://{{.TrustDomain}}/ns/${POD_NAMESPACE}/pod/${POD_NAME}/${POD_UID}"
+            csi.cert-manager.io/key-algorithm: ECDSA
+            csi.cert-manager.io/key-size: "256"
+            csi.cert-manager.io/key-encoding: PKCS8
+            csi.cert-manager.io/key-usages: "server auth,digital signature"
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool

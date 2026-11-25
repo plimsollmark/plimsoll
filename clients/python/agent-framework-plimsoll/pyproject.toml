@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # clients/python/frameworks/agent_framework runs against the versions below.
 [project]
 name = "agent-framework-plimsoll"
-version = "0.28.0"
+version = "0.29.0"
 description = "A Microsoft Agent Framework shell tool and code tool that run agent-written commands and code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ dependencies = [
     # agent-framework-tools, the framework's shell tools, is a beta released about weekly, so
     # it is pinned exactly on purpose: a new beta is tested before the pin moves.
     "agent-framework-tools==1.0.0b261112",
-    "plimsoll-client==0.28.0",
+    "plimsoll-client==0.29.0",
 ]
 keywords = ["agent-framework", "microsoft agent framework", "shell", "sandbox", "code execution", "agents", "gvisor"]
 classifiers = [

@@ -300,22 +300,22 @@ template's limits (default 256 MiB and 1 CPU);
 SANDBOX_DISK_MB, when set, bounds the sum of its volumes'
 size limits; SANDBOX_PIDS fails startup, because the
 kubelet sets the process limit`})
-	AgentsandboxSandboxdCAFile = sectionAgentsandbox.text(Meta{Name: "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE", Doc: `the PEM certificate authority sandboxd's TLS
-certificate must chain to, the deployment's own (the
-system roots are never used); required. Each pod's
-TLS terminator serves the certificate from the
-Secret mounted at /etc/plimsoll/sandboxd-tls (mode
-0400), in front of sandboxd on loopback, and nothing
-is sent to a pod that does not prove it`})
-	AgentsandboxSandboxdServerName = sectionAgentsandbox.text(Meta{Name: "SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME", Doc: `the DNS name that certificate must carry (default
+	AgentsandboxSandboxdCAFile = sectionAgentsandbox.text(Meta{Name: "SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE", Doc: `the PEM certificate authority every pod's TLS
+certificate must chain to: the in-cluster issuer's
+that signs each pod's own certificate (the system roots
+are never used); required. Each pod's TLS terminator
+serves its pair from the key volume mounted at
+/etc/plimsoll/sandboxd-tls, in front of sandboxd on
+loopback, and nothing is sent to a pod that does not
+prove it is the pod plimsolld read`})
+	AgentsandboxSandboxdServerName = sectionAgentsandbox.text(Meta{Name: "SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME", Doc: `the one DNS name each certificate must carry (default
 sandboxd.plimsoll.invalid)`})
-	AgentsandboxEncryptedPodNetwork = sectionAgentsandbox.bool(Meta{Name: "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK", Doc: `=1 states that the pod network between plimsolld and
-the sandbox pods is authenticated and encrypted (a CNI
-with WireGuard or IPsec, or a mesh with mutual TLS).
-Every pod serves the same TLS certificate, so the
-channel proves the peer is a plimsoll sandbox pod, not
-which one; hardened mode requires the statement until
-each pod has a key of its own`})
+	AgentsandboxSandboxdTrustDomain = sectionAgentsandbox.text(Meta{Name: "SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN", Doc: `the trust domain of the pods' identities; required.
+Each pod's certificate must carry exactly one URI name,
+spiffe://<this>/ns/<namespace>/pod/<name>/<UID>, of the
+pod plimsolld read from the API server, so a
+connection that reaches another pod is refused before
+anything is sent. Hardened mode requires it`})
 )
 
 // lambdamicrovm settings.
@@ -540,4 +540,24 @@ to suspend, draws on the paid allowances`})
 	SessionDiskMB = sectionLimits.int(Meta{Name: "SANDBOX_SESSION_DISK_MB", Default: "1024", Doc: `end a session whose files exceed this after a call
 (default 1024; 0 = no bound; at most 1048576);
 measured after each call, not enforced during it`})
+	SessionKeptAnswerBytes = sectionLimits.int(Meta{Name: "SANDBOX_SESSION_KEPT_ANSWER_BYTES", Default: "4194304", Doc: `the largest answer a session keeps in memory after
+its call (default 4194304, 4 MiB; 0 = keep none; at
+most 16777216, 16 MiB, so the answer an attach
+returns stays under the clients' 32 MiB limit on an
+answer in JSON, where output bytes grow by a third),
+so a worker taking the session over across that
+call's lost answer gets it back; a larger answer
+leaves only its record. Dropped when the next call
+starts, at suspend, close and end; never logged or
+written to disk. All sessions' kept answers
+together are bounded by
+SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES`})
+	SessionKeptAnswersTotalBytes = sectionLimits.int(Meta{Name: "SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES", Default: "67108864", Doc: `the most memory all sessions' kept answers may hold
+at once (default 67108864, 64 MiB: sixteen answers
+of the default 4 MiB; 0 = keep none; at most
+1099511627776, 1 TiB). An answer that would pass it
+is not kept (its record still is), and a dropped
+answer gives its bytes back. Without it the daemon
+could hold SANDBOX_MAX_SESSIONS times
+SANDBOX_SESSION_KEPT_ANSWER_BYTES of guest output`})
 )

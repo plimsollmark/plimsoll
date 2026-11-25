@@ -20,24 +20,26 @@ from typing import Any, List, Optional
 
 from plimsoll_client import (
     AsyncClient,
-    CallAlreadySentError,
     ChainError,
     CheckpointConflictError,
     CheckpointMismatchError,
     CheckpointStoreError,
     CheckpointUnavailableError,
     Client,
+    HeadMismatchError,
     InvalidOptionError,
     InvalidRequestError,
+    LostCall,
     MemoryCheckpointStore,
     PlimsollError,
+    RecoveringError,
     SessionCheckpoint,
     SessionEndedError,
     StaleOwnerError,
     StoredCheckpoint,
 )
 
-from plimsoll_client._tables import CALL_ALREADY_SENT_TEXT
+from plimsoll_client._tables import RECOVERING_TEXT
 
 from ._cases import says_of, verdict
 from ._env import setting
@@ -96,6 +98,23 @@ class FakeHoldingStore(MemoryCheckpointStore):
             self.loads.append(got)
             hold.wait(10)
         return got
+
+
+class FakeBeforeReadyStore(MemoryCheckpointStore):
+    """A memory store that runs ``before_ready`` once, right before it is asked to store a
+    record at a later generation than the one it replaces (an attacher's write after the
+    daemon answered its attach): another worker acting between the attach and its write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.before_ready: Optional[Any] = None
+
+    def compare_and_set(self, key: str, expected: Optional[StoredCheckpoint], replacement: StoredCheckpoint) -> bool:
+        hook = self.before_ready
+        if hook is not None and expected is not None and replacement.checkpoint.generation > expected.checkpoint.generation:
+            self.before_ready = None
+            hook()
+        return super().compare_and_set(key, expected, replacement)
 
 
 class FakeFailingStore(MemoryCheckpointStore):
@@ -526,19 +545,6 @@ class Pending(Base):
         a.run_cell("x = 1")
         a.close()
 
-    def test_a_store_changed_during_the_attach_drops_the_session(self) -> None:
-        store = FakeInterleavingStore()
-        s = self.client().open_session(checkpoint_store=store, checkpoint_key="moved")
-        record = store.load("moved")
-        assert record is not None
-        other = replace(record, revision=record.revision + 1)
-        store.after_load = lambda: store.compare_and_set("moved", record, other)
-        with self.assertRaises(CheckpointConflictError) as cm:
-            self.client().attach_session("moved", store=store)
-        self.assertTrue(cm.exception.sent, "the attach went through; only the store write failed")
-        self.assertEqual(store.load("moved"), other)
-        del s
-
     def test_conflict_on_begin_stops_the_session(self) -> None:
         store = MemoryCheckpointStore()
         a = self.client().open_session(checkpoint_store=store, checkpoint_key="begin")
@@ -581,11 +587,13 @@ class Pending(Base):
 class ExplainedGap(Base):
     """The explained gap (option A of the PydanticAI design's section 3.3): a pending record
     names its call, and a call that ran with its answer lost is taken over across the gap,
-    once, with the lost call's record; the first call after may not repeat it."""
+    once, with the lost call's record and, when the daemon kept it, its answer; the attached
+    session is then recovering, and refuses every call until the application resolves it
+    (lost call option 3, the Go client's client/checkpoint_gap_test.go)."""
 
-    def lost(self, key: str, url: Optional[str] = None, floor: Optional[str] = None) -> MemoryCheckpointStore:
+    def lost(self, key: str, url: Optional[str] = None, floor: Optional[str] = None, keep_no_answer: bool = False) -> MemoryCheckpointStore:
         store = MemoryCheckpointStore()
-        a = self.client(url).open_session(checkpoint_store=store, checkpoint_key=key, minimum_isolation=floor)
+        a = self.client(url).open_session(checkpoint_store=store, checkpoint_key=key, minimum_isolation=floor, keep_no_answer=keep_no_answer)
         a.run_cell("x = 1")
         with self.assertRaises(PlimsollError):
             a.run_cell("y = 2", trace_id="drop-answer")
@@ -596,73 +604,123 @@ class ExplainedGap(Base):
         pending = store.load("gap")
         assert pending is not None and pending.state == "pending"
         b = self.client().attach_session("gap", store=store)
-        assert b.lost_call is not None
-        self.assertEqual((b.lost_call.request_sha256, b.lost_call.sequence), (pending.request_sha256, 2))
+        lc = b.lost_call
+        assert lc is not None and lc.record is not None
+        self.assertEqual((lc.request_sha256, lc.record.request_sha256, lc.record.sequence), (pending.request_sha256, pending.request_sha256, 2))
+        # The answer the worker that sent the call never got: its output, and its record the
+        # lost one.
+        assert lc.answer is not None
+        self.assertEqual((lc.answer.stdout_text, lc.answer.record), ("python 2: y = 2", lc.record))
         ready = store.load("gap")
         assert ready is not None
         self.assertEqual((ready.state, ready.checkpoint.generation, ready.checkpoint.calls), ("ready", 2, 2))
-        self.assertEqual((ready.checkpoint.last_record_sha256, ready.checkpoint.lost_call_sha256), (b.lost_call.sha256, pending.request_sha256))
+        self.assertEqual(
+            (ready.checkpoint.last_record_sha256, ready.checkpoint.recovering_request_sha256), (lc.record.sha256, pending.request_sha256),
+            "the store holds the recovering state",
+        )
+        b.resolve_lost_call()
+        self.assertIsNone(b.lost_call)
+        resolved = store.load("gap")
+        assert resolved is not None
+        self.assertEqual(
+            (resolved.revision, resolved.checkpoint.recovering_request_sha256, resolved.checkpoint.calls), (ready.revision + 1, "", 2),
+            "resolving writes the store's record without the lost call",
+        )
         r = b.run_cell("z = 3")
         self.assertEqual(r.stdout_text, "python 3: z = 3", "the same interpreter, after the lost call")
-        after = store.load("gap")
-        assert after is not None
-        self.assertEqual((after.checkpoint.calls, after.checkpoint.lost_call_sha256), (3, ""), "the first call spends the note")
-        b.close()
+        assert r.record is not None
+        self.assertEqual((r.record.sequence, r.record.previous_sha256), (3, lc.record.sha256))
+        self.assertEqual(b.close().calls, 3)
 
-    def test_the_first_call_may_not_repeat_the_lost_call(self) -> None:
+    def test_a_recovering_session_refuses_every_call_until_resolved(self) -> None:
+        # Finding release-74, release-84: under the first-call rule a repeat sent after any
+        # other call ran a second time (starts.log 2). Every call is refused now, the lost
+        # call's repeat and any other alike, before anything is sent, until the application
+        # resolves the session; then a deliberate resend runs, the application's decision.
         store = self.lost("repeat")
         b = self.client().attach_session("repeat", store=store)
         calls = self.provider_calls()
-        with self.assertRaises(CallAlreadySentError) as cm:
-            b.run_cell("y = 2")
-        self.assertEqual(cm.exception.not_dispatched, "request")
-        # What the client knows, in the Go client's words (client.CallAlreadySentText,
-        # copied into _tables by internal/wiretables): the call was sent once. The lost
-        # call's record says whether it finished.
-        self.assertEqual(cm.exception.message, f"plimsoll: {CALL_ALREADY_SENT_TEXT}; nothing was sent")
-        self.assertNotIn("ran once", cm.exception.message)
-        self.assertEqual(self.provider_calls(), calls, "the repeat ran")
-        self.assertIsNone(b.stopped)
-        b.run_cell("y = 2")  # the note is spent: the same call again runs
+        for code in ("y = 2", "w = 0", "y = 2"):
+            with self.subTest(code), self.assertRaises(RecoveringError) as cm:
+                b.run_cell(code)
+            self.assertEqual(cm.exception.not_dispatched, "request")
+            # What the client says, in the Go client's words (client.RecoveringText, copied
+            # into _tables by internal/wiretables).
+            self.assertEqual(cm.exception.message, f"plimsoll: {RECOVERING_TEXT}; nothing was sent")
+        self.assertEqual(self.provider_calls(), calls, "a call ran while recovering")
+        self.assertIsNone(b.stopped, "the refusals stopped the session")
+        self.assertIsNotNone(b.lost_call, "the refusals resolved the session")
+        self.assertTrue(b.checkpoint().recovering_request_sha256, "saving the head resolved the session")
+        self.assertIsNotNone(b.lost_call)
+        b.resolve_lost_call()
+        b.run_cell("y = 2")  # the repeat, once resolved: running it again is the application's decision
+        self.assertEqual(self.provider_calls(), calls + 1)
         b.close()
 
     def test_a_retry_on_another_worker_is_refused_too(self) -> None:
-        # The worker that took the session over across the gap dies before any call; the
-        # next one attaches from the record it left, and is refused the repeat too.
+        # The worker that took the session over across the gap dies before it resolves it;
+        # the next one attaches from the record it left, which carries the recovering state:
+        # it knows the lost call by its request digest alone, and refuses every call until it
+        # resolves it (finding release-62: the stored record carries the state until a
+        # resolve, as the Go and TypeScript clients' checkpoints do).
         store = self.lost("retry")
-        self.client().attach_session("retry", store=store)
+        b = self.client().attach_session("retry", store=store)
+        lost = b.lost_call
+        assert lost is not None
+        with self.assertRaises(RecoveringError):
+            b.run_cell("w = 0")
+        stored = store.load("retry")
+        assert stored is not None
+        self.assertEqual(stored.checkpoint.recovering_request_sha256, lost.request_sha256, "a refused call cleared the stored state")
         c = self.client().attach_session("retry", store=store)
-        with self.assertRaises(CallAlreadySentError):
+        self.assertEqual(c.lost_call, LostCall(request_sha256=lost.request_sha256), "the record and answer stay with the worker that attached across the gap")
+        calls = self.provider_calls()
+        with self.assertRaises(RecoveringError):
             c.run_cell("y = 2")
+        self.assertEqual(self.provider_calls(), calls)
+        c.resolve_lost_call()
+        c.run_cell("w = 0")
+        after = store.load("retry")
+        assert after is not None
+        self.assertEqual(after.checkpoint.recovering_request_sha256, "", "the state outlived its resolution")
         c.close()
 
-    def test_a_first_call_the_daemon_refuses_leaves_the_note(self) -> None:
-        # Refused with the not-dispatched mark (a floor above the session's tier), the first
-        # call ran nothing: the note stays, in the session and in the stored record, and the
-        # lost call sent next is refused with nothing sent.
-        store = self.lost("refused-first")
-        b = self.client().attach_session("refused-first", store=store)
-        note = b.lost_call_sha256
-        self.assertTrue(note)
-        calls = self.provider_calls()
-        with self.assertRaises(PlimsollError) as cm:
-            b.run_cell("w = 0", minimum_isolation="vm")
-        self.assertEqual(cm.exception.not_dispatched, "isolation")
-        self.assertEqual(b.lost_call_sha256, note)
-        stored = store.load("refused-first")
-        assert stored is not None
-        self.assertEqual((stored.state, stored.checkpoint.lost_call_sha256), ("ready", note))
-        with self.assertRaises(CallAlreadySentError):
-            b.run_cell("y = 2")
-        self.assertEqual(self.provider_calls(), calls, "a call ran")
-        b.close()
+    def test_a_checkpoint_carries_the_recovering_state(self) -> None:
+        # The application-held checkpoint, as Go's Session.Checkpoint: it carries the state
+        # until the session is resolved, and round-trips through its JSON form.
+        store = self.lost("json")
+        b = self.client().attach_session("json", store=store)
+        cp = b.checkpoint()
+        assert b.lost_call is not None
+        self.assertEqual(cp.recovering_request_sha256, b.lost_call.request_sha256)
+        self.assertEqual(SessionCheckpoint.from_json(cp.to_json()), cp)
+        self.assertIn('"recovering_request_sha256":"' + cp.recovering_request_sha256 + '"', cp.to_json())
+        b.resolve_lost_call()
+        self.assertEqual(b.checkpoint().recovering_request_sha256, "")
 
-    def test_a_different_first_call_spends_the_note(self) -> None:
-        store = self.lost("other")
-        b = self.client().attach_session("other", store=store)
-        b.run_cell("w = 0")
-        b.run_cell("y = 2")
-        b.close()
+    def test_a_resolve_the_store_will_not_take_stops_the_session(self) -> None:
+        # The record changed under this worker (another worker took the session over): the resolve writes nothing over
+        # it, raises with nothing sent, and the session stops; the store still says recovering, so the next worker is
+        # told again.
+        store = self.lost("resolve-conflict")
+        b = self.client().attach_session("resolve-conflict", store=store)
+        held = store.load("resolve-conflict")
+        assert held is not None
+        moved = replace(held, revision=held.revision + 1)
+        self.assertTrue(store.compare_and_set("resolve-conflict", held, moved))
+        with self.assertRaises(CheckpointConflictError) as cm:
+            b.resolve_lost_call()
+        self.assertFalse(cm.exception.sent)
+        self.assertIsNotNone(b.stopped)
+        self.assertEqual(store.load("resolve-conflict"), moved)
+
+    def test_keep_no_answer_returns_the_record_alone(self) -> None:
+        store = self.lost("no-answer", keep_no_answer=True)
+        b = self.client().attach_session("no-answer", store=store)
+        lc = b.lost_call
+        assert lc is not None and lc.record is not None
+        self.assertTrue(lc.record.result_sha256, "the daemon answered the lost call")
+        self.assertIsNone(lc.answer, "a session opened with keep_no_answer got an answer back")
 
     def test_forged_explained_gap_answers_are_refused(self) -> None:
         liar_url = setting("PLIMSOLL_ATTACH_LIAR_URL")
@@ -682,15 +740,135 @@ class ExplainedGap(Base):
         assert before is not None
         self.assertEqual(get_json(f"{liar_url}/test/closes?session={before.checkpoint.session}")["closes"], 0)
         s = b.attach_session("forged-gap", store=store, trace_id="forge-lost-none")
-        self.assertIsNotNone(s.lost_call)
+        lc = s.lost_call
+        assert lc is not None
+        self.assertIsNotNone(lc.answer, "the honest answer carries the lost call's answer, checked")
         verdict("attach/lost-forgeries/lost-none", "attach-live", "accept")
 
-    def test_a_checkpoint_carries_the_note_in_its_json(self) -> None:
-        store = self.lost("json")
-        b = self.client().attach_session("json", store=store)
-        cp = b.checkpoint()
-        self.assertTrue(cp.lost_call_sha256)
-        self.assertEqual(SessionCheckpoint.from_json(cp.to_json()), cp)
+
+class HeadOnEveryCall(Base):
+    """Every session call states the head it expects (protocol 8), filled in inside the lock
+    that serializes the session's calls."""
+
+    def test_a_head_mismatch_stops_the_session(self) -> None:
+        # The attach liar raises the head's count of a call whose trace ID is head-mismatch, so
+        # the daemon refuses it as another holder's call would leave it: not dispatched,
+        # reason request, the daemon's head beside it. The session stops: the call after it is
+        # refused before it is sent (the liar counts no second call).
+        liar_url = setting("PLIMSOLL_ATTACH_LIAR_URL")
+        h = self.client(liar_url).open_session(minimum_isolation="container")
+        with self.assertRaises(HeadMismatchError) as cm:
+            h.run_cell("1", trace_id="head-mismatch")
+        call_err = cm.exception
+        self.assertEqual(call_err.not_dispatched, "request")
+        assert call_err.head is not None
+        self.assertEqual((call_err.head["generation"], call_err.head["calls"]), (1, 0), "the daemon's head, as its detail states it")
+        self.assertIsNotNone(h.stopped)
+        before = get_json(f"{liar_url}/test/session-calls?session={h.fingerprint}")["calls"]
+        next_err: Optional[PlimsollError] = None
+        try:
+            h.run_cell("1")
+        except PlimsollError as e:
+            next_err = e
+        sent = get_json(f"{liar_url}/test/session-calls?session={h.fingerprint}")["calls"] != before
+        got = {"call": says_of(call_err).split("/")[0], "next": says_of(next_err).split("/")[0], "nextSent": sent}
+        verdict("session/head-mismatch", "session-head", got)
+        self.assertEqual(got, {"call": "not_dispatched:request", "next": "not_dispatched:request", "nextSent": False})
+        with self.assertRaises(CheckpointUnavailableError):
+            h.checkpoint()
+
+    def test_concurrent_calls_on_one_session_each_state_the_head(self) -> None:
+        s = self.client().open_session()
+        calls = self.provider_calls()
+        errors: List[BaseException] = []
+
+        def call() -> None:
+            try:
+                s.run_cell("x = 1")
+            except BaseException as e:  # every outcome is counted below, none hidden
+                errors.append(e)
+
+        threads = [threading.Thread(target=call) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(errors, [])
+        self.assertEqual((self.provider_calls() - calls, s.calls), (8, 8))
+        self.assertEqual(s.close().calls, 8)
+
+    def test_the_head_is_sent_and_kept_out_of_the_request_digest(self) -> None:
+        s = self.client().open_session()
+        sent: List[Any] = []
+        call = s._transport.call
+
+        def spy(method: str, body: Any, path: str, cancel: Any = None) -> Any:
+            if method == "SessionRun":
+                sent.append(json.loads(json.dumps(body)))
+            return call(method, body, path, cancel)
+
+        s._transport.call = spy  # type: ignore[method-assign]
+        first = s.run_cell("x = 1")
+        second = s.run_cell("x = 1")
+        assert first.record is not None and second.record is not None
+        self.assertEqual([b["head"] for b in sent], [
+            {"generation": "1", "calls": "0", "lastRecordSha256": ""},
+            {"generation": "1", "calls": "1", "lastRecordSha256": first.record.sha256},
+        ])
+        self.assertNotIn("generation", sent[0], "the generation alone was deleted with protocol 8")
+        self.assertEqual(first.record.request_sha256, second.record.request_sha256, "the head is not part of the request digest")
+        s.close()
+
+
+class AttachWriteOverAStaleWorker(Base):
+    """Finding release-60: an attach the daemon answered, whose store write then found a
+    record a stale worker wrote after the attach read the store."""
+
+    def test_the_attacher_keeps_the_session_when_a_stale_worker_wrote_meanwhile(self) -> None:
+        # Worker A holds the session; worker B reads the store and attaches. Between B's attach
+        # and B's write, A begins a call (pending), the daemon refuses it as stale, and A puts
+        # its record back to ready at the old generation. B's compare-and-set fails; the record
+        # A wrote names the same session at the generation B attached from, so B writes over it
+        # and holds the session, rather than dropping it to nobody until its lifetime ends.
+        store = FakeBeforeReadyStore()
+        a = self.client().open_session(checkpoint_store=store, checkpoint_key="stale-write")
+        a.run_cell("x = 1")
+        refused: List[BaseException] = []
+
+        def stale_call() -> None:
+            try:
+                a.run_cell("late")
+            except BaseException as e:  # asserted below
+                refused.append(e)
+
+        store.before_ready = stale_call
+        calls = self.provider_calls()
+        b = self.client().attach_session("stale-write", store=store)
+        self.assertEqual(len(refused), 1)
+        self.assertIsInstance(refused[0], StaleOwnerError)
+        self.assertEqual(self.provider_calls(), calls, "the stale call ran")
+        now = store.load("stale-write")
+        assert now is not None
+        self.assertEqual((now.state, now.checkpoint.generation, now.checkpoint.calls), ("ready", 2, 1), "the store holds the attacher's record")
+        self.assertEqual(b.run_cell("y = 2").stdout_text, "python 2: y = 2")
+        # The session is reachable by one worker, from the store, by the next attach too.
+        c = self.client().attach_session("stale-write", store=store)
+        self.assertEqual(c.close().calls, 2)
+
+    def test_a_later_generation_written_meanwhile_still_drops_the_session(self) -> None:
+        # Another worker's attach after this one's read leaves a record at a later generation:
+        # that worker holds the session, so this attach is dropped, not written over it.
+        store = FakeInterleavingStore()
+        s = self.client().open_session(checkpoint_store=store, checkpoint_key="moved")
+        record = store.load("moved")
+        assert record is not None
+        other = replace(record, revision=record.revision + 1, checkpoint=replace(record.checkpoint, generation=record.checkpoint.generation + 5))
+        store.after_load = lambda: store.compare_and_set("moved", record, other)
+        with self.assertRaises(CheckpointConflictError) as cm:
+            self.client().attach_session("moved", store=store)
+        self.assertTrue(cm.exception.sent, "the attach went through; only the store write failed")
+        self.assertEqual(store.load("moved"), other)
+        del s
 
 
 class AsyncAttach(Base):

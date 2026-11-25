@@ -40,16 +40,15 @@ unless all of the following are verifiably in force:
   offers no such pinning, so there it means an explicit `E2B_TEMPLATE` rather than the
   implicit default: a named template, not a fixed version;
 - for the backend that runs each sandbox in a Kubernetes pod (`SANDBOX_PROVIDER=agentsandbox`),
-  `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`, the operator's statement that the pod
-  network between plimsolld and the sandbox pods is authenticated and encrypted (a network
-  plugin with WireGuard or IPsec, or a service mesh with mutual TLS). The daemon's own
-  connection to each pod is TLS checked against the deployment's certificate authority, but
-  every pod's TLS terminator serves the same certificate, so that check proves the peer is a
-  plimsoll sandbox pod, not which one. Someone who can rewrite traffic on the pod network
-  could send one caller's run into another caller's pod, and the daemon cannot see whether
-  the network beneath stops that, so it asks the operator to say so
-  ([agentsandbox.md](agentsandbox.md#hardened-mode-and-the-pod-network)). The requirement
-  goes when each pod has a key of its own;
+  `SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN`, the trust domain of the identity each
+  sandbox pod's own certificate carries. Each pod serves a certificate made for it alone by
+  an issuer in the cluster, naming the pod's UID (the identifier Kubernetes gives each pod,
+  new for every pod), and the daemon's TLS connection to the pod checks it against the pod
+  it read from the API server, so someone who can rewrite traffic on the pod network cannot
+  send one caller's run into another pod. That backend requires the setting with or
+  without this mode, and this mode states it as its own rule. Earlier releases asked instead for
+  `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`, the operator's statement about the
+  network, which is gone ([agentsandbox.md](agentsandbox.md#the-control-channel-is-tls));
 - an explicit per-run resource envelope (the memory, CPU and other limits each run
   gets), and for docker, whose runs share the daemon's machine, an aggregate memory
   budget, the total memory all runs at once may use;

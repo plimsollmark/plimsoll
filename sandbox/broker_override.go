@@ -92,6 +92,16 @@ func isJSONContentType(contentType string) bool {
 var (
 	errOverrideField = errors.New("host api request names a method override field (_method), which the route check cannot see")
 	errBodyNotJSON   = errors.New("host api request body is sent as JSON and is not JSON")
+	// errKeyNotPlain refuses a top-level key that holds an escaped control character
+	// (U+0000 to U+001F, the characters JSON requires be escaped) or an escaped half of a
+	// surrogate pair with no other half (hunt-security-19). The broker forwards the
+	// guest's bytes as written, so the API's parser reads each key itself, and parsers
+	// differ on such a key: one may cut it at a NUL or drop a lone surrogate, Go's puts
+	// U+FFFD for the surrogate, PHP's refuses the body. "_method" followed by an escaped
+	// NUL is not the field to the broker and could be to such a parser. No honest client
+	// is known to write either kind of key, so the broker refuses them rather than model
+	// each parser.
+	errKeyNotPlain = errors.New("host api request body has a top-level JSON key with an escaped control character or an unpaired surrogate, which JSON parsers read differently")
 )
 
 // overrideRefusal is the broker answer for one of the errors above.
@@ -184,9 +194,15 @@ func checkJSONBody(body []byte) error {
 		return errBodyNotJSON
 	}
 	for dec.More() {
+		before := dec.InputOffset()
 		keyTok, err := dec.Token()
 		if err != nil {
 			return errBodyNotJSON
+		}
+		// The key as written: what follows the previous value (white space, a comma, white
+		// space), then the quoted key the decoder has just read.
+		if !plainJSONKey(bytes.TrimLeft(first[before:dec.InputOffset()], " \t\r\n,")) {
+			return errKeyNotPlain
 		}
 		if key, _ := keyTok.(string); asciiKey(key) && isOverrideName(key) {
 			return errOverrideField
@@ -197,6 +213,61 @@ func checkJSONBody(body []byte) error {
 		}
 	}
 	return nil
+}
+
+// plainJSONKey reports whether quoted, a JSON string as written (quotes included) that
+// encoding/json has accepted, holds no escaped control character and no escaped
+// surrogate outside a high-then-low pair (errKeyNotPlain). The streamed scanner makes the
+// same check a byte at a time (stringByte); FuzzJSONOverrideScannerAgreesWithDecoder holds
+// the two to each other.
+func plainJSONKey(quoted []byte) bool {
+	if len(quoted) < 2 || quoted[0] != '"' || quoted[len(quoted)-1] != '"' {
+		return false
+	}
+	s := quoted[1 : len(quoted)-1]
+	hex4 := func(i int) (rune, bool) { // the four hex digits of an escape at s[i:]
+		if i+4 > len(s) {
+			return 0, false
+		}
+		var v rune
+		for _, c := range s[i : i+4] {
+			d, ok := hexValue(c)
+			if !ok {
+				return 0, false
+			}
+			v = v<<4 | d
+		}
+		return v, true
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(s) {
+			return false
+		}
+		switch s[i] {
+		case 'b', 'f', 'n', 'r', 't':
+			return false
+		case 'u':
+			v, ok := hex4(i + 1)
+			i += 4
+			switch {
+			case !ok, v < 0x20, v >= 0xdc00 && v <= 0xdfff:
+				return false
+			case v >= 0xd800 && v <= 0xdbff:
+				if i+2 >= len(s) || s[i+1] != '\\' || s[i+2] != 'u' {
+					return false
+				}
+				if low, ok := hex4(i + 3); !ok || low < 0xdc00 || low > 0xdfff {
+					return false
+				}
+				i += 6
+			}
+		}
+	}
+	return true
 }
 
 // asciiKey reports whether a decoded key is ASCII; a key with any other character is
@@ -230,33 +301,75 @@ func streamScannerFor(contentType string) overrideScanner {
 	return nil
 }
 
-// jsonOverrideScanner finds a top-level object key equal to the override field in JSON
-// fed in pieces, holding a few bytes of state and never the body. It tracks strings,
-// escapes and nesting only: on valid JSON it reads exactly the keys encoding/json reads
-// (FuzzJSONOverrideScannerAgreesWithDecoder), and a body that is not JSON is one no
-// framework read acts on (PHP's json_decode answers null for it, Express refuses it).
-// Every top-level value is read, so a second value after the first is checked too. The
-// body must be valid UTF-8 with no control byte but tab, line feed and carriage return
-// outside a string and none inside one, as JSON requires; anything else is refused with
-// errBodyNotJSON at the piece that holds it (so UTF-16, whose ASCII letters come with a
-// NUL each, never reaches a parser that would decode it).
+// maxJSONDepth is the deepest nesting the scanner reads, encoding/json's own limit
+// (maxNestingDepth in its scanner.go, and jsontext's in the v2 package): 10000 levels
+// are JSON to both checks and 10001 to neither, so the buffered and the streamed check
+// agree on deep nesting, and the scanner's nesting record has a fixed size
+// (TestStreamedScannerNestingLimitIsEncodingJSONs).
+const maxJSONDepth = 10000
+
+// jsonState is where the scanner is in the JSON grammar, outside a string.
+type jsonState uint8
+
+const (
+	jsTop          jsonState = iota // between top-level values
+	jsValue                         // a value must come: after a colon or an array's comma
+	jsValueOrClose                  // after "[": a value or "]"
+	jsKeyOrClose                    // after "{": a key or "}"
+	jsKey                           // after an object's comma: a key
+	jsColon                         // after a key: ":"
+	jsAfterValue                    // after a value in a container: a comma or its close
+	jsLiteral                       // in true, false or null; lit holds the bytes to come
+	jsNumMinus                      // after a number's "-": a digit
+	jsNumZero                       // after a leading 0: the number may end, or "." or an exponent
+	jsNumInt                        // in the integer digits
+	jsNumDot                        // after ".": a digit
+	jsNumFrac                       // in the fraction digits
+	jsNumE                          // after "e" or "E": a sign or a digit
+	jsNumESign                      // after the exponent's sign: a digit
+	jsNumExp                        // in the exponent digits
+)
+
+// jsonOverrideScanner checks JSON fed in pieces, a byte at a time, against the whole
+// JSON grammar (RFC 8259: objects, arrays, strings and their escapes, numbers with sign,
+// fraction and exponent, true, false and null, commas and colons in their places, white
+// space only where JSON allows it), and finds a top-level object key equal to the
+// override field, holding a fixed amount of state and never the body. Anything that is
+// not JSON is refused with errBodyNotJSON at the piece that holds it, and a body that
+// ends inside a value is refused at end (finding release-109: when the scanner tracked
+// strings, escapes and nesting only, it passed text, an object cut short, a trailing
+// comma and unquoted or single-quoted keys, which a lenient parser reads _method from).
+// The body must also be valid UTF-8 with no control byte but tab, line feed and
+// carriage return outside a string and none inside one (so UTF-16, whose ASCII letters
+// come with a NUL each, never reaches a parser that would decode it).
+//
+// It refuses at least everything checkBufferedBody refuses as not JSON, and on valid
+// JSON it reads exactly the keys encoding/json reads (FuzzJSONOverrideScannerAgreesWithDecoder
+// holds both, for any input). Where the two differ it is in this direction, the scanner
+// refusing more: it reads every top-level value, white space required between two, so
+// text after the first value (which the buffered check does not read) is refused when
+// it is not JSON and when it names the field (the known lead in private/hunts/leads.md).
 type jsonOverrideScanner struct {
-	utf8     utf8Check
-	err      error // errBodyNotJSON, once refused
-	bom      int   // bytes of a leading byte order mark matched so far
-	started  bool  // past the start of the body
-	depth    int
-	topObj   bool // the depth-1 container is an object
-	wantKey  bool // the next string at depth 1 is a key
-	inString bool
-	isKey    bool
-	esc      bool
-	hex      int  // hex digits of a \u escape still to come
-	hexVal   rune // the escape's value so far
-	key      [len(overrideField)]byte
-	keyLen   int
-	keyLong  bool // the key is longer than the field or holds a non-ASCII character
-	found    bool
+	utf8      utf8Check
+	err       error // errBodyNotJSON or errKeyNotPlain, once refused
+	bom       int   // bytes of a leading byte order mark matched so far
+	started   bool  // past the start of the body
+	state     jsonState
+	needSpace bool   // a top-level value has ended: white space must come before another
+	lit       string // the rest of the literal in jsLiteral
+	depth     int
+	objects   [(maxJSONDepth + 63) / 64]uint64 // bit d-1: the container at depth d is an object
+	inString  bool
+	keyString bool // the string is an object's key, at any depth
+	isKey     bool // the string is a top-level key, the one place the field counts
+	esc       bool
+	hex       int  // hex digits of a \u escape still to come
+	hexVal    rune // the escape's value so far
+	highOpen  bool // the key's last escape was a high surrogate, so a low one must follow
+	key       [len(overrideField)]byte
+	keyLen    int
+	keyLong   bool // the key is longer than the field or holds a non-ASCII character
+	found     bool
 }
 
 func (s *jsonOverrideScanner) feed(p []byte) error {
@@ -279,29 +392,14 @@ func (s *jsonOverrideScanner) feed(p []byte) error {
 			s.started = true
 		}
 		if s.inString {
-			s.stringByte(c)
+			if s.stringByte(c); s.err != nil {
+				return s.err
+			}
 			continue
 		}
-		switch c {
-		case '{', '[':
-			s.depth++
-			if s.depth == 1 {
-				s.topObj = c == '{'
-				s.wantKey = s.topObj
-			}
-		case '}', ']':
-			if s.depth > 0 {
-				s.depth--
-			}
-		case ',':
-			if s.depth == 1 && s.topObj {
-				s.wantKey = true
-			}
-		case '"':
-			s.inString = true
-			s.isKey = s.depth == 1 && s.topObj && s.wantKey
-			s.wantKey = false
-			s.keyLen, s.keyLong, s.esc, s.hex = 0, false, false, 0
+		if !s.grammarByte(c) {
+			s.err = errBodyNotJSON
+			return s.err
 		}
 	}
 	if s.found {
@@ -310,47 +408,247 @@ func (s *jsonOverrideScanner) feed(p []byte) error {
 	return nil
 }
 
-// end: a JSON body's end names no key the pieces did not; it is refused when it cuts a
-// UTF-8 character short.
+// end refuses a body that ends inside a value (a string, a container, a literal, or a
+// number that cannot end there) or inside a UTF-8 character. A JSON body's end names no
+// key the pieces did not.
 func (s *jsonOverrideScanner) end() error {
-	if s.err == nil && s.utf8.need > 0 {
+	if s.err != nil || s.found {
+		if s.err == nil {
+			return errOverrideField
+		}
+		return s.err
+	}
+	switch {
+	case s.utf8.need > 0, s.inString, s.depth > 0:
+		s.err = errBodyNotJSON
+	case s.state == jsTop, s.state == jsNumZero, s.state == jsNumInt, s.state == jsNumFrac, s.state == jsNumExp:
+	default:
 		s.err = errBodyNotJSON
 	}
 	return s.err
 }
 
+// grammarByte reads one byte outside a string and reports whether JSON allows it there.
+func (s *jsonOverrideScanner) grammarByte(c byte) bool {
+	switch s.state {
+	case jsLiteral:
+		if c != s.lit[0] {
+			return false
+		}
+		if s.lit = s.lit[1:]; s.lit == "" {
+			s.valueDone()
+		}
+		return true
+	case jsNumMinus:
+		switch {
+		case c == '0':
+			s.state = jsNumZero
+		case c >= '1' && c <= '9':
+			s.state = jsNumInt
+		default:
+			return false
+		}
+		return true
+	case jsNumZero, jsNumInt, jsNumFrac, jsNumExp:
+		switch {
+		case c >= '0' && c <= '9' && s.state != jsNumZero:
+			return true
+		case c == '.' && (s.state == jsNumZero || s.state == jsNumInt):
+			s.state = jsNumDot
+			return true
+		case (c == 'e' || c == 'E') && s.state != jsNumExp:
+			s.state = jsNumE
+			return true
+		}
+		// The number has ended; the byte is read after it (a digit after a leading 0 is
+		// then refused, as a value straight after a value is).
+		s.valueDone()
+		return s.grammarByte(c)
+	case jsNumDot, jsNumESign:
+		if c < '0' || c > '9' {
+			return false
+		}
+		if s.state == jsNumDot {
+			s.state = jsNumFrac
+		} else {
+			s.state = jsNumExp
+		}
+		return true
+	case jsNumE:
+		switch {
+		case c == '+' || c == '-':
+			s.state = jsNumESign
+		case c >= '0' && c <= '9':
+			s.state = jsNumExp
+		default:
+			return false
+		}
+		return true
+	}
+	if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+		if s.state == jsTop {
+			s.needSpace = false
+		}
+		return true
+	}
+	switch s.state {
+	case jsTop, jsValue, jsValueOrClose:
+		if s.state == jsTop && s.needSpace {
+			return false
+		}
+		if s.state == jsValueOrClose && c == ']' {
+			s.depth--
+			s.valueDone()
+			return true
+		}
+		return s.startValue(c)
+	case jsKeyOrClose, jsKey:
+		if c == '"' {
+			s.startString(true)
+			return true
+		}
+		if c == '}' && s.state == jsKeyOrClose {
+			s.depth--
+			s.valueDone()
+			return true
+		}
+	case jsColon:
+		if c == ':' {
+			s.state = jsValue
+			return true
+		}
+	case jsAfterValue:
+		obj := s.objects[(s.depth-1)/64]&(1<<((s.depth-1)%64)) != 0
+		switch {
+		case c == ',' && obj:
+			s.state = jsKey
+		case c == ',':
+			s.state = jsValue
+		case c == '}' && obj, c == ']' && !obj:
+			s.depth--
+			s.valueDone()
+		default:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// startValue reads the first byte of a value.
+func (s *jsonOverrideScanner) startValue(c byte) bool {
+	switch {
+	case c == '{' || c == '[':
+		if s.depth == maxJSONDepth {
+			return false // encoding/json refuses the same depth
+		}
+		word, bit := s.depth/64, uint64(1)<<(s.depth%64)
+		if c == '{' {
+			s.objects[word] |= bit
+			s.state = jsKeyOrClose
+		} else {
+			s.objects[word] &^= bit
+			s.state = jsValueOrClose
+		}
+		s.depth++
+	case c == '"':
+		s.startString(false)
+	case c == 't':
+		s.state, s.lit = jsLiteral, "rue"
+	case c == 'f':
+		s.state, s.lit = jsLiteral, "alse"
+	case c == 'n':
+		s.state, s.lit = jsLiteral, "ull"
+	case c == '-':
+		s.state = jsNumMinus
+	case c == '0':
+		s.state = jsNumZero
+	case c >= '1' && c <= '9':
+		s.state = jsNumInt
+	default:
+		return false
+	}
+	return true
+}
+
+// valueDone moves past a value that has just ended.
+func (s *jsonOverrideScanner) valueDone() {
+	if s.depth == 0 {
+		s.state, s.needSpace = jsTop, true
+	} else {
+		s.state = jsAfterValue
+	}
+}
+
+// startString begins a string, an object's key when key is set.
+func (s *jsonOverrideScanner) startString(key bool) {
+	s.inString, s.keyString, s.isKey = true, key, key && s.depth == 1
+	s.keyLen, s.keyLong, s.esc, s.hex, s.highOpen = 0, false, false, 0, false
+}
+
+// stringByte reads one byte inside a string. In a top-level key it sets s.err to
+// errKeyNotPlain at the byte that shows an escaped control character or an unpaired
+// surrogate (plainJSONKey says the same of a whole key, for the buffered check).
 func (s *jsonOverrideScanner) stringByte(c byte) {
 	switch {
 	case s.hex > 0:
 		v, ok := hexValue(c)
 		if !ok {
-			s.hex = 0
-			s.keyLong = true // not JSON; whatever it is, no key it names is ours
+			s.err = errBodyNotJSON // a \u escape needs four hex digits
 			return
 		}
 		s.hexVal = s.hexVal<<4 | v
 		s.hex--
-		if s.hex == 0 {
-			s.keyRune(s.hexVal)
+		if s.hex > 0 {
+			return
 		}
+		r := s.hexVal
+		if s.isKey {
+			isHigh, isLow := r >= 0xd800 && r <= 0xdbff, r >= 0xdc00 && r <= 0xdfff
+			switch {
+			case s.highOpen != isLow, r < 0x20:
+				s.err = errKeyNotPlain // a lone half of a pair, or an escaped control character
+				return
+			case isHigh:
+				s.highOpen = true
+				return
+			case isLow:
+				s.highOpen = false
+				r = 0x10000 // the pair names a character past ASCII; which one does not matter
+			}
+		}
+		s.keyRune(r)
 	case s.esc:
 		s.esc = false
+		if s.isKey && s.highOpen && c != 'u' {
+			s.err = errKeyNotPlain // a high surrogate, then an escape that is not \u
+			return
+		}
 		switch c {
 		case 'u':
 			s.hex, s.hexVal = 4, 0
 		case '"', '\\', '/':
 			s.keyRune(rune(c))
 		case 'b', 'f', 'n', 'r', 't':
-			s.keyRune(0) // a control character: never in the field's name
+			if s.isKey {
+				s.err = errKeyNotPlain // an escaped control character
+			}
 		default:
-			s.keyLong = true
+			s.err = errBodyNotJSON // JSON has no other escape
 		}
 	case c == '\\':
 		s.esc = true
+	case s.isKey && s.highOpen:
+		s.err = errKeyNotPlain // a high surrogate, then a character or the key's end
 	case c == '"':
 		s.inString = false
 		if s.isKey && !s.keyLong && s.keyLen == len(overrideField) && isOverrideName(string(s.key[:s.keyLen])) {
 			s.found = true
+		}
+		if s.keyString {
+			s.state = jsColon
+		} else {
+			s.valueDone()
 		}
 	default:
 		s.keyRune(rune(c))

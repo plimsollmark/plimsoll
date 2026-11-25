@@ -238,7 +238,7 @@ func TestShipScanRefusesASessionCallOutsideTheChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	_, err = svc.SessionRun(ctx, callReq(id, "const seed = "+heldOutSeed))
+	_, err = headRun(svc, ctx, callReq(id, "const seed = "+heldOutSeed))
 	if _, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodePermissionDenied || !marked {
 		t.Fatalf("the session call: %v; want PermissionDenied, not dispatched", err)
 	}
@@ -253,7 +253,7 @@ func TestShipScanRefusesASessionCallOutsideTheChain(t *testing.T) {
 		t.Errorf("the session refusal's line does not name the session %s: %q", open.Msg.GetSession(), refusal)
 	}
 	req := callReq(id, "console.log(1)")
-	resp, err := svc.SessionRun(ctx, req)
+	resp, err := headRun(svc, ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestShipScanTakesTheRateTokenFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ssvc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "console.log(1)")); err != nil {
+	if _, err := headRun(ssvc, ctx, callReq(open.Msg.GetSessionId(), "console.log(1)")); err != nil {
 		t.Fatalf("a scanned session call was charged twice: %v", err)
 	}
 }

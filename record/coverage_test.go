@@ -21,7 +21,7 @@ import (
 // listed here, so nothing that changes what runs can be left out of a signed record by
 // forgetting to add it to the encoder.
 var unsigned = map[protoreflect.FullName]string{
-	"plimsoll.v1.SessionRunRequest.generation": "ownership admission metadata: changes who may run, not what runs",
+	"plimsoll.v1.SessionRunRequest.head":       "ownership and chain admission: decides whether the call may run, not what runs; the record binds its predecessor already",
 	"plimsoll.v1.RunRequest.trace_id":          "the caller's correlation key: it changes nothing that runs",
 	"plimsoll.v1.SessionRunRequest.trace_id":   "the caller's correlation key: it changes nothing that runs",
 	"plimsoll.v1.SessionRunRequest.session_id": "a capability: the record carries the session's fingerprint instead",

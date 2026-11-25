@@ -100,13 +100,14 @@ func TestRunRefusesWrongProtocolBeforeReadingPayload(t *testing.T) {
 	}
 }
 
-// This daemon serves protocol 7: its clients refuse a record whose provider name holds a
-// control or bidirectional format character (record.ValidText, finding hunt-security-39), and
-// a client of protocol 6 accepted one, so a protocol 6 request is refused before its payload
-// is read, marked not dispatched for the protocol, and so is one of every earlier number (2026-11-21).
-func TestRunRefusesAProtocol6ClientBeforeReadingPayload(t *testing.T) {
-	if protocol.Number != 7 {
-		t.Fatalf("protocol.Number = %d; this test pins 7, the provider name's rule", protocol.Number)
+// This daemon serves protocol 8: every session call states the head it expects and runs
+// only on it, and a client of protocol 7 sent the generation alone, so a protocol 7 request
+// is refused before its payload is read, marked not dispatched for the protocol, and so is
+// one of every earlier number (7 was the provider name's rule, record.ValidText, finding
+// hunt-security-39, 2026-11-21; 8 the head, 2026-11-24).
+func TestRunRefusesAProtocol7ClientBeforeReadingPayload(t *testing.T) {
+	if protocol.Number != 8 {
+		t.Fatalf("protocol.Number = %d; this test pins 8, the session head's rule", protocol.Number)
 	}
 	for n := uint32(1); n < protocol.Number; n++ {
 		fake := &fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake"}}

@@ -6,7 +6,8 @@
 // node and joined to the run's record by the pod's UID. Two tampered copies (a connection
 // deleted from a receipt, one byte of a log changed) are checked too, and must fail.
 //
-// The live run needs a kind cluster with agent-sandbox v1.0.7 and the gvisor-receipt
+// The live run needs a kind cluster with agent-sandbox v1.0.7, cert-manager and its CSI
+// driver (each sandbox pod's own key pair, docs/agentsandbox.md), and the gvisor-receipt
 // runtime class (examples/dependency-receipt/fixtures/capture.sh -install puts its runsc
 // handler in the node), docker, kind and kubectl, and the agent-sandbox image built from
 // docker/agentsandbox.Dockerfile. It makes a namespace of its own and deletes it after.

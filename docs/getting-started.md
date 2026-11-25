@@ -273,6 +273,12 @@ go install github.com/plimsollmark/plimsoll/cmd/plimsolld@latest
 go install github.com/plimsollmark/plimsoll/cmd/plimsoll-clients@latest
 ```
 
+Both commands build with Go 1.26.11 or later, whatever Go you have installed: the module's
+`go` line names 1.26.11, so an older Go fetches that toolchain first (Go's default
+`GOTOOLCHAIN=auto`). Earlier 1.26 releases carry security advisories in HTTP code the daemon
+calls. With `GOTOOLCHAIN=local` set, an older Go refuses to build instead; install 1.26.11 or
+later then. Check what built the daemon with `go version -m $(go env GOPATH)/bin/plimsolld`.
+
 There are no prebuilt binaries and no daemon container image yet. `go install` builds
 from the tagged module source, checked against Go's checksum database
 (`sum.golang.org`) like any other module.

@@ -52,6 +52,7 @@
     "docs/trainers/private-api.html",
     "docs/efficiency-advisor.md",
     "docs/capability-grants.md",
+    "docs/answer-key-tripwire.md",
     "docs/architecture/credential-minting.md",
     "docs/trainers/mcp.html",
     "docs/examples/what-a-sandbox-is/index.html",
@@ -404,6 +405,12 @@
       "definition": "The program that runs virtual machines and keeps them apart, so code that breaks out of a virtual machine still has to break the hypervisor."
     },
     {
+      "term": "idempotency key",
+      "anchor": "idempotency-key",
+      "variants": ["idempotency keys"],
+      "definition": "A label sent with a request so the receiving service does the work only once for that label, however many times the request arrives."
+    },
+    {
       "term": "in-toto",
       "anchor": "in-toto",
       "variants": [],
@@ -661,6 +668,12 @@
       "definition": "A short note, capped at a fixed number of tokens, written by a model that read a loop's whole record: the sticky note the last person on the job left for the next one."
     },
     {
+      "term": "recovering",
+      "anchor": "recovering",
+      "variants": [],
+      "definition": "The state of a session taken over across an explained gap: the official clients refuse every call until the application has read the lost call and resolved it."
+    },
+    {
       "term": "resampling",
       "anchor": "resampling",
       "variants": ["resample", "resampled"],
@@ -738,6 +751,12 @@
       "anchor": "session-checkpoint",
       "variants": ["session checkpoints"],
       "definition": "What an application saves after each call of a session so another process can take it over: the session's fingerprint, its ownership generation, its count of calls, its last record's digest and the policy it stated at open, and no secret."
+    },
+    {
+      "term": "session head",
+      "anchor": "session-head",
+      "variants": ["session heads"],
+      "definition": "A session's position as the daemon keeps it (its ownership generation, how many calls it has answered or ended, and the digest of the last call's record), which every session call states so the daemon can refuse one sent from a stale view."
     },
     {
       "term": "SHA-256",

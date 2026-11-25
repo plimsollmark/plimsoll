@@ -229,7 +229,60 @@ func (e *E2B) EgressGuardCall(ctx context.Context, token string, call GuardReque
 // would therefore call every target open. IPv6 was unreachable and names did not
 // resolve. The one answer came from 169.254.169.254, Firecracker's own metadata
 // endpoint inside the VM's host process: HTTP 401, "No MMDS", nothing configured.
-const vmSmokeProbe = `(async () => {
+//
+// Past TCP, it asks a DNS question for example.com three ways: in a UDP datagram to an
+// outside address, over a TCP connection to that address's port 53, and through node's
+// own resolver pointed at an outside resolver. A name that resolves while every HTTPS
+// connection then fails is egress the fetches alone would miss (finding release-69). Each
+// reply counts as egress unless it is a refusal: DNS code REFUSED or NOTIMP with no
+// answer. A resolver on the internet answers example.com with its address and never
+// refuses it, so a refusal comes from something on the sandbox's side that resolves
+// nothing, while any other reply (an address, "no such name", a server failure, a
+// datagram that is not DNS) may have come from beyond it and is counted. Docker Cloud
+// answers every DNS question on port 53, to any address, with REFUSED (measured
+// 2026-11-24, finding release-106), and its TCP port 53 accepts a connection; E2B's
+// accepts the connection and answers nothing (measured 2026-10-24). The three targets sit
+// on lines of their own, so the docker stand-in (TestDockerE2BSmokeScriptCountsUDPAndDNS)
+// can point them at responders of its own.
+const vmSmokeProbe = `const udpTarget = ["8.8.8.8", 53];
+const tcpTarget = ["8.8.8.8", 53];
+const dnsServer = "1.1.1.1";
+const dgram = require("node:dgram"), dns = require("node:dns"), net = require("node:net");
+const question = Buffer.from("504c01000001000000000000076578616d706c6503636f6d0000010001", "hex");
+const refusal = (m) => m.length >= 12 && [4, 5].includes(m[3] & 0x0f) && m.readUInt16BE(6) === 0;
+const datagramAnswered = ([host, port]) => new Promise((resolve) => {
+  const s = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
+  let timer;
+  const done = (answered) => { clearTimeout(timer); try { s.close(); } catch {} resolve(answered); };
+  timer = setTimeout(() => done(false), 4000);
+  s.on("message", (m) => done(!refusal(m)));
+  s.on("error", () => done(false));
+  s.send(question, port, host, (err) => { if (err) done(false); });
+});
+const streamAnswered = ([host, port]) => new Promise((resolve) => {
+  let got = Buffer.alloc(0), timer;
+  const s = net.connect({ host, port });
+  const done = (answered) => { clearTimeout(timer); s.destroy(); resolve(answered); };
+  timer = setTimeout(() => done(got.length > 0), 4000);
+  s.on("connect", () => s.write(Buffer.concat([Buffer.from([0, question.length]), question])));
+  s.on("data", (d) => {
+    got = Buffer.concat([got, d]);
+    if (got.length >= 2 && got.length >= 2 + got.readUInt16BE(0)) done(!refusal(got.subarray(2, 2 + got.readUInt16BE(0))));
+  });
+  s.on("error", () => done(got.length > 0));
+  s.on("close", () => done(got.length > 0));
+});
+const resolverAnswered = async (server) => {
+  const r = new dns.promises.Resolver({ timeout: 4000, tries: 1 });
+  try {
+    r.setServers([server]);
+    await r.resolve4("example.com");
+    return true;
+  } catch (e) {
+    return ["ENODATA", "ENOTFOUND", "ESERVFAIL", "EFORMERR", "EBADRESP"].includes(e.code);
+  }
+};
+(async () => {
   const egressOpen = [];
   for (const target of ["https://1.1.1.1", "http://1.1.1.1", "https://[2606:4700:4700::1111]", "https://example.com"]) {
     try {
@@ -237,6 +290,9 @@ const vmSmokeProbe = `(async () => {
       egressOpen.push(target);
     } catch {}
   }
+  if (await datagramAnswered(udpTarget)) egressOpen.push("udp://" + udpTarget.join(":"));
+  if (await streamAnswered(tcpTarget)) egressOpen.push("tcp-dns://" + tcpTarget.join(":"));
+  if (await resolverAnswered(dnsServer)) egressOpen.push("dns://" + dnsServer);
   process.stdout.write(JSON.stringify({ node: process.version, cwd: process.cwd(), egressOpen }));
 })();`
 

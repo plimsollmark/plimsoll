@@ -12,6 +12,8 @@ export {
   type Isolation,
   type JavaScriptResult,
   type Language,
+  type LostAnswer,
+  type LostCall,
   type PayloadEnvironment,
   type ProjectOutcome,
   type ProjectRequest,
@@ -23,7 +25,17 @@ export {
   type SoftwareRule,
   type StepResult,
 } from "./client.ts";
-export { CallAlreadySentError, CheckpointMismatchError, PlimsollError, StaleOwnerError, type Code, type Refusal, type SessionEnd } from "./errors.ts";
+export {
+  CheckpointMismatchError,
+  HeadMismatchError,
+  PlimsollError,
+  RecoveringError,
+  StaleOwnerError,
+  type Code,
+  type Refusal,
+  type SessionEnd,
+  type SessionHead,
+} from "./errors.ts";
 export { checkpointProblem, checkpointToJSON, parseCheckpoint, validateCheckpoint, type SessionCheckpoint } from "./checkpoint.ts";
 export type { RunRecord } from "./record.ts";
 export {

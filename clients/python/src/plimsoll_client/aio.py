@@ -31,6 +31,7 @@ from .types import (
     CellResult,
     Info,
     JavaScriptResult,
+    LostCall,
     ModuleResult,
     ProjectResult,
     SessionEnded,
@@ -162,6 +163,7 @@ class AsyncClient:
         languages: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
         warm_only: bool = False,
+        keep_no_answer: bool = False,
         checkpoint_store: Optional[CheckpointStore] = None,
         checkpoint_key: Optional[str] = None,
     ) -> "AsyncSession":
@@ -183,6 +185,7 @@ class AsyncClient:
                 languages=languages,
                 owner=owner,
                 warm_only=warm_only,
+                keep_no_answer=keep_no_answer,
                 checkpoint_store=checkpoint_store,
                 checkpoint_key=checkpoint_key,
             )
@@ -250,6 +253,16 @@ class AsyncSession:
     @property
     def calls(self) -> int:
         return self.sync.calls
+
+    @property
+    def lost_call(self) -> Optional[LostCall]:
+        """:attr:`Session.lost_call`: the call this session is recovering from, or None."""
+        return self.sync.lost_call
+
+    async def resolve_lost_call(self) -> None:
+        """:meth:`Session.resolve_lost_call`, in a thread: a store-backed session writes its
+        store."""
+        await asyncio.to_thread(self.sync.resolve_lost_call)
 
     async def checkpoint(self) -> SessionCheckpoint:
         """:meth:`Session.checkpoint`, in a thread: it waits for a call in flight."""

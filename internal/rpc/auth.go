@@ -125,7 +125,7 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler, refusals ...Ref
 		// cmd/plimsolld, judged from the bound address). An embedder that serves this
 		// handler itself must bind loopback the same way. Within that bind, a browser
 		// page that rebinds its own name to 127.0.0.1 would cross it as a same-origin
-		// request (DNS rebinding; Claude Security scan, 2026-10-27). Such a request
+		// request (DNS rebinding; security scan, 2026-10-27). Such a request
 		// still names the page's host, so open mode answers only a request addressed to
 		// localhost or a loopback address. This is not access control: any program that
 		// reaches the listener can send that Host. The bind and a token are.

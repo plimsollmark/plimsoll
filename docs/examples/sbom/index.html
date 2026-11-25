@@ -6399,7 +6399,7 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
     // The languages plimsoll keeps an interpreter for (sandbox.Languages).
     LANGUAGES: Object.freeze(["javascript", "python"]),
     // The wire protocol number a client states on every request (protocol.Number).
-    PROTOCOL: 7,
+    PROTOCOL: 8,
     // The header carrying a client's ID for one request, which the daemon echoes (protocol.RequestIDHeader).
     REQUEST_ID_HEADER: "Plimsoll-Request-Id",
     // The daemon's mark on an answer written before any handler ran (protocol.NotDispatchedHeader).
@@ -6408,7 +6408,7 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
     TRACE_ID_PATTERN: "^[A-Za-z0-9._:-]{1,64}$",
     // The text of a session call, close or attach refused because another worker attached (protocol.StaleOwnerText).
     STALE_OWNER_TEXT: "session ownership generation is stale",
-    // The text of an attach refused because its checkpoint is not the session's head (protocol.CheckpointMismatchText).
+    // The text of an attach refused because its checkpoint is not the session's head, and of a call refused because its head is not (protocol.CheckpointMismatchText).
     CHECKPOINT_MISMATCH_TEXT: "session checkpoint does not match",
     // The tiers a request may state as its floor, weakest first: every tier but none.
     FLOORS: Object.freeze(["process", "container", "kernel", "vm"]),
@@ -6467,13 +6467,13 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
     // The largest answer a client reads (client.MaxResponseBytes).
     MAX_RESPONSE_BYTES: 33554432,
     // The one version of a session checkpoint the clients write and read (client.CheckpointVersion).
-    CHECKPOINT_VERSION: 1,
+    CHECKPOINT_VERSION: 2,
     // A daemon name's grammar: the application's own name for a daemon, never a URL (client.DaemonNamePattern).
     DAEMON_NAME_PATTERN: "^[A-Za-z0-9._-]{1,64}$",
     // A software rule's ID as a checkpoint states it (client.SoftwareRuleIDPattern).
     SOFTWARE_RULE_ID_PATTERN: "^(?:exact:[A-Za-z0-9._:/@+-]{1,256}|approved:sha256:[0-9a-f]{64})$",
-    // What a client says when it refuses a repeat of a call lost across a takeover (client.CallAlreadySentText).
-    CALL_ALREADY_SENT_TEXT: "this call was already sent once in the session, and its answer was lost",
+    // What a client says when it refuses a call on a session recovering from a call lost across a takeover (client.RecoveringText).
+    RECOVERING_TEXT: "this session is recovering from a call whose answer was lost: read the lost call and resolve it before sending another call",
   });
 })(globalThis);
 /* One receipt checker for the generated page and the offline Node suite. */
@@ -6582,8 +6582,13 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
   const daemonVersionForm = new RegExp(tables.DAEMON_VERSION_PATTERN);
   const validDaemonVersion = v => v === '' || (v.length <= tables.MAX_DAEMON_VERSION_BYTES && daemonVersionForm.test(v));
   // Each version 5 field has its protobuf JSON type or is absent: a string sentence and version, a boolean warm.
+  // An integer may come as a JSON number or as a string holding one whole decimal: Go's protojson reads "5 6", "5,"
+  // and "5" with a zero byte after it as 5, so every reader refuses such a string rather than read it otherwise.
+  const integerOK = v => v === undefined || (typeof v === 'number' && Number.isSafeInteger(v))
+    || (typeof v === 'string' && /^-?(?:0|[1-9][0-9]*)$/.test(v));
   const recordShapeOK = r => ['isolation_qualification', 'daemon_version'].every(k => r[k] === undefined || typeof r[k] === 'string')
-    && (r.warm === undefined || typeof r.warm === 'boolean');
+    && (r.warm === undefined || typeof r.warm === 'boolean')
+    && ['version', 'started_unix_ms', 'ended_unix_ms', 'sequence'].every(k => integerOK(r[k]));
   function recordDigest(r) {
     const e = new Encoder('plimsoll.run-record.v' + r.version);
     for (const field of layoutOf(r)) e.field(field, field === 'warm' ? String(Boolean(r.warm)) : r[field] ?? '');

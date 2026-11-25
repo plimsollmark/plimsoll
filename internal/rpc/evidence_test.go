@@ -135,7 +135,7 @@ func TestASessionStatesTheQualificationOnEveryRecord(t *testing.T) {
 	id := open.Msg.GetSessionId()
 	fp := record.SessionFingerprint(id)
 	firstReq := callReq(id, "1")
-	first, err := svc.SessionRun(ctx, firstReq)
+	first, err := headRun(svc, ctx, firstReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestASessionStatesTheQualificationOnEveryRecord(t *testing.T) {
 		t.Fatalf("the answered call's record: %+v, %v", r1, err)
 	}
 	second := callReq(id, "2")
-	_, err = svc.SessionRun(ctx, second)
+	_, err = headRun(svc, ctx, second)
 	var ce *connect.Error
 	var unanswered *plimsollv1.RunRecord
 	if errors.As(err, &ce) {
@@ -235,7 +235,7 @@ func TestASessionStatesItsOwnPolicyOnEveryRecord(t *testing.T) {
 			id := open.Msg.GetSessionId()
 			fp := record.SessionFingerprint(id)
 			firstReq := callReq(id, "1")
-			first, err := svc.SessionRun(ctx, firstReq)
+			first, err := headRun(svc, ctx, firstReq)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -244,7 +244,7 @@ func TestASessionStatesItsOwnPolicyOnEveryRecord(t *testing.T) {
 				t.Fatal(err)
 			}
 			second := callReq(id, "2")
-			_, err = svc.SessionRun(ctx, second)
+			_, err = headRun(svc, ctx, second)
 			r2, err := record.CheckUnanswered(second.Msg, unansweredOf(err), fp, 1, r1.SHA256)
 			if err != nil {
 				t.Fatalf("the unanswered call's record: %v", err)

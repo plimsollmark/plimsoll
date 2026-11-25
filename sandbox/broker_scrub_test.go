@@ -3,6 +3,8 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -319,6 +321,55 @@ func TestStreamScrubberMatchesTheWholeAnswerInARunLongerThanTheHold(t *testing.T
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestStreamScrubberFindsACredentialLongerThanTheHold (hunt-quality-18): a credential
+// longer than scrubHold (a large JWT can be) makes the scrubber hold up to its length less
+// one byte, so a copy split anywhere, or sent in pieces of any size, is found and no byte
+// of it reaches the guest: what is sent before the stream is cut is a prefix of what came
+// before the copy. With the hold left at scrubHold, a copy cut past its first scrubHold
+// bytes would go out in two parts, neither of them a whole copy.
+func TestStreamScrubberFindsACredentialLongerThanTheHold(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	sum := sha256.Sum256([]byte("a credential longer than the hold"))
+	for b.Len() < 2000 {
+		b.WriteString(hex.EncodeToString(sum[:])) // hex digits only: no x or y, the padding below
+		sum = sha256.Sum256(sum[:])
+	}
+	credential := b.String()[:2000]
+	if len(credential) <= scrubHold {
+		t.Fatalf("the credential is %d bytes, not longer than the hold of %d", len(credential), scrubHold)
+	}
+	text := "data: " + strings.Repeat("x", 40) + credential + strings.Repeat("y", 30) + "\n\n"
+	start := strings.Index(text, credential)
+	check := func(how string, pieces []string) {
+		t.Helper()
+		outs, tail, hit := scrubPieces(credential, pieces)
+		sent := strings.Join(outs, "") + tail
+		if !hit || len(sent) > start || sent != text[:len(sent)] {
+			t.Fatalf("%s: found %v, sent %d bytes; want the copy found and at most the %d bytes before it sent", how, hit, len(sent), start)
+		}
+	}
+	for _, cut := range []int{0, 1, start, start + 1, start + scrubHold - 1, start + scrubHold, start + scrubHold + 1,
+		start + 1500, start + len(credential) - 1, start + len(credential), len(text) - 1, len(text)} {
+		check(fmt.Sprintf("cut at %d", cut), []string{text[:cut], text[cut:]})
+	}
+	for _, size := range []int{1, 7, 100, scrubHold - 1, scrubHold, scrubHold + 1, len(credential) - 1, len(credential), len(credential) + 1} {
+		var pieces []string
+		for i := 0; i < len(text); i += size {
+			pieces = append(pieces, text[i:min(i+size, len(text))])
+		}
+		check(fmt.Sprintf("pieces of %d", size), pieces)
+	}
+	// A near miss, the credential with its last byte changed, is no copy: it arrives whole.
+	near := strings.Replace(text, credential, credential[:len(credential)-1]+"z", 1)
+	for _, cut := range []int{start + 1500, start + len(credential)} {
+		outs, tail, hit := scrubPieces(credential, []string{near[:cut], near[cut:]})
+		if got := strings.Join(outs, "") + tail; hit || got != near {
+			t.Fatalf("near miss cut at %d: found %v, %d bytes of %d arrived", cut, hit, len(got), len(near))
 		}
 	}
 }

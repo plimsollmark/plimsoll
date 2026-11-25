@@ -41,6 +41,17 @@ type SessionConfig struct {
 	Lifetime    time.Duration // absolute, from open; a request may ask for less
 	IdleTimeout time.Duration // a session idle this long is suspended; a request may ask for less
 	DiskBytes   int64         // what a session's calls may leave behind; 0 = no bound
+	// KeptAnswerBytes is the largest answer (the proto size of a call's RunResponse) a
+	// session keeps in memory after its call, so that a takeover across that call's lost
+	// answer gets it back (SANDBOX_SESSION_KEPT_ANSWER_BYTES); 0 keeps none. A larger
+	// answer leaves only its record.
+	KeptAnswerBytes int
+	// KeptAnswersTotalBytes bounds the kept answers of every session together
+	// (SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES); 0 keeps none. An answer that would
+	// take the total past it is not kept (its record still is); a dropped answer gives
+	// its bytes back. Without it the daemon could hold MaxSessions times
+	// KeptAnswerBytes of guest output, which no memory budget counts.
+	KeptAnswersTotalBytes int64
 	// Pool is how many sandboxes the provider keeps ready for sessions
 	// (SANDBOX_SESSION_POOL), 0 = none: Describe states it, and a warm-only open is
 	// refused at once without one.
@@ -117,9 +128,24 @@ type sessionEntry struct {
 	// from a checkpoint one call behind can return the call that ran (the explained gap,
 	// sessions_attach.go); nil before the first call. Protected by mu.
 	lastRecord *plimsollv1.RunRecord
-	release    func() // the held concurrency slot; nil while suspended or ended
-	idle       *time.Timer
-	idleDue    func() // a fired timer waiting for the current turn to finish
+	// keptAnswer is the answer of the call whose record lastRecord is, when the daemon
+	// answered it and it fits keptCap, so an attach across its lost answer can return it;
+	// nil otherwise. Dropped when the next call starts, at suspend, close and end. Memory
+	// only: never logged, never written anywhere. Protected by mu.
+	keptAnswer *plimsollv1.RunResponse
+	// keptCap is the largest answer the session keeps (SessionConfig.KeptAnswerBytes), 0
+	// when it keeps none (the open asked for keep_no_answer). Set at open.
+	keptCap int
+	// keptTotal is the daemon-wide bound on every session's kept answers together
+	// (SessionConfig.KeptAnswersTotalBytes), and keptPool the count it bounds, shared
+	// by every session of the daemon; keptSize is what this session's kept answer
+	// holds of it. Set at open; keptSize protected by mu.
+	keptTotal int64
+	keptPool  *atomic.Int64
+	keptSize  int64
+	release   func() // the held concurrency slot; nil while suspended or ended
+	idle      *time.Timer
+	idleDue   func() // a fired timer waiting for the current turn to finish
 	// idleAt is when the idle timer last armed was set to fire.
 	idleAt time.Time
 	// idleGen numbers the idle timers: stopping one or arming the next moves it on, so
@@ -160,6 +186,28 @@ func (e *sessionEntry) checkGeneration(generation uint64) error {
 	return nil
 }
 
+// checkHead refuses a call whose head is not the session's: the generation matched
+// (checkGeneration), but the count or the last record digest differs, because a call ran
+// whose answer the caller has not seen, or the caller counts calls that never ran. The
+// refusal is marked not dispatched, reason request, and carries the daemon's head as a
+// SessionHeadMismatch detail: only the current owner reaches it, and the head is what
+// its own checkpoint would hold had every answer reached it. It moves nothing.
+func (e *sessionEntry) checkHead(head *plimsollv1.SessionCheckpoint) error {
+	e.mu.Lock()
+	generation, calls, last := e.generation, e.calls, e.last
+	e.mu.Unlock()
+	if head.GetCalls() == calls && head.GetLastRecordSha256() == last {
+		return nil
+	}
+	ce := refuse(connect.CodeFailedPrecondition, sandbox.RefusalRequest, errors.New(textCheckpointMismatch))
+	if detail, derr := connect.NewErrorDetail(&plimsollv1.SessionHeadMismatch{
+		Head: &plimsollv1.SessionCheckpoint{Generation: generation, Calls: calls, LastRecordSha256: last},
+	}); derr == nil {
+		ce.AddDetail(detail)
+	}
+	return ce
+}
+
 // endErr is the session's end as its calls and its close report it: replaced when
 // the daemon took it for a newer session of its owner, unclaimed when it closed it
 // because no request named it, whatever the provider says.
@@ -186,6 +234,45 @@ func (e *sessionEntry) endErr() error {
 	return err
 }
 
+// keepLocked keeps resp as the session's answer when it fits the session's cap and the
+// daemon's total still has room for it, taking its size from the total; otherwise the
+// session keeps no answer. The total is reserved by compare and swap, so two sessions
+// keeping at once cannot both take its last bytes. Called with mu held; any answer kept
+// before is given back first.
+func (e *sessionEntry) keepLocked(resp *plimsollv1.RunResponse) {
+	e.dropKeptLocked()
+	// A call that ended its own session (its disk budget filled, say) answers after watch
+	// has marked the entry ended and dropped what it kept; keeping now would hold the answer
+	// with nothing left to drop it, and its bytes would never go back to the daemon's total
+	// (finding release-110).
+	if e.ended {
+		return
+	}
+	size := int64(proto.Size(resp))
+	if e.keptCap <= 0 || size > int64(e.keptCap) || e.keptPool == nil {
+		return
+	}
+	for {
+		held := e.keptPool.Load()
+		if held+size > e.keptTotal {
+			return
+		}
+		if e.keptPool.CompareAndSwap(held, held+size) {
+			break
+		}
+	}
+	e.keptAnswer, e.keptSize = proto.Clone(resp).(*plimsollv1.RunResponse), size
+}
+
+// dropKeptLocked drops the session's kept answer, if any, and gives its bytes back to the
+// daemon's total. Called with mu held.
+func (e *sessionEntry) dropKeptLocked() {
+	if e.keptAnswer != nil && e.keptPool != nil {
+		e.keptPool.Add(-e.keptSize)
+	}
+	e.keptAnswer, e.keptSize = nil, 0
+}
+
 // claim records that a request naming the session reached the daemon.
 func (e *sessionEntry) claim() {
 	e.mu.Lock()
@@ -200,6 +287,9 @@ type sessionRegistry struct {
 	opening       int            // reservations taken by opens still creating their sandbox
 	openingBy     map[string]int // the same, by principal and by ownerKey
 	clock         atomic.Uint64  // orders sessions by last use
+	// kept is the bytes (proto size) of the answers every session keeps now, held
+	// under SessionConfig.KeptAnswersTotalBytes by sessionEntry.keepLocked.
+	kept atomic.Int64
 }
 
 // ownerKey names one owner of one principal: owners of different callers never meet.
@@ -673,6 +763,10 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		gone:          make(chan struct{}),
 		paid:          paid,
 	}
+	if !m.GetKeepNoAnswer() {
+		e.keptCap = max(s.Sessions.KeptAnswerBytes, 0)
+	}
+	e.keptTotal, e.keptPool = max(s.Sessions.KeptAnswersTotalBytes, 0), &s.sessions.kept
 	e.fingerprint = record.SessionFingerprint(e.id)
 	s.sessions.add(e)
 	placed = true
@@ -892,6 +986,7 @@ func (s *SandboxService) watch(e *sessionEntry) {
 	}
 	e.mu.Lock()
 	e.ended = true
+	e.dropKeptLocked()
 	e.stopIdle()
 	if e.release != nil {
 		e.release()
@@ -973,6 +1068,9 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 		e.mu.Unlock()
 		return
 	}
+	// An idle session keeps no answer, whether or not it suspends below, so no answer
+	// outlives the idle timeout.
+	e.dropKeptLocked()
 	if !e.claimed {
 		e.unclaimed = true
 		e.mu.Unlock()
@@ -1073,14 +1171,15 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if err != nil {
 		return nil, err
 	}
-	if m.GetGeneration() == 0 {
-		return nil, refuseZeroGeneration()
+	head := m.GetHead()
+	if err := checkHeadForm(head); err != nil {
+		return nil, err
 	}
 	e, ok := s.sessions.get(m.GetSessionId(), auditCaller(ctx))
 	if !ok {
 		return nil, errSessionNotFound()
 	}
-	if err := e.checkGeneration(m.GetGeneration()); err != nil {
+	if err := e.checkGeneration(head.GetGeneration()); err != nil {
 		return nil, err
 	}
 	// Any call naming the session claims it, one refused below included: its client
@@ -1145,15 +1244,22 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if ctx.Err() != nil {
 		return nil, busy(ctx)
 	}
-	if err := e.checkGeneration(m.GetGeneration()); err != nil {
+	if err := e.checkGeneration(head.GetGeneration()); err != nil {
 		return nil, err
 	}
 	if err := e.endErr(); err != nil {
 		return nil, refuseEnded(err)
 	}
+	// The head, compared under the turn, so no call that ran while this one waited can
+	// slip between the comparison and the dispatch. A mismatch does not move the head,
+	// does not count as use, and leaves the kept answer for an attach across its gap.
+	if err := e.checkHead(head); err != nil {
+		return nil, err
+	}
 	e.mu.Lock()
 	idleAt := e.idleAt
 	e.stopIdle()
+	e.dropKeptLocked() // the next call has started
 	e.mu.Unlock()
 	// refused: nothing of this call ran. Such a call does not count as use, so the
 	// session suspends when it would have without it: a fresh idle period after a
@@ -1192,9 +1298,17 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	link := sandbox.RunRecord{Session: e.fingerprint, Sequence: seq, PreviousSHA256: e.last}
 	e.mu.Unlock()
 	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software, recordPolicy(k, e.software.Policy))
+	// A call that ended its session has set the session's error by the time it answers,
+	// whether or not watch has run yet; its answer is not kept (finding release-110).
+	endedByCall := e.sess.Err() != nil
 	e.mu.Lock()
 	e.calls, e.last = seq, resp.Record.GetRecordSha256()
 	e.lastRecord = proto.Clone(resp.Record).(*plimsollv1.RunRecord)
+	// Kept only when it fits: above the cap, or past the daemon's total, the record
+	// alone says what happened.
+	if !endedByCall {
+		e.keepLocked(resp)
+	}
 	e.mu.Unlock()
 	out := &plimsollv1.SessionRunResponse{Run: resp}
 	// Err, not Done: Done waits for the sandbox's delete, and a call that ended the
@@ -1305,6 +1419,7 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	e.claim()
 	e.mu.Lock()
 	e.stopIdle()
+	e.dropKeptLocked()
 	e.mu.Unlock()
 	// The RPC edge's ceiling bounds a close as it bounds an open (review, 2026-10-26).
 	closeCtx, cancelClose := runContext(ctx)

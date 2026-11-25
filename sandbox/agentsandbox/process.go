@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -30,16 +28,12 @@ const (
 	postExitGrace = time.Second
 )
 
-// process returns a ProcessService client for sandboxd in the pod at ip, through the
-// pod's TLS terminator on frontPort and the pinned channel (channel.go), every request
-// carrying the token. The URL is https and the transport speaks nothing else, so there is
-// no cleartext path to fall back to.
-func (p *Provider) process(ip string) processv1connect.ProcessServiceClient {
-	addr := net.JoinHostPort(ip, strconv.Itoa(frontPort))
-	if p.dialAddr != nil {
-		addr = p.dialAddr(ip)
-	}
-	return processv1connect.NewProcessServiceClient(p.sandboxd, "https://"+addr, connect.WithGRPC(),
+// process returns a ProcessService client for sandboxd in the pod ch reaches, through the
+// pod's TLS terminator on frontPort and that pod's pinned channel (channel.go), every
+// request carrying the token. The URL is https and the transport speaks nothing else, so
+// there is no cleartext path to fall back to.
+func (p *Provider) process(ch *podChannel) processv1connect.ProcessServiceClient {
+	return processv1connect.NewProcessServiceClient(ch.client, "https://"+ch.addr, connect.WithGRPC(),
 		connect.WithReadMaxBytes(maxMessageBytes), connect.WithInterceptors(bearer(p.cfg.SandboxdToken)))
 }
 
@@ -89,15 +83,15 @@ type execOutput struct {
 // gVisor, a hung snippet's stream was once cancelled by the server a moment before this
 // process's deadline, so the run read as a broken stream instead of a timeout. Only ctx's
 // end, seen here, ends the calls early.
-func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []byte, stdoutCap, stderrCap int) (execOutput, error) {
+func (p *Provider) exec(ctx context.Context, ch *podChannel, argv []string, stdin []byte, stdoutCap, stderrCap int) (execOutput, error) {
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
-	c := p.process(ip)
+	c := p.process(ch)
 	cwd := workDir
 	stream, err := c.Start(streamCtx, connect.NewRequest(&processv1.StartRequest{Config: &processv1.ProcessConfig{Command: argv, Cwd: &cwd}}))
 	if err != nil {
-		return execOutput{}, p.channelRefusal(fmt.Errorf("sandboxd start: %w", err))
+		return execOutput{}, ch.refusal(fmt.Errorf("sandboxd start: %w", err))
 	}
 	defer stream.Close()
 
@@ -160,7 +154,7 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 	case out.exited:
 		return out, nil
 	case recvErr != nil && !errors.Is(recvErr, io.EOF):
-		return out, p.channelRefusal(fmt.Errorf("sandboxd stream: %w", recvErr))
+		return out, ch.refusal(fmt.Errorf("sandboxd stream: %w", recvErr))
 	case sendErr != nil:
 		return out, fmt.Errorf("sandboxd stream ended without an exit status: %w", sendErr)
 	default:

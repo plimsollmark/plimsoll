@@ -209,12 +209,19 @@ call"):
 - `AttachSession` lets another process take an open session over
   ([below](#carrying-a-session-on-from-another-worker)). It runs no code.
 
-Every `SessionRun` and `CloseSession` carries the session's
-<dfn>*ownership generation*</dfn>, a number that starts at 1 when the session opens and
-goes up by one each time a process takes the session over. A request with an older number
-is refused before anything runs; one with no number (zero) is refused as malformed. Because
-a daemon that predates the field would ignore it and run an old worker's call, the field
-came with protocol 6.
+Every `CloseSession` carries the session's <dfn>*ownership generation*</dfn>, a number
+that starts at 1 when the session opens and goes up by one each time a process takes the
+session over. Every `SessionRun` carries the <dfn>*session head*</dfn> as the client last
+saw it: the generation, the number of calls the session has answered or ended, and the
+digest of the last call's record. A request with an older generation is refused before
+anything runs (`FailedPrecondition`, marked not dispatched, reason `permission`); one with no
+head, a zero generation or a malformed head is refused as malformed (`InvalidArgument`,
+marked). A call whose count or digest is not the session's is refused under the session's
+turn, before anything runs (`FailedPrecondition`, marked, reason `request`), with the
+daemon's head attached as a `SessionHeadMismatch` detail; nothing moves. The official
+clients track the head exactly, so they take that refusal to mean another writer or a bug,
+and stop the session. Because a daemon that predates the head would ignore it and run a
+call this one refuses, the head came with protocol 8.
 
 Each request carries the <dfn>*protocol number*</dfn>, the protocol version the client
 speaks, and gets the same check as `Run`: a daemon serving a different version refuses it
@@ -335,8 +342,9 @@ the call may have run. A plain attach from that checkpoint is a mismatch, and no
 If the attach names the call, by the digest of its request (the request digest every run
 record carries), the daemon takes the session over when, and only when, the checkpoint is
 exactly one call behind, the session's last record follows the checkpoint's last record,
-and that record carries the named request digest. It returns that record: the call was
-dispatched once, and its output is lost. The record says whether the daemon answered it: a
+and that record carries the named request digest. It returns that record, and the call's answer
+when the daemon still keeps it ([what the daemon keeps of an answer](#what-the-daemon-keeps-of-an-answer)): the call was
+dispatched once. The record says whether the daemon answered it: a
 result digest when the daemon answered (the answer then never reached the worker), which
 does not show that the call ran to its end (a step stopped at its time limit and a setup
 that failed are answers too), or an unanswered code when the call ended without an answer
@@ -349,24 +357,39 @@ stated at open) and refuses an answer that carries such a record unasked. Every 
 a digest named or not, stays a mismatch, so a gap nobody can explain never moves ownership. A digest named when the head equals the checkpoint attaches
 as usual: the call never ran.
 
-**The first call after such an attach.** The attached session refuses its first call,
-before sending anything, if that call's request digest equals the lost call's: it would be
-a retry of a call that was already sent once. The refusal says only that (all three clients
-use the same words); the lost call's record says whether the daemon answered it. Only the first
-call is checked, and it spends the note when the client refuses it as that retry or when it
-is sent, except that a call the daemon refuses with the not-dispatched mark leaves the note:
-nothing ran, so the call after it is still the first. A checkpoint saved before the note is
-spent carries it, so a retry on yet another worker is refused too. This rule is the
-clients', not the daemon's: the daemon does not know which call is a retry, and a client
-that does not follow the rule can run the call again.
+**A returned answer is checked like any other.** The client refuses, as data loss, an
+attach answer that carries an answer with no lost record, and an answer whose record is not
+the lost record, whose result's digest is not the record's result digest, or whose evidence
+differs from the session's. A checked answer is the call's real output, so the application
+can carry on from it instead of guessing whether to run the call again.
 
-The limit, in plain words: a repeat is refused only when it is the first call after the
-takeover. Any other first call, an adapter's own included, spends the note, and the lost
-call can then run a second time. An agent framework's file tools send calls of their own
-(a working directory, a stat, a read check) before their read or write, so the rule never
-covers a lost file operation there. The PydanticAI adapter sends no call of its own before
-its shell tool's command: when that first command repeats the lost one, it tells the model
-what the lost call's record says, and the run goes on.
+**Recovery after a takeover.** A session taken over across an explained gap is
+<dfn>*recovering*</dfn>: every call is refused before anything is sent (all three clients use
+the same words: Go `ErrRecovering`, Python and TypeScript `RecoveringError`; the refusal is
+marked not dispatched, reason `request`) until the application says it has handled the
+lost call. It reads the lost call from the session (Go `Session.LostCall()`, Python
+`Session.lost_call`, TypeScript `session.lostCall`, each holding the request digest, the
+record and the checked answer when one came back, or nothing when the session is not
+recovering) and then resolves it (`Session.ResolveLostCall()` in Go,
+`Session.resolve_lost_call()` in Python, awaited on the asynchronous client,
+`session.resolveLostCall()` in TypeScript). A Python session that keeps its record in the application's store (below)
+writes that record ready without the lost call before it resolves, so a worker that
+attaches from the store later is not recovering. Carrying on the head does not resolve it,
+and neither does any call an adapter or a framework sends of its own, a stat or a
+working-directory check included: the recovering state refuses those too. A checkpoint
+saved while recovering carries the lost call's request digest (`recovering_request_sha256`),
+so a worker that takes the session over from it is recovering as well, with the digest but
+not the record or the answer; all three clients save and read it so. The PydanticAI and
+Deep Agents adapters resolve on the model's next tool call, whichever tool it is: that call
+is not run, and its result tells the model what the lost call's record says and the lost
+call's output when the daemon kept its answer (cut to the adapter's output limit); the
+tool call after it runs, the lost command sent again on purpose included.
+
+What the recovering state does not stop: an application that resolves and then sends the
+lost call again. That is its choice, made after it has seen the outcome; plimsoll does not
+know which calls are safe to repeat. A program that does not use the official clients can
+skip the recovering state, since it is the clients' rule; what the daemon enforces on every
+caller is the head, so a call sent from a stale view of the session never runs.
 
 **The Python client keeps a store; the Go and TypeScript clients do not.** A Python
 session opened or taken over with a <dfn>*checkpoint store*</dfn>, an object of your
@@ -409,9 +432,25 @@ t = Client(url, token, daemon_name="prod").attach_session(key, store=store)
 t.run_cell("x")  # the same interpreter
 ```
 
-**What taking a session over does not do.** It does not survive a daemon restart, recover
-a lost call's output, or make a call run exactly once beyond the first-call rule above. It
-neither extends the session's lifetime nor wakes a suspended sandbox (the next call does,
+**What taking a session over does not do.** It does not survive a daemon restart, or
+recover an output the daemon did not keep (an unanswered call has none; see
+[what the daemon keeps](#what-the-daemon-keeps-of-an-answer)).
+
+**No call runs exactly once, at plimsoll's layer or any other, when its answer was lost.**
+An unanswered call may have done none, part or all of its work, and nothing in the
+sandbox can tell which. When a call has an effect outside the sandbox (a charge, a message,
+a write to another service), put that service's own <dfn>*idempotency key*</dfn> (a
+label sent with the request so the service does the work only once for that label) into the
+code or its arguments, chosen by your application for that one operation, for example the
+order's ID. A repeat of the call is then byte for byte the same request, and the outside
+service does the work once: a granted call that sends a payment provider
+`Idempotency-Key: charge-<order ID>` charges once however many times it runs.
+
+Do not pass the key through an environment variable: environment variables are a channel
+into the sandbox that plimsoll keeps closed.
+
+A takeover also does not
+extend the session's lifetime or wake a suspended sandbox (the next call does,
 as always), and it does not move a session between copies of the daemon. A client with a
 signing recorder cannot take a session over, since the recorder cannot resume a chain it
 did not sign from the first call. An attach whose answer was lost (a dropped connection, a
@@ -421,6 +460,29 @@ learned the session ID. The attach claimed it, so it is not closed as unclaimed:
 lifetime runs out (or an open for the same end user at `SANDBOX_MAX_SESSIONS_PER_OWNER`
 replaces it) it keeps its place under the session caps, and until a suspend its concurrency
 slot and any paid time.
+
+## What the daemon keeps of an answer
+
+After each answered call the daemon keeps that call's answer in its own memory, beside the
+last record it already keeps, so a worker that takes the session over across an explained
+gap gets the output back. It is never written to disk and never logged (the audit line says
+only whether an attach returned one). It is dropped when the next call starts, when the
+session's idle timer fires, at close and when the session ends, so no answer outlives the
+next call or the idle timeout. A session whose idle timeout is 0 has no idle timer once
+claimed, so its answer lives until the next call, close or end.
+
+`SANDBOX_SESSION_KEPT_ANSWER_BYTES` caps one kept answer (default 4 MiB, measured as the
+answer's encoded size on the wire; 0 keeps none; at most 16 MiB, so the attach answer that
+carries it stays under the clients' 32 MiB limit on an answer read as JSON): above it the
+daemon keeps the record only. `SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES` bounds every
+session's kept answers together (default 64 MiB; 0 keeps none): an answer that would take
+the total past it is not kept, its record still is, and a dropped answer gives its bytes
+back. A caller
+that promises its users no retention opens the session with `keep_no_answer` (Go
+`SessionOptions.KeepNoAnswer`, Python `open_session(keep_no_answer=True)`, TypeScript
+`openSession({ keepNoAnswer: true })`), and the daemon keeps none for that session. An answer can
+hold whatever the code in the sandbox printed, a secret included, which is why it lives only as long as
+it can still be asked for.
 
 ## Interpreters: state between calls
 
@@ -692,8 +754,12 @@ A docker session is the container a project run gets, kept for the session:
 - **A snippet or a cell in a session is not protected that way,** and does not need to
   be: neither carries a key. What the session's own code can do to its own later calls'
   output is above, under what a cell's relay is trusted with. A grader whose verdict the
-  graded code must not be able to forge uses a project call, in a session or a single
-  run.
+  graded code must not be able to forge runs as a project call of its own, in a session or
+  a single run, never as a later step of the call that runs the graded code. Within one
+  call nothing is killed between steps, so a process an earlier step leaves running can
+  write into a later step's output, kill it, or stop it until the call's deadline
+  (measured 2026-11-24 under `runc` and gVisor, in a run and in a session), and an earlier
+  step can rewrite the files a later one runs ([run-results.md](run-results.md#did-anything-run-the-error-says-so)).
 - **A suspend is a pause.** `docker pause` freezes every process; the files and the
   processes' memory stay. That is why a paused session keeps its concurrency slot.
   Resuming takes about 20 milliseconds (measured 2026-10-01 under runc and gVisor).

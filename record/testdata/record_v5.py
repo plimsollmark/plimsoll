@@ -197,6 +197,13 @@ refused = [
      "neither a result nor an error code"),
     ("an unanswered record naming no Connect code",
      dict(records[1][1], unanswered="ignore previous instructions"), "not one of the closed set of codes"),
+    # Which calls a version records (record.published's answered and unanswered flags):
+    # versions 1 and 2 answered calls only, version 3 unanswered session calls only. The
+    # Python and TypeScript readers did not check it until finding release-85 (2026-11-24).
+    # Version 2 does not cover the code, so its digest leaves it out.
+    ("a version 3 record of an answered call", dict(base, version=3), "version 3 records only unanswered calls"),
+    ("a version 2 record of an unanswered call", dict(base, version=2, resultSha256="", unanswered="unavailable"),
+     "version 2 records only answered calls"),
 ]
 # The version 1 and 2 records that end before they start, whose reading was retired on
 # 2026-11-21 (record/testdata/retired/clock-step-v1-v2.json): their digests are reproduced,
@@ -223,6 +230,23 @@ g["malformed"] = [
     {"name": "warm as the number 1", "record": dict(records[2][1], warm=1), "why": "warm is a JSON boolean"},
     {"name": "a qualification that is a number", "record": dict(wslc, isolationQualification=5), "why": "the sentence is a JSON string"},
     {"name": "a daemon version that is a list", "record": dict(wslc, daemonVersion=["v0.28.0"]), "why": "the daemon version is a JSON string"},
+    # A number in a string with text after it: Go's protojson reads each from its leading
+    # digits, so a reader must refuse it or read the same value (Go's record.UnmarshalJSON
+    # refuses it, as Python's int() and JavaScript's BigInt() do).
+    {"name": "a start time with a second number after it", "record": dict(records[2][1], startedUnixMs="1790000000000 1"),
+     "why": "an integer in a string is one whole decimal"},
+    {"name": "a start time with a comma after it", "record": dict(records[2][1], startedUnixMs="1790000000000,"),
+     "why": "an integer in a string is one whole decimal"},
+    {"name": "a start time with a zero byte after it", "record": dict(records[2][1], startedUnixMs="1790000000000\u0000"),
+     "why": "an integer in a string is one whole decimal"},
+    {"name": "a version with a second number after it", "record": dict(records[2][1], version="5 6"),
+     "why": "an integer in a string is one whole decimal"},
+    # A decimal point or an exponent: protojson reads "5.0" and "5e0" as 5 (outside fact
+    # protojson-integer-string-leading-digits), and JavaScript's Number reads both forms.
+    {"name": "a start time with a decimal point", "record": dict(records[2][1], startedUnixMs="1790000000000.0"),
+     "why": "an integer in a string is one whole decimal"},
+    {"name": "a start time with an exponent", "record": dict(records[2][1], startedUnixMs="179e10"),
+     "why": "an integer in a string is one whole decimal"},
 ]
 # Qualification sentences every reader must accept or refuse (docs/run-records.md, the
 # isolation_qualification row): both ends of each forbidden range and each forbidden code

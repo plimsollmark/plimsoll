@@ -407,6 +407,13 @@ func TestE2BSessionStartsEveryProgramInRootClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	att.Close()
+	// The sweep after a call runs off the caller's path (sessionkit.Life.Call), so the
+	// project call's may not have run yet; a suspend waits for the session's turn, which
+	// that sweep holds. Counting without it failed under load (the landing gate of
+	// 2026-11-24 saw two sweeps).
+	if _, err := s.Suspend(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	seen := map[string]int{}
 	for _, st := range rec.recorded() {

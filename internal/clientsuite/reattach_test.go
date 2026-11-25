@@ -33,7 +33,7 @@ func TestAttachLiarForgesFromTheHonestAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := cellCall(open.Msg.GetSessionId(), "x = 1", "")
+	call := cellCall(open.Msg.GetSessionId(), "x = 1", "", nil)
 	call.MinimumIsolation = "container" // every call states the floor set at open
 	ran, err := c.SessionRun(ctx, authed(call))
 	if err != nil {
@@ -59,8 +59,14 @@ func TestAttachLiarForgesFromTheHonestAnswer(t *testing.T) {
 	}
 }
 
-func cellCall(id, code, trace string) *plimsollv1.SessionRunRequest {
-	return &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id, Generation: 1, TraceId: trace,
+// cellCall is a cell call at the opener's generation after the record last (nil before the
+// first call).
+func cellCall(id, code, trace string, last *plimsollv1.RunRecord) *plimsollv1.SessionRunRequest {
+	head := &plimsollv1.SessionCheckpoint{Generation: 1}
+	if last != nil {
+		head.Calls, head.LastRecordSha256 = last.GetSequence(), last.GetRecordSha256()
+	}
+	return &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id, Head: head, TraceId: trace,
 		Payload: &plimsollv1.SessionRunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: code}}}
 }
 
@@ -75,11 +81,11 @@ func TestAttachLiarForgesTheExplainedGapFromTheHonestAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := c.SessionRun(ctx, authed(cellCall(open.Msg.GetSessionId(), "x = 1", "")))
+	first, err := c.SessionRun(ctx, authed(cellCall(open.Msg.GetSessionId(), "x = 1", "", nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	lostCall := cellCall(open.Msg.GetSessionId(), "y = 2", DropAnswerTrace)
+	lostCall := cellCall(open.Msg.GetSessionId(), "y = 2", DropAnswerTrace, first.Msg.GetRun().GetRecord())
 	if _, err := c.SessionRun(ctx, authed(lostCall)); err == nil {
 		t.Fatal("a dropped answer arrived")
 	}
@@ -87,8 +93,8 @@ func TestAttachLiarForgesTheExplainedGapFromTheHonestAnswer(t *testing.T) {
 		Checkpoint:        &plimsollv1.SessionCheckpoint{Generation: 1, Calls: 1, LastRecordSha256: first.Msg.GetRun().GetRecord().GetRecordSha256()},
 		LostRequestSha256: record.SessionRunRequestDigest(lostCall)}
 	honest := d.Forge(req, "lost-none")
-	if honest == nil || honest.GetLostRecord() == nil {
-		t.Fatal("no honest explained-gap answer")
+	if honest == nil || honest.GetLostRecord() == nil || honest.GetLostAnswer() == nil {
+		t.Fatal("no honest explained-gap answer, or one without the lost call's answer")
 	}
 	for _, name := range AttachLostForgeries {
 		if forged := d.Forge(req, name); forged == nil || proto.Equal(forged, honest) {
@@ -105,7 +111,8 @@ func TestAttachLiarForgesTheExplainedGapFromTheHonestAnswer(t *testing.T) {
 }
 
 // A session call carrying the drop-answer trace ID runs on the provider, and its caller
-// gets no answer.
+// gets no answer; a call sent after it from the head before it is refused as a head
+// mismatch, and runs nothing.
 func TestReattachDaemonRunsADroppedCall(t *testing.T) {
 	d := ServeReattach(t)
 	c := plimsollv1connect.NewSandboxServiceClient(http.DefaultClient, d.URL)
@@ -114,7 +121,8 @@ func TestReattachDaemonRunsADroppedCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: open.Msg.GetSessionId(), Generation: 1, TraceId: DropAnswerTrace,
+	call := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: open.Msg.GetSessionId(),
+		Head: &plimsollv1.SessionCheckpoint{Generation: 1}, TraceId: DropAnswerTrace,
 		Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
 	if _, err := c.SessionRun(ctx, authed(call)); err == nil || connect.CodeOf(err) != connect.CodeUnavailable && connect.CodeOf(err) != connect.CodeUnknown {
 		t.Fatalf("a dropped answer arrived: %v", err)
@@ -123,11 +131,11 @@ func TestReattachDaemonRunsADroppedCall(t *testing.T) {
 		t.Fatalf("the provider ran %d calls, want the dropped one", d.ProviderCalls())
 	}
 	call.TraceId = ""
-	if _, err := c.SessionRun(ctx, authed(call)); err != nil {
-		t.Fatal(err)
+	if _, err := c.SessionRun(ctx, authed(call)); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("a call from the head before the dropped one: %v, want a head mismatch", err)
 	}
-	if d.ProviderCalls() != 2 {
-		t.Fatalf("the provider ran %d calls, want 2", d.ProviderCalls())
+	if d.ProviderCalls() != 1 {
+		t.Fatalf("the provider ran %d calls, want the dropped one alone", d.ProviderCalls())
 	}
 }
 

@@ -75,7 +75,7 @@ func TestHardenedPolicyEnvelopeAtTheProvenTier(t *testing.T) {
 	f := hardenedDockerFacts()
 	f.Provider = "agentsandbox"
 	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1", "SANDBOX_REQUIRE_PINNED_IMAGES": "1",
-		"SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK": "1"}
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN": "plimsoll.test"}
 	for _, c := range []struct {
 		tier     sandbox.IsolationClass
 		pending  bool

@@ -40,6 +40,15 @@ const ReattachToken = "client-suite-reattach-token"
 // cuts the connection of, so the call ran and its answer never reaches the client.
 const DropAnswerTrace = "drop-answer"
 
+// HeadMismatchTrace is the trace ID of a session call the attach liar sends on to the real
+// handler with its head's count raised by one and another last record digest, so the daemon
+// refuses it as a head mismatch
+// (not dispatched, reason request, the daemon's head as a SessionHeadMismatch detail): the
+// refusal a client gets when another holder of the session ran a call between its own.
+// A client must stop the session: its next call is refused before it is sent. The liar
+// counts the calls that reach it (GET /test/session-calls?session=<fingerprint>).
+const HeadMismatchTrace = "head-mismatch"
+
 // CheckpointVectors is the shared checkpoint vectors: a JSON object whose "valid" and
 // "invalid" lists hold {"name", "json"}, every client parsing each valid text into a
 // checkpoint and refusing each invalid one. The reattach daemon serves it at GET
@@ -72,7 +81,7 @@ func (d Reattach) ProviderCalls() int {
 func ServeReattach(t *testing.T) Reattach {
 	t.Helper()
 	d := Reattach{Token: ReattachToken, Provider: &sandboxtest.Sessions{}}
-	svc := sessionService(d.Provider, rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute})
+	svc := sessionService(d.Provider, rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute, KeptAnswerBytes: keptAnswerBytes, KeptAnswersTotalBytes: keptAnswersTotalBytes})
 	d.URL = serveDropping(t, svc, func(mux *http.ServeMux) {
 		mux.HandleFunc("GET /test/calls", func(w http.ResponseWriter, _ *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]int{"calls": d.ProviderCalls()})
@@ -84,6 +93,14 @@ func ServeReattach(t *testing.T) Reattach {
 	})
 	return d
 }
+
+// keptAnswerBytes is the served daemons' cap on a kept answer: the daemon's default, so a
+// lost call's answer comes back on an attach across its gap.
+const keptAnswerBytes = 4 << 20
+
+// keptAnswersTotalBytes is the served daemons' bound on every session's kept answers
+// together: the daemon's default.
+const keptAnswersTotalBytes = 64 << 20
 
 func serveReattach(t *testing.T) []string {
 	d := ServeReattach(t)
@@ -174,6 +191,7 @@ var AttachForgeries = []string{
 	"expiry",
 	"idle",
 	"unasked-lost-record", // the honest answer, carrying the session's last record as a lost call's
+	"unasked-lost-answer", // the honest answer, carrying the session's last answer as a lost call's, with no lost record
 }
 
 // AttachLostForgeries names the explained-gap answers the attach liar forges, for an attach
@@ -198,6 +216,10 @@ var AttachLostForgeries = []string{
 	"lost-result-and-code", // a result digest and an unanswered code, sealed again
 	"lost-no-result",       // neither a result digest nor an unanswered code, sealed again
 	"lost-unknown-code",    // an unanswered code outside the closed set, sealed again
+	// The lost call's answer (AttachSessionResponse.lost_answer) is believed only when it
+	// carries the lost record and its result digests to the record's.
+	"lost-answer-result", // the answer's output changed, so its result digest is not the record's
+	"lost-answer-record", // the answer carrying another record than the lost one (its end time changed, sealed again)
 }
 
 // AttachLiar is a served attach liar.
@@ -213,6 +235,14 @@ func (d AttachLiar) Closes(fingerprint string) int {
 	d.liar.mu.Lock()
 	defer d.liar.mu.Unlock()
 	return d.liar.closes[fingerprint]
+}
+
+// SessionCalls is how many SessionRun requests reached the liar for the session with this
+// fingerprint, refused ones included.
+func (d AttachLiar) SessionCalls(fingerprint string) int {
+	d.liar.mu.Lock()
+	defer d.liar.mu.Unlock()
+	return d.liar.calls[fingerprint]
 }
 
 // Forge is the liar's answer to an attach whose trace ID is "forge-"+name, built from the
@@ -234,10 +264,12 @@ func (d AttachLiar) Forge(req *plimsollv1.AttachSessionRequest, name string) *pl
 func ServeAttachLiar(t *testing.T) AttachLiar {
 	t.Helper()
 	l := &attachLiar{
-		SandboxService: sessionService(&sandboxtest.Sessions{}, rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}),
+		SandboxService: sessionService(&sandboxtest.Sessions{}, rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute, KeptAnswerBytes: keptAnswerBytes, KeptAnswersTotalBytes: keptAnswersTotalBytes}),
 		opened:         map[string]*plimsollv1.OpenSessionResponse{},
 		closes:         map[string]int{},
 		last:           map[string]*plimsollv1.RunRecord{},
+		answers:        map[string]*plimsollv1.RunResponse{},
+		calls:          map[string]int{},
 	}
 	d := AttachLiar{Token: ReattachToken, liar: l}
 	d.URL = serveDropping(t, l, func(mux *http.ServeMux) {
@@ -249,6 +281,9 @@ func ServeAttachLiar(t *testing.T) AttachLiar {
 		})
 		mux.HandleFunc("GET /test/closes", func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]int{"closes": d.Closes(r.URL.Query().Get("session"))})
+		})
+		mux.HandleFunc("GET /test/session-calls", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]int{"calls": d.SessionCalls(r.URL.Query().Get("session"))})
 		})
 	})
 	return d
@@ -262,16 +297,31 @@ type attachLiar struct {
 	opened map[string]*plimsollv1.OpenSessionResponse // by fingerprint
 	closes map[string]int
 	last   map[string]*plimsollv1.RunRecord // each session's last record, answered or not
+	// answers is each session's last answer, absent after an unanswered call.
+	answers map[string]*plimsollv1.RunResponse
+	calls   map[string]int // the session calls that reached the liar, by fingerprint
 }
 
 // SessionRun keeps each session's last record, from the answer or, for a call that may
 // have run, from the error's unanswered record (a dropped answer's included: the drop is
-// in front of this handler).
+// in front of this handler), and its last answer. A call whose trace ID is
+// HeadMismatchTrace goes on with its head's count raised by one.
 func (l *attachLiar) SessionRun(ctx context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
+	fingerprint := record.SessionFingerprint(req.Msg.GetSessionId())
+	l.mu.Lock()
+	l.calls[fingerprint]++
+	l.mu.Unlock()
+	if req.Msg.GetTraceId() == HeadMismatchTrace && req.Msg.GetHead() != nil {
+		req.Msg.Head.Calls++
+		req.Msg.Head.LastRecordSha256 = record.SessionFingerprint("a record this client never saw")
+	}
 	resp, err := l.SandboxService.SessionRun(ctx, req)
 	var rec *plimsollv1.RunRecord
 	if err == nil {
 		rec = resp.Msg.GetRun().GetRecord()
+		l.mu.Lock()
+		l.answers[fingerprint] = proto.Clone(resp.Msg.GetRun()).(*plimsollv1.RunResponse)
+		l.mu.Unlock()
 	} else {
 		var ce *connect.Error
 		if errors.As(err, &ce) {
@@ -286,7 +336,10 @@ func (l *attachLiar) SessionRun(ctx context.Context, req *connect.Request[plimso
 	}
 	if rec != nil {
 		l.mu.Lock()
-		l.last[record.SessionFingerprint(req.Msg.GetSessionId())] = proto.Clone(rec).(*plimsollv1.RunRecord)
+		l.last[fingerprint] = proto.Clone(rec).(*plimsollv1.RunRecord)
+		if err != nil {
+			delete(l.answers, fingerprint)
+		}
 		l.mu.Unlock()
 	}
 	return resp, err
@@ -322,13 +375,13 @@ func (l *attachLiar) AttachSession(ctx context.Context, req *connect.Request[pli
 
 func (l *attachLiar) forge(req *plimsollv1.AttachSessionRequest, name string) *plimsollv1.AttachSessionResponse {
 	l.mu.Lock()
-	open, last := l.opened[req.GetSession()], l.last[req.GetSession()]
+	open, last, answer := l.opened[req.GetSession()], l.last[req.GetSession()], l.answers[req.GetSession()]
 	l.mu.Unlock()
 	if open == nil {
 		return nil
 	}
 	if strings.HasPrefix(name, "lost-") {
-		return forgeLost(open, last, req, name)
+		return forgeLost(open, last, answer, req, name)
 	}
 	cp := req.GetCheckpoint()
 	info := proto.Clone(open).(*plimsollv1.OpenSessionResponse)
@@ -382,6 +435,11 @@ func (l *attachLiar) forge(req *plimsollv1.AttachSessionRequest, name string) *p
 			return nil
 		}
 		resp.LostRecord = proto.Clone(last).(*plimsollv1.RunRecord)
+	case "unasked-lost-answer":
+		if answer == nil {
+			return nil
+		}
+		resp.LostAnswer = proto.Clone(answer).(*plimsollv1.RunResponse)
 	default:
 		return nil
 	}
@@ -390,10 +448,18 @@ func (l *attachLiar) forge(req *plimsollv1.AttachSessionRequest, name string) *p
 
 // forgeLost is the explained-gap answer to an attach one call behind last, the session's
 // last record, with the forgery name names ("lost-none": none); nil when there is no last
-// record or no such forgery.
-func forgeLost(open *plimsollv1.OpenSessionResponse, last *plimsollv1.RunRecord, req *plimsollv1.AttachSessionRequest, name string) *plimsollv1.AttachSessionResponse {
+// record or no such forgery. The honest answer carries the session's last answer beside
+// the lost record when the call was answered (answer, whose record is last), as the
+// daemon returns a kept one.
+func forgeLost(open *plimsollv1.OpenSessionResponse, last *plimsollv1.RunRecord, answer *plimsollv1.RunResponse, req *plimsollv1.AttachSessionRequest, name string) *plimsollv1.AttachSessionResponse {
 	if last == nil {
 		return nil
+	}
+	if answer != nil && !proto.Equal(answer.GetRecord(), last) {
+		answer = nil
+	}
+	if answer != nil {
+		answer = proto.Clone(answer).(*plimsollv1.RunResponse)
 	}
 	cp := req.GetCheckpoint()
 	info := proto.Clone(open).(*plimsollv1.OpenSessionResponse)
@@ -408,6 +474,18 @@ func forgeLost(open *plimsollv1.OpenSessionResponse, last *plimsollv1.RunRecord,
 	}
 	switch name {
 	case "lost-none", "lost-missing", "lost-head", "lost-head-calls":
+	case "lost-answer-result":
+		if !changeOutput(answer) {
+			return nil
+		}
+	case "lost-answer-record":
+		if answer == nil {
+			return nil
+		}
+		r := record.FromWire(answer.GetRecord())
+		r.Ended = r.Ended.Add(time.Millisecond)
+		r.SHA256 = record.Digest(r)
+		answer.Record = record.ToWire(r)
 	case "lost-unsealed":
 		lost.EndedUnixMs++ // a field no other check reads: only the record's own digest catches it
 	case "lost-request":
@@ -442,6 +520,7 @@ func forgeLost(open *plimsollv1.OpenSessionResponse, last *plimsollv1.RunRecord,
 		SessionInfo: info,
 		Checkpoint:  &plimsollv1.SessionCheckpoint{Generation: info.Generation, Calls: cp.GetCalls() + 1, LastRecordSha256: lost.GetRecordSha256()},
 		LostRecord:  lost,
+		LostAnswer:  answer,
 	}
 	switch name {
 	case "lost-missing":
@@ -451,5 +530,26 @@ func forgeLost(open *plimsollv1.OpenSessionResponse, last *plimsollv1.RunRecord,
 	case "lost-head-calls":
 		resp.Checkpoint.Calls = cp.GetCalls()
 	}
+	if answer != nil && name != "lost-answer-record" && name != "lost-answer-result" {
+		// The record the answer carries is the lost record as this answer states it, so a
+		// forgery of the record alone is caught by the record's own checks.
+		answer.Record = proto.Clone(lost).(*plimsollv1.RunRecord)
+	}
 	return resp
+}
+
+// changeOutput changes an answer's output, whatever its kind, so its result digest is no
+// longer its record's; false when it has no result.
+func changeOutput(a *plimsollv1.RunResponse) bool {
+	switch r := a.GetResult().(type) {
+	case *plimsollv1.RunResponse_Cell:
+		r.Cell.Stdout = append(r.Cell.Stdout, '!')
+	case *plimsollv1.RunResponse_Javascript:
+		r.Javascript.Stdout = append(r.Javascript.Stdout, '!')
+	case *plimsollv1.RunResponse_Project:
+		r.Project.OutcomeDetail += "!"
+	default:
+		return false
+	}
+	return true
 }

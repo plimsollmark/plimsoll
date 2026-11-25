@@ -301,7 +301,7 @@ func TestDecodeSlotIsHeldUntilTheRequestIsDecoded(t *testing.T) {
 }
 
 // Open dev mode has no credential, so a page that rebinds its own name to 127.0.0.1
-// must still be refused: its requests name the page's host (Claude Security scan,
+// must still be refused: its requests name the page's host (security scan,
 // 2026-10-27). The refusal is a marked permission refusal and never reaches the handler.
 func TestOpenModeAnswersOnlyLoopbackHosts(t *testing.T) {
 	for _, tc := range []struct {

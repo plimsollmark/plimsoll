@@ -71,7 +71,7 @@ type SandboxServiceClient interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 6 (the Go constant
+	// informational field does not bump it. Current number: 8 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation
@@ -98,7 +98,8 @@ type SandboxServiceClient interface {
 	// NotFound, all with the same text.
 	AttachSession(context.Context, *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error)
 	// SessionRun runs one call in an open session. Its record is chained to the
-	// session's previous call (RunRecord's session fields).
+	// session's previous call (RunRecord's session fields). The call states the head it
+	// expects (SessionRunRequest.head), and runs only when that is the session's head.
 	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
 	// CloseSession ends a session, or collects the end of one that ended by
 	// itself, and states how many calls it executed and the last record's digest,
@@ -212,7 +213,7 @@ type SandboxServiceHandler interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 6 (the Go constant
+	// informational field does not bump it. Current number: 8 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation
@@ -239,7 +240,8 @@ type SandboxServiceHandler interface {
 	// NotFound, all with the same text.
 	AttachSession(context.Context, *connect.Request[v1.AttachSessionRequest]) (*connect.Response[v1.AttachSessionResponse], error)
 	// SessionRun runs one call in an open session. Its record is chained to the
-	// session's previous call (RunRecord's session fields).
+	// session's previous call (RunRecord's session fields). The call states the head it
+	// expects (SessionRunRequest.head), and runs only when that is the session's head.
 	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
 	// CloseSession ends a session, or collects the end of one that ended by
 	// itself, and states how many calls it executed and the last record's digest,

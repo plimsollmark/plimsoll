@@ -10,11 +10,11 @@ import asyncio
 import threading
 import unittest
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 from deepagents import create_deep_agent
-from deepagents.backends.protocol import SandboxBackendProtocol, execute_accepts_timeout
+from deepagents.backends.protocol import ExecuteResponse, SandboxBackendProtocol, execute_accepts_timeout
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -23,6 +23,7 @@ from plimsoll_client import (AtCapacityError, Client, InsufficientIsolationError
                              RecordMismatchError, UnsupportedError)
 from plimsoll_client.checkpoint import MemoryCheckpointStore
 from plimsoll_client.deepagents import PlimsollSandbox
+from plimsoll_client.types import LostCall, RunRecord, StepResult
 from plimsoll_client.workspace import MAX_READ_BYTES, MAX_WHOLE_BYTES, ExecOutcome, Workspace, WorkspaceCallError, WorkspacePathError
 from tests._env import setting
 
@@ -34,12 +35,20 @@ def outcome(stdout: bytes = b"", stderr: bytes = b"", exit_code: int = 0, timed_
 
 
 class FakeSession:
+    """What the backend reads of a Session: its tier, its close, and the lost call it is recovering from
+    (``lost_call``, None when not recovering) with ``resolve_lost_call``, which ``resolves`` counts."""
+
     fingerprint = "fp-fake"
-    lost_call_sha256 = ""
 
     def __init__(self, isolation: str = "kernel") -> None:
         self.isolation = isolation
         self.closed = False
+        self.lost_call: Optional[LostCall] = None
+        self.resolves = 0
+
+    def resolve_lost_call(self) -> None:
+        self.resolves += 1
+        self.lost_call = None
 
     def close(self) -> None:
         self.closed = True
@@ -420,15 +429,108 @@ class AttachTests(unittest.TestCase):
         self.build(lambda: PlimsollSandbox.open(client, minimum_isolation="kernel", checkpoint_store=store, checkpoint_key="k"))  # type: ignore[arg-type]
         self.assertEqual((client.opened[0]["checkpoint_store"], client.opened[0]["checkpoint_key"]), (store, "k"))
 
-    def test_over_a_lost_call_note_the_backend_sends_nothing_of_its_own(self) -> None:
-        # After an attach across an explained gap the session's next call is checked against
-        # the lost call; the probe would be that call and spend the check.
+    def test_over_a_recovering_session_the_backend_sends_nothing_of_its_own(self) -> None:
+        # After an attach across an explained gap the session is recovering and refuses every
+        # call until it is resolved: the backend asks no probe, and the agent's first tool call
+        # is the one that tells the model of the lost call.
         client = FakeAttachClient()
-        client.session.lost_call_sha256 = "a" * 64  # type: ignore[misc]
+        client.session.lost_call = LostCall(request_sha256="a" * 64)
         got = self.build(lambda: PlimsollSandbox.attach(client, "k", store=MemoryCheckpointStore(), minimum_isolation="kernel"))  # type: ignore[arg-type]
         self.assertEqual(got["ws"].probes, 0)
         self.assertEqual(got["ws"].commands, [])
+        self.assertEqual(client.session.resolves, 0, "making the backend resolved the session")
         self.assertFalse(got["backend"]._gnu_grep, "searches go through Deep Agents' python3 search")
+
+
+def lost_record(*, unanswered: str = "", ms: int = 2400) -> RunRecord:
+    return RunRecord(
+        version=5, request_sha256="3" * 64, result_sha256="" if unanswered else "4" * 64, provider="fake", isolation="kernel",
+        environment="", policy="", software_identity="", software_rule_id="", started_unix_ms=1790000000000,
+        ended_unix_ms=1790000000000 + ms, session="f" * 64, sequence=4, previous_sha256="a" * 64, sha256="b" * 64,
+        unanswered=unanswered,
+    )
+
+
+class LostCallTests(unittest.TestCase):
+    """A session taken over across a call whose answer was lost (lost call option 3): the agent's first tool call,
+    whichever it is, is not run; the model reads what plimsoll's record of the lost call says (and its output when
+    the answer came back) as that tool's answer, the backend resolves the session, and the next tool call runs."""
+
+    def recovering(self, lost: LostCall, **opts: Any) -> Backend:
+        b = Backend(**opts)
+        b.session.lost_call = lost
+        return b
+
+    def test_each_entry_point_answers_with_the_lost_call_and_sends_nothing(self) -> None:
+        lost = LostCall(request_sha256="3" * 64, record=lost_record(unanswered="canceled"))
+        cases: List[Tuple[str, Any]] = [
+            ("execute", lambda s: s.execute("ls")),
+            ("aexecute", lambda s: asyncio.run(s.aexecute("ls"))),
+            ("execute_with_offload", lambda s: s.execute_with_offload("ls", "/tmp/out", max_inline_bytes=100).response),
+            ("ls", lambda s: s.ls("/work")),
+            ("als", lambda s: asyncio.run(s.als("/work"))),
+            ("read", lambda s: s.read("/work/a.txt")),
+            ("write", lambda s: s.write("/work/a.txt", "x")),
+            ("edit", lambda s: s.edit("/work/a.txt", "x", "y")),
+            ("delete", lambda s: s.delete("/work/a.txt")),
+            ("grep", lambda s: s.grep("x", "/work")),
+            ("glob", lambda s: s.glob("*.txt", "/work")),
+            ("upload_files", lambda s: s.upload_files([("/work/a.txt", b"x")])[0]),
+            ("download_files", lambda s: s.download_files(["/work/a.txt"])[0]),
+        ]
+        for name, use in cases:
+            with self.subTest(name):
+                b = self.recovering(lost)
+                got = use(b.backend)
+                text = got.output if isinstance(got, ExecuteResponse) else got.error
+                self.assertIn("this tool call was not run", text)
+                self.assertIn("That call ended without an answer after 2.4 s: the request for it was called off.", text)
+                if isinstance(got, ExecuteResponse):
+                    self.assertEqual(got.exit_code, pd.NOT_RUN_EXIT)
+                self.assertEqual((b.ws.commands, b.ws.files), ([], {}), "a call was sent")
+                self.assertEqual(b.session.resolves, 1)
+                self.assertIsNone(b.session.lost_call)
+
+    def test_a_kept_answer_is_shown_cut_to_the_output_limit(self) -> None:
+        from plimsoll_client.types import ProjectResult
+
+        step = StepResult(command="", stdout=b"y" * 40 + b"TAIL", stderr=b"", exit_code=0, timed_out=False, duration_ms=1,
+                          stdout_truncated=False, stderr_truncated=False)
+        answer = ProjectResult(provider="fake", isolation="kernel", environment="", software_identity="", duration_ms=1,
+                               record=lost_record(), outcome="completed", detail="", steps=(step,), artifacts=(),
+                               artifacts_truncated=False, advice=())
+        b = self.recovering(LostCall(request_sha256="3" * 64, record=lost_record(), answer=answer), max_output_chars=40)
+        text = b.backend.execute("ls").output
+        self.assertIn("and kept its answer, which follows", text)
+        self.assertIn("y" * 40, text)
+        self.assertNotIn("TAIL", text)
+        self.assertIn("[output truncated]", text)
+
+    def test_the_agent_is_told_then_its_next_call_runs(self) -> None:
+        # Findings release-74 and release-84: the lost command sent again as the agent's first command, or after another
+        # call, ran a second time with nothing said under the first-call rule. The first tool call is told now; the
+        # command sent again on purpose after it runs.
+        firsts = (
+            call("execute", {"command": "python3 triage.py"}, id="c1"),
+            call("ls", {"path": "/work"}, id="c1"),
+            call("read_file", {"file_path": "/work/notes.md"}, id="c1"),
+            call("write_file", {"file_path": "/work/notes.md", "content": "x"}, id="c1"),
+            call("edit_file", {"file_path": "/work/notes.md", "old_string": "x", "new_string": "y"}, id="c1"),
+            call("glob", {"pattern": "*.md", "path": "/work"}, id="c1"),
+            call("grep", {"pattern": "x", "path": "/work"}, id="c1"),
+        )
+        for first in firsts:
+            with self.subTest(first.tool_calls[0]["name"]):
+                b = self.recovering(LostCall(request_sha256="3" * 64, record=lost_record()))
+                b.ws.answers.append(outcome(stdout=b"done\n"))
+                model = Scripted(messages=iter([first, call("execute", {"command": "python3 triage.py"}, id="c2"), AIMessage(content="done")]))
+                out = create_deep_agent(model=model, backend=b.backend).invoke({"messages": [{"role": "user", "content": "go"}]})
+                told = next(m for m in out["messages"] if isinstance(m, ToolMessage) and m.tool_call_id == "c1")
+                self.assertIn("this tool call was not run", str(told.content))
+                self.assertIn("The sandbox answered that call after 2.4 s, but the answer is lost", str(told.content))
+                self.assertEqual(b.ws.commands, ["python3 triage.py"], "only the call after the one told ran")
+                self.assertEqual(b.ws.files, {}, "the told call wrote a file")
+                self.assertEqual(b.session.resolves, 1)
 
 
 class DaemonTests(unittest.TestCase):

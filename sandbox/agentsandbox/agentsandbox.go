@@ -9,7 +9,7 @@
 // reads its pod back (the runtime class, and that class's handler: runsc and any handler
 // the operator declares as gVisor are the kernel tier, runc the container tier, the tested
 // Kata handlers the VM tier, anything else refused; the image by digest; no API token
-// in the pod, no host namespaces, fixed DNS, emptyDir volumes and the one TLS Secret only; sandboxd started with
+// in the pod, no host namespaces, fixed DNS, emptyDir volumes and the pod's one key volume only; sandboxd started with
 // plimsoll's token digest; capabilities limited to the two the uid drop needs) and every
 // network policy in the namespace that selects the pod (egress denied by one and allowed
 // by none; ingress only to sandboxd's port). Unknown pod/container fields and exec handlers
@@ -29,9 +29,11 @@
 //
 // sandboxd serves no TLS, so the image runs it on loopback behind plimsoll's TLS
 // terminator, the container's command, and plimsolld reaches every pod over TLS 1.3
-// alone, trusting only the deployment's CA and the configured name (channel.go): the
-// token, the code, each run's report key and every result are never in the clear on the
-// pod network, and a pod that cannot prove itself gets nothing, marked not dispatched.
+// alone, trusting only the deployment's CA, the configured name and, in each pod's own
+// certificate, the identity of the pod it read (channel.go): the token, the code, each
+// run's report key and every result are never in the clear on the pod network, never
+// sent to another pod than the one read, and a pod that cannot prove itself gets
+// nothing, marked not dispatched.
 //
 // This is its own package, as openshell is, so only a program that imports it links the
 // generated process.v1 protobuf names, which agent-sandbox's own Go SDK registers too.
@@ -41,12 +43,12 @@ package agentsandbox
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
@@ -141,12 +143,15 @@ type Config struct {
 	// SandboxdToken is the bearer token sandboxd checks. The template must start
 	// sandboxd with --auth-token-sha256 set to its SHA-256 in hex.
 	SandboxdToken string
-	// SandboxdCAFile is the PEM certificate authority sandboxd's TLS certificate must
-	// chain to (the deployment's own; the system roots are never used), read by New.
-	// SandboxdServerName is the DNS name that certificate must carry; empty is
-	// DefaultServerName. The pod's terminator serves the certificate (channel.go).
-	SandboxdCAFile     string
-	SandboxdServerName string
+	// SandboxdCAFile is the PEM certificate authority every pod's TLS certificate must
+	// chain to (the deployment's own, the in-cluster issuer's; the system roots are never
+	// used), read by New. SandboxdServerName is the one DNS name each certificate must
+	// carry; empty is DefaultServerName. SandboxdTrustDomain is the trust domain of the
+	// one URI name each must carry, the pod's identity (podIdentity); required. The pod's
+	// terminator serves the certificate (channel.go).
+	SandboxdCAFile      string
+	SandboxdServerName  string
+	SandboxdTrustDomain string
 	// MemoryMB and CPUs are the limits the template's container must set: 0 is 256 MiB
 	// and 1 CPU.
 	MemoryMB int
@@ -212,6 +217,10 @@ func (c Config) validate() error {
 		return errors.New("agentsandbox: sandboxd's CA file is required: the certificate authority its TLS certificate must chain to")
 	case !validServerName(c.serverName()):
 		return fmt.Errorf("agentsandbox: sandboxd's server name %q is not a DNS name", truncate(c.serverName(), 80))
+	case c.SandboxdTrustDomain == "":
+		return errors.New("agentsandbox: the trust domain of the pods' identities is required: each pod's certificate must name that pod alone")
+	case !validServerName(c.SandboxdTrustDomain):
+		return fmt.Errorf("agentsandbox: the trust domain %q is not a DNS name in lowercase", truncate(c.SandboxdTrustDomain, 80))
 	case c.MemoryMB < 0 || c.CPUs < 0 || c.DiskMB < 0:
 		return errors.New("agentsandbox: negative limits")
 	}
@@ -250,8 +259,9 @@ type Provider struct {
 	// is read without the lock, and no provider's declarations reach another's.
 	handlers map[string]sandbox.IsolationClass
 	kube     *kube
-	// sandboxd is the pinned TLS client for every pod's terminator (channel.go).
-	sandboxd    *http.Client
+	// pool is the pinned CA every pod's channel trusts (channel.go); each claim gets a
+	// client of its own (channelTo).
+	pool        *x509.CertPool
 	tokenDigest string
 	// instance labels every claim this provider makes, so ReconcileOrphans finds its own.
 	instance string
@@ -317,7 +327,7 @@ func New(cfg Config) (*Provider, error) {
 		handlers[name] = sandbox.IsolationKernel
 	}
 	return &Provider{
-		cfg: cfg, handlers: handlers, kube: k, sandboxd: channelClient(pool, cfg.serverName()), tokenDigest: hex.EncodeToString(sum[:]),
+		cfg: cfg, handlers: handlers, kube: k, pool: pool, tokenDigest: hex.EncodeToString(sum[:]),
 		instance: providerkit.RandHex(8), pf: providerkit.Check{TTL: preflightTTL, Err: errors.New("agentsandbox: no check has completed yet")},
 		deleteTimeout: deleteBudget,
 	}, nil
@@ -546,7 +556,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 		return fail, err
 	}
 	start := time.Now()
-	out, err := p.exec(runCtx, b.ip, guestArgv(nil, sessionkit.GuestNodeArgv("-")...), []byte(req.Code), maxOutputBytes, maxOutputBytes)
+	out, err := p.exec(runCtx, b.ch, guestArgv(nil, sessionkit.GuestNodeArgv("-")...), []byte(req.Code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
 		Stdout: string(out.stdout), Stderr: string(out.stderr),
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
@@ -618,7 +628,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 func (p *Provider) runPlan(ctx context.Context, b box, planJSON, key []byte) (sandbox.ProjectResult, error) {
 	res := sandbox.ProjectResult{Sandbox: Name, Isolation: b.tier, Instance: b.instance, EnvironmentIdentity: imageIdentity(b.environment)}
 	argv := guestArgv([]string{"PLIMSOLL_WORK=" + workDir + "/project"}, runnerCommand...)
-	out, err := p.exec(ctx, b.ip, argv, planJSON, runnerwire.StdoutCap, maxOutputBytes)
+	out, err := p.exec(ctx, b.ch, argv, planJSON, runnerwire.StdoutCap, maxOutputBytes)
 	if !out.exited {
 		if deadline.Expired(ctx) == context.DeadlineExceeded {
 			res.Outcome, res.Detail = sandbox.ProjectOutcomeTimedOut, "run exceeded the time budget"

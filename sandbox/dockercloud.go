@@ -217,8 +217,10 @@ var dcStartCmd = []string{"tail", "-f", "/dev/null"}
 //   - The command's time inside the VM, in centiseconds from /proc/uptime (a "-" when
 //     the guest has no readable /proc/uptime), and 1 if a stream flooded (else 0), are
 //     the last line of stderr (dcTrailer), always written, after both keeps have ended:
-//     only the keeps write to the wrapper's own stderr, so no guest process can write
-//     after it, and the host strips it before reporting stderr. Always, because the
+//     only the keeps write to the wrapper's own stderr, so nothing the command started
+//     holds it to write after it (a process of the root guest can still open it through
+//     /proc, as it can the status file: what that leaves a later step is in
+//     execGuarded's comment), and the host strips it before reporting stderr. Always, because the
 //     host reads the last line in the trailer's shape: were it left out, a guest line
 //     in that shape would be read as the wrapper's (review, 2026-10-26). It decides
 //     whether `timeout` killed the command: the elapsed time around the remote call

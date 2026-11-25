@@ -80,10 +80,11 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # go.mod's `go` directive is the floor (1.26.2), not the canonical build. The
-      # `toolchain go1.26.11` line is, because govulncheck is clean there and earlier
-      # 1.26.x carried stdlib advisories in the HTTP/1, HTTP/2 and reverse-proxy paths this
-      # TCB calls. setup-go installs the version that toolchain line names and sets
+      # go.mod's `go` directive and its `toolchain` line both name go1.26.11, because
+      # govulncheck is clean there and earlier 1.26.x carried stdlib advisories in the
+      # HTTP/1, HTTP/2 and reverse-proxy paths this TCB calls. The `go` line is the one a
+      # `go install ...@version` obeys (Go applies a toolchain line only to the module being
+      # worked in), so an older local Go fetches 1.26.11 instead of building with itself. setup-go installs the version that toolchain line names and sets
       # GOTOOLCHAIN=local, so the gate runs on the pinned compiler and fetches no other
       # (a nested module needing a newer Go is skipped by `make modules`, said so).
       - name: Set up Go

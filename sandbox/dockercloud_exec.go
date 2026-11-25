@@ -27,13 +27,18 @@ type dcExecOutput struct {
 //
 // A step is reported as timed out when the in-guest `timeout` killed it: exit 137
 // (or 124) AND the command ran at least the in-guest limit, as the wrapper measured it
-// inside the VM (dcTrailer). Guest code cannot change that measurement (it is the
-// wrapper's own, written after anything the guest can write) or shorten its run, so a
-// user program that merely exits 137 is not misread as a timeout, and neither is one
-// whose answer was slow to arrive. When the trailer states no time (a guest with no
-// readable /proc/uptime), the elapsed time around the call stands in, as it did
-// before. The trailer itself is always there: the wrapper writes it last whatever the
-// guest wrote, so a guest line in its shape is never read as it.
+// inside the VM (dcTrailer). The command itself cannot change that measurement (it is
+// the wrapper's own, written after anything the command writes on its streams) or
+// shorten its run, so a user program that merely exits 137 is not misread as a timeout,
+// and neither is one whose answer was slow to arrive. That holds against the command, not
+// against the guest as a whole: the guest is root in the VM and nothing is killed between
+// calls, so a process an earlier step left running can replace the status file, stop or
+// kill the command, and an earlier step can rewrite a later step's script
+// (TestDockerCloudStepLeftoverReachesALaterStep; docs/dockercloud.md says what a later
+// step may trust). When the trailer states no time (a guest with no readable
+// /proc/uptime), the elapsed time around the call stands in, as it did before. The
+// trailer itself is always there: the wrapper writes it last whatever the command wrote,
+// so a line of the command's in its shape is never read as it.
 func (d *DockerCloud) execGuarded(ctx context.Context, vm dcVM, argv []string, cwd string) (dcExecOutput, error) {
 	return d.execGuardedCap(ctx, vm, argv, cwd, d.maxOutput())
 }

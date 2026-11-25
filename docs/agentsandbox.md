@@ -65,6 +65,13 @@ daemon test then waited on the cluster, not the channel: with the node's CPU res
 other pools, a claim's new pod was not scheduled within a snippet's 5 seconds (the daemon's
 log: "claim not ready"). The same suite with another CA pinned, and with another server
 name, refused every run at its first command, before anything was sent.
+With each pod's own key ([below](#the-control-channel-is-tls)) the whole suite passed on
+2026-11-24 on a fresh kind cluster (Kubernetes 1.37.0, agent-sandbox v1.0.7, cert-manager
+v1.21.3 and its CSI driver v0.16.1) under gVisor, runc and both Kata handlers (`kata-clh` and
+`kata-clh-runtime-rs`), daemon test included. Its added test claims a second pod and sends a
+fresh claim's connection to that pod's real terminator instead, as a rewritten route would:
+under every one of the four, the run was refused before anything was sent, naming the
+certificate's identity and the one expected, and the second pod then answered as itself.
 
 [The evidence page (INTERNAL · example page →)](examples/agentsandbox/index.html) shows two
 requests on that cluster through a hardened daemon, under gVisor and again under Kata
@@ -109,7 +116,7 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
   plimsoll's TLS terminator at `/usr/local/bin/plimsoll-sandboxd-tls`
   ([docker/sandboxdtls](../docker/sandboxdtls/main.go), Go's standard library only), which
   starts sandboxd and stands in front of it ([below](#the-control-channel-is-tls)); the
-  directory `/etc/plimsoll`, root's and mode 0700, where the TLS Secret is mounted; and
+  directory `/etc/plimsoll`, root's and mode 0700, where each pod's own key is mounted; and
   util-linux's `setpriv` at `/bin/setpriv`, which drops every command to the guest user.
   `SANDBOX_AGENTSANDBOX_IMAGE` names it exactly as the template writes it; with
   `SANDBOX_REQUIRE_PINNED_IMAGES=1` it must be pinned by `@sha256:`, and that digest is
@@ -127,16 +134,50 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
   `SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE`, never in the environment. The template starts
   sandboxd with `--auth-token-sha256=` and the token's SHA-256 in hex: sandboxd runs as root,
   and without a token, code in the pod could ask it on loopback to run a command as root.
-- **A TLS certificate for sandboxd, from a certificate authority of the deployment's own.**
-  Make a CA (openssl, cert-manager's CA issuer or any other tool) and one server certificate
-  for the name plimsolld checks, `sandboxd.plimsoll.invalid` unless
-  `SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME` names another (`.invalid` is a name reserved
-  never to resolve, so it can be checked but never dialed: plimsolld dials each pod's
-  address). Put the certificate and its key in a `kubernetes.io/tls` Secret in the pool's
-  namespace (keys `tls.crt` and `tls.key`), and the CA certificate in a file named by
-  `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE`, which plimsolld reads at startup: PEM certificates
-  and nothing else. plimsolld trusts that file alone, never the system's roots, and never reads
-  the Secret, so its service account needs no access to secrets.
+- **A certificate of its own for each sandbox pod, from an issuer in the cluster.** Each pod
+  serves a key and certificate made for it alone, and plimsolld refuses any pod whose
+  certificate does not name the pod it read from the API server
+  ([below](#the-control-channel-is-tls)). The setup plimsoll was run with
+  ([its record](#how-it-was-built-and-verified)):
+  1. [cert-manager](https://cert-manager.io/docs/installation/) (`EXTERNAL · official docs ↗`),
+     the Kubernetes add-on that signs certificates, and its
+     [CSI driver](https://cert-manager.io/docs/usage/csi-driver/) (`EXTERNAL · official docs ↗`).
+     A CSI driver is a plugin on every node that the kubelet (Kubernetes' agent on each node)
+     asks to mount a volume into a pod; this one makes a key on the node as the pod starts,
+     has the issuer sign a certificate for that pod, and mounts both into the pod, renewing
+     them before they expire. Measured with cert-manager v1.21.3 and the driver v0.16.1 on
+     Kubernetes 1.37.
+  2. A namespaced CA issuer in the pool's namespace (an `Issuer` of kind `ca`, whose signing
+     key cert-manager keeps in a Secret of its own; [an example](agentsandbox-example.yaml)).
+     Its CA certificate goes in a file named by `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE`, which
+     plimsolld reads at startup: PEM certificates and nothing else. plimsolld trusts that file
+     alone, never the system's roots, and reads no Secret, so its service account needs no
+     access to secrets. Use this CA for nothing else.
+  3. `SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN`, the first part of each pod's identity, for
+     example your cluster's name as a DNS name. Each certificate must carry exactly one URI
+     name, `spiffe://<trust domain>/ns/<namespace>/pod/<pod name>/<pod UID>` (a SPIFFE ID, the
+     usual form of a workload identity in a certificate), and exactly one DNS name,
+     `sandboxd.plimsoll.invalid` unless `SANDBOX_AGENTSANDBOX_SANDBOXD_SERVER_NAME` names
+     another (`.invalid` is reserved never to resolve, so the name can be checked but never
+     dialed: plimsolld dials each pod's address). The UID is what binds: Kubernetes gives
+     every pod a new one, and the warm pool reuses pod names when it refills.
+  4. Who may have a certificate signed. cert-manager's built-in approver signs every request
+     for a namespaced issuer that is made in its namespace, so anyone who may create a
+     `CertificateRequest` in the pool's namespace can get a certificate naming any pod there,
+     and pass for it (measured: a request for a running pod's identity was signed). So can
+     anyone who may create a pod there: the driver takes `uri-sans` from the pod's own volume,
+     so a pod that writes another pod's identity out in full, with no `${POD_...}` in it, gets
+     a certificate for that identity (read from the driver's documentation, not measured
+     here). So no account but the operator's and the driver's may create
+     `certificaterequests` or pods in that namespace, and the issuer must be a namespaced
+     `Issuer` there (plimsoll refuses a `ClusterIssuer`). Kubernetes' `edit` and `admin` roles
+     include both (pods always; cert-manager adds `certificaterequests`), so bind neither
+     there to anyone else. cert-manager's
+     [approver-policy](https://cert-manager.io/docs/policy/approval/approver-policy/)
+     (`EXTERNAL · official docs ↗`) can narrow approval further, to one issuer and the
+     identity's pattern, but it needs the built-in approver switched off for the whole
+     cluster, which stops every other certificate the cluster issues until a policy allows
+     it; and no policy can tie the name and UID in a request to a real pod.
 - **A template and a warm pool**, named by `SANDBOX_AGENTSANDBOX_WARM_POOL` (the pool, which
   names its template) in `SANDBOX_AGENTSANDBOX_NAMESPACE`, whose pods plimsoll's read-back
   accepts:
@@ -154,7 +195,10 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
     the terminator forwards), and every argument in the `--name=value` form (sandboxd's flag
     parser stops at `--` or a bare word, and lets a flag without `=` take the next argument
     as its value, so any other form could make it read other flags than plimsoll checked;
-    the terminator refuses them too), `allowPrivilegeEscalation: false`, a read-only root
+    the terminator refuses them too), each naming a flag the pinned sandboxd takes (the 17
+    its own `-h` lists at the commit the image builds; a flag a later sandboxd adds is
+    refused until the list is read again, by the read-back and the terminator alike),
+    `allowPrivilegeEscalation: false`, a read-only root
     filesystem, all capabilities dropped but `SETUID` and `SETGID`, and memory and CPU limits
     equal to `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` (default 256 MiB and 1 CPU). A readiness
     probe, if any, is a TCP probe on port 9090: sandboxd's own ports, the REST one included,
@@ -168,11 +212,25 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
     when an image symlink hides the relationship from the API path check. Under Kata no volume
     keeps its size limit, so `SANDBOX_DISK_MB` fails startup there
     ([below](#kata-containers-the-vm-tier));
-  - one more volume, the TLS Secret: a `secret` volume naming its Secret, with
-    `defaultMode: 0400` (256 in JSON; unset, Kubernetes would make the key readable by every
-    user in the pod), not `optional` and with no `items`, mounted once, `readOnly: true`, at
-    `/etc/plimsoll/sandboxd-tls`, with no other volume mounted at, over or inside
-    `/etc/plimsoll`. It is outside the writable volumes and outside `SANDBOX_DISK_MB`'s sum;
+  - one more volume, the pod's key: a `csi` volume of the driver `csi.cert-manager.io`,
+    `readOnly: true`, mounted once, read-only, at `/etc/plimsoll/sandboxd-tls`, with no
+    other volume mounted at, over or inside `/etc/plimsoll`. Its attributes are a closed
+    list: `issuer-name`, `issuer-kind` (`Issuer` only: a `ClusterIssuer` signs requests made in
+    every namespace, so a pod anywhere in the cluster could have a pool pod's identity signed)
+    and, for an issuer
+    outside cert-manager's own group, `issuer-group`; `dns-names` the one name above;
+    `uri-sans` exactly `spiffe://<trust domain>/ns/${POD_NAMESPACE}/pod/${POD_NAME}/${POD_UID}`,
+    which the driver fills from the pod being mounted, never from anything the pod says;
+    `key-algorithm: ECDSA`, `key-size: "256"`, `key-encoding: PKCS8` and `key-usages: server
+    auth,digital signature` (the driver's defaults are an RSA key with no server use); and,
+    optionally, `duration`, the certificate's lifetime. Any other attribute is refused, among
+    them `fs-group` (it would make the key readable by a group of the pod's choosing),
+    `pkcs12-enable` (a second copy of the key) and `reuse-private-key` (a renewal must bring
+    a new key). The volume is outside the writable volumes and outside `SANDBOX_DISK_MB`'s
+    sum. A `secret` volume, which earlier releases took for one key shared by every pod, is
+    refused. Choose a lifetime longer than a pod ever lives (the driver's default is 30
+    days): a pod waits, unready, until its certificate is signed, so a running pod then never
+    needs cert-manager, and a pod lives no longer than its claim;
   - `terminationMessagePath` somewhere the guest cannot reach, such as
     `/root/termination-log`. The default, `/dev/termination-log`, is a file the kubelet
     mounts from the node's disk, writable by every user in the container (measured: 64 MiB
@@ -187,15 +245,11 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
 
 ### Hardened mode and the pod network
 
-With `PLIMSOLL_HARDENED=1` plimsolld refuses to serve this provider unless
-`SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1` states that the pod network between it and the
-sandbox pods is authenticated and encrypted (a network plugin with WireGuard or IPsec, or a
-service mesh with mutual TLS). The reason: the TLS channel above does not yet tie a
-connection to the one pod dialed. Every pod's terminator serves the same certificate, so the
-check proves the peer is a plimsoll sandbox pod, not which one, and someone who can rewrite
-traffic between plimsolld and the pods could send one caller's run into another caller's pod.
-The daemon cannot see whether the network beneath prevents that, so the operator states it.
-The requirement is lifted when each pod has a key of its own and the daemon checks it.
+With `PLIMSOLL_HARDENED=1` plimsolld requires `SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN`,
+the trust domain of each pod's identity, which the provider requires in every mode too. It
+asks for no statement about the pod network: the channel below checks, in every handshake,
+that the peer is the pod plimsolld read. `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK`, the
+statement earlier releases asked for, is gone.
 
 ### The control channel is TLS
 
@@ -208,58 +262,64 @@ and authenticated by plimsoll itself:
 
 - In the pod, `plimsoll-sandboxd-tls` is the container's first process. It refuses to start
   unless sandboxd's flags put it on loopback port 9091 alone and give it one token digest to
-  check (`--auth-token-sha256`, never a token file), and the key file is closed to every user
-  but root; then it starts sandboxd, waits for its port, and listens on 9090 (so a
-  readiness probe on 9090 means the whole chain is up). Each connection must finish a TLS 1.3
-  handshake within 10 seconds and agree on HTTP/2 before a byte reaches sandboxd; the bytes
-  are then copied unchanged both ways. It reads the certificate and key again at every
-  handshake, so a rotated Secret reaches warm pods without a restart. A failed handshake is
+  check (`--auth-token-sha256`, never a token file), `/etc/plimsoll` is root's and closed to
+  everyone else, and the key and certificate have exactly mode 0440 for owner root and group
+  root, as the driver writes them; then it starts sandboxd, waits for its port, and listens
+  on 9090 (so a readiness probe on 9090 means the whole chain is up). Each connection must
+  finish a TLS 1.3 handshake within 10 seconds and agree on HTTP/2 before a byte reaches
+  sandboxd; the bytes are then copied unchanged both ways. It reads the certificate and key
+  again at every handshake, so a certificate the driver renewed is served without a
+  restart (measured under runc, gVisor and both Kata handlers). A failed handshake is
   logged by its kind (not TLS, timed out, no protocol in common), never with the error's text,
   which can quote what the client sent, and at most 16 lines a minute.
 - plimsolld speaks HTTP/2 over TLS 1.3 alone, to `https://<pod address>:9090`: no HTTP/1.1, no
   cleartext HTTP/2 and no proxy. It accepts only a certificate that chains to the CA in
-  `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE` and carries the configured name, and refuses a
-  connection with no verified chain or no HTTP/2 even if a later change skipped a check.
-- A pod that cannot prove itself (a certificate from another CA, another name, an expired
-  one, a port that speaks no TLS) gets nothing: the handshake comes before any request, so
-  neither the token nor any code is sent, and the run is refused, marked not dispatched
-  (reason `environment`), with the CA file and the name in the message. At startup the smoke
-  test's own claims take the same path, so a wrong CA or name stops plimsolld from serving.
-  A terminator that refuses to start leaves its pod unready; its reason is in the pod's log.
+  `SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE`, carries exactly the configured DNS name, and
+  carries exactly one URI name, the identity of the pod this run claimed, built from the
+  namespace, name and UID plimsolld read from the API server just before; no IP address or
+  other name may stand beside them. It refuses a connection with no verified chain or no
+  HTTP/2 even if a later change skipped a check.
+- Each claim has a connection of its own: a client made for that pod, closed when the
+  claim is released. A pod's address passes to another pod once it is deleted, and a pooled
+  connection is checked only at its handshake, so one client shared by every claim could
+  carry a later run's token over a connection checked for an earlier pod.
+- A pod that cannot prove itself (a certificate from another CA, another name, another
+  pod's identity, the same name with another UID, an expired one, a port that speaks no
+  TLS) gets nothing: the handshake comes before any request, so neither the token nor any
+  code is sent, and the run is refused, marked not dispatched (reason `environment`), with
+  the CA file, the name and the identity expected in the message. At startup the smoke
+  test's own claims take the same path, so a wrong CA, name or trust domain stops plimsolld
+  from serving. A terminator that refuses to start leaves its pod unready; its reason is in
+  the pod's log.
 - The guest cannot read the key: `/etc/plimsoll` is root's with mode 0700, the key file is
-  root's and closed to group and others (0400 as the example mounts it), the guest is another user with no capabilities, and the key's only
-  other copy is in the terminator's memory, process 1, which the guest cannot open. The
-  smoke test proves both from inside the pod ([below](#startup-smoke-test)).
+  root's and group root's, mode 0440, the guest is another user with no group and no
+  capabilities, and the key's only other copy is in the terminator's memory, process 1,
+  which the guest cannot open. The smoke test proves from inside the pod that the guest's
+  open of the key is refused and that the guest holds no group
+  ([below](#startup-smoke-test)).
 
-**What it does not prove: which pod answered.** Every pod of a deployment serves the same
-certificate and key, so the certificate proves the peer is a plimsoll sandbox pod of this
-deployment, not the pod plimsolld dialed. plimsolld dials each claimed pod's address and checks
-the certificate against one fixed name, never against that address. Someone who can rewrite
-traffic on the pod network (a compromised node or network plugin component, or address or
-route manipulation on the node network) can therefore redirect plimsolld's connection for one
-caller's pod to another pod of the same deployment, for example one the attacker's own run has
-claimed. The handshake passes, the tier check passes (the other pod is a genuine pod of the
-same tier), and plimsolld then sends that run's token, code, files and plan into the wrong
-pod, where code the attacker controls could read them and shape the output returned under the
-run's record. The channel stops someone who only watches or alters the traffic without being
-able to redirect it to a pod of the deployment; it does not stop this on-path redirection. The
-fix, a certificate or key per pod bound to the pod dialed, is not built yet; until it is,
-hardened mode requires `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`, your statement that the
-network layer described next is in place ([above](#hardened-mode-and-the-pod-network)).
+**What it proves: which pod answered.** Each pod's certificate names that pod's UID, and
+plimsolld checks it against the pod it read, so someone who can rewrite traffic on the pod
+network (address or route manipulation, a compromised network plugin component) and owns
+another pod of the deployment, for example one their own run claimed, cannot receive a
+caller's run by redirecting plimsolld's connection there: the other pod's certificate is
+valid but names another UID, and the handshake fails before anything is sent. A pod
+deleted and made again under the same name has a new UID and fails the same way. A guest
+that became root in its pod (which takes a flaw in the runtime's boundary, not a setting)
+reads that pod's key, which passes for that pod alone, for as long as that pod lives.
 
-If you fear an attacker with an on-path position on the pod network, do not rely on this
-channel alone. Run the pod network as an authenticated, encrypted one that ties traffic to the
-workload it reaches: a network plugin with WireGuard or IPsec between nodes, or a service mesh
-with mutual TLS in which each pod has its own identity, and keep the network policy above, so
-that a redirect is dropped at the network layer. plimsolld cannot check it, which is why
-hardened mode asks you to state it rather than testing for it.
-
-What else it leaves: a guest that became root in its pod (which takes a flaw in the runtime's
-boundary, not a setting) could read the shared key and, from a position on the pod network,
-pass for any pod until the Secret is replaced. Rotate the Secret and the sandboxd token on a
-schedule (a new token file, the template's `--auth-token-sha256` of it, and a daemon
-restart). To change the CA, put the old and the new certificate in the CA file, restart
-plimsolld, replace the Secret, then drop the old certificate.
+**What it does not stop: a compromised node, or anyone who may have a pod's certificate
+signed.** The driver runs on every node with a service account that may create certificate
+requests in every namespace and read every pod (measured on its v0.16.1), so root on any
+node, or anyone holding the driver's token, can have a certificate signed for any pod's
+identity and pass for it. So can any account that may create certificate requests or pods in
+the pool's namespace while cert-manager's built-in approver signs them (step 4
+[above](#what-the-operator-sets-up)). Per-pod keys move the attacker from "on the pod
+network" to "holds a node or the issuer"; they do not take the node out of the trusted
+base. Rotate the sandboxd token on a schedule (a new token file, the template's
+`--auth-token-sha256` of it, and a daemon restart). To change the CA, put the old and the
+new certificate in the CA file, restart plimsolld, change the issuer, let the pool refill,
+then drop the old certificate.
 
 **A closed pod and container schema.** Both the template and each actual pod refuse unknown
 pod-spec and container fields, including unknown fields inside decoded probes, mounts and

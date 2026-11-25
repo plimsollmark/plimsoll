@@ -8,8 +8,8 @@
 #
 # A SandboxTemplate runs it as root with only CAP_SETUID and CAP_SETGID, with the command
 # /usr/local/bin/plimsoll-sandboxd-tls and sandboxd's flags, among them
-# --listen-host=127.0.0.1, --grpc-port=9091 and --auth-token-sha256, and the TLS Secret
-# mounted at /etc/plimsoll/sandboxd-tls (docs/agentsandbox.md). Build with
+# --listen-host=127.0.0.1, --grpc-port=9091 and --auth-token-sha256, and the pod's own key
+# volume mounted at /etc/plimsoll/sandboxd-tls (docs/agentsandbox.md). Build with
 #   docker build -f docker/agentsandbox.Dockerfile -t plimsoll/sandbox-agentsandbox docker
 # Its context is docker/ filtered by agentsandbox.Dockerfile.dockerignore, which admits
 # the terminator's source alone. The sandboxd build fetches the agent-sandbox source and
@@ -43,8 +43,8 @@ RUN printf 'module plimsoll-sandboxd-tls\n\ngo 1.26\n' > go.mod \
 
 FROM plimsoll/sandbox:latest
 USER root
-# /etc/plimsoll holds the TLS Secret's mount; root's and closed to every other user, so
-# the guest cannot even reach the key file below it, whatever the Secret's own modes.
+# /etc/plimsoll holds the key volume's mount; root's and closed to every other user, so
+# the guest cannot even reach the key file below it, whatever the volume's own modes.
 RUN apk add --no-cache setpriv && /bin/setpriv --version | grep -q util-linux \
  && install -d -o root -g root -m 0700 /etc/plimsoll /etc/plimsoll/sandboxd-tls
 COPY --from=sandboxd /sandboxd /usr/local/bin/sandboxd

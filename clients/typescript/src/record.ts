@@ -23,7 +23,7 @@ import {
   UNANSWERED_CODES as UNANSWERED_CODE_LIST,
 } from "./tables.gen.ts";
 
-import { wireBytes, WireShapeError, type WireRecord, type WireRunResponse, type WireSoftwareRule } from "./wire.ts";
+import { INT64, UINT32, UINT64, wholeInt, wireBytes, WireShapeError, type WireRecord, type WireRunResponse, type WireSoftwareRule } from "./wire.ts";
 
 const INSTANCE_FORM = new RegExp(INSTANCE_PATTERN);
 
@@ -291,10 +291,10 @@ export type RunRecord = {
 // big reads a 64-bit integer field the JSON codec sends as a decimal string (or a
 // number). Anything else is an answer this client cannot read, a PlimsollError,
 // never BigInt's own SyntaxError or RangeError.
-function big(v: string | number | undefined, name: string): bigint {
-  if (v === undefined) return 0n;
-  if ((typeof v === "string" && /^-?[0-9]{1,20}$/.test(v)) || (typeof v === "number" && Number.isSafeInteger(v))) return BigInt(v);
-  throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not an integer`);
+function big(v: unknown, name: string, range: readonly [bigint, bigint] = INT64): bigint {
+  const n = wholeInt(v, range);
+  if (n === undefined) throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not an integer in one whole decimal`);
+  return n;
 }
 
 // text and flag read a record field the JSON codec sends as a string or a boolean: absent is "" or false, and any
@@ -314,7 +314,7 @@ function flag(v: unknown, name: string): boolean {
 
 export function recordFromWire(m: WireRecord): RunRecord {
   return {
-    version: m.version ?? 0,
+    version: Number(big(m.version, "version", UINT32)),
     requestSha256: text(m.requestSha256, "requestSha256"),
     resultSha256: text(m.resultSha256, "resultSha256"),
     provider: text(m.provider, "provider"),
@@ -326,7 +326,7 @@ export function recordFromWire(m: WireRecord): RunRecord {
     startedUnixMs: big(m.startedUnixMs, "startedUnixMs"),
     endedUnixMs: big(m.endedUnixMs, "endedUnixMs"),
     session: text(m.session, "session"),
-    sequence: big(m.sequence, "sequence"),
+    sequence: big(m.sequence, "sequence", UINT64),
     previousSha256: text(m.previousSha256, "previousSha256"),
     unanswered: text(m.unanswered, "unanswered"),
     instance: text(m.instance, "instance"),
@@ -350,7 +350,23 @@ export function recordDigest(r: RunRecord): string {
 }
 
 /**
- * The fields a record's version does not cover are unset, it states a result digest or,
+ * Which calls each published record version records (record.published's answered and
+ * unanswered flags): versions 1 and 2 answered calls only, version 3 unanswered session
+ * calls only, versions 4 and 5 both. Published versions are frozen, so this is too; a
+ * version missing here records nothing, so a new one is refused until it is added, and a
+ * test holds the keys to RECORD_FIELDS' (finding release-85).
+ */
+export const RECORD_KINDS: Readonly<Record<number, { answered: boolean; unanswered: boolean }>> = {
+  1: { answered: true, unanswered: false },
+  2: { answered: true, unanswered: false },
+  3: { answered: false, unanswered: true },
+  4: { answered: true, unanswered: true },
+  5: { answered: true, unanswered: true },
+};
+
+/**
+ * The record records a kind of call its version records, the fields its version does not
+ * cover are unset, it states a result digest or,
  * for an unanswered call, an error code, exactly one, and the code is one of the closed
  * set, its tier is one of TIERS (never "unknown" or empty, whatever floor the request
  * named), it does not end before it starts, answered or not, its qualification and daemon
@@ -362,12 +378,16 @@ export function statesOnlyProblem(r: RunRecord): string | undefined {
   for (const [name, text] of shownFields(r)) {
     if (typeof text !== "string" || !validText(text)) return `the record's ${name} is not UTF-8 or holds a control or bidirectional format character`;
   }
+  const unanswered = r.unanswered !== "";
+  const kinds = RECORD_KINDS[r.version];
+  if (!kinds) return `a version ${r.version} record is not of a published version`;
+  if (unanswered && !kinds.unanswered) return `a version ${r.version} record cannot record an unanswered call`;
+  if (!unanswered && !kinds.answered) return `a version ${r.version} record records only an unanswered call`;
   const covered = RECORD_FIELDS[r.version] ?? [];
   for (const name of RECORD_FIELDS[RECORD_VERSION]!) {
     const v = recordField(r, name);
     if (!covered.includes(name) && v !== "" && v !== false && v !== 0n) return `a version ${r.version} record does not cover ${name}, so it cannot state one`;
   }
-  const unanswered = r.unanswered !== "";
   if (unanswered === (r.resultSha256 !== "")) return "a record states a result or, for an unanswered call, an error code, exactly one";
   if (unanswered && !UNANSWERED_CODES.has(r.unanswered)) return `an unanswered call's record names ${JSON.stringify(r.unanswered)}, not a Connect code`;
   if (!(TIERS as readonly string[]).includes(r.isolation)) return `the record's isolation ${JSON.stringify(r.isolation)} is not a tier (${TIERS.join(", ")})`;
@@ -512,4 +532,50 @@ export function checkRecord(
   }
   if (r.sha256 !== recordDigest(r)) return { problem: `record digest ${r.sha256}, its fields digest to ${recordDigest(r)}` };
   return { record: r };
+}
+
+/**
+ * Checks the answer an attach returned for a lost call (AttachSessionResponse.lostAnswer)
+ * against that call's record, which the caller has already checked against its
+ * checkpoint and the request digest it named (record.CheckLostAnswer): the answer carries
+ * exactly that record, which is a live answered call's, and one result of a session call's
+ * kind whose result digest is the record's, stating the evidence the record states. The
+ * request itself is not at hand, only its digest, so the record's request digest and
+ * software rule stand for it. Returns the result's kind, or the reason it does not check.
+ */
+export function checkLostAnswer(resp: WireRunResponse, lost: RunRecord): { kind: "javascript" | "project" | "cell" } | { problem: string } {
+  if (resp === null || typeof resp !== "object" || Array.isArray(resp)) return { problem: "the lost call's answer is not an object" };
+  if (!resp.record) return { problem: "the lost call's answer carries no run record" };
+  const r = recordFromWire(resp.record);
+  if (!sameRecord(r, lost)) return { problem: "the lost call's answer carries another record than the lost call's" };
+  if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
+  if (r.unanswered !== "") return { problem: `an answer came for a call whose record states it ended unanswered (${r.unanswered})` };
+  const bounds = statesOnlyProblem(r);
+  if (bounds !== undefined) return { problem: bounds };
+  if (r.sha256 !== recordDigest(r)) return { problem: `record digest ${r.sha256}, its fields digest to ${recordDigest(r)}` };
+  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  const kind = kinds[0];
+  if (kinds.length !== 1 || kind === "module" || kind === undefined) return { problem: "the lost call's answer holds no one result of a session call's kind" };
+  let result: string;
+  try {
+    result = resultDigest(resp);
+  } catch (e) {
+    if (e instanceof WireShapeError) return { problem: `the lost call's answer is malformed: ${e.message}` };
+    throw e;
+  }
+  if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the lost call's answer digests to ${result}` };
+  if (
+    r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "") || r.environment !== (resp.environment ?? "") ||
+    r.instance !== (resp.instance ?? "") || r.isolationQualification !== (resp.isolationQualification ?? "") || r.warm !== (resp.warm ?? false) ||
+    r.daemonVersion !== (resp.daemonVersion ?? "") || r.softwareIdentity !== (resp.softwareIdentity ?? "")
+  ) {
+    return { problem: "the lost call's answer states other evidence than its record" };
+  }
+  return { kind };
+}
+
+// Whether two records read off the wire are the same record, field by field (Go: proto.Equal
+// on the wire messages).
+function sameRecord(a: RunRecord, b: RunRecord): boolean {
+  return (Object.keys(a) as (keyof RunRecord)[]).every((k) => a[k] === b[k]);
 }

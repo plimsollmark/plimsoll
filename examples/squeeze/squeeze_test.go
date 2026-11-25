@@ -997,9 +997,6 @@ func TestCanaryDemoTranscript(t *testing.T) {
 		t.Log("SQUEEZE_RERUN_CANARY not set: the transcript is checked, the script not rerun")
 		return
 	}
-	if _, err := os.Stat("canary-demo.sh"); errors.Is(err, os.ErrNotExist) {
-		t.Skip("canary-demo.sh is not in this checkout: the canary check is not part of the open-source release")
-	}
 	cmd := exec.Command("sh", "examples/squeeze/canary-demo.sh")
 	cmd.Dir = filepath.Join("..", "..")
 	out, err := cmd.Output()

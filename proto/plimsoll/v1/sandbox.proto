@@ -24,7 +24,7 @@ service SandboxService {
   // daemon serves exactly one: a request that omits it is InvalidArgument and a
   // request on any other number is Unimplemented, in both cases before the
   // payload is read. The number is bumped when such a field is added; an
-  // informational field does not bump it. Current number: 6 (the Go constant
+  // informational field does not bump it. Current number: 8 (the Go constant
   // protocol.Number, which Describe reports).
   rpc Run(RunRequest) returns (RunResponse);
   // Describe reports the protocol number, the active provider, current isolation
@@ -51,7 +51,8 @@ service SandboxService {
   // NotFound, all with the same text.
   rpc AttachSession(AttachSessionRequest) returns (AttachSessionResponse);
   // SessionRun runs one call in an open session. Its record is chained to the
-  // session's previous call (RunRecord's session fields).
+  // session's previous call (RunRecord's session fields). The call states the head it
+  // expects (SessionRunRequest.head), and runs only when that is the session's head.
   rpc SessionRun(SessionRunRequest) returns (SessionRunResponse);
   // CloseSession ends a session, or collects the end of one that ended by
   // itself, and states how many calls it executed and the last record's digest,
@@ -565,6 +566,16 @@ message OpenSessionRequest {
   // daemon refuses before reading the request. A cell for one call needs no session:
   // RunRequest.prefer_warm.
   bool warm_only = 9;
+  // Keep no call's answer. By default the daemon keeps, in memory only, the answer to
+  // the session's last answered call (the whole RunResponse, its output included) until
+  // the next call starts or the session suspends or ends, so that a worker taking the
+  // session over across that call's lost answer gets it back
+  // (AttachSessionResponse.lost_answer). An answer above the operator's cap
+  // (SANDBOX_SESSION_KEPT_ANSWER_BYTES) is not kept. Set this when the caller promises
+  // its users that the daemon retains no output; it holds for the whole session and
+  // cannot be changed per call. It is no way to keep a secret from the daemon: every
+  // answer passes through it.
+  bool keep_no_answer = 10;
 }
 
 message OpenSessionResponse {
@@ -588,8 +599,10 @@ message OpenSessionResponse {
   SoftwareRule software_rule = 11; // immutable rule established at open
 }
 
-// SessionCheckpoint is public chain state, never a credential. Applications must
-// protect its integrity separately from conversation history.
+// SessionCheckpoint is public chain state, never a credential: the ownership
+// generation, the count of calls the session has seen and the last one's record
+// digest (empty before the first call). The daemon's own is the session's head.
+// Applications must protect its integrity separately from conversation history.
 message SessionCheckpoint {
   uint64 generation = 1;
   uint64 calls = 2;
@@ -619,6 +632,24 @@ message AttachSessionResponse {
   // the call that ran after the checkpoint, which the caller checks against the
   // checkpoint and the digest it named before carrying the chain on.
   RunRecord lost_record = 3;
+  // Set only beside lost_record, when the daemon answered that call and still keeps its
+  // answer (OpenSessionRequest.keep_no_answer): the answer that never reached the
+  // worker which sent the call. The caller believes it only when its record is
+  // lost_record and its result digest matches, as for any run answer; an answer that
+  // comes unasked, or without lost_record, is refused. Absent when the call ended
+  // unanswered (it has no answer), when the answer was above the operator's cap, when
+  // the session opened with keep_no_answer, and when a call has started or the session
+  // has suspended since.
+  RunResponse lost_answer = 4;
+}
+
+// SessionHeadMismatch is the error detail of a session call refused because the head
+// it stated (SessionRunRequest.head) carries the session's current generation but
+// another count or last record digest than the session's. It carries the daemon's
+// head, so its owner can tell how far behind or ahead it is. It goes only to the
+// current owner: a stale generation is refused without it.
+message SessionHeadMismatch {
+  SessionCheckpoint head = 1;
 }
 
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
@@ -634,10 +665,22 @@ message SessionRunRequest {
   int32 timeout_ms = 4;
   string session_id = 5;
   SoftwareRule software_rule = 6;
-  // The current ownership number (OpenSessionResponse.generation, or the one
-  // AttachSession returned). Zero is InvalidArgument; any other number but the
-  // current one is FailedPrecondition, reason permission. Both are not dispatched.
-  uint64 generation = 7;
+  // 7 was generation, the ownership number alone; head carries it now, and the
+  // number stays reserved so it can never be reused with another meaning.
+  reserved 7;
+  // The head the caller expects the call to run on: the current ownership generation
+  // (OpenSessionResponse.generation, or the one AttachSession returned), the count of
+  // calls and the last record digest of the answers it has seen. Under the session's
+  // turn, before anything is dispatched, the daemon compares it with its own. A missing
+  // head, a zero generation or a malformed count and digest is InvalidArgument; a
+  // generation other than the current one is FailedPrecondition, reason permission (a
+  // stale owner); a current generation with another count or digest is
+  // FailedPrecondition, reason request (a head mismatch: a call ran whose answer this
+  // caller has not seen, or the caller counts calls that did not run), with the
+  // daemon's head as a SessionHeadMismatch detail. All are not dispatched, and none
+  // moves the head. It is not part of the request digest: the record already binds its
+  // predecessor.
+  SessionCheckpoint head = 8;
   oneof payload {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
@@ -686,8 +729,8 @@ message SessionRunResponse {
 message CloseSessionRequest {
   uint32 protocol = 1;
   string session_id = 2;
-  // The current ownership number, checked as SessionRunRequest.generation is,
-  // before anything of the session is closed.
+  // The current ownership number, checked as SessionRunRequest.head's generation is,
+  // before anything of the session is closed. A close needs no head: it runs nothing.
   uint64 generation = 3;
 }
 

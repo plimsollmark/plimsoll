@@ -47,7 +47,7 @@ func TestPydanticAICrashDocker(t *testing.T) {
 			`^worker B   : the checkpoint store holds call ([0-9]+) as pending \(request [0-9a-f]{12}\.\.\.\), worker A's call that never settled; the kit gives it up to 30 s to settle, then takes the sandbox over across it$`,
 			`^worker B   : PydanticAI resumes the call that was in flight \(call-1\): python3 triage\.py$`,
 			`^worker B   : took the sandbox over \(ref plimsoll/[0-9a-f]+\.\.\., ownership generation 2\) across that call; plimsoll's record of it, call [0-9]+: the call ended without an answer \(canceled\), after 1\.[0-9] s$`,
-			`^worker B   : plimsoll did not send call-1 again, and told the model: "plimsoll: this exact command was already sent once in this sandbox, and the call ended without an answer after 1\.[0-9] s: .*It was not run again\.`,
+			`^worker B   : plimsoll did not send call-1 again, and told the model: "plimsoll: this tool call was not run\. .*That call ended without an answer after 1\.[0-9] s: .*Then send this tool call again if you still want it; it will be run\."$`,
 			`^worker B   : the model read by_route\.json, which the cut command had written$`,
 			`^worker B   : first answer refused by the output check: by_route\.json says /checkout has error_rate 0\.[0-9]+ `,
 			`^worker B   : typed answer: Incident\(route='/checkout', first_bad_minute='12:04', errors=57, requests=184, error_rate=0\.31, evidence='by_route\.json'\)$`,

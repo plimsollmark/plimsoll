@@ -110,6 +110,14 @@ func buildAnswerCases(t *testing.T) []answerCase {
 	}
 	s, b = written(t, ce)
 	add("a session that ended", s, js, b, "match", "", connect.CodeOf(ended).String(), "request", "expired", false)
+	// A call whose head is not the session's, as checkHead writes it: marked, with the
+	// daemon's head beside the mark.
+	mismatch := (&sessionEntry{generation: 1, calls: 1, last: strings.Repeat("ab", 32)}).checkHead(&plimsollv1.SessionCheckpoint{Generation: 1})
+	if !errors.As(mismatch, &ce) {
+		t.Fatal("a head mismatch is not a connect error")
+	}
+	s, b = written(t, ce)
+	add("a call whose head is not the session's", s, js, b, "match", "", "failed_precondition", "request", "", false)
 	if !errors.As(mapSandboxErr(errors.New("the runner vanished")), &ce) {
 		t.Fatal("an internal fault did not map to a connect error")
 	}

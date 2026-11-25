@@ -97,7 +97,7 @@ The kit asks for a shell and files to run the agent's commands in, and plimsoll 
 | Deep Agents (LangChain) | `plimsoll-client[deepagents]` | [Python client guide, LangChain tool and Deep Agents backend (INTERNAL · documentation →)](../clients/python/README.md#langchain-tool-and-deep-agents-backend) | no page yet |
 | Google ADK environment | `plimsoll-client[adk]` | [Google ADK guide, the environment (INTERNAL · documentation →)](google-adk.md#a-kept-sandbox-with-a-shell-and-files) | no page yet |
 | Microsoft Agent Framework | `agent-framework-plimsoll` | [Python client guide, Microsoft Agent Framework shell tool and code tool (INTERNAL · documentation →)](../clients/python/README.md#microsoft-agent-framework-shell-tool-and-code-tool) | no page yet |
-| PydanticAI | `pydantic-ai-plimsoll` (next release) | [Python client guide, PydanticAI workspace (INTERNAL · documentation →)](../clients/python/README.md#pydanticai-workspace) | no page yet |
+| PydanticAI | `pydantic-ai-plimsoll` | [Python client guide, PydanticAI workspace (INTERNAL · documentation →)](../clients/python/README.md#pydanticai-workspace) | no page yet |
 | Claude Managed Agents | `plimsoll-client[anthropic]` | [Python client guide, Claude Managed Agents worker (INTERNAL · documentation →)](../clients/python/README.md#claude-managed-agents-self-hosted-worker) | no page yet |
 
 What each keeps between calls, what it leaves out, and whether its code can call a web API:
@@ -147,7 +147,8 @@ called; replacing it with a real model is one line. Each file's header says what
 which daemon to start and how to run it, and a test runs every one of them against a real Docker
 daemon. One more PydanticAI program, [kill the worker, keep the sandbox](../clients/python/examples/pydantic_ai_crash.py),
 kills the process running an agent while its command runs and has a second process carry the run on
-in the same sandbox: plimsoll's record of the lost call says it ended without an answer, the repeat
+in the same sandbox: plimsoll's record of the lost call says it ended without an answer, the call
 that PydanticAI's resume sends is not sent, the model is told so, and the two processes' run
-records form one chain the daemon's count at close matches. The refusal covers only a repeat sent
-as the first call after the takeover; its header says so first, with every other limit.
+records form one chain the daemon's count at close matches. The model is told on its first tool
+call after the takeover, whichever it is, and a command it sends again after that runs; its header
+says so first, with every other limit.

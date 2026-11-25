@@ -178,28 +178,28 @@ class Transport(unittest.TestCase):
             Client(self.stub.url).describe()
         self.assertEqual(cm.exception.info.protocol, PROTOCOL + 1)
 
-    def test_this_client_speaks_protocol_7_and_a_protocol_6_daemon_refuses_it(self) -> None:
-        # Protocol 7 came with the provider name's rule (record.ValidText, hunt-security-39,
-        # 2026-11-21): this client refuses a record whose provider holds a
-        # control or bidirectional character, which a protocol 6 client accepted. A daemon of
-        # protocol 6 refuses this client's run before anything runs, and its Describe is
-        # refused here.
-        self.assertEqual(PROTOCOL, 7, "this test pins protocol 7 to the provider name's rule")
+    def test_this_client_speaks_protocol_8_and_a_protocol_7_daemon_refuses_it(self) -> None:
+        # Protocol 8 came with the head on every session call (lost call option 3, 2026-11-24):
+        # a daemon of protocol 7 would ignore the head and run a call made from stale state,
+        # which this client's daemon refuses. Protocol 7 (the provider name's rule,
+        # record.ValidText, hunt-security-39) still holds. A daemon of protocol 7 refuses this
+        # client's run before anything runs, and its Describe is refused here.
+        self.assertEqual(PROTOCOL, 8, "this test pins protocol 8 to the head on every session call")
         self.assertFalse(valid_text("docker\x1b[2J"))
         refusal = {
             "code": "unimplemented",
-            "message": "this daemon serves protocol 6 and the request states 7; nothing ran",
+            "message": "this daemon serves protocol 7 and the request states 8; nothing ran",
             "details": [{"type": "plimsoll.v1.NotDispatched", "value": "CAM"}],
         }
         self.stub.reply = lambda h: send(h, 501, json.dumps(refusal).encode())
         with self.assertRaises(ProtocolMismatchError) as cm:
             Client(self.stub.url).run_javascript("1")
         self.assertEqual(cm.exception.not_dispatched, "protocol")
-        self.assertEqual(json.loads(self.stub.seen[0]["body"])["protocol"], 7)
-        self.stub.reply = lambda h: send(h, 200, describe_answer(6))
+        self.assertEqual(json.loads(self.stub.seen[0]["body"])["protocol"], 8)
+        self.stub.reply = lambda h: send(h, 200, describe_answer(7))
         with self.assertRaises(ProtocolMismatchError) as dm:
             Client(self.stub.url).describe()
-        self.assertEqual(dm.exception.info.protocol, 6)
+        self.assertEqual(dm.exception.info.protocol, 7)
 
     def test_a_declared_oversized_answer_is_refused_unread(self) -> None:
         self.stub.reply = lambda h: send(h, 200, b"{}", length=MAX_RESPONSE_BYTES + 1)

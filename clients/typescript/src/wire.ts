@@ -30,8 +30,12 @@ export type WireCellRun = { language: string; code: string; files?: { path: stri
 
 export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun; cell?: WireCellRun };
 
-/** A session call: the run request with the session ID and the current ownership generation (a uint64, as a decimal string). */
-export type WireSessionRunRequest = WireRunRequest & { sessionId: string; generation: string };
+/**
+ * A session call: the run request with the session ID and the head the call expects to run
+ * on (the current ownership generation, the count of calls and the last record's digest);
+ * the daemon runs it only on that head (protocol 8).
+ */
+export type WireSessionRunRequest = WireRunRequest & { sessionId: string; head: WireSessionCheckpoint };
 
 export type WireRecord = {
   version?: number;
@@ -165,6 +169,8 @@ export type WireOpenSessionRequest = {
   languages?: string[];
   owner?: string;
   warmOnly?: boolean;
+  /** Keep no call's answer for a takeover (protocol 8): the daemon then retains no output. */
+  keepNoAnswer?: boolean;
 };
 
 export type WireOpenSessionResponse = {
@@ -189,7 +195,13 @@ export type WireSessionCheckpoint = { generation?: string | number; calls?: stri
 
 export type WireAttachSessionRequest = { protocol: number; session: string; checkpoint: WireSessionCheckpoint; traceId?: string; lostRequestSha256?: string };
 
-export type WireAttachSessionResponse = { sessionInfo?: WireOpenSessionResponse; checkpoint?: WireSessionCheckpoint; lostRecord?: WireRecord };
+/** lostAnswer comes only beside lostRecord: the lost call's answer, when the daemon kept it (protocol 8). */
+export type WireAttachSessionResponse = {
+  sessionInfo?: WireOpenSessionResponse;
+  checkpoint?: WireSessionCheckpoint;
+  lostRecord?: WireRecord;
+  lostAnswer?: WireRunResponse;
+};
 
 export type WireCloseSessionResponse = {
   session?: string;
@@ -205,6 +217,32 @@ export type WireError = {
   details?: { type?: string; value?: string }[];
 };
 
+// At most 20 digits: a 64-bit number has no more, and the test stays one short pass.
+const WHOLE_DECIMAL = /^-?(?:0|[1-9][0-9]{0,19})$/;
+
+/**
+ * Reads an integer field of the daemon's answer: a JSON number that is a safe integer, or a
+ * string that is one whole decimal (an optional minus and digits with no leading zero, the
+ * form every client writes), within [lo, hi]. Anything else ("5 6", "5,", "5" and a zero
+ * byte, "05", " 5", "5.0", "5e0", "0x5") is not read: undefined, never a value read from its
+ * leading digits or by BigInt's and Number's looser grammars. Absent is 0. Go reads integer
+ * strings the same way (record.UnmarshalJSON), where protojson alone reads "5 6" as 5
+ * (finding release-90).
+ */
+export function wholeInt(v: unknown, [lo, hi]: readonly [bigint, bigint]): bigint | undefined {
+  let n: bigint | undefined;
+  if (v === undefined || v === null) n = 0n;
+  else if (typeof v === "number" && Number.isSafeInteger(v)) n = BigInt(v);
+  else if (typeof v === "string" && WHOLE_DECIMAL.test(v)) n = BigInt(v);
+  return n !== undefined && n >= lo && n <= hi ? n : undefined;
+}
+
+/** The ranges of the protobuf integer kinds, for wholeInt. */
+export const UINT32: readonly [bigint, bigint] = [0n, (1n << 32n) - 1n];
+export const INT32: readonly [bigint, bigint] = [-(1n << 31n), (1n << 31n) - 1n];
+export const UINT64: readonly [bigint, bigint] = [0n, (1n << 64n) - 1n];
+export const INT64: readonly [bigint, bigint] = [-(1n << 63n), (1n << 63n) - 1n];
+
 /** A bytes field that is not base64 text: the answer is not the protocol's. */
 export class WireShapeError extends Error {}
 
@@ -213,7 +251,7 @@ export class WireShapeError extends Error {}
  * accepted: the answer is parsed JSON, and Buffer.from given an object with a
  * "length" allocates that many bytes and reads each index, so a 30-byte
  * {"length":2000000000} would cost 2 GB and a blocked event loop past the
- * response's 32 MiB cap (Claude Security scan, 2026-10-27).
+ * response's 32 MiB cap (security scan, 2026-10-27).
  *
  * The text must be base64 throughout, standard or URL-safe, padded or not, as protobuf
  * JSON and Connect error details may carry it, and as the Python client reads it:

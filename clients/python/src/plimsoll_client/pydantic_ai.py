@@ -45,31 +45,34 @@ What it is, and what it is not, stated here and in the docstrings:
   configuration and the session's public fingerprint, never the session ID (a capability) or a URL.
 - **A call whose answer was lost.** With a checkpoint store, a call whose answer never reached its process leaves
   the store pending with that call, and the next process takes the session over across it; the takeover returns
-  the lost call's record, which goes to the ``record_sink`` before anything else, and which says whether the daemon
-  answered the call (a result digest, which does not show that the command ran to its end) or the call ended without
-  an answer (an unanswered code, which does not show that the command started: it may have done none, part or all of
-  its work). The client refuses to send that call again only when it is the first call after the takeover. When
-  that first call is ``plimsoll_shell`` repeating the lost command, the model gets a failed tool result
-  (PydanticAI's ``ToolFailed``) saying what the record says, and the run goes on. Any other first call, the kit's
-  own calls and each file tool's included, is sent as usual, so a lost command can run again after it, and a lost
-  file operation can be sent again: a file tool sends calls of its own before its read or write.
+  the lost call's record, which says whether the daemon answered the call (a result digest, which does not show
+  that the command ran to its end) or the call ended without an answer (an unanswered code, which does not show that
+  the command started: it may have done none, part or all of its work), and the call's answer when the daemon kept
+  it. The session is then recovering: plimsoll's client refuses every call until it is resolved. The model's next
+  tool call after the takeover, whichever it is (``plimsoll_shell`` or a file tool), is not run: the lost call's
+  record goes to the ``record_sink``, the model gets a failed tool result (PydanticAI's ``ToolFailed``) saying what
+  the record says, and the lost call's output when its answer came back, cut to ``max_output_chars``, and the backend
+  resolves the session; the run goes on, and the model's next call runs. So a lost command or file operation is
+  never sent again before the model has been told; the model may then send it again on purpose.
 - **Not for durable execution yet.** Under Temporal, DBOS or Prefect a workspace call may run again after its
   answer was lost, and every call rebuilds the backend in whichever worker runs it. The checkpoint store is what
-  makes that safe (a lost call is either never run, or named, and refused if the next call repeats it), but no
-  engine's own test runs here yet, so ``get_workspace`` still refuses a durable run with a ``UserError`` that says
-  so.
+  makes that safe (a lost call is either never run, or named, and no call is sent until the model was told of it),
+  but no engine's own test runs here yet, so ``get_workspace`` still refuses a durable run with a ``UserError`` that
+  says so.
 - **The session ends when its lifetime does**, or when :meth:`PlimsollWorkspace.destroy` closes it; a run never
   closes it (the contract leaves that to whoever holds the ref).
 - **A call that may have run is never reported as one that did not.** :func:`map_error` is the one mapping from
   plimsoll's errors to PydanticAI's. An error without plimsoll's not-dispatched mark raises
-  :class:`PlimsollOutcomeUnknownError`, a ``WorkspaceUnavailableError``, which no engine retries, and so does the
-  refused repeat of a lost call (:class:`PlimsollAlreadySentError`, its subclass: nothing of the repeat was sent,
-  but the lost call may have run); a refusal that another try may pass raises :class:`PlimsollRetryableError`, a
+  :class:`PlimsollOutcomeUnknownError`, a ``WorkspaceUnavailableError``, which no engine retries; the tool call
+  refused for a lost call raises :class:`PlimsollLostCallError` (nothing of it was sent), a plain
+  ``WorkspaceError``, which PydanticAI's file tools give the model as a failed tool result; a refusal that another
+  try may pass raises :class:`PlimsollRetryableError`, a
   ``ConnectionError``; a session that has ended, or that this run can no longer use, raises
   :class:`PlimsollWorkspaceGoneError`.
 - **Records are kept.** Every record the client checked goes to the capability's ``record_sink`` (by default a
   list on the session's backends, :attr:`PlimsollWorkspaceBackend.records`; :class:`JsonLinesRecordSink` writes a
-  file), the record of a call lost before a takeover included, once, at the takeover.
+  file), the record of a call lost before a takeover included, once, before any call of the new worker's is sent
+  (a sink that fails is tried again on the next operation, and nothing is sent until it takes the record).
 
 :func:`plimsoll_code_tool` is plimsoll's stateless code tool (a fresh sandbox per call,
 :class:`~plimsoll_client.execution.CodeExecutor`) as a PydanticAI tool; it answers with the dict
@@ -86,7 +89,6 @@ import dataclasses
 import json
 import logging
 import posixpath
-import re
 import sys
 import threading
 import time
@@ -111,22 +113,23 @@ except ImportError as e:  # pragma: no cover
 from . import _code_tool as ct
 from . import _validate as v
 from ._langsmith import labels as _closed_set_labels
-from ._tables import UNANSWERED_CODES
+from ._lost_call import lost_call_message
 from ._transport import CancelHandle
 from .aio import AsyncClient
 from .checkpoint import CheckpointConflictError, CheckpointStore, CheckpointStoreError
 from .client import Client, Session
 from .errors import (
-    CallAlreadySentError,
     CheckpointMismatchError,
     DataLossError,
+    HeadMismatchError,
     InsufficientIsolationError,
     PlimsollError,
+    RecoveringError,
     SessionEndedError,
     StaleOwnerError,
 )
 from .execution import CodeExecutor
-from .types import ProjectResult, RunRecord, SessionSummary, meets
+from .types import LostCall, ProjectResult, RunRecord, SessionSummary, meets
 from .workspace import MAX_WHOLE_BYTES, STATE_DIR, Workspace, WorkspaceCallError, WorkspacePathError, WorkspaceTooLargeError, _check_text
 from .workspace import close_quietly as _close_quietly
 
@@ -135,7 +138,7 @@ __all__ = [
     "PlimsollWorkspace",
     "PlimsollWorkspaceBackend",
     "PlimsollOutcomeUnknownError",
-    "PlimsollAlreadySentError",
+    "PlimsollLostCallError",
     "PlimsollWorkspaceGoneError",
     "PlimsollRetryableError",
     "JsonLinesRecordSink",
@@ -183,12 +186,19 @@ class PlimsollOutcomeUnknownError(WorkspaceUnavailableError):
         self.result = result
 
 
-class PlimsollAlreadySentError(PlimsollOutcomeUnknownError):
-    """The first call after a takeover repeats the call whose answer was lost before it, and plimsoll's client
-    refused it with nothing sent (``CallAlreadySentError``). A :class:`PlimsollOutcomeUnknownError`, so no engine
-    retries it: the lost call may have done none, part or all of its work. The session's ``lost_call`` holds that
-    call's record when the takeover returned it, and says whether the daemon answered it. ``plimsoll_shell`` tells the model so and
-    the run goes on; any other operation raises it."""
+class PlimsollLostCallError(ToolFailed, WorkspaceError):
+    """The operation was not run: it was the first after a takeover across a call whose answer was lost, and the
+    session was recovering (plimsoll's client refuses every call until the session is resolved). Its message is what
+    the model is told: what plimsoll's record of the lost call says (the record says whether the daemon answered the
+    call), and the lost call's output when its answer came back. The backend resolved the session before raising it,
+    so the next operation runs. PydanticAI's ``ToolFailed`` and a plain ``WorkspaceError`` (not
+    ``WorkspaceUnavailableError``): raised anywhere in a tool's body (a file tool reads the working directory before
+    its own error handling), PydanticAI gives it to the model as a failed tool result and the run goes on. ``lost`` is
+    the lost call (:class:`~plimsoll_client.types.LostCall`)."""
+
+    def __init__(self, message: str, *, lost: Optional[LostCall] = None) -> None:
+        super().__init__(message)
+        self.lost = lost
 
 
 class PlimsollWorkspaceGoneError(WorkspaceUnavailableError):
@@ -227,10 +237,18 @@ def map_error(e: BaseException) -> BaseException:
                 record=getattr(e.result, "record", None), result=e.result if isinstance(e.result, ProjectResult) else None,
             )
         return PlimsollWorkspaceGoneError(f"plimsoll: the checkpoint store would not take the call ({e}); nothing was sent", reason="store")
-    if isinstance(e, CallAlreadySentError):
-        return PlimsollAlreadySentError(
-            "plimsoll: this call was already sent once in the session and its answer was lost; it is not sent again "
-            "(nothing was sent)"
+    if isinstance(e, RecoveringError) and e.not_dispatched is not None:
+        # The backend resolves a recovering session before its first operation runs, so only a session handed to it
+        # recovering by another path reaches this.
+        return PlimsollLostCallError(
+            "plimsoll: this session is recovering from a call whose answer was lost, and the operation was not sent; "
+            "read the lost call and resolve it (Session.resolve_lost_call) before sending another"
+        )
+    if isinstance(e, HeadMismatchError) and e.not_dispatched is not None:
+        return PlimsollWorkspaceGoneError(
+            f"plimsoll: the daemon ran a call on this session that this run did not send ({e.message}); nothing ran, and "
+            "this run sends nothing more on the session",
+            reason="head_mismatch",
         )
     if isinstance(e, CheckpointMismatchError):
         return PlimsollOutcomeUnknownError(
@@ -274,54 +292,6 @@ def map_error(e: BaseException) -> BaseException:
     if reason == "request":
         return ValueError(f"plimsoll: refused before anything ran (request): {e.message}")
     return PlimsollWorkspaceGoneError(f"plimsoll: refused before anything ran ({reason}): {e.message}", reason=reason)
-
-
-# ---- what the model is told about a lost call ----
-#
-# When plimsoll_shell's command repeats the call whose answer was lost before a takeover, the client refuses it
-# with nothing sent, and the model is told what plimsoll's record of the lost call says, in plimsoll's own words
-# and from values the client checked only: whether the record states a result digest (the daemon answered the call,
-# which does not show that the command ran to its end) or an unanswered code (the call ended without an answer,
-# which does not show that the command started), and its two times. Never the code itself, the
-# command, any output, or an identifier.
-
-# How a call whose record states an unanswered code ended, for the codes plimsoll can say something plain about;
-# every other code of the closed set gets _ENDED_OTHER.
-_ENDED_HOW = {
-    "canceled": "the request for it was called off",
-    "deadline_exceeded": "the request for it ran out of time",
-}
-_ENDED_OTHER = "the sandbox service reported an error for it"
-_UNANSWERED = frozenset(UNANSWERED_CODES)
-_HEX64 = re.compile("[0-9a-f]{64}")
-
-
-def _lost_call_message(lost: Optional[RunRecord]) -> str:
-    """The sentence ``plimsoll_shell`` gives the model for a refused repeat of the lost call whose record is
-    ``lost`` (the session's ``lost_call``, which the client checked): one for a record that states a result digest,
-    one for a record that states an unanswered code, and one for no record at hand (a session taken over from a
-    checkpoint that carried the lost call's digest without its record)."""
-    if lost is not None and isinstance(lost.started_unix_ms, int) and isinstance(lost.ended_unix_ms, int):
-        took = f"{max(0, lost.ended_unix_ms - lost.started_unix_ms) / 1000:.1f} s"
-        if lost.unanswered == "" and isinstance(lost.result_sha256, str) and _HEX64.fullmatch(lost.result_sha256):
-            return (
-                "plimsoll: this exact command was already sent once in this sandbox, and its answer never came back. "
-                f"The sandbox answered the call after {took}, but the answer is lost, so whether the command ran to "
-                "its end, and whether it succeeded, is not known. It was not run again. Anything it wrote to files is "
-                "still in the sandbox: look there before you run it again."
-            )
-        if lost.result_sha256 == "" and lost.unanswered in _UNANSWERED:
-            return (
-                "plimsoll: this exact command was already sent once in this sandbox, and the call ended without an "
-                f"answer after {took}: {_ENDED_HOW.get(lost.unanswered, _ENDED_OTHER)}. Whether the command began, "
-                "and how much of its work it did, is not known, and any output it gave is lost. It was not run again. "
-                "Look at the sandbox's files before you decide to run it again."
-            )
-    return (
-        "plimsoll: this exact command was already sent once in this sandbox, and its answer never came back; whether "
-        "it finished is not known here. It was not run again. Look at the sandbox's files before you decide to run it "
-        "again."
-    )
 
 
 # The pause between capacity retries; a test replaces it.
@@ -426,7 +396,8 @@ class _RecordingSession:
         except Exception as e:
             raise PlimsollOutcomeUnknownError(
                 "plimsoll: the record of the call lost before this takeover could not be kept by the record sink "
-                f"({type(e).__name__}: {e}); no call was sent",
+                f"({type(e).__name__}: {e}); no call was sent, and none is until the sink takes it (the next operation "
+                "offers it again)",
                 record=record,
             ) from e
 
@@ -569,6 +540,24 @@ def _check_abs(path: Any) -> str:
 # ---- one open session, shared by every backend that reaches it in this process ----
 
 
+# The fixed scripts that change the sandbox's files. An operation is one or a few session calls (each through
+# _Environment.script, or Workspace's own steps):
+#
+#   working_dir   the work directory step and _REALPATH, once per session (root()); no call after
+#   read_bytes    _READ_CHECK, then Workspace.read_whole's pieces (one call per 8 MiB): reads only
+#   write_bytes   _WRITE_BEGIN alone up to _WRITE_CHUNK_BYTES; above it _WRITE_BEGIN to a staging file,
+#                 _WRITE_APPEND for each middle piece, _WRITE_COMMIT (and _WRITE_ABORT on a failure)
+#   stat, list_dir, exists, realpath   one reading call each (_STAT, _LIST, _EXISTS, _REALPATH)
+#   make_dir      _MAKE_DIR, one call
+#   remove        _REALPATH of the parent, then _REMOVE
+#   plimsoll_shell   one call (the command)
+#
+# An operation refused part way, after one of these ran under this worker, is not sent again from its start after a
+# takeover (finding release-61): only the large write and remove can be, and a repeat could write over what the
+# process that took the session changed. Reading calls are safe to repeat.
+_MUTATING = frozenset({_WRITE_BEGIN, _WRITE_APPEND, _WRITE_COMMIT, _WRITE_ABORT, _MAKE_DIR, _REMOVE})
+
+
 class _Environment:
     """One open session: the session, the Workspace over it, its ref, who opened it, its records."""
 
@@ -578,6 +567,13 @@ class _Environment:
         self.key = key  # the checkpoint store's key, when the session's calls pass through one
         self.ref = WorkspaceRef(provider=PROVIDER, id=f"{capability.daemon}/{session.fingerprint}")
         self.records: List[RunRecord] = []
+        # The record of the call lost before the takeover that made this environment, until the sink has taken it;
+        # held under lost_lock with the session's recovering state (finding release-83).
+        lost = getattr(session, "lost_call", None)
+        self.pending_lost: Optional[RunRecord] = lost.record if lost is not None else None
+        self.resolved_lost: Optional[LostCall] = None  # the lost call recover() told the model of and resolved
+        self.lost_lock = threading.Lock()
+        self.mutations = 0  # the file-changing calls (_MUTATING) that ran on this session from this process
         sink = capability.record_sink if capability.record_sink is not None else self.records.append
         self.recording = _RecordingSession(session, sink)
         self.workspace = Workspace(self.recording, timeout=capability.timeout, max_timeout=capability.max_timeout, confined=False)
@@ -598,6 +594,23 @@ class _Environment:
                 reason="stopped",
             )
 
+    def recover(self, max_chars: int) -> None:
+        """When the session is recovering from a call lost before the takeover, before anything is sent: the lost
+        call's record goes to the sink (a sink that fails raises, and the session stays recovering, so the next
+        operation offers it again and nothing is sent until the sink takes it), the session is resolved, and
+        :class:`PlimsollLostCallError` is raised with what the model is told. Once per takeover: the first operation
+        of any backend of this process that reaches the session does it."""
+        with self.lost_lock:
+            lost = getattr(self.session, "lost_call", None)
+            if lost is None:
+                return
+            if self.pending_lost is not None:
+                self.recording.keep_lost(self.pending_lost)
+                self.pending_lost = None
+            self.session.resolve_lost_call()
+            self.resolved_lost = lost
+        raise PlimsollLostCallError(lost_call_message(lost, max_chars), lost=lost)
+
     def root(self) -> str:
         """The working directory, symlinks resolved (the contract asks for it canonical): the work directory the
         sandbox reports, then resolved by the realpath script. Two calls, once per session."""
@@ -614,7 +627,14 @@ class _Environment:
         """Runs a fixed script with ``args`` and ``stdin``: its exit code, stdout and stderr. A call past its budget
         raises ``WorkspaceTimeoutError``; an answer whose stdout or stderr the daemon cut raises
         ``WorkspaceOutputLimitError``."""
-        out = _with_capacity_retry(lambda: self.workspace.run(["sh", "-c", script, "sh", *args], stdin=stdin))
+        try:
+            out = _with_capacity_retry(lambda: self.workspace.run(["sh", "-c", script, "sh", *args], stdin=stdin))
+        except PlimsollError as e:
+            if script in _MUTATING and e.not_dispatched is None:
+                self.mutations += 1  # it may have run
+            raise
+        if script in _MUTATING:
+            self.mutations += 1
         if out.timed_out:
             raise WorkspaceTimeoutError("plimsoll: the file operation ran past its time budget", stdout=out.stdout_text, stderr=out.stderr_text)
         if out.stdout_truncated or out.stderr_truncated:
@@ -677,6 +697,14 @@ class PlimsollWorkspaceBackend:
         env = self._env
         return env.session if env is not None else None
 
+    @property
+    def resolved_lost_call(self) -> Optional[LostCall]:
+        """The call lost before this backend's session was taken over, once an operation told the model of it and
+        resolved the session (the session's own ``lost_call`` is then ``None``), else ``None``: what the application
+        reads after the run of what the model was told. Its record says whether the daemon answered the call."""
+        env = self._env
+        return env.resolved_lost if env is not None else None
+
     async def working_dir(self) -> str:
         return await self._run(lambda env: env.root())
 
@@ -733,8 +761,11 @@ class PlimsollWorkspaceBackend:
 
     def _in_thread(self, op: Callable[[_Environment], Any]) -> Any:
         env = self._environment()
+        cap = self._capability
+        mutations = env.mutations
         try:
             env.usable()
+            env.recover(cap.max_output_chars)
             return op(env)
         except PlimsollWorkspaceGoneError as e:
             # The session stopped taking this process's calls: another process took it over, the store moved on,
@@ -746,11 +777,21 @@ class PlimsollWorkspaceBackend:
             if not self._taken_over(e):
                 raise map_error(e) from e
             first = e
-        # Nothing of the refused call ran. Take the session back from the store once and send the operation again,
-        # from its start; a second refusal gives up.
+        if env.mutations != mutations:
+            # A call of this operation that changes files ran under this worker before the refusal (a large write's
+            # first piece): sent again from its start, it could write over what the process that took the session
+            # changed since (finding release-61).
+            raise PlimsollWorkspaceGoneError(
+                "plimsoll: another process took the session over part way through this operation, after a call of it "
+                "that changes files ran here; it is not sent again, and this run can no longer use the session",
+                reason="stale",
+            ) from first
+        # Nothing of the refused call ran, and nothing the operation sent before it changed a file. Take the session
+        # back from the store once and send the operation again, from its start; a second refusal gives up.
         env = self._reattach(env, first)
         try:
             env.usable()
+            env.recover(cap.max_output_chars)
             return op(env)
         except PlimsollWorkspaceGoneError:
             raise
@@ -831,7 +872,17 @@ class PlimsollWorkspaceBackend:
                 "reached; it is never replaced by another or a fresh one",
                 reason="not_found",
             ) from e
-        except (PlimsollError, CheckpointStoreError) as e:
+        except CheckpointStoreError as e:
+            if e.sent:
+                # The attach's own write (finding release-60): the daemon moved the session to this worker and the store
+                # names another holder. Nothing of the run's ran.
+                raise PlimsollWorkspaceGoneError(
+                    f"plimsoll: the attach went through and its checkpoint store write did not ({e}): another worker holds "
+                    "the session now, or the store failed; nothing of this run's ran, and this run does not use the session",
+                    reason="store",
+                ) from e
+            raise map_error(e) from e
+        except PlimsollError as e:
             raise map_error(e) from e
         if f"{cap.daemon}/{session.fingerprint}" != ref.id:
             # Not with plimsoll's client, which refuses another session before sending. A client that did not would
@@ -843,21 +894,23 @@ class PlimsollWorkspaceBackend:
                 reason="not_found",
             )
         env = _Environment(cap, session, self._owner, self._key)
-        cap._register(env)
         if not meets(getattr(session, "isolation", "") or "", cap.minimum_isolation):
-            cap._forget(env)
+            # The session is not used: the record of the call lost before the takeover still goes to the sink first,
+            # since no later operation of this process will reach this environment (finding release-83).
+            if env.pending_lost is not None:
+                env.recording.keep_lost(env.pending_lost)
+                env.pending_lost = None
             raise map_error(InsufficientIsolationError(
                 f"plimsoll: the session states {getattr(session, 'isolation', '') or 'no tier'}, below the required "
                 f"{cap.minimum_isolation}; nothing ran (the session is left open: it holds the conversation's files)",
                 not_dispatched="isolation",
             ))
-        # Once per takeover, before this worker sends a call: the record of the call lost before it goes to the
-        # record sink, so the two workers' logs chain with no hole. A backend that reaches this session later in
-        # this process finds it in the registry and never comes here. A sink that fails ends the run; the session
-        # stays registered, so the next operation does not take it over again.
-        lost = getattr(session, "lost_call", None)
-        if lost is not None:
-            env.recording.keep_lost(lost)
+        # Registered after the floor check. The record of the call lost before the takeover goes to the record sink
+        # before this process sends any call on the session, by whichever backend's operation reaches it first
+        # (_Environment.recover): the session is recovering, so the client sends nothing until it is resolved, and
+        # the environment resolves it only once the sink has taken the record. A sink that fails ends the run; the
+        # session stays registered and recovering, so the next operation offers the record again.
+        cap._register(env)
         return env
 
     def _environment(self) -> _Environment:
@@ -1080,8 +1133,8 @@ _DURABLE_REFUSAL = (
     "plimsoll: PlimsollWorkspace does not support durable execution ({what}), and refuses it before anything runs. "
     "Under Temporal, DBOS or Prefect a workspace call may run again after its answer was lost, and every call rebuilds "
     "the backend in whichever worker runs it. A checkpoint store narrows that (a lost call is named at the takeover, "
-    "and a repeat of it is refused only when it is the first call after the takeover), but no engine's own test runs "
-    "against this package yet. Run the agent without durable execution for now."
+    "and the model's next tool call is not run: the model is told of the lost call first), but no engine's own test "
+    "runs against this package yet. Run the agent without durable execution for now."
 )
 
 
@@ -1289,12 +1342,12 @@ class PlimsollWorkspace(AbstractCapability[AgentDepsT]):
         except anyio.get_cancelled_exc_class():
             handle.cancel()
             raise
-        except PlimsollAlreadySentError as e:
-            # The first call after a takeover repeats the call lost before it, and the client refused it with
-            # nothing sent. The model gets a failed tool result saying what plimsoll's record of the lost call
-            # says, and the run goes on. Only this refusal: every other call that may have run ends the run.
-            session = backend.session
-            raise ToolFailed(_lost_call_message(getattr(session, "lost_call", None))) from e
+        except PlimsollLostCallError as e:
+            # The first operation after a takeover across a lost call: the command was not sent, the backend resolved
+            # the session, and the model gets a failed tool result saying what plimsoll's record of the lost call says
+            # (and its output, when its answer came back); the run goes on. Every call that may have run still ends
+            # the run.
+            raise ToolFailed(str(e)) from e
         text, cut = _format(out, self.max_output_chars)
         metadata = {"exit_code": out.exit_code, "timed_out": out.timed_out, "truncated": cut, **_labels(out.result)}
         return ToolReturn(return_value=text, metadata=metadata)

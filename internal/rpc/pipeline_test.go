@@ -87,9 +87,9 @@ func sessionCall(t *testing.T, svc *SandboxService, ctx context.Context, payload
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := &plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(), TraceId: "trace-s"}
+	req := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(), TraceId: "trace-s"}
 	payload(req)
-	resp, err := svc.SessionRun(ctx, connect.NewRequest(req))
+	resp, err := headRun(svc, ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
 	}
@@ -352,10 +352,10 @@ func TestRefusedCellsSpendNoRateToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	cell := func(change func(*plimsollv1.SessionRunRequest)) error {
-		req := &plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
+		req := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
 			Payload: &plimsollv1.SessionRunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: "1"}}}
 		change(req)
-		_, err := svc.SessionRun(ctx, connect.NewRequest(req))
+		_, err := headRun(svc, ctx, connect.NewRequest(req))
 		return err
 	}
 	if err := cell(func(r *plimsollv1.SessionRunRequest) { r.MinimumIsolation = "vm" }); !errors.Is(err, sandbox.ErrInsufficientIsolation) {
@@ -393,7 +393,7 @@ func TestSessionCallIsValidatedBeforeItsTurn(t *testing.T) {
 	defer give()
 	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
-	_, err = svc.SessionRun(cctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
+	_, err = headRun(svc, cctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
 		Payload: &plimsollv1.SessionRunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "cobol", Code: "1"}}}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("a malformed call behind a held turn: %v (%s); want InvalidArgument", err, connect.CodeOf(err))
@@ -421,7 +421,7 @@ func TestSessionCallsRefusedBeforeTheyRanAreNotChained(t *testing.T) {
 			svc.Sandbox = &unreadableSessions{svc.Sandbox.(*sandboxtest.Sessions)}
 		}, func(id string) *connect.Request[plimsollv1.SessionRunRequest] { return callReq(id, "1") }},
 		{"a grant profile the caller may not use", func(*SandboxService) {}, func(id string) *connect.Request[plimsollv1.SessionRunRequest] {
-			return connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id,
+			return connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id,
 				Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1", GrantProfile: "nobody-has-this"}}})
 		}},
 	} {
@@ -434,7 +434,7 @@ func TestSessionCallsRefusedBeforeTheyRanAreNotChained(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := opened.Msg.GetSessionId()
-			_, err = svc.SessionRun(ctx, tc.call(id))
+			_, err = headRun(svc, ctx, tc.call(id))
 			if _, marked := notDispatchedOf(err); !marked {
 				t.Fatalf("the refusal: %v; want it marked not dispatched", err)
 			}

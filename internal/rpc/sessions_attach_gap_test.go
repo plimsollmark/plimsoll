@@ -39,12 +39,12 @@ func sessionWithALostCall(t *testing.T) (svc *SandboxService, id, fp string, fir
 		t.Fatal(err)
 	}
 	id, fp = o.Msg.GetSessionId(), o.Msg.GetSession()
-	a, err := svc.SessionRun(ctx, callReq(id, "1"))
+	a, err := headRun(svc, ctx, callReq(id, "1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	call := callReq(id, "2")
-	b, err := svc.SessionRun(ctx, call)
+	b, err := headRun(svc, ctx, call)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +68,8 @@ func TestExplainedGapAttachReturnsTheLostCall(t *testing.T) {
 		t.Fatalf("the lost record %v is not the call's %v", got.Msg.GetLostRecord(), lost)
 	}
 	next := callReq(id, "3")
-	next.Msg.Generation = 2
-	if _, err := svc.SessionRun(ctx, next); err != nil {
+	atGeneration(svc, next.Msg, 2)
+	if _, err := headRun(svc, ctx, next); err != nil {
 		t.Fatalf("the attached worker's next call: %v", err)
 	}
 	if !strings.Contains(log.String(), `"explained_gap":true`) || strings.Contains(log.String(), lost.GetRequestSha256()) || strings.Contains(log.String(), id) {
@@ -87,7 +87,7 @@ func TestExplainedGapForAnUnansweredCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := callReq(o.Msg.GetSessionId(), "1")
-	_, err = svc.SessionRun(ctx, call)
+	_, err = headRun(svc, ctx, call)
 	var ce *connect.Error
 	var unanswered *plimsollv1.RunRecord
 	if errors.As(err, &ce) {

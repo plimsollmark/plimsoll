@@ -719,7 +719,15 @@ What the broker checks:
   `_method`, in any letter case, is refused with 403 before the API receives it whole, whether
   the broker holds the body or passes it through piece by piece on an upload route. A body sent
   as JSON that is not JSON, or not valid UTF-8 (the byte encoding of text JSON uses), is
-  refused with 400. A refused body the broker holds is refused before anything is sent: the
+  refused with 400. So is one whose top-level object has a key holding a control character
+  (U+0000 to U+001F) written as an <dfn>*escape*</dfn> (a backslash sequence JSON uses to
+  write a character inside a string: `\n`, `\t`, or `\u` and four hex digits), or half of a
+  surrogate pair without the other half (JSON writes a character past U+FFFF as two `\u`
+  escapes, the first from D800 to DBFF and the second from DC00 to DFFF, and one alone names
+  no character): JSON parsers read such a key differently (Go's puts a replacement character
+  for the lone half, PHP's refuses the body, and a parser that cuts a key at a NUL would read
+  `_method` followed by an escaped NUL as `_method`), and the API reads the bytes the code
+  wrote, not the broker's reading of them. A refused body the broker holds is refused before anything is sent: the
   call counts as denied, spends no `route_max_calls`, and writes no call row. A passed-through
   body is refused while its request is under way, after the request's headers went (they are
   sent before the body, and an API's handler runs on them), so the API may already have acted
@@ -749,7 +757,8 @@ The tests: `TestBrokerOverrideStandInNeverActsOnAnOverride` (a stand-in API that
 override headers and a body's `_method` and acts only on the granted method and path),
 `TestBrokerOverrideStreamedBodyNeverArrivesWhole`, `TestBrokerOverrideRefusalKeepsTheChargeOnceABodyByteWent`,
 `TestGrantRefusesOverrideHeaders`, `TestHostAPIGrantRequestContentType`,
-`TestJSONScannerRefusesWhatIsNotUTF8`, `FuzzJSONOverrideScannerAgreesWithDecoder`, and
+`TestJSONScannerRefusesWhatIsNotUTF8`, `TestBrokerRefusesUTF16JSONStreamed`,
+`TestJSONKeyThatIsNotPlainIsRefused`, `FuzzJSONOverrideScannerAgreesWithDecoder`, and
 `TestBrokerForwardsFormAndUploadBodiesUnread`, which holds the limit above as a fact: the
 stand-in acts on `DELETE` for a form body and a multipart body that name `_method`.
 

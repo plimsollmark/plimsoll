@@ -9,6 +9,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 
 import {
+  checkLostAnswer,
   checkRecord,
   checkUnanswered,
   recordDigest,
@@ -22,21 +23,31 @@ import {
   type RunRecord,
 } from "./record.ts";
 import {
-  CALL_ALREADY_SENT_TEXT,
   LANGUAGES,
   MAX_RESPONSE_BYTES,
   MAX_SOFTWARE_IDENTITIES,
   MAX_SOFTWARE_IDENTITY_BYTES,
   NOT_DISPATCHED_HEADER,
   OUTCOME_NAMES,
+  CHECKPOINT_VERSION,
   PROTOCOL,
   RECORD_VERSION,
+  RECOVERING_TEXT,
   REQUEST_ID_HEADER,
   SOFTWARE_IDENTITY_PATTERN,
   TIERS,
 } from "./tables.gen.ts";
 import { checkpointProblem, validDaemonName, type SessionCheckpoint } from "./checkpoint.ts";
-import { CallAlreadySentError, errorFromWire, PlimsollError, sessionEndFromWire, StaleOwnerError, unboundSuccess, type SessionEnd } from "./errors.ts";
+import {
+  errorFromWire,
+  HeadMismatchError,
+  PlimsollError,
+  RecoveringError,
+  sessionEndFromWire,
+  StaleOwnerError,
+  unboundSuccess,
+  type SessionEnd,
+} from "./errors.ts";
 import type {
   WireAdvice,
   WireAttachSessionRequest,
@@ -54,7 +65,7 @@ import type {
   WireSessionRunResponse,
   WireSoftwareRule,
 } from "./wire.ts";
-import { trailing, wireBytes } from "./wire.ts";
+import { INT64, trailing, UINT32, UINT64, wholeInt, wireBytes } from "./wire.ts";
 
 // PROTOCOL, the wire protocol number this client speaks, and MAX_RESPONSE_BYTES, above the
 // largest legitimate project response so a misbehaving daemon cannot make the client buffer
@@ -316,8 +327,48 @@ export type SessionOptions = {
    * call needs no session of its own: runCell with preferWarm.
    */
   warmOnly?: boolean;
+  /**
+   * Ask the daemon to keep no call's answer. By default it keeps the last answered call's
+   * answer in memory, until the next call starts or the session suspends or ends, so that
+   * a worker taking the session over across that call's lost answer gets it back
+   * (session.lostCall.answer). Set it when the application promises its users that the
+   * daemon retains no output; it holds for the whole session.
+   */
+  keepNoAnswer?: boolean;
   signal?: AbortSignal;
 };
+
+/**
+ * A call that was sent once and whose answer never reached the worker that sent it, as a
+ * session taken over across it knows it (session.lostCall; Go: client.LostCall).
+ */
+export type LostCall = {
+  /** The lost call's request digest. */
+  requestSha256: string;
+  /**
+   * The lost call's record, as the attach returned it and this client checked it, or
+   * undefined on a session attached from a checkpoint saved while recovering, which carries
+   * the request digest alone. It says whether the daemon answered the call: a result digest
+   * when it answered, which does not show that the call ran to its end (a step stopped at
+   * its time limit and a setup that failed are answers too), or an unanswered code when it
+   * ended without an answer, so that it may have done none, part or all of its work.
+   */
+  record?: RunRecord;
+  /**
+   * The lost call's answer when the daemon kept it and the attach returned it, checked
+   * against record (the same record, its result digest recomputed), or undefined: the call
+   * ended unanswered, the answer was above the daemon's cap, the session was opened with
+   * keepNoAnswer, or the daemon dropped it (a call started, or the session suspended,
+   * after the lost one).
+   */
+  answer?: LostAnswer;
+};
+
+/** A lost call's answer, by the kind of call it was: the result that call would have returned. */
+export type LostAnswer =
+  | { kind: "javascript"; result: JavaScriptResult }
+  | { kind: "project"; result: ProjectResult }
+  | { kind: "cell"; result: CellResult };
 
 /**
  * What an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll session owner key
@@ -739,6 +790,9 @@ export class PlimsollClient {
     if (opts.warmOnly !== undefined && typeof opts.warmOnly !== "boolean") {
       throw new PlimsollError("invalid_argument", "plimsoll: warmOnly must be a boolean", { notDispatched: "request" });
     }
+    if (opts.keepNoAnswer !== undefined && typeof opts.keepNoAnswer !== "boolean") {
+      throw new PlimsollError("invalid_argument", "plimsoll: keepNoAnswer must be a boolean", { notDispatched: "request" });
+    }
     const m = await this.call<WireOpenSessionResponse>(
       "OpenSession",
       {
@@ -751,6 +805,7 @@ export class PlimsollClient {
         languages: opts.languages?.length ? [...new Set(opts.languages)] : undefined,
         owner: opts.owner === undefined ? undefined : ownerDigest(this.token, opts.owner),
         warmOnly: opts.warmOnly || undefined,
+        keepNoAnswer: opts.keepNoAnswer || undefined,
       },
       opts.signal,
     );
@@ -759,6 +814,11 @@ export class PlimsollClient {
       // The session exists on the daemon either way, and nothing else holds its ID.
       await s.close().catch(() => undefined);
       throw new PlimsollError("data_loss", "plimsoll: the daemon's answer to the open states an ownership generation other than 1; the session was closed");
+    }
+    if (wholeInt(m.expiresUnixMs, INT64) === undefined || wholeInt(m.idleTimeoutMs, UINT32) === undefined) {
+      // A checkpoint states both, and an attach answer must repeat them exactly.
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", "plimsoll: the daemon's answer to the open states an expiry or idle timeout that is not one whole decimal; the session was closed");
     }
     if (decoded(() => s.fingerprint !== sessionFingerprint(m.sessionId ?? ""))) {
       // The session exists on the daemon either way, and nothing else holds its ID.
@@ -803,11 +863,15 @@ export class PlimsollClient {
    * answer reaching it (session.lostRequestSha256 gives it for a call of this process).
    * With it, the daemon takes the session over from a checkpoint exactly one call behind
    * its head when its last record is that call, following cp (the explained gap), and
-   * returns the record; it must check on its own, be the call named, at cp's next place,
-   * stating the evidence the session stated at open, and be the new head
-   * (session.lostCall). The attached session then refuses its first call if it repeats
-   * that call (CallAlreadySentError). A lost call's record the attach did not name is refused
-   * as data_loss.
+   * returns the record, and the call's answer when the daemon still keeps it. The record
+   * must check on its own, be the call named, at cp's next place, stating the evidence the
+   * session stated at open, and be the new head; the answer must carry that same record
+   * and a result whose digest is the record's. A lost call's record the attach did not
+   * name, and a lost answer with no lost record, are refused as data_loss.
+   *
+   * A session attached across a lost call, or from a checkpoint saved while recovering, is
+   * recovering: session.lostCall says what it knows of the lost call, and every call is
+   * refused before it is sent (RecoveringError) until session.resolveLostCall().
    */
   async attachSession(cp: SessionCheckpoint, opts: { traceId?: string; signal?: AbortSignal; lostRequestSha256?: string } = {}): Promise<Session> {
     const problem = checkpointProblem(cp);
@@ -831,27 +895,39 @@ export class PlimsollClient {
   }
 
   // The attached session, once the answer repeats the checkpoint exactly, or carries the
-  // record of the call lost names at the checkpoint's next place and a head after it.
+  // record of the call lost names at the checkpoint's next place and a head after it (and,
+  // beside that record, the call's answer, when the daemon kept it).
   private attached(cp: SessionCheckpoint, m: WireAttachSessionResponse, lost: string): Session {
     const info = m.sessionInfo;
     const head = m.checkpoint;
     let problem: string | undefined;
+    let recovering: LostCall | undefined = cp.recoveringRequestSha256 ? { requestSha256: cp.recoveringRequestSha256 } : undefined;
     let lostCall: RunRecord | undefined;
-    if (m.lostRecord) {
+    if (m.lostAnswer !== undefined && m.lostAnswer !== null && !m.lostRecord) {
+      problem = "carries a lost call's answer without the lost call's record";
+    } else if (m.lostRecord) {
       const checked = lostRecord(cp, lost, m.lostRecord);
       if ("problem" in checked) problem = checked.problem;
-      else lostCall = checked.record;
+      else {
+        lostCall = checked.record;
+        recovering = { requestSha256: lostCall.requestSha256, record: lostCall };
+        if (m.lostAnswer !== undefined && m.lostAnswer !== null) {
+          const answer = checkLostAnswer(m.lostAnswer, lostCall);
+          if ("problem" in answer) problem = `carries a lost call's answer that does not check against its record (${answer.problem})`;
+          else recovering.answer = lostAnswerResult(m.lostAnswer, lostCall, answer.kind);
+        }
+      }
     }
     const calls = lostCall ? lostCall.sequence : cp.calls;
     const last = lostCall ? lostCall.sha256 : cp.lastRecordSha256;
     if (problem) {
-      // the lost call's record does not check
+      // the lost call's record or answer does not check
     } else if (!info || !head) problem = "lacks the session or its checkpoint";
     else if ((info.session ?? "") !== cp.session || sessionFingerprint(info.sessionId ?? "") !== cp.session) {
       problem = "names another session, or a session ID whose SHA-256 is not the fingerprint";
-    } else if (BigInt(info.generation ?? 0) !== cp.generation + 1n || BigInt(head.generation ?? 0) !== cp.generation + 1n) {
+    } else if (wholeInt(info.generation, UINT64) !== cp.generation + 1n || wholeInt(head.generation, UINT64) !== cp.generation + 1n) {
       problem = "states a generation other than one past the checkpoint's";
-    } else if (BigInt(head.calls ?? 0) !== calls || (head.lastRecordSha256 ?? "") !== last) {
+    } else if (wholeInt(head.calls, UINT64) !== calls || (head.lastRecordSha256 ?? "") !== last) {
       problem = "states another chain head than the checkpoint's (or, across an explained gap, than the lost call's)";
     } else if (
       (info.sandbox ?? "") !== cp.provider || (info.isolation ?? "") !== cp.isolation ||
@@ -860,19 +936,13 @@ export class PlimsollClient {
       problem = "states another provider, tier, qualification or software than the session stated at open";
     } else if ((info.minimumIsolation ?? "") !== cp.openFloor || wireRuleId(info.softwareRule) !== cp.openRule) {
       problem = "states another floor or software rule than the session was opened with";
-    } else if (num(info.expiresUnixMs) !== cp.expiresUnixMs || (info.idleTimeoutMs ?? 0) !== cp.idleTimeoutMs) {
+    } else if (wholeInt(info.expiresUnixMs, INT64) !== BigInt(cp.expiresUnixMs) || wholeInt(info.idleTimeoutMs, UINT32) !== BigInt(cp.idleTimeoutMs)) {
       problem = "states another lifetime or idle timeout than the session's";
     }
     if (problem || !info) throw new PlimsollError("data_loss", `plimsoll: the daemon's answer to the attach ${problem}; the session was left as it is`);
     const rule = cp.openRule && info.softwareRule ? { mode: info.softwareRule.mode, identities: [...info.softwareRule.identities] } : undefined;
     const floor = cp.openFloor === "" ? undefined : (cp.openFloor as Exclude<Isolation, "none">);
-    return new Session(this, info, rule, floor, {
-      generation: cp.generation + 1n,
-      calls,
-      last,
-      lostCall: lostCall ? lostCall.requestSha256 : cp.lostCallSha256,
-      lostRecord: lostCall,
-    });
+    return new Session(this, info, rule, floor, { generation: cp.generation + 1n, calls, last, recovering });
   }
 
   /** @internal */
@@ -928,6 +998,14 @@ export function lostRecord(cp: SessionCheckpoint, lost: string, m: NonNullable<W
     return { problem: "carries a lost call's record stating other evidence than the session stated at open" };
   }
   return { record: r };
+}
+
+// A lost call's checked answer as the result its kind maps to, as the call would have
+// returned it.
+function lostAnswerResult(resp: WireRunResponse, record: RunRecord, kind: "javascript" | "project" | "cell"): LostAnswer {
+  if (kind === "javascript") return { kind, result: javascriptResult(resp, record) };
+  if (kind === "project") return { kind, result: projectResult(resp, record) };
+  return { kind, result: cellResult(resp, record) };
 }
 
 // The ID of a software rule as the daemon sent it, "" for none; a rule this client would
@@ -1019,14 +1097,16 @@ export class Session {
   // Set once the daemon refused a call or close because another worker attached the
   // session: this worker must not use it again.
   #stale: string | undefined;
+  // Set once the daemon refused a call because the head it carried is not the session's
+  // (HeadMismatchError): the chain this client tracks no longer follows the daemon's.
+  #diverged: string | undefined;
   // Set once the daemon answered this client's close.
   #closed = false;
-  // The request digest the session's next call is refused for repeating, set by an attach
-  // across an explained gap (or inherited with a checkpoint) and spent by the next call;
-  // the record of that lost call; and the request digest of the call after which this
-  // session stopped with no answer it could check.
-  #lostCall = "";
-  #lostRecord: RunRecord | undefined;
+  // The lost call this session is recovering from, set by an attach across an explained
+  // gap or from a checkpoint saved while recovering: while it is set every call is refused
+  // before anything is sent, until resolveLostCall(). And the request digest of the call
+  // after which this session stopped with no answer it could check.
+  #recovering: LostCall | undefined;
   #lostRequest = "";
   #queue: Promise<unknown> = Promise.resolve();
   #closing: Promise<SessionSummary> | undefined;
@@ -1037,7 +1117,7 @@ export class Session {
     m: WireOpenSessionResponse,
     rule: WireSoftwareRule | undefined,
     floor?: Exclude<Isolation, "none">,
-    attached?: { generation: bigint; calls: bigint; last: string; lostCall: string; lostRecord: RunRecord | undefined },
+    attached?: { generation: bigint; calls: bigint; last: string; recovering: LostCall | undefined },
   ) {
     this.#client = client;
     this.#id = m.sessionId ?? "";
@@ -1048,8 +1128,7 @@ export class Session {
     if (attached) {
       this.#calls = attached.calls;
       this.#last = attached.last;
-      this.#lostCall = attached.lostCall;
-      this.#lostRecord = attached.lostRecord;
+      this.#recovering = attached.recovering;
     }
     this.#rule = rule;
     this.#floor = floor;
@@ -1058,8 +1137,10 @@ export class Session {
     this.isolationQualification = m.isolationQualification ?? "";
     this.sandbox = m.sandbox ?? "";
     this.softwareIdentity = m.softwareIdentity ?? "";
-    this.expiresAtMs = num(m.expiresUnixMs);
-    this.idleTimeoutMs = m.idleTimeoutMs ?? 0;
+    // openSession refuses an answer whose expiry or idle timeout is not one whole decimal,
+    // after closing the session with this one; attached() compares both with the checkpoint.
+    this.expiresAtMs = Number(wholeInt(m.expiresUnixMs, INT64) ?? 0n);
+    this.idleTimeoutMs = Number(wholeInt(m.idleTimeoutMs, UINT32) ?? 0n);
   }
 
   /**
@@ -1067,7 +1148,7 @@ export class Session {
    * answer it could check (the call may have run); undefined while it is usable.
    */
   get stopped(): string | undefined {
-    return this.#stale ?? this.#unknown;
+    return this.#stale ?? this.#unknown ?? this.#diverged;
   }
 
   /**
@@ -1080,22 +1161,34 @@ export class Session {
   }
 
   /**
-   * The record of the call that was sent once and whose answer was lost, on a session attached
-   * across an explained gap; its output is lost. The record says whether the daemon answered
-   * it: a result digest when the daemon answered, which does not show that the call ran to its
-   * end (a step stopped at its time limit and a setup that failed are answers too), an
-   * unanswered code when it ended without an answer, so that it may have done none, part or all
-   * of its work.
+   * The call this session is recovering from, or undefined when it is not recovering: after
+   * an attach across an explained gap (attachSession with lostRequestSha256), or from a
+   * checkpoint saved while recovering, until resolveLostCall(). While it is defined every
+   * call is refused before it is sent (RecoveringError). Its record says whether the daemon
+   * answered the call, and its answer, when the daemon kept it, is that call's result.
    */
-  get lostCall(): RunRecord | undefined {
-    return this.#lostRecord;
+  get lostCall(): LostCall | undefined {
+    const lc = this.#recovering;
+    return lc === undefined ? undefined : { ...lc };
+  }
+
+  /**
+   * Ends the recovering state: the application has read the lost call (lostCall) and
+   * handled its outcome, or accepts it as unknown, and the session's calls are sent again.
+   * Taking the session over, or copying its head, does not resolve it. On a session that is
+   * not recovering it does nothing (Go: Session.ResolveLostCall).
+   */
+  resolveLostCall(): void {
+    this.#recovering = undefined;
   }
 
   /**
    * The session's checkpoint (Go: Session.Checkpoint), for the application to save where
    * only it can write, so another process can attachSession. It waits for a call in
    * flight, so the head it states follows that call. Refused when the client has no
-   * daemonName and when the session is stopped, closed or ended.
+   * daemonName and when the session is stopped, closed or ended. A session recovering from
+   * a lost call saves that state (recoveringRequestSha256), so the worker that attaches
+   * from it is recovering too.
    */
   checkpoint(): Promise<SessionCheckpoint> {
     return this.#serial(async () => {
@@ -1106,7 +1199,7 @@ export class Session {
       if (this.#closed) throw refuse("it is closed");
       if (this.#end !== undefined && this.#end.reason !== "open") throw refuse(`it ended (${this.#end.reason})`);
       return {
-        version: 1,
+        version: CHECKPOINT_VERSION,
         daemon,
         session: this.fingerprint,
         generation: this.#generation,
@@ -1120,7 +1213,7 @@ export class Session {
         openRule: softwareRuleId(this.#rule),
         expiresUnixMs: this.expiresAtMs,
         idleTimeoutMs: this.idleTimeoutMs,
-        lostCallSha256: this.#lostCall,
+        recoveringRequestSha256: this.#recovering?.requestSha256 ?? "",
       };
     });
   }
@@ -1191,28 +1284,31 @@ export class Session {
           { notDispatched: "request" },
         );
       }
+      if (this.#diverged !== undefined) {
+        throw new PlimsollError("failed_precondition", `plimsoll: ${this.#diverged}; this client sends nothing more on the session: open a new one`, {
+          notDispatched: "request",
+        });
+      }
+      // A session recovering from a lost call sends nothing until the application has
+      // resolved it: every call is refused here, whatever it is.
+      if (this.#recovering !== undefined) throw new RecoveringError(`plimsoll: ${RECOVERING_TEXT}; nothing was sent`);
       const env = this.#client.envelope(opts, rule);
       // Before the digest, which cannot encode such text either.
       refuseIllFormed({ ...env, ...payload }, "the request");
       const digest = requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) });
-      // The first call after an attach across an explained gap: a repeat of the lost call is
-      // a retry of a call that was already sent once, refused here with nothing sent, and the
-      // refusal spends the note. Only the first call is checked: any other call spends the
-      // note once it is sent, unless the daemon refuses it with the not-dispatched mark,
-      // since then nothing ran, the head is where it was, and the next call is still the
-      // first.
-      if (this.#lostCall !== "" && digest === this.#lostCall) {
-        this.#lostCall = "";
-        throw new CallAlreadySentError(`plimsoll: ${CALL_ALREADY_SENT_TEXT}; nothing was sent`);
-      }
       try {
-        const answered = await this.#exchange(payload, opts, rule, env, digest);
-        this.#lostCall = "";
-        return answered;
+        return await this.#exchange(payload, opts, rule, env, digest);
       } catch (e) {
         if (e instanceof StaleOwnerError) this.#stale = "another worker attached the session";
+        if (e instanceof HeadMismatchError) {
+          // The daemon's own word that its chain holds a call this client did not send (or
+          // counts one it did not see): this client's chain no longer follows the daemon's,
+          // so it sends nothing more. Nothing ran, so no call is lost (lostRequestSha256).
+          this.#diverged =
+            `the session's head on the daemon is not this client's: the daemon's is call ${e.head.calls} ending "${e.head.lastRecordSha256}", ` +
+            `this client sent call ${this.#calls} ending "${this.#last}"`;
+        }
         if (e instanceof PlimsollError && e.notDispatched) throw e;
-        this.#lostCall = "";
         if (e instanceof PlimsollError && e.unanswered) {
           // The call may have run, and the daemon chained its record: check it and keep
           // it in the chain, so the session goes on and the call is not hidden.
@@ -1256,7 +1352,10 @@ export class Session {
   ): Promise<{ run: WireRunResponse; record: RunRecord }> {
     let m: WireSessionRunResponse;
     try {
-      const body: WireSessionRunRequest = { ...env, sessionId: this.#id, generation: this.#generation.toString(), ...payload };
+      // The head this call expects to run on, filled in here, inside the queue that
+      // serializes the session's calls, so it is the one the call before it left.
+      const head = { generation: this.#generation.toString(), calls: this.#calls.toString(), lastRecordSha256: this.#last };
+      const body: WireSessionRunRequest = { ...env, sessionId: this.#id, head, ...payload };
       m = await this.#client.call<WireSessionRunResponse>("SessionRun", body, opts.signal);
     } catch (e) {
       if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
@@ -1323,7 +1422,7 @@ export class Session {
       try {
         sum = decoded(() => ({
           session: m.session ?? "",
-          calls: BigInt(m.calls ?? 0),
+          calls: closeCount(m.calls),
           lastRecordSha256: m.lastRecordSha256 ?? "",
           end: sessionEndFromWire(m.ended),
         }));
@@ -1342,6 +1441,14 @@ export class Session {
       return sum;
     });
   }
+}
+
+// The count a close answer states, read as one whole decimal; anything else is an answer
+// this client cannot read.
+function closeCount(v: unknown): bigint {
+  const n = wholeInt(v, UINT64);
+  if (n === undefined) throw new PlimsollError("data_loss", "plimsoll: the daemon's count of calls is not one whole decimal");
+  return n;
 }
 
 // Reads the answer under the call's signal itself, since a fetch implementation

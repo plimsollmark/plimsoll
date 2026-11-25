@@ -25,7 +25,7 @@ from plimsoll_client import Client
 from plimsoll_client.execution import CodeExecutor
 from plimsoll_client.pydantic_ai import (
     JsonLinesRecordSink,
-    PlimsollAlreadySentError,
+    PlimsollLostCallError,
     PlimsollOutcomeUnknownError,
     PlimsollRetryableError,
     PlimsollWorkspace,
@@ -38,7 +38,7 @@ __all__ = [
     "Client",
     "CodeExecutor",
     "JsonLinesRecordSink",
-    "PlimsollAlreadySentError",
+    "PlimsollLostCallError",
     "PlimsollOutcomeUnknownError",
     "PlimsollRetryableError",
     "PlimsollWorkspace",
@@ -46,4 +46,4 @@ __all__ = [
     "PlimsollWorkspaceGoneError",
     "plimsoll_code_tool",
 ]
-__version__ = "0.28.0"
+__version__ = "0.29.0"

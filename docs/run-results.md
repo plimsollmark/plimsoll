@@ -111,9 +111,15 @@ Report the protocol error to the operator separately.
 
 A grader should also not trust a check that runs as a later step of the same project.
 Every step shares one writable work directory, so an earlier step can rewrite the
-files a later one runs, the tests included, and on every provider. Run the check in a
-run of its own that the graded code never touched: the graded run's artifacts go in as
-that run's files.
+files a later one runs, the tests included, and on every provider. Nothing is killed
+between steps either, so a process an earlier step leaves running can write into a later
+step's output and kill it or stop it: the later step's output, exit code and timed-out
+mark are not the check's own (measured 2026-11-24 on `docker`, under `runc` and
+[gVisor (INTERNAL · glossary →)](trainers/glossary.html#gvisor),
+and on a local stand-in for `dockercloud`). On `dockercloud` every step is a script
+uploaded before the first runs, so an earlier step can also replace a later step's
+command. Run the check in a run of its own that the graded code never touched: the
+graded run's artifacts go in as that run's files.
 
 Read the isolation errors the same way. `ErrInsufficientIsolation` is marked
 `isolation`: **no code ran**. `ErrIsolationEvidenceMismatch` is raised by the client

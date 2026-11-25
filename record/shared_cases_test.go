@@ -73,7 +73,7 @@ func TestSharedCases(t *testing.T) {
 	}
 	decode := func(raw json.RawMessage) (*plimsollv1.RunRecord, error) {
 		m := &plimsollv1.RunRecord{}
-		return m, protojson.Unmarshal(raw, m)
+		return m, record.UnmarshalJSON(raw, m)
 	}
 	vectors := func(prefix string, v sharedVectors) {
 		for _, r := range v.Requests {

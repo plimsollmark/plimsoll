@@ -37,7 +37,7 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: sandboxd token: %w", err)
 	}
 	var missing []string
-	for _, s := range []*settings.Text{settings.AgentsandboxNamespace, settings.AgentsandboxWarmPool, settings.AgentsandboxRuntimeClass, settings.AgentsandboxImage, settings.AgentsandboxSandboxdCAFile} {
+	for _, s := range []*settings.Text{settings.AgentsandboxNamespace, settings.AgentsandboxWarmPool, settings.AgentsandboxRuntimeClass, settings.AgentsandboxImage, settings.AgentsandboxSandboxdCAFile, settings.AgentsandboxSandboxdTrustDomain} {
 		if s.Get(getenv) == "" {
 			missing = append(missing, s.Name)
 		}
@@ -50,21 +50,22 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS: %w", err)
 	}
 	p, err := New(Config{
-		APIServer:          settings.AgentsandboxAPIServer.Get(getenv), // default: the pod's own service account
-		CAFile:             settings.AgentsandboxCAFile.Get(getenv),
-		TokenFile:          settings.AgentsandboxTokenFile.Get(getenv),
-		Namespace:          settings.AgentsandboxNamespace.Get(getenv),
-		WarmPool:           settings.AgentsandboxWarmPool.Get(getenv),
-		RuntimeClass:       settings.AgentsandboxRuntimeClass.Get(getenv),
-		RunscHandlers:      handlers,
-		Image:              settings.AgentsandboxImage.Get(getenv),
-		RequirePinnedImage: pinned,
-		SandboxdToken:      strings.TrimSpace(string(token)),
-		SandboxdCAFile:     settings.AgentsandboxSandboxdCAFile.Get(getenv),
-		SandboxdServerName: settings.AgentsandboxSandboxdServerName.Get(getenv),
-		MemoryMB:           res.MemoryMB,
-		CPUs:               res.CPUs,
-		DiskMB:             res.DiskMB,
+		APIServer:           settings.AgentsandboxAPIServer.Get(getenv), // default: the pod's own service account
+		CAFile:              settings.AgentsandboxCAFile.Get(getenv),
+		TokenFile:           settings.AgentsandboxTokenFile.Get(getenv),
+		Namespace:           settings.AgentsandboxNamespace.Get(getenv),
+		WarmPool:            settings.AgentsandboxWarmPool.Get(getenv),
+		RuntimeClass:        settings.AgentsandboxRuntimeClass.Get(getenv),
+		RunscHandlers:       handlers,
+		Image:               settings.AgentsandboxImage.Get(getenv),
+		RequirePinnedImage:  pinned,
+		SandboxdToken:       strings.TrimSpace(string(token)),
+		SandboxdCAFile:      settings.AgentsandboxSandboxdCAFile.Get(getenv),
+		SandboxdServerName:  settings.AgentsandboxSandboxdServerName.Get(getenv),
+		SandboxdTrustDomain: settings.AgentsandboxSandboxdTrustDomain.Get(getenv),
+		MemoryMB:            res.MemoryMB,
+		CPUs:                res.CPUs,
+		DiskMB:              res.DiskMB,
 	})
 	if err != nil {
 		return sandbox.Provider{}, err

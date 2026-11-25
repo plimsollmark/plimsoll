@@ -8,6 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
+	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+
 	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -43,7 +45,8 @@ func lostCallSession(t *testing.T, url string, floor sandbox.IsolationClass) (*S
 	return a, cp, lost
 }
 
-// Naming the lost call takes the session over across the gap: the attached session
+// Naming the lost call takes the session over across the gap: the attached session is
+// recovering, holding the lost call's record and its answer, checked; once resolved it
 // carries the chain on after the lost call's record, in the same interpreter.
 func TestExplainedGapCarriesTheChainOn(t *testing.T) {
 	d := clientsuite.ServeReattach(t)
@@ -54,14 +57,24 @@ func TestExplainedGapCarriesTheChainOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc := b.LostCall()
-	if lc == nil || lc.RequestSHA256 != lost || lc.Sequence != cp.Calls+1 || lc.PreviousSHA256 != cp.LastRecordSHA256 {
-		t.Fatalf("the lost call's record %+v", lc)
+	if lc == nil || lc.RequestSHA256 != lost || lc.Record == nil || lc.Record.RequestSHA256 != lost ||
+		lc.Record.Sequence != cp.Calls+1 || lc.Record.PreviousSHA256 != cp.LastRecordSHA256 {
+		t.Fatalf("the lost call %+v", lc)
+	}
+	// The answer the worker that sent the call never got: its output, and its record the
+	// lost one.
+	if lc.Answer == nil || string(lc.Answer.GetCell().GetStdout()) != "python 2: y = 2" || lc.Answer.GetRecord().GetRecordSha256() != lc.Record.SHA256 {
+		t.Fatalf("the lost call's answer %v", lc.Answer)
+	}
+	b.ResolveLostCall()
+	if b.LostCall() != nil {
+		t.Fatal("the session is still recovering after ResolveLostCall")
 	}
 	res, err := b.RunCell(ctx, cell("z = 3"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stdout != "python 3: z = 3" || res.Record.Sequence != cp.Calls+2 || res.Record.PreviousSHA256 != lc.SHA256 {
+	if res.Stdout != "python 3: z = 3" || res.Record.Sequence != cp.Calls+2 || res.Record.PreviousSHA256 != lc.Record.SHA256 {
 		t.Fatalf("the next call %q, record %+v", res.Stdout, res.Record)
 	}
 	if sum, err := b.Close(ctx); err != nil || sum.Calls != 3 {
@@ -69,9 +82,12 @@ func TestExplainedGapCarriesTheChainOn(t *testing.T) {
 	}
 }
 
-// The first call after the attach is refused, with nothing sent, when it repeats the lost
-// call; the note is then spent, so the same call sent again runs.
-func TestTheFirstCallMayNotRepeatTheLostCall(t *testing.T) {
+// A recovering session refuses every call before it is sent, the lost call's repeat and
+// any other alike, with the words every client uses (internal/wiretables copies
+// RecoveringText into the Python and TypeScript clients), and the refusals neither stop
+// it nor resolve it. Once the application resolves it, calls run, the repeat included:
+// running it again is then the application's decision.
+func TestARecoveringSessionRefusesEveryCallUntilResolved(t *testing.T) {
 	d := clientsuite.ServeReattach(t)
 	ctx := context.Background()
 	_, cp, lost := lostCallSession(t, d.URL, sandbox.IsolationUnknown)
@@ -80,30 +96,37 @@ func TestTheFirstCallMayNotRepeatTheLostCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran := d.ProviderCalls()
-	_, err = b.RunCell(ctx, cell("y = 2"))
-	if reason, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, ErrCallAlreadySent) || !marked || reason != sandbox.RefusalRequest {
-		t.Fatalf("the repeat: %v (marked %v, %v)", err, marked, reason)
+	for _, code := range []string{"y = 2", "w = 0", "y = 2"} {
+		_, err = b.RunCell(ctx, cell(code))
+		if reason, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, ErrRecovering) || !marked || reason != sandbox.RefusalRequest {
+			t.Fatalf("a call while recovering (%s): %v (marked %v, %v)", code, err, marked, reason)
+		}
+		if !strings.Contains(err.Error(), RecoveringText) {
+			t.Fatalf("the refusal's text: %v", err)
+		}
 	}
-	// The refusal says what the client knows, in the words the Python and TypeScript
-	// clients use too (internal/wiretables copies CallAlreadySentText into both, and each
-	// suite holds its error to the copy): the call was sent once. The lost call's record
-	// says whether it finished (Session.LostCall).
-	if !strings.Contains(err.Error(), CallAlreadySentText) || strings.Contains(err.Error(), "ran once") {
-		t.Fatalf("the repeat's text: %v", err)
+	if _, _, err := b.Exchange(ctx, &plimsollv1.RunRequest{Protocol: Protocol, Payload: &plimsollv1.RunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: "y = 2"}}}); !errors.Is(err, ErrRecovering) {
+		t.Fatalf("an exchange while recovering: %v", err)
 	}
 	if d.ProviderCalls() != ran {
-		t.Fatal("the repeated call ran")
+		t.Fatal("a call ran while recovering")
 	}
-	if b.Stopped() != nil {
-		t.Fatal("the refused repeat stopped the session")
+	if b.Stopped() != nil || b.LostCall() == nil {
+		t.Fatalf("the refusals stopped (%v) or resolved the session", b.Stopped())
 	}
+	// Saving the head does not resolve it either.
+	if _, err := b.Checkpoint(); err != nil || b.LostCall() == nil {
+		t.Fatalf("the checkpoint: %v; recovering %v", err, b.LostCall() != nil)
+	}
+	b.ResolveLostCall()
 	if _, err := b.RunCell(ctx, cell("y = 2")); err != nil {
-		t.Fatalf("the same call after the first: %v", err)
+		t.Fatalf("the repeat after the session was resolved: %v", err)
 	}
 }
 
-// A different first call runs and spends the note: the lost call may be sent after it.
-func TestADifferentFirstCallRunsAndSpendsTheNote(t *testing.T) {
+// A call the daemon refuses with the not-dispatched mark changes nothing of the recovering
+// state: it is refused before it is sent, so the daemon never sees it.
+func TestRecoveringOutlivesARefusedCall(t *testing.T) {
 	d := clientsuite.ServeReattach(t)
 	ctx := context.Background()
 	_, cp, lost := lostCallSession(t, d.URL, sandbox.IsolationUnknown)
@@ -111,46 +134,20 @@ func TestADifferentFirstCallRunsAndSpendsTheNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.RunCell(ctx, cell("w = 0")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.RunCell(ctx, cell("y = 2")); err != nil {
-		t.Fatalf("the lost call after another: %v", err)
-	}
-}
-
-// A first call the daemon refuses with the not-dispatched mark ran nothing, so it leaves
-// the note: a checkpoint saved after it still carries the note, and the lost call sent next
-// is refused with nothing sent.
-func TestAFirstCallTheDaemonRefusesLeavesTheNote(t *testing.T) {
-	d := clientsuite.ServeReattach(t)
-	ctx := context.Background()
-	_, cp, lost := lostCallSession(t, d.URL, sandbox.IsolationUnknown)
-	b, err := reattachRemote(t, d.URL).AttachSession(ctx, cp, AttachOptions{LostRequestSHA256: lost})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ran := d.ProviderCalls()
 	refused := cell("w = 0")
-	refused.MinimumIsolation = sandbox.IsolationVM // above the session's tier: refused before it runs
-	_, err = b.RunCell(ctx, refused)
-	if reason, marked := sandbox.NotDispatchedReason(err); !marked || reason != sandbox.RefusalIsolation {
-		t.Fatalf("the refused first call: %v (marked %v, %v)", err, marked, reason)
+	refused.MinimumIsolation = sandbox.IsolationVM
+	if _, err := b.RunCell(ctx, refused); !errors.Is(err, ErrRecovering) {
+		t.Fatalf("a call with a floor above the tier while recovering: %v", err)
 	}
-	if cp2, err := b.Checkpoint(); err != nil || cp2.LostCallSHA256 != lost || cp2.Calls != cp.Calls+1 {
-		t.Fatalf("the checkpoint after the refused first call: %+v, %v", cp2, err)
-	}
-	if _, err := b.RunCell(ctx, cell("y = 2")); !errors.Is(err, ErrCallAlreadySent) {
-		t.Fatalf("the lost call after a refused first call: %v", err)
-	}
-	if d.ProviderCalls() != ran {
-		t.Fatal("a call ran")
+	if cp2, err := b.Checkpoint(); err != nil || cp2.RecoveringRequestSHA256 != lost || cp2.Calls != cp.Calls+1 {
+		t.Fatalf("the checkpoint: %+v, %v", cp2, err)
 	}
 }
 
-// A checkpoint saved before the first call carries the note to another worker, which
-// refuses the repeat too; one saved after it carries none.
-func TestACheckpointCarriesTheNoteUntilTheFirstCall(t *testing.T) {
+// A checkpoint saved while recovering carries the state to another worker, which knows
+// the lost call by its request digest alone and refuses every call until it resolves it;
+// a checkpoint saved after that carries none.
+func TestACheckpointCarriesTheRecoveringState(t *testing.T) {
 	d := clientsuite.ServeReattach(t)
 	ctx := context.Background()
 	_, cp, lost := lostCallSession(t, d.URL, sandbox.IsolationUnknown)
@@ -159,19 +156,51 @@ func TestACheckpointCarriesTheNoteUntilTheFirstCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp2, err := b.Checkpoint()
-	if err != nil || cp2.LostCallSHA256 != lost || cp2.Calls != cp.Calls+1 {
+	if err != nil || cp2.RecoveringRequestSHA256 != lost || cp2.Calls != cp.Calls+1 {
 		t.Fatalf("the checkpoint after the explained attach: %+v, %v", cp2, err)
 	}
 	c, err := reattachRemote(t, d.URL).AttachSession(ctx, cp2, AttachOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RunCell(ctx, cell("y = 2")); !errors.Is(err, ErrCallAlreadySent) {
-		t.Fatalf("the third worker's repeat: %v", err)
+	if lc := c.LostCall(); lc == nil || lc.RequestSHA256 != lost || lc.Record != nil || lc.Answer != nil {
+		t.Fatalf("the third worker's lost call: %+v", lc)
+	}
+	ran := d.ProviderCalls()
+	if _, err := c.RunCell(ctx, cell("w = 0")); !errors.Is(err, ErrRecovering) || d.ProviderCalls() != ran {
+		t.Fatalf("the third worker's call while recovering: %v", err)
+	}
+	c.ResolveLostCall()
+	if _, err := c.RunCell(ctx, cell("w = 0")); err != nil {
+		t.Fatal(err)
 	}
 	cp3, err := c.Checkpoint()
-	if err != nil || cp3.LostCallSHA256 != "" {
-		t.Fatalf("the note outlived the first call: %+v, %v", cp3, err)
+	if err != nil || cp3.RecoveringRequestSHA256 != "" {
+		t.Fatalf("the state outlived its resolution: %+v, %v", cp3, err)
+	}
+}
+
+// A session opened with KeepNoAnswer gets the lost call's record back and no answer.
+func TestKeepNoAnswerReturnsTheRecordAlone(t *testing.T) {
+	d := clientsuite.ServeReattach(t)
+	ctx := context.Background()
+	a, err := reattachRemote(t, d.URL).OpenSession(ctx, SessionOptions{KeepNoAnswer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := a.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RunCell(NewTraceContext(ctx, clientsuite.DropAnswerTrace), cell("y = 2")); err == nil {
+		t.Fatal("a dropped answer arrived")
+	}
+	b, err := reattachRemote(t, d.URL).AttachSession(ctx, cp, AttachOptions{LostRequestSHA256: a.LostRequestSHA256()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc := b.LostCall(); lc == nil || lc.Record == nil || lc.Record.ResultSHA256 == "" || lc.Answer != nil {
+		t.Fatalf("the lost call %+v", lc)
 	}
 }
 
@@ -212,5 +241,32 @@ func TestForgedExplainedGapAnswersAreRefused(t *testing.T) {
 	s, err := b.AttachSession(NewTraceContext(ctx, "forge-lost-none"), cp, AttachOptions{LostRequestSHA256: lost})
 	if err != nil || s.LostCall() == nil {
 		t.Fatalf("the honest explained answer: %v", err)
+	}
+}
+
+// Calls sent at once on one session all run, one after another: each takes its head inside
+// the queue that serializes the session's calls, after the call before it has moved it, so
+// none is refused for its head.
+func TestConcurrentCallsOnOneSessionEachStateTheHead(t *testing.T) {
+	d := clientsuite.ServeReattach(t)
+	ctx := context.Background()
+	s, err := reattachRemote(t, d.URL).OpenSession(ctx, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 8)
+	for i := 0; i < cap(errs); i++ {
+		go func() {
+			_, err := s.RunCell(ctx, cell("x = 1"))
+			errs <- err
+		}()
+	}
+	for i := 0; i < cap(errs); i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("a concurrent call: %v", err)
+		}
+	}
+	if d.ProviderCalls() != cap(errs) {
+		t.Fatalf("%d calls ran, want %d", d.ProviderCalls(), cap(errs))
 	}
 }

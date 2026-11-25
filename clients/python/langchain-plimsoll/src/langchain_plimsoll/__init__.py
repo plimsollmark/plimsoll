@@ -30,7 +30,7 @@ from plimsoll_client.execution import CodeExecutor
 from plimsoll_client.langchain import PlimsollCodeTool
 
 __all__ = ["Client", "CodeExecutor", "PlimsollCodeTool", "PlimsollSandbox", "retry_on"]
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 
 def __getattr__(name: str) -> Any:

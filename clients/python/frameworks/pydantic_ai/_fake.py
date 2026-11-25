@@ -21,10 +21,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import plimsoll_client.pydantic_ai as pa
 import plimsoll_client.workspace as pw
-from plimsoll_client import CallAlreadySentError, Client, PlimsollError, Session, SessionEndedError
-from plimsoll_client._tables import CALL_ALREADY_SENT_TEXT
+from plimsoll_client import Client, PlimsollError, RecoveringError, Session, SessionEndedError
+from plimsoll_client._tables import RECOVERING_TEXT
 from plimsoll_client._wire import Msg
-from plimsoll_client.types import Artifact, ProjectResult, RunRecord, SessionEnded, SessionSummary, StepResult
+from plimsoll_client.types import Artifact, LostCall, ProjectResult, RunRecord, SessionEnded, SessionSummary, StepResult
 
 ROOT = "/work"
 STATE = ROOT + "/" + pw.STATE_DIR
@@ -95,10 +95,9 @@ class FakeSession:
     answering: an exception, raised (unmarked ones stop the session, as Session does), or a function of the call's
     files and steps returning a ProjectResult. ``commands`` are the shell commands the shell tool sent.
 
-    A session taken over across a lost call carries that call's record in ``lost_call``, as the real one does; a
-    test names the lost call's command in ``lost_command``, and the first call is then refused with nothing sent
-    when it repeats that command (``CallAlreadySentError``), as the real client refuses a repeat of the lost call's
-    request: any other first call spends the note."""
+    A session taken over across a lost call carries it in ``lost_call`` (a :class:`LostCall`), as the real one does,
+    and is recovering: every call is refused with nothing sent (``RecoveringError``) until ``resolve_lost_call()``,
+    which ``resolves`` counts."""
 
     def __init__(self, *, isolation: str = "kernel", tree: Optional[Tree] = None) -> None:
         self.fingerprint = "f" * 64
@@ -112,8 +111,9 @@ class FakeSession:
         self.scripts: List[str] = []
         self.budgets: List[float] = []
         self.closes = 0
-        self.lost_call: Optional[RunRecord] = None
-        self.lost_command: Optional[str] = None
+        self.lost_call: Optional[LostCall] = None
+        self.resolves = 0
+        self.refused_recovering = 0  # the calls refused while recovering
         self._ended: Optional[SessionEnded] = None
         self._stopped: Optional[str] = None
         self._calls = 0
@@ -135,6 +135,10 @@ class FakeSession:
     def last_record_sha256(self) -> str:
         return self._last
 
+    def resolve_lost_call(self) -> None:
+        self.resolves += 1
+        self.lost_call = None
+
     def end(self, reason: str = "expired") -> None:
         self._ended = SessionEnded(reason=reason, detail="")
 
@@ -153,10 +157,9 @@ class FakeSession:
         if self._stopped is not None:
             raise PlimsollError("plimsoll: an earlier call ... sends nothing more", code="failed_precondition", not_dispatched="request")
         files = dict(files)
-        if self.lost_command is not None:
-            lost, self.lost_command = self.lost_command, None
-            if list(steps)[:1] == [pw._EXEC_STEP] and files.get(pw._CMD) == lost:
-                raise CallAlreadySentError(f"plimsoll: {CALL_ALREADY_SENT_TEXT}; nothing was sent", not_dispatched="request")
+        if self.lost_call is not None:
+            self.refused_recovering += 1
+            raise RecoveringError(f"plimsoll: {RECOVERING_TEXT}; nothing was sent", not_dispatched="request")
         self.budgets.append(timeout or 0.0)
         if self.plan:
             planned = self.plan.pop(0)
@@ -296,7 +299,7 @@ class FakeClient(Client):
 
     def open_session(self, *, minimum_isolation: Optional[str] = None, software: Any = None, lifetime: Optional[float] = None,
                      idle_timeout: Optional[float] = None, trace_id: Optional[str] = None, languages: Optional[Sequence[str]] = None,
-                     owner: Optional[str] = None, warm_only: bool = False, checkpoint_store: Any = None,
+                     owner: Optional[str] = None, warm_only: bool = False, keep_no_answer: bool = False, checkpoint_store: Any = None,
                      checkpoint_key: Optional[str] = None) -> Any:
         opened: Dict[str, Any] = {"minimum_isolation": minimum_isolation, "lifetime": lifetime, "languages": languages, "owner": owner}
         if checkpoint_store is not None or checkpoint_key is not None:

@@ -380,15 +380,15 @@ func TestLoadPaidConfig(t *testing.T) {
 	}
 }
 
-// Every pod's TLS terminator serves the same certificate, so the channel to sandboxd does
-// not tie a connection to the pod dialed; hardened mode serves agentsandbox only once the
-// operator states the pod network is authenticated and encrypted, until each pod has a key
-// of its own (Claude Security scan, 2026-11-07, finding F1).
-func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
+// Each pod serves a certificate of its own, naming its UID, and the channel checks it
+// against the pod read, so hardened mode needs no statement about the pod network; it
+// requires the trust domain of those identities, which the provider requires in every mode
+// (security scan, 2026-11-07, finding F1, closed by per-pod keys).
+func TestHardenedPolicyAgentSandboxNeedsTheTrustDomain(t *testing.T) {
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "agentsandbox", sandbox.IsolationKernel
 	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1", "SANDBOX_DISK_MB": "64", "SANDBOX_REQUIRE_PINNED_IMAGES": "1",
-		"SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK": "1"}
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN": "plimsoll.test"}
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
 		t.Fatalf("compliant agentsandbox deployment rejected: %v", err)
 	}
@@ -398,18 +398,15 @@ func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
 		t.Fatalf("a declared gVisor handler rejected: %v", err)
 	}
-	for _, v := range []string{"", "0"} {
-		env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = v
-		if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1") {
-			t.Fatalf("value %q: err = %v, want the encrypted-pod-network violation", v, err)
-		}
+	delete(env, "SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN")
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN") {
+		t.Fatalf("no trust domain: err = %v, want it required", err)
 	}
-	env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = "yes please"
-	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK") {
-		t.Fatalf("an unreadable value: err = %v, want it reported", err)
-	}
-	delete(env, "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK")
-	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1") {
-		t.Fatalf("variable unset: err = %v, want the encrypted-pod-network violation", err)
+	// The operator's statement of earlier releases is no setting any more: it names nothing
+	// hardened mode reads, and plimsolld -h does not list it.
+	env["SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN"] = "plimsoll.test"
+	env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = "0"
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
+		t.Fatalf("the removed statement still read: %v", err)
 	}
 }

@@ -125,16 +125,38 @@ export class CheckpointMismatchError extends PlimsollError {
 }
 
 /**
- * The first call of a session taken over across an explained gap repeats the lost call:
- * that call was already sent once and its answer was lost, so this is a retry of it.
- * Refused before anything was sent (notDispatched "request"), and never a retry signal.
- * Only the first call is checked (Go: client.ErrCallAlreadySent, in the same words).
- * The lost call's record says whether the daemon answered it (session.lostCall).
+ * A session call refused before anything was sent, because the session is recovering
+ * from a call whose answer was lost: it was taken over across that call (attachSession
+ * with lostRequestSha256), or attached from a checkpoint saved while recovering. Every
+ * call is refused (notDispatched "request") until the application has read
+ * session.lostCall and called session.resolveLostCall(). It is never a retry signal: the
+ * lost call was sent once and may have run (Go: client.ErrRecovering, in the same words).
+ * The lost call's record says whether the daemon answered it: a result digest when it did,
+ * an unanswered code when it ended without an answer.
  */
-export class CallAlreadySentError extends PlimsollError {
+export class RecoveringError extends PlimsollError {
   constructor(message: string) {
     super("failed_precondition", message, { notDispatched: "request" });
-    this.name = "CallAlreadySentError";
+    this.name = "RecoveringError";
+  }
+}
+
+/** A session's head: the ownership generation, the count of calls and the last record's digest. */
+export type SessionHead = { generation: bigint; calls: bigint; lastRecordSha256: string };
+
+/**
+ * A session call the daemon refused, before running anything, because the head this
+ * client sent (its generation, count of calls and last record) is not the session's:
+ * another holder of the session ran a call between this client's, or a bug. head is the
+ * daemon's, from the refusal's SessionHeadMismatch detail. This client tracks the head
+ * exactly, so the session stops here and sends nothing more (Go: client.ErrHeadMismatch).
+ */
+export class HeadMismatchError extends PlimsollError {
+  readonly head: SessionHead;
+  constructor(message: string, head: SessionHead, opts: ConstructorParameters<typeof PlimsollError>[2] = {}) {
+    super("failed_precondition", message, opts);
+    this.name = "HeadMismatchError";
+    this.head = head;
   }
 }
 
@@ -215,6 +237,68 @@ function bigVarint(b: Uint8Array, i: number): [bigint, number] {
     if ((c & 0x80) === 0) return [v, i];
   }
   throw new Error("bad varint");
+}
+
+// The index after a field of wire type wire whose value starts at b[i]: how a field this
+// client does not know is skipped, as Go and Python skip it.
+function skipField(b: Uint8Array, i: number, wire: number): number {
+  if (wire === 0) return varint(b, i)[1];
+  if (wire === 2) {
+    const [n, k] = varint(b, i);
+    if (k + n > b.length) throw new Error("bad detail");
+    return k + n;
+  }
+  if (wire === 1 || wire === 5) {
+    const next = i + (wire === 1 ? 8 : 4);
+    if (next > b.length) throw new Error("bad detail");
+    return next;
+  }
+  throw new Error("unexpected wire type");
+}
+
+// Decodes a SessionHeadMismatch detail (field 1, a SessionCheckpoint: generation 1, calls 2,
+// last_record_sha256 3) by hand; undefined when it holds no head, which leaves the refusal
+// an attach's checkpoint mismatch, as in Go (headMismatchDetail).
+function decodeHeadMismatch(b: Uint8Array): SessionHead | undefined {
+  let head: SessionHead | undefined;
+  for (let i = 0; i < b.length; ) {
+    const [tag, j] = varint(b, i);
+    const wire = tag & 7;
+    if (tag >>> 3 === 1 && wire === 2) {
+      const [n, k] = varint(b, j);
+      if (k + n > b.length) throw new Error("bad detail");
+      head = decodeHead(b.subarray(k, k + n));
+      i = k + n;
+    } else {
+      i = skipField(b, j, wire);
+    }
+  }
+  return head;
+}
+
+function decodeHead(b: Uint8Array): SessionHead {
+  const h: SessionHead = { generation: 0n, calls: 0n, lastRecordSha256: "" };
+  for (let i = 0; i < b.length; ) {
+    const [tag, j] = varint(b, i);
+    const field = tag >>> 3;
+    const wire = tag & 7;
+    if ((field === 1 || field === 2) && wire === 0) {
+      const [v, k] = bigVarint(b, j);
+      // Go's protowire refuses a varint past 64 bits; so does this decoder.
+      if (v >> 64n !== 0n) throw new Error("bad varint");
+      if (field === 1) h.generation = v;
+      else h.calls = v;
+      i = k;
+    } else if (field === 3 && wire === 2) {
+      const [n, k] = varint(b, j);
+      if (k + n > b.length) throw new Error("bad detail");
+      h.lastRecordSha256 = new TextDecoder("utf-8", { fatal: true }).decode(b.subarray(k, k + n));
+      i = k + n;
+    } else {
+      i = skipField(b, j, wire);
+    }
+  }
+  return h;
 }
 
 const RECORD_STRINGS: Record<number, keyof WireRecord> = {
@@ -313,6 +397,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
   let notDispatched: Refusal | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   let unanswered: WireRecord | undefined;
+  let head: SessionHead | undefined;
   for (const d of (unreadable ? [] : details) as { type?: string; value?: string }[]) {
     try {
       const bytes = wireBytes(d.value);
@@ -325,6 +410,8 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
         sessionEnded = { reason: reason === "open" ? "unknown" : reason, detail: m.detail };
       } else if (d.type === "plimsoll.v1.UnansweredCall") {
         unanswered = decodeUnanswered(bytes);
+      } else if (d.type === "plimsoll.v1.SessionHeadMismatch") {
+        head = decodeHeadMismatch(bytes);
       }
     } catch {
       // An undecodable detail states nothing; in particular not that nothing ran.
@@ -337,10 +424,11 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
   const opts = { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered };
   // The ownership refusals of a session's run, close or attach (protocol 6): reason
   // permission is a stale worker; reason request with the daemon's constant text is a
-  // checkpoint that is not the head.
+  // checkpoint that is not the head: an attach's, or, with the daemon's head as a
+  // SessionHeadMismatch detail (protocol 8), a call's.
   if (code === "failed_precondition" && !sessionEnded && notDispatched === "permission") return new StaleOwnerError(message, opts);
   if (code === "failed_precondition" && !sessionEnded && notDispatched === "request" && message === CHECKPOINT_MISMATCH_TEXT) {
-    return new CheckpointMismatchError(message, opts);
+    return head ? new HeadMismatchError(message, head, opts) : new CheckpointMismatchError(message, opts);
   }
   return new PlimsollError(code, message, opts);
 }

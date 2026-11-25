@@ -14,7 +14,7 @@ import (
 
 func TestConfigRefuses(t *testing.T) {
 	good := Config{APIServer: "https://k8s.example:6443", CAFile: "ca", TokenFile: "tok", Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: "sandboxd-ca"}
+		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: "sandboxd-ca", SandboxdTrustDomain: fakeTrustDomain}
 	if err := good.validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +32,7 @@ func TestConfigRefuses(t *testing.T) {
 		"token with a space":  func(c *Config) { c.SandboxdToken = strings.Repeat("a", 20) + " " + strings.Repeat("b", 20) },
 		"no sandboxd CA":      func(c *Config) { c.SandboxdCAFile = "" },
 		"an address as name":  func(c *Config) { c.SandboxdServerName = "10.0.0.1" },
+		"no trust domain":     func(c *Config) { c.SandboxdTrustDomain = "" },
 	} {
 		c := good
 		edit(&c)
@@ -136,27 +137,32 @@ func TestReadBackRefuses(t *testing.T) {
 			p.Spec.Containers[0].Command = append(c[:2:2], c[3:]...)
 		}, want: "exactly one --listen-host"},
 		"a second listen host": {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"-listen-host=127.0.0.1"} }, want: "exactly one --listen-host"},
-		"no TLS Secret": {pod: func(p *pod) {
+		"no key volume": {pod: func(p *pod) {
 			p.Spec.Volumes = p.Spec.Volumes[:1]
 			p.Spec.Containers[0].VolumeMounts = p.Spec.Containers[0].VolumeMounts[:1]
-		}, want: "0 Secret volumes"},
-		"two TLS Secrets": {pod: func(p *pod) {
-			p.Spec.Volumes = append(p.Spec.Volumes, volume{"name": json.RawMessage(`"tls2"`), "secret": p.Spec.Volumes[1]["secret"]})
-		}, want: "2 Secret volumes"},
-		"a group-readable key":        {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":288}`) }, want: "defaultMode 0440"},
-		"the default key mode":        {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":420}`) }, want: "defaultMode 0644"},
-		"no key mode":                 {pod: func(p *pod) { tlsSource(p, `{"secretName":"s"}`) }, want: "sets no defaultMode"},
-		"a key its owner cannot read": {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":128}`) }, want: "defaultMode 0200"},
-		"an optional Secret":          {pod: func(p *pod) { tlsSource(p, `{"secretName":"s","defaultMode":256,"optional":true}`) }, want: "optional"},
-		"Secret items": {pod: func(p *pod) {
-			tlsSource(p, `{"secretName":"s","defaultMode":256,"items":[{"key":"tls.key","path":"k","mode":420}]}`)
-		}, want: "no items"},
-		"a Secret with no name":           {pod: func(p *pod) { tlsSource(p, `{"defaultMode":256}`) }, want: "names Secret"},
-		"a Secret beside another source":  {pod: func(p *pod) { p.Spec.Volumes[1]["emptyDir"] = json.RawMessage(`{}`) }, want: "another source"},
-		"the Secret mounted writable":     {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].ReadOnly = false }, want: "mount it whole and read-only"},
-		"the Secret mounted in /work":     {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].MountPath = "/work/tls" }, want: "mount it whole and read-only"},
-		"the Secret mounted by a subPath": {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].SubPath = "tls.key" }, want: "mount it whole and read-only"},
-		"the Secret mounted twice": {pod: func(p *pod) {
+		}, want: "0 key volumes"},
+		"two key volumes": {pod: func(p *pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, volume{"name": json.RawMessage(`"tls2"`), "csi": p.Spec.Volumes[1]["csi"]})
+		}, want: "2 key volumes"},
+		// The shared key of earlier releases: one Secret mounted into every pod.
+		"the shared Secret instead": {pod: func(p *pod) {
+			p.Spec.Volumes[1] = volume{"name": json.RawMessage(`"sandboxd-tls"`), "secret": json.RawMessage(`{"secretName":"plimsoll-sandboxd-tls","defaultMode":256}`)}
+		}, want: "0 key volumes"},
+		"the shared Secret beside it": {pod: func(p *pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, volume{"name": json.RawMessage(`"old-tls"`), "secret": json.RawMessage(`{"secretName":"plimsoll-sandboxd-tls","defaultMode":256}`)})
+		}, want: "not an emptyDir"},
+		"another CSI driver":    {pod: func(p *pod) { keyRaw(p, `{"driver":"secrets-store.csi.k8s.io","readOnly":true}`) }, want: "of driver"},
+		"a writable CSI volume": {pod: func(p *pod) { keyRaw(p, `{"driver":"csi.cert-manager.io","readOnly":false}`) }, want: "readOnly: true"},
+		"no readOnly":           {pod: func(p *pod) { keyRaw(p, `{"driver":"csi.cert-manager.io"}`) }, want: "readOnly: true"},
+		"a filesystem type":     {pod: func(p *pod) { keyRaw(p, `{"driver":"csi.cert-manager.io","readOnly":true,"fsType":"ext4"}`) }, want: "only driver, readOnly and volumeAttributes"},
+		"a node publish secret": {pod: func(p *pod) {
+			keyRaw(p, `{"driver":"csi.cert-manager.io","readOnly":true,"nodePublishSecretRef":{"name":"x"}}`)
+		}, want: "only driver, readOnly and volumeAttributes"},
+		"the key volume beside a dir": {pod: func(p *pod) { p.Spec.Volumes[1]["emptyDir"] = json.RawMessage(`{}`) }, want: "another source"},
+		"the key mounted writable":    {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].ReadOnly = false }, want: "mount it whole and read-only"},
+		"the key mounted in /work":    {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].MountPath = "/work/tls" }, want: "mount it whole and read-only"},
+		"the key mounted by subPath":  {pod: func(p *pod) { p.Spec.Containers[0].VolumeMounts[1].SubPath = "tls.key" }, want: "mount it whole and read-only"},
+		"the key mounted twice": {pod: func(p *pod) {
 			m := p.Spec.Containers[0].VolumeMounts
 			p.Spec.Containers[0].VolumeMounts = append(m, m[1])
 		}, want: "mounted 2 times"},
@@ -171,7 +177,11 @@ func TestReadBackRefuses(t *testing.T) {
 			c := p.Spec.Containers[0].Command
 			p.Spec.Containers[0].Command = append(c[:4:4], "--metadata-env-prefix", c[4])
 		}, want: "not a --name=value"},
-		"a positional argument":         {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"serve"} }, want: "not a --name=value"},
+		"a positional argument": {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"serve"} }, want: "not a --name=value"},
+		// finding release-58: a flag the pinned sandboxd does not take, as a later one might
+		"an unknown flag":               {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"--allow-unauthenticated=true"} }, want: "does not take"},
+		"an unknown single-dash flag":   {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"-allow-unauthenticated=true"} }, want: "does not take"},
+		"a known flag in another case":  {pod: func(p *pod) { p.Spec.Containers[0].Args = []string{"--Root-Dir=/work"} }, want: "does not take"},
 		"the default termination log":   {pod: func(p *pod) { p.Spec.Containers[0].TerminationMessagePath = defaultTerminationLog }, want: "terminationMessagePath"},
 		"no termination log path":       {pod: func(p *pod) { p.Spec.Containers[0].TerminationMessagePath = "" }, want: "terminationMessagePath"},
 		"a termination log in a volume": {pod: func(p *pod) { p.Spec.Containers[0].TerminationMessagePath = "/work/log" }, want: "inside /work"},
@@ -635,8 +645,16 @@ func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
 	drained(t, p)
 }
 
-// tlsSource replaces the TLS Secret volume's source in a pod.
-func tlsSource(p *pod, src string) { p.Spec.Volumes[1]["secret"] = json.RawMessage(src) }
+// keyRaw replaces the key volume's CSI source in a pod.
+func keyRaw(p *pod, src string) { p.Spec.Volumes[1]["csi"] = json.RawMessage(src) }
+
+// keyAttrs replaces the key volume's attributes in a pod with keyAttributes as edit leaves
+// them.
+func keyAttrs(p *pod, edit func(map[string]string)) {
+	attrs := keyAttributes()
+	edit(attrs)
+	p.Spec.Volumes[1]["csi"] = keySource(attrs)
+}
 
 // scratchAt mounts a writable memory volume at path.
 func scratchAt(p *pod, at string) {

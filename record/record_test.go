@@ -214,7 +214,7 @@ func TestGoldenVectors(t *testing.T) {
 		t.Fatalf("the golden file holds %d malformed records, fewer than the 4 it had", len(g.Malformed))
 	}
 	for _, r := range g.Malformed {
-		if err := protojson.Unmarshal(r.Record, &plimsollv1.RunRecord{}); err == nil {
+		if err := UnmarshalJSON(r.Record, &plimsollv1.RunRecord{}); err == nil {
 			t.Errorf("%s (%s) was read", r.Name, r.Why)
 		}
 	}

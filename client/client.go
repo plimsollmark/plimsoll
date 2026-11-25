@@ -735,10 +735,14 @@ func restoreSandboxError(err error) error {
 			// session has not ended.
 			sentinel = ErrStaleOwner
 		case reason == sandbox.RefusalRequest:
-			// An attach whose checkpoint is not the head, told by the daemon's constant
-			// text; any other refusal with this reason is left without a sentinel.
+			// An attach whose checkpoint is not the head, or a call whose head is not, told
+			// by the daemon's constant text and, for a call, the daemon's head beside it; any
+			// other refusal with this reason is left without a sentinel.
 			if checkpointMismatch(err) {
 				sentinel = ErrCheckpointMismatch
+				if headMismatchDetail(err) != nil {
+					sentinel = ErrHeadMismatch
+				}
 			}
 		case reason == sandbox.RefusalIsolation:
 			sentinel = sandbox.ErrInsufficientIsolation

@@ -21,8 +21,18 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from . import _validate as v
 from ._record import VERSION as RECORD_VERSION_LIVE
-from ._record import _states_only, check, check_single, check_unanswered, record_digest, record_from_wire, request_digest, session_fingerprint
-from ._tables import CALL_ALREADY_SENT_TEXT, DAEMON_NAME_PATTERN
+from ._record import (
+    _states_only,
+    check,
+    check_lost_answer,
+    check_single,
+    check_unanswered,
+    record_digest,
+    record_from_wire,
+    request_digest,
+    session_fingerprint,
+)
+from ._tables import CHECKPOINT_VERSION, DAEMON_NAME_PATTERN, RECOVERING_TEXT
 from ._transport import CancelHandle, Transport
 from .checkpoint import (
     CheckpointConflictError,
@@ -44,15 +54,16 @@ from ._wire import (
     Msg,
 )
 from .errors import (
-    CallAlreadySentError,
     ChainError,
     DataLossError,
+    HeadMismatchError,
     PlimsollError,
     InvalidOptionError,
     IsolationEvidenceMismatchError,
     MalformedResponseError,
     ProtocolMismatchError,
     RecordMismatchError,
+    RecoveringError,
     ResultKindMismatchError,
     SessionEndedError,
     SoftwareEvidenceMismatchError,
@@ -64,6 +75,7 @@ from .types import (
     Artifact,
     Info,
     JavaScriptResult,
+    LostCall,
     ModuleResult,
     ModuleRun,
     PayloadEnvironment,
@@ -531,6 +543,7 @@ class Client:
         languages: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
         warm_only: bool = False,
+        keep_no_answer: bool = False,
         checkpoint_store: Optional[CheckpointStore] = None,
         checkpoint_key: Optional[str] = None,
     ) -> "Session":
@@ -558,6 +571,12 @@ class Client:
         reading the open. A cell for one call needs no session of its own:
         :meth:`run_cell` with ``prefer_warm``.
 
+        ``keep_no_answer`` asks the daemon to keep no call's answer. By default it keeps the
+        last answered call's answer in memory, until the next call starts or the session
+        suspends or ends, so that a worker taking the session over across that call's lost
+        answer gets it back (``Session.lost_call``). Set it when the application promises
+        its users that the daemon retains no output; it holds for the whole session.
+
         ``checkpoint_store`` and ``checkpoint_key`` (both or neither, and the client's
         ``daemon_name`` with them) keep the session's checkpoint in the store under the
         key, so another process can carry on with it (:meth:`attach_session`); every call
@@ -575,6 +594,10 @@ class Client:
             raise TypeError("warm_only must be a bool")
         if warm_only:
             req["warmOnly"] = True
+        if not isinstance(keep_no_answer, bool):
+            raise TypeError("keep_no_answer must be a bool")
+        if keep_no_answer:
+            req["keepNoAnswer"] = True
         if owner is not None:
             if not isinstance(owner, str):
                 raise TypeError("owner must be a string")
@@ -675,10 +698,14 @@ class Client:
         daemon never dispatched the call, the heads match and the attach succeeds. If it
         dispatched it, the heads differ by that one call, which the pending record names,
         so the daemon takes the session over across it (the explained gap) and returns
-        its record (``Session.lost_call``). The session then refuses its first call if it
-        repeats the lost one (CallAlreadySentError); only the first call is checked, so a
-        later call can send the lost call again. Any other difference is refused
-        (CheckpointMismatchError).
+        its record, and its answer when the daemon still keeps it, both checked here. The
+        session is then recovering (``Session.lost_call``): every call is refused before
+        it is sent (RecoveringError) until the application has read the lost call and
+        called ``Session.resolve_lost_call()``. The lost call's record says whether the
+        daemon answered it: a result digest when it did, an unanswered code when the call
+        ended without an answer. A stored checkpoint saved while recovering makes the
+        attached session recovering too, with the lost call's request digest alone. Any
+        other difference is refused (CheckpointMismatchError).
 
         A missing record raises LookupError: it never becomes a fresh session. A
         checkpoint naming another daemon than this client's ``daemon_name`` is refused
@@ -688,8 +715,17 @@ class Client:
         ChainError, and the session is not closed: a bad answer gives this client no right
         to destroy a session another worker may be using. A transport failure or a cancel
         after sending is raised as it is and never retried: the daemon may have raised
-        the generation. If the store changed meanwhile, CheckpointConflictError, and the
-        attached session is dropped, not closed."""
+        the generation.
+
+        The daemon holds the session for this worker once the attach is answered, so the
+        store is written after it even when its record changed meanwhile, provided the
+        record it now holds names the same session at no later generation than the one
+        attached from: only an attach raises the generation, so such a record was written
+        by a worker the daemon now refuses as stale (one whose call was refused between this
+        worker's read and its write, finding release-60), and the session would otherwise be
+        held by nobody until its lifetime ended. A record at a later generation, of another
+        session, or gone raises CheckpointConflictError, and the attached session is
+        dropped, not closed."""
         if not self.daemon_name:
             raise v.invalid("attach_session needs the client's daemon_name")
         if not isinstance(key, str) or not key:
@@ -723,29 +759,52 @@ class Client:
             req["traceId"] = tid
         m = self._transport.call("AttachSession", req, "AttachSessionResponse", cancel)
         s = self._attached(cp, m, lost)
-        ready = StoredCheckpoint(revision=loaded.revision + 1, state="ready", operation="", checkpoint=s.checkpoint())
-        try:
-            moved = store.compare_and_set(key, loaded, ready)
-        except Exception as e:
-            raise CheckpointStoreError("plimsoll: the checkpoint store failed after the attach; the attached session is dropped", sent=True) from e
-        if not moved:
-            raise CheckpointConflictError("plimsoll: the checkpoint store changed during the attach; the attached session is dropped", sent=True)
-        s._bind(store, key, ready)
-        return s
+        expected = loaded
+        for _ in range(_ATTACH_WRITE_TRIES):
+            ready = StoredCheckpoint(revision=expected.revision + 1, state="ready", operation="", checkpoint=s.checkpoint())
+            try:
+                moved = store.compare_and_set(key, expected, ready)
+                now = None if moved else store.load(key)
+            except Exception as e:
+                raise CheckpointStoreError("plimsoll: the checkpoint store failed after the attach; the attached session is dropped", sent=True) from e
+            if moved:
+                s._bind(store, key, ready)
+                return s
+            # A record a stale worker wrote since the read (the same session, at no later
+            # generation than the one attached from) is replaced: the daemon holds the
+            # session for this worker now. Anything else is another worker's.
+            if not isinstance(now, StoredCheckpoint) or now.checkpoint.session != cp.session or now.checkpoint.generation > cp.generation:
+                break
+            expected = now
+        raise CheckpointConflictError(
+            "plimsoll: another worker took the session over, or the store's record under this key changed to another session, "
+            "while this worker attached; the attached session is dropped (the daemon moved the session to this worker, and the "
+            "store names another holder)",
+            sent=True,
+        )
 
     def _attached(self, cp: SessionCheckpoint, m: Msg, lost: str = "") -> "Session":
         """The attached session, once the answer repeats the checkpoint exactly, or carries
         the record of the call ``lost`` names at the checkpoint's next place and a head
-        after it; else ChainError, with nothing closed."""
+        after it, and beside it, when the daemon kept it, that call's answer, which must
+        carry the same record and a result whose digest is the record's; else ChainError,
+        with nothing closed. A lost call's answer with no lost record is refused the same
+        way."""
         info, head = m.get_msg("sessionInfo"), m.get_msg("checkpoint")
-        lost_msg = m.get_msg("lostRecord")
-        lost_call: Optional[RunRecord] = None
+        lost_msg, answer_msg = m.get_msg("lostRecord"), m.get_msg("lostAnswer")
+        recovering: Optional[LostCall] = LostCall(request_sha256=cp.recovering_request_sha256) if cp.recovering_request_sha256 else None
         problem = ""
-        if lost_msg is not None:
+        if answer_msg is not None and lost_msg is None:
+            problem = "carries a lost call's answer without the lost call's record"
+        calls, last = cp.calls, cp.last_record_sha256
+        if lost_msg is not None and not problem:
             lost_call, problem = _lost_record(cp, lost, lost_msg)
-        calls, last, note = cp.calls, cp.last_record_sha256, cp.lost_call_sha256
-        if lost_call is not None:
-            calls, last, note = lost_call.sequence, lost_call.sha256, lost_call.request_sha256
+            if lost_call is not None:
+                answer: Any = None
+                if answer_msg is not None:
+                    answer, problem = _lost_answer(answer_msg, lost_call)
+                recovering = LostCall(request_sha256=lost_call.request_sha256, record=lost_call, answer=answer)
+                calls, last = lost_call.sequence, lost_call.sha256
         if not problem and (info is None or head is None):
             problem = "lacks the session or its checkpoint"
         elif not problem and info is not None and head is not None:
@@ -772,12 +831,16 @@ class Client:
         rule = SoftwareRule(wire_rule.get_str("mode"), tuple(wire_rule.get_strs("identities"))) if wire_rule is not None and cp.open_rule else None  # type: ignore[arg-type]
         s = Session(self._transport, info.get_str("sessionId"), info, rule, cp.open_floor, self.daemon_name)
         s._calls, s._last = calls, last
-        s._lost_call, s._lost_record = note, lost_call
+        s._recovering = recovering
         return s
 
 
 _DAEMON_NAME = re.compile(DAEMON_NAME_PATTERN)
 _FINGERPRINT = re.compile("[0-9a-f]{64}")
+# How many times an attach writes its record over one a stale worker wrote meanwhile: a
+# stale worker writes at most two (its call's pending record, then the ready one after the
+# refusal), and every later write it tries fails, since the store then holds this one's.
+_ATTACH_WRITE_TRIES = 4
 
 
 def _lost_record(cp: SessionCheckpoint, lost: str, m: Msg) -> Tuple[Optional[RunRecord], str]:
@@ -805,6 +868,20 @@ def _lost_record(cp: SessionCheckpoint, lost: str, m: Msg) -> Tuple[Optional[Run
     ):
         return None, "carries a lost call's record stating other evidence than the session stated at open"
     return r, ""
+
+
+def _lost_answer(m: Msg, lost: RunRecord) -> Tuple[Any, str]:
+    """The result of a lost call's answer an attach returned (``m``), once it checks against
+    the lost call's record ``lost`` (_record.check_lost_answer), carrying that record; else
+    what differs."""
+    try:
+        check_lost_answer(m, lost)
+        kind = _kinds(m)[0]
+        payload = m.get_msg(kind)
+        assert payload is not None
+        return replace(_MAPPERS[kind](m, payload), record=lost), ""
+    except PlimsollError as e:
+        return None, f"carries a lost call's answer that does not check against its record ({e.message})"
 
 
 def _wire_rule_id(m: Optional[Msg]) -> Optional[str]:
@@ -879,13 +956,12 @@ class Session:
         # next close starts from it, since the record stays pending and the store holds it,
         # not the ready one before it (finding hunt-quality-91).
         self._close_pending: Optional[StoredCheckpoint] = None
-        # The request digest the session's next call is refused for repeating, set by an
-        # attach across an explained gap (or inherited with a checkpoint) and spent by that
-        # refusal or by the next call that may have run (a call the daemon refuses with the
-        # not-dispatched mark leaves it); the record of that lost call; and the request
-        # digest of the call after which this session stopped with no answer it could check.
-        self._lost_call = ""
-        self._lost_record: Optional[RunRecord] = None
+        # The lost call this session is recovering from, set by an attach across an explained
+        # gap or from a checkpoint saved while recovering, None otherwise: while it is set
+        # every call is refused before anything is sent (RecoveringError), until
+        # resolve_lost_call. And the request digest of the call after which this session
+        # stopped with no answer it could check.
+        self._recovering: Optional[LostCall] = None
         self._lost_request = ""
 
     def __repr__(self) -> str:
@@ -899,7 +975,9 @@ class Session:
         keeps it itself; a session with a store keeps its own. It waits for a call in
         flight, so the head it states follows that call. Raises
         CheckpointUnavailableError when the client has no ``daemon_name`` and when the
-        session is stopped, closed or ended."""
+        session is stopped, closed or ended. A session recovering from a lost call saves
+        that state (``recovering_request_sha256``), so the worker that attaches from it is
+        recovering too."""
         if not self._daemon:
             raise CheckpointUnavailableError("plimsoll: the client has no daemon_name, so its sessions have no checkpoint")
         with self._lock:
@@ -914,7 +992,7 @@ class Session:
     def _checkpoint(self) -> SessionCheckpoint:
         assert self._daemon is not None
         return SessionCheckpoint(
-            version=1,
+            version=CHECKPOINT_VERSION,
             daemon=self._daemon,
             session=self.fingerprint,
             generation=self._generation,
@@ -928,7 +1006,7 @@ class Session:
             open_rule=self._rule.rule_id() if self._rule is not None else "",
             expires_unix_ms=self.expires_unix_ms,
             idle_timeout_ms=self.idle_timeout_ms,
-            lost_call_sha256=self._lost_call,
+            recovering_request_sha256=self._recovering.request_sha256 if self._recovering is not None else "",
         )
 
     @property
@@ -939,23 +1017,47 @@ class Session:
         return self._lost_request
 
     @property
-    def lost_call_sha256(self) -> str:
-        """The request digest the session's next call is refused for repeating, or "": set
-        by an attach across an explained gap (or with a checkpoint that carries it) and spent
-        by the next call, unless the daemon refuses that call with the not-dispatched mark.
-        An adapter that sends a call of its own before the application's first (a probe)
-        would spend it, so it sends none while this is set."""
-        return self._lost_call
-
-    @property
-    def lost_call(self) -> Optional[RunRecord]:
-        """The record of the call that was sent once and whose answer was lost, on a
-        session attached across an explained gap, or None. Its output is lost. The record
-        says whether the daemon answered it: a result digest when the daemon answered,
+    def lost_call(self) -> Optional[LostCall]:
+        """The call this session is recovering from (:class:`~plimsoll_client.types.LostCall`),
+        or None when it is not recovering: after an attach across an explained gap, or from
+        a checkpoint saved while recovering, until :meth:`resolve_lost_call`. While it is not
+        None every call is refused before it is sent (RecoveringError). Its record says
+        whether the daemon answered the call: a result digest when the daemon answered,
         which does not show that the call ran to its end (a step stopped at its time limit
         and a setup that failed are answers too), an ``unanswered`` code when it ended
-        without an answer, so that it may have done none, part or all of its work."""
-        return self._lost_record
+        without an answer, so that it may have done none, part or all of its work. Its
+        ``answer`` is the call's result when the daemon kept it."""
+        return self._recovering
+
+    def resolve_lost_call(self) -> None:
+        """Ends the recovering state (Go: ``Session.ResolveLostCall``): the application has
+        read the lost call (:attr:`lost_call`) and handled its outcome, or accepts it as
+        unknown, and the session's calls are sent again. Taking the session over, or
+        copying its head, does not resolve it. A store-backed session writes its record
+        ready without the lost call first, so a worker that attaches from it later is not
+        recovering; a store that will not take the write raises CheckpointStoreError (or
+        CheckpointConflictError) with nothing sent, and the session sends nothing more. On
+        a session that is not recovering it does nothing."""
+        with self._lock:
+            if self._recovering is None:
+                return
+            current = self._stored
+            live = self._unanswered is None and self._stale is None and self._closed is None and self._close_error is None
+            if self._store is not None and current is not None and live and self._close_pending is None and current.checkpoint.recovering_request_sha256:
+                ready = StoredCheckpoint(
+                    revision=current.revision + 1, state="ready", operation="",
+                    checkpoint=replace(current.checkpoint, recovering_request_sha256=""),
+                )
+                try:
+                    ok = self._store.compare_and_set(self._key, current, ready)
+                except Exception as e:
+                    self._unanswered = "the checkpoint store could not be written"
+                    raise CheckpointStoreError("plimsoll: the checkpoint store failed as the lost call was resolved; nothing was sent", sent=False) from e
+                if not ok:
+                    self._unanswered = "the checkpoint store changed under this worker"
+                    raise CheckpointConflictError("plimsoll: the checkpoint store changed under this worker; nothing was sent", sent=False)
+                self._stored = ready
+            self._recovering = None
 
     def __enter__(self) -> "Session":
         return self
@@ -981,7 +1083,8 @@ class Session:
     def stopped(self) -> Optional[str]:
         """Why this client sends no more calls, or None until it stops: after an answer it
         could not check, after the daemon refused a call or close because another worker
-        attached the session, or after its checkpoint store could not be written.
+        attached the session, after the daemon refused a call because its head is not this
+        client's (HeadMismatchError), or after its checkpoint store could not be written.
         Separate from an end the daemon reported."""
         return self._stale or self._unanswered
 
@@ -1057,8 +1160,7 @@ class Session:
 
     def _call(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], cancel: Optional[CancelHandle]) -> Any:
         req["sessionId"] = self._id
-        req["generation"] = str(self._generation)
-        digest = request_digest(req)  # the session ID is not part of it
+        digest = request_digest(req)  # neither the session ID nor the head is part of it
         floor = req.get("minimumIsolation", "")
         with self._lock:
             if self._closed is not None or self._close_error is not None:
@@ -1068,15 +1170,13 @@ class Session:
                     not_dispatched="request",
                 )
             self._refuse_if_stopped()
-            # The first call after an attach across an explained gap: a repeat of the lost
-            # call is a retry of a call that was already sent once, refused here with nothing
-            # sent, and the refusal spends the note. Only the first call is checked: any
-            # other call spends the note once it is sent, unless the daemon refuses it with
-            # the not-dispatched mark, since then nothing ran, the head is where it was, and
-            # the next call is still the first.
-            if self._lost_call and digest == self._lost_call:
-                self._lost_call = ""
-                raise CallAlreadySentError(f"plimsoll: {CALL_ALREADY_SENT_TEXT}; nothing was sent", not_dispatched="request")
+            # A session recovering from a lost call sends nothing until the application has
+            # resolved it: every call is refused here, whatever it is.
+            if self._recovering is not None:
+                raise RecoveringError(f"plimsoll: {RECOVERING_TEXT}; nothing was sent", not_dispatched="request")
+            # The head this call expects, filled in here, inside the lock that serializes the
+            # session's calls, so each call carries the head the call before it left.
+            req["head"] = {"generation": str(self._generation), "calls": str(self._calls), "lastRecordSha256": self._last}
             calls_before = self._calls
             pending = self._begin(digest)
             try:
@@ -1088,17 +1188,22 @@ class Session:
                 # nothing ran, or the chain moved past this call, this client can no
                 # longer follow the daemon's chain, so it sends nothing more.
                 marked = isinstance(e, PlimsollError) and e.not_dispatched is not None
-                if not marked:
-                    self._lost_call = ""
                 if not marked and self._calls == calls_before:
                     self._lost_request = self._lost_request or digest
                     if self._unanswered is None:
                         self._unanswered = e.message if isinstance(e, PlimsollError) else type(e).__name__
                 if isinstance(e, StaleOwnerError):
                     self._stale = "another worker attached the session"
+                if isinstance(e, HeadMismatchError) and self._unanswered is None:
+                    # The daemon's own word that its chain holds a call this client did not
+                    # send (or counts one it never ran): this client can no longer follow it.
+                    h = e.head or {}
+                    self._unanswered = (
+                        f"the daemon's head is call {h.get('calls')} ending {h.get('last_record_sha256')!r}, this client sent "
+                        f"call {self._calls} ending {self._last!r} ({e.message}); open a new session"
+                    )
                 self._settle(pending, calls_before, e, None)
                 raise
-            self._lost_call = ""
             self._settle(pending, calls_before, None, result)
             return result
 
@@ -1147,9 +1252,10 @@ class Session:
         marked = isinstance(error, PlimsollError) and error.not_dispatched is not None
         if not moved and not marked:
             return
-        # A lost call's note stays only when the daemon said nothing ran (_call spent it
-        # otherwise).
-        checkpoint = replace(pending.checkpoint, calls=self._calls, last_record_sha256=self._last, lost_call_sha256=self._lost_call)
+        # A call is sent only once the session is not recovering, so the record it leaves
+        # carries no lost call.
+        recovering = self._recovering.request_sha256 if self._recovering is not None else ""
+        checkpoint = replace(pending.checkpoint, calls=self._calls, last_record_sha256=self._last, recovering_request_sha256=recovering)
         ready = StoredCheckpoint(revision=pending.revision + 1, state="ready", operation="", checkpoint=checkpoint)
         cause: Optional[BaseException] = None
         try:

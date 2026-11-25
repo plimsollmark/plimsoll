@@ -104,8 +104,13 @@
   const daemonVersionForm = new RegExp(tables.DAEMON_VERSION_PATTERN);
   const validDaemonVersion = v => v === '' || (v.length <= tables.MAX_DAEMON_VERSION_BYTES && daemonVersionForm.test(v));
   // Each version 5 field has its protobuf JSON type or is absent: a string sentence and version, a boolean warm.
+  // An integer may come as a JSON number or as a string holding one whole decimal: Go's protojson reads "5 6", "5,"
+  // and "5" with a zero byte after it as 5, so every reader refuses such a string rather than read it otherwise.
+  const integerOK = v => v === undefined || (typeof v === 'number' && Number.isSafeInteger(v))
+    || (typeof v === 'string' && /^-?(?:0|[1-9][0-9]*)$/.test(v));
   const recordShapeOK = r => ['isolation_qualification', 'daemon_version'].every(k => r[k] === undefined || typeof r[k] === 'string')
-    && (r.warm === undefined || typeof r.warm === 'boolean');
+    && (r.warm === undefined || typeof r.warm === 'boolean')
+    && ['version', 'started_unix_ms', 'ended_unix_ms', 'sequence'].every(k => integerOK(r[k]));
   function recordDigest(r) {
     const e = new Encoder('plimsoll.run-record.v' + r.version);
     for (const field of layoutOf(r)) e.field(field, field === 'warm' ? String(Boolean(r.warm)) : r[field] ?? '');

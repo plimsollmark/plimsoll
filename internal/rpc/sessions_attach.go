@@ -68,6 +68,30 @@ const (
 	textGenerationSpent    = "session ownership generation exhausted"
 )
 
+// checkHeadForm refuses a session call whose head is missing or malformed (no head, a
+// zero generation, a count of zero with a digest, a count with no valid digest): a
+// malformed request, refused before the session is looked up, as a zero generation is.
+func checkHeadForm(head *plimsollv1.SessionCheckpoint) error {
+	switch {
+	case head == nil:
+		return refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("session call requires the head it expects"))
+	case head.GetGeneration() == 0:
+		return refuseZeroGeneration()
+	case !validHead(head):
+		return refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("session call's head is malformed"))
+	}
+	return nil
+}
+
+// validHead reports whether a head's count and last record digest agree: no digest
+// before the first call, a SHA-256 in lowercase hex after it.
+func validHead(h *plimsollv1.SessionCheckpoint) bool {
+	if h.GetCalls() == 0 {
+		return h.GetLastRecordSha256() == ""
+	}
+	return validSessionDigest(h.GetLastRecordSha256())
+}
+
 // refuseZeroGeneration refuses a run, close or attach that carries no ownership
 // generation: a malformed request, refused before the session is looked up or its
 // turn taken, so it never waits behind a call in flight.
@@ -128,9 +152,7 @@ func (s *SandboxService) attachSession(ctx context.Context, m *plimsollv1.Attach
 		return nil, refuseZeroGeneration()
 	}
 	lost := m.GetLostRequestSha256()
-	if !validSessionDigest(m.GetSession()) || cp == nil ||
-		(cp.GetCalls() == 0 && cp.GetLastRecordSha256() != "") ||
-		(cp.GetCalls() > 0 && !validSessionDigest(cp.GetLastRecordSha256())) ||
+	if !validSessionDigest(m.GetSession()) || cp == nil || !validHead(cp) ||
 		(lost != "" && !validSessionDigest(lost)) {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("session attach requires a valid fingerprint and checkpoint"))
 	}
@@ -173,12 +195,18 @@ func (s *SandboxService) attachSession(ctx context.Context, m *plimsollv1.Attach
 	// following the checkpoint. Compared here, under the turn and the lock, with the
 	// generation's advance below, so an unexplained gap never moves ownership.
 	var lostRecord *plimsollv1.RunRecord
+	var lostAnswer *plimsollv1.RunResponse
 	if cp.GetCalls() != e.calls || cp.GetLastRecordSha256() != e.last {
 		if !explainsGap(cp, lost, e.calls, e.lastRecord) {
 			e.mu.Unlock()
 			return nil, refuse(connect.CodeFailedPrecondition, sandbox.RefusalRequest, errors.New(textCheckpointMismatch))
 		}
 		lostRecord = proto.Clone(e.lastRecord).(*plimsollv1.RunRecord)
+		// The lost call's answer, when the daemon answered it and still keeps it: its
+		// record is lastRecord, since the two are set, replaced and dropped together.
+		if e.keptAnswer != nil {
+			lostAnswer = proto.Clone(e.keptAnswer).(*plimsollv1.RunResponse)
+		}
 	}
 	if e.generation == math.MaxUint64 {
 		e.mu.Unlock()
@@ -196,12 +224,13 @@ func (s *SandboxService) attachSession(ctx context.Context, m *plimsollv1.Attach
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session attached", append([]slog.Attr{
 		slog.String("caller", e.principal), slog.String("session", e.fingerprint),
 		slog.Uint64("old_generation", previous), slog.Uint64("generation", generation),
-		slog.Uint64("calls", calls), slog.Bool("explained_gap", lostRecord != nil),
+		slog.Uint64("calls", calls), slog.Bool("explained_gap", lostRecord != nil), slog.Bool("lost_answer", lostAnswer != nil),
 	}, traceAttrs(m.GetTraceId())...)...)
 	return connect.NewResponse(&plimsollv1.AttachSessionResponse{
 		SessionInfo: e.sessionInfo(generation),
 		Checkpoint:  &plimsollv1.SessionCheckpoint{Generation: generation, Calls: calls, LastRecordSha256: last},
 		LostRecord:  lostRecord,
+		LostAnswer:  lostAnswer,
 	}), nil
 }
 

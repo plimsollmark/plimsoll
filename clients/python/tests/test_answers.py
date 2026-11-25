@@ -9,7 +9,7 @@ import json
 import pathlib
 import unittest
 
-from plimsoll_client import SessionEndedError
+from plimsoll_client import CheckpointMismatchError, HeadMismatchError, SessionEndedError
 from plimsoll_client._wire import error_from_wire
 
 from ._cases import verdict
@@ -28,6 +28,23 @@ class SharedAnswers(unittest.TestCase):
                        "answerNotBound": e.answer_not_bound}
                 verdict("answers/" + a["name"], "error-answer", got)
                 self.assertEqual(got, a["expect"])
+
+    def test_a_head_mismatch_carries_the_daemons_head(self) -> None:
+        # Protocol 8: a call whose head is not the session's is refused with the attach's
+        # mismatch text and the daemon's head as a SessionHeadMismatch detail, which tells it
+        # apart from an attach's mismatch; the same text without the detail stays the attach's.
+        a = next(a for a in ANSWERS["answers"] if a["name"] == "a call whose head is not the session's")
+        e = error_from_wire(a["status"], a["body"].encode(), bound=True)
+        self.assertIsInstance(e, HeadMismatchError)
+        assert isinstance(e, HeadMismatchError)
+        self.assertEqual(e.head, {"generation": 1, "calls": 1, "last_record_sha256": "ab" * 32})
+        body = json.loads(a["body"])
+        body["details"] = body["details"][:1]
+        plain = error_from_wire(a["status"], json.dumps(body).encode(), bound=True)
+        self.assertIsInstance(plain, CheckpointMismatchError)
+        self.assertNotIsInstance(plain, HeadMismatchError)
+        unbound = error_from_wire(a["status"], a["body"].encode(), bound=False)
+        self.assertNotIsInstance(unbound, (HeadMismatchError, CheckpointMismatchError), "an answer not bound to the request is believed in nothing")
 
     def test_an_answer_with_a_null_detail_is_believed_in_nothing(self) -> None:
         # Finding release-88: the Go client panicked on a null in the details list. Every

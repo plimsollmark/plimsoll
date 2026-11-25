@@ -49,6 +49,9 @@ type box struct {
 	node        string   // the node the pod runs on
 	roots       []string // writable roots from this actual pod, not the template
 	instance    string   // "k8s-pod-uid:" and the UID the API server gave the pod
+	// ch is the channel to this pod alone, which refuses any certificate but the one
+	// naming this pod's UID; deleteLater closes it.
+	ch *podChannel
 }
 
 // claimSandbox makes one claim on the warm pool for a run of at most lifetime, waits for
@@ -180,6 +183,9 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 	}
 	b.roots = roots
 	b.ip, b.environment, b.tier, b.node, b.instance = ip, running, tier, pd.Spec.NodeName, instance
+	// The channel expects this pod's identity: its name and UID as the API server just
+	// gave them, in the namespace read, so another pod answering at this address is refused.
+	b.ch = p.channelTo(ip, podName, pd.Meta.UID)
 	return b, nil
 }
 
@@ -291,7 +297,7 @@ const tierCheckBytes = 64 << 10
 // kubelet reports, read from the node object. A pod that fails is refused before any code
 // is sent.
 func (p *Provider) proveTier(ctx context.Context, b box) error {
-	out, err := p.exec(ctx, b.ip, tierCheck, nil, tierCheckBytes, tierCheckBytes)
+	out, err := p.exec(ctx, b.ch, tierCheck, nil, tierCheckBytes, tierCheckBytes)
 	if err != nil {
 		return fmt.Errorf("agentsandbox: claim %s: tier check: %w", b.claim, err)
 	}
@@ -336,6 +342,8 @@ type tierReport struct {
 // and anything the run left running in it, lives until then. Call it before the call
 // returns.
 func (p *Provider) deleteLater(ctx context.Context, b box) {
+	// The pod's channel is closed first: nothing is sent to it after its release.
+	b.ch.close()
 	hold := sandbox.HoldCapacity(ctx)
 	p.cleanup.Hold(b.claim, func() {
 		hold()

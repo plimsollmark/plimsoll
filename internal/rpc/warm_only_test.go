@@ -87,7 +87,7 @@ func TestWarmOnlyOpenClosesNoSessionOfTheOwner(t *testing.T) {
 	if _, err := svc.OpenSession(alice, warmOpen("u1")); !refusedNoWarm(err) {
 		t.Fatalf("a warm-only open at the owner's cap = %v; want refused, capacity", err)
 	}
-	if _, err := svc.SessionRun(alice, callReq(held.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, alice, callReq(held.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatalf("the owner's session after a warm-only open at the cap: %v; want it still open", err)
 	}
 	if len(p.Opened()) != 1 {

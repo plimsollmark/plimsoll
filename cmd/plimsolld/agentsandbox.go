@@ -28,18 +28,14 @@ func init() {
 		// The tier is read from the runtime class each check finds (Provider.IsolationClass),
 		// and is unknown until the first.
 		tierFromChecks: func(sandbox.Sandbox) bool { return true },
-		// The channel to sandboxd is TLS, but every pod's terminator serves the same
-		// certificate, so it proves the peer is a plimsoll sandbox pod, not the pod dialed
-		// (Claude Security scan, 2026-11-07, finding F1). Someone who can rewrite traffic
-		// on the pod network could send one caller's run into another caller's pod. The
-		// daemon cannot see whether the CNI or a mesh authenticates that path, so hardened
-		// mode requires the operator to state it, until each pod has a key of its own.
-		hardened: func(getenv func(string) string, fail func(string, ...any), bad func(error)) {
-			encrypted, err := settings.AgentsandboxEncryptedPodNetwork.Get(getenv)
-			if err != nil {
-				bad(err)
-			} else if !encrypted {
-				fail("hardened mode requires SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1: every sandbox pod's TLS certificate is the same, so the channel proves the peer is a plimsoll sandbox pod, not the pod this run was sent to; the pod network between plimsolld and the sandbox pods must be authenticated and encrypted (a CNI with WireGuard or IPsec, or a service mesh with mutual TLS) before a result can be trusted against anyone who can rewrite traffic on that path")
+		// Each pod serves a certificate of its own, naming that pod's UID, and the channel
+		// refuses any other in the handshake, so a run cannot be sent to another pod than
+		// the one read (security scan, 2026-11-07, finding F1). The provider requires
+		// the trust domain in every mode; hardened mode states it as its own rule, so a
+		// later default could not quietly drop the check.
+		hardened: func(getenv func(string) string, fail func(string, ...any), _ func(error)) {
+			if settings.AgentsandboxSandboxdTrustDomain.Get(getenv) == "" {
+				fail("hardened mode requires SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN: the trust domain of the identity each sandbox pod's own certificate carries, which the channel checks against the pod plimsolld read before anything is sent")
 			}
 		},
 	}

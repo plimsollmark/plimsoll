@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"path"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -157,11 +159,14 @@ func (p *Provider) checkPodSpec(s podSpec, tier sandbox.IsolationClass) error {
 	if err := checkSeccomp(s, c, tier); err != nil {
 		return err
 	}
-	tls, err := tlsVolume(s)
+	key, err := findKeyVolume(s)
 	if err != nil {
 		return err
 	}
-	if err := checkMounts(c, tls.Volume); err != nil {
+	if err := p.checkKeyAttributes(key); err != nil {
+		return err
+	}
+	if err := checkMounts(c, key.Volume); err != nil {
 		return err
 	}
 	if err := checkTerminationLog(c); err != nil {
@@ -244,17 +249,18 @@ func checkSeccomp(s podSpec, c container, tier sandbox.IsolationClass) error {
 // one a tmpfs of the VM's own that ignores its limit (measured 2026-10-18 under both of
 // Kata's runtimes), so the vm tier keeps the rule and promises no cap but the VM's memory.
 //
-// The one other volume is the TLS Secret (tlsVolume), which holds no guest data and is
-// outside the writable roots and the disk budget.
+// The one other volume is the key volume (findKeyVolume), which holds no guest data and
+// is outside the writable roots and the disk budget. A Secret volume, which earlier
+// releases took for one key shared by every pod, is refused like any other source.
 func volumeSizes(s podSpec) (map[string]int64, error) {
-	tls, err := tlsVolume(s)
+	key, err := findKeyVolume(s)
 	if err != nil {
 		return nil, err
 	}
 	sizes := map[string]int64{}
 	for _, v := range s.Volumes {
 		var name string
-		if v["secret"] != nil && json.Unmarshal(v["name"], &name) == nil && name == tls.Volume {
+		if v["csi"] != nil && json.Unmarshal(v["name"], &name) == nil && name == key.Volume {
 			continue
 		}
 		var dir struct {
@@ -273,88 +279,189 @@ func volumeSizes(s podSpec) (map[string]int64, error) {
 	return sizes, nil
 }
 
-// tlsSecret is the TLS Secret volume as the read-back accepts it; the boundary digest
-// binds it, so a pod whose Secret, mode or mount differs from the proven template's is
-// refused.
-type tlsSecret struct {
-	Volume      string
-	SecretName  string
-	DefaultMode int
+// The pod's key volume: where the pod's own key and certificate come from. An issuer in
+// the cluster signs a certificate for each pod as it is mounted, with the pod's identity
+// in it (channel.go), and the key is made on the node for that pod alone. The read-back
+// accepts one source of it today, a CSI volume of keyDriver (the driver of cert-manager's
+// csi-driver project) with a closed list of attributes. Another source, such as
+// Kubernetes' own pod certificate projection, would be one more case here under the same
+// contract: the files tls.crt and tls.key at tlsMountPath, the certificate naming the one
+// DNS name and the pod's identity alone, chained to the operator's CA.
+const (
+	keyDriver = "csi.cert-manager.io"
+	keyAttr   = keyDriver + "/"
+)
+
+// keyVolume is the key volume as the read-back accepts it; the boundary digest binds it
+// whole, attributes included, so a pod whose issuer, identity or key settings differ from
+// the proven template's is refused.
+type keyVolume struct {
+	Volume     string
+	Driver     string
+	Attributes map[string]string
 }
 
-// tlsVolume holds the Secret the pod's TLS terminator serves from: exactly one secret
-// volume, naming its Secret and nothing else (no items, not optional), whose files are
-// closed to every user but their owner (defaultMode owner-readable with no group or other
-// bit: 0400; the API server would otherwise default it to 0644), mounted once, read-only,
-// at tlsMountPath, with no other volume mounted over, at or inside tlsGuardDir, which the
-// image makes root's, mode 0700. So the guest (another uid, no capabilities) cannot reach
-// the key; the smoke test proves it from inside. The pod-level fsGroup that would make the
-// files group-readable is refused by the closed pod schema.
-func tlsVolume(s podSpec) (tlsSecret, error) {
-	var found []tlsSecret
+// refusedKeyAttrs are attributes the driver offers that would undo what the read-back
+// relies on, each with the reason given to the operator. Any other attribute outside
+// checkKeyAttributes' list is refused too, as unknown.
+var refusedKeyAttrs = map[string]string{
+	"fs-group":          "it makes the key readable by a group of its choosing, which the guest could hold",
+	"pkcs12-enable":     "it writes a second copy of the key in another file",
+	"pkcs12-filename":   "it writes a second copy of the key in another file",
+	"pkcs12-password":   "it writes a second copy of the key in another file",
+	"reuse-private-key": "a renewed certificate must come with a new key",
+	"certificate-file":  "the terminator reads tls.crt and tls.key, and nothing else",
+	"privatekey-file":   "the terminator reads tls.crt and tls.key, and nothing else",
+	"ca-file":           "the terminator reads tls.crt and tls.key, and nothing else",
+	"ip-sans":           "the certificate names the pod by its identity alone; an address is not an identity",
+	"common-name":       "the certificate names the pod by its identity alone",
+	"is-ca":             "a pod's certificate signs nothing",
+}
+
+// findKeyVolume finds the pod's one key volume and checks its shape: exactly one CSI
+// volume, of keyDriver, read-only, giving the driver, readOnly and its attributes and
+// nothing else (no filesystem type, no node publish secret), mounted once, read-only and
+// whole at tlsMountPath, with no other volume mounted over, at or inside tlsGuardDir,
+// which the image makes root's, mode 0700. The driver writes its files mode 0440, owner
+// and group root (measured 2026-11-24), so the guest, another uid with no group and no
+// capability, cannot reach the key; the smoke test proves it from inside, and the
+// pod-level fsGroup that would change the group is refused by the closed pod schema. The
+// attributes are held to the configuration by checkKeyAttributes.
+func findKeyVolume(s podSpec) (keyVolume, error) {
+	var found []keyVolume
 	for _, v := range s.Volumes {
-		if v["secret"] == nil {
+		if v["csi"] == nil {
 			continue
 		}
-		var t tlsSecret
-		if len(v) != 2 || json.Unmarshal(v["name"], &t.Volume) != nil {
-			return tlsSecret{}, fmt.Errorf("volume %s is a Secret with another source beside it or no name", v["name"])
+		var k keyVolume
+		if len(v) != 2 || json.Unmarshal(v["name"], &k.Volume) != nil {
+			return keyVolume{}, fmt.Errorf("volume %s is a CSI volume with another source beside it or no name", v["name"])
 		}
 		var src struct {
-			SecretName  string `json:"secretName"`
-			DefaultMode *int   `json:"defaultMode"`
-			Optional    *bool  `json:"optional"`
+			Driver           string            `json:"driver"`
+			ReadOnly         *bool             `json:"readOnly"`
+			VolumeAttributes map[string]string `json:"volumeAttributes"`
 		}
-		d := json.NewDecoder(bytes.NewReader(v["secret"]))
+		d := json.NewDecoder(bytes.NewReader(v["csi"]))
 		d.DisallowUnknownFields()
 		if err := d.Decode(&src); err != nil {
-			return tlsSecret{}, fmt.Errorf("Secret volume %s: %w (only secretName, defaultMode and optional are accepted; no items)", t.Volume, err)
+			return keyVolume{}, fmt.Errorf("CSI volume %s: %w (only driver, readOnly and volumeAttributes are accepted)", k.Volume, err)
 		}
 		switch {
-		case !validName(src.SecretName):
-			return tlsSecret{}, fmt.Errorf("Secret volume %s names Secret %q", t.Volume, src.SecretName)
-		case src.DefaultMode == nil:
-			return tlsSecret{}, fmt.Errorf("Secret volume %s sets no defaultMode; set 0400 (256), or Kubernetes makes the key readable by every user in the pod (0644)", t.Volume)
-		case *src.DefaultMode&^0o777 != 0 || *src.DefaultMode&0o077 != 0 || *src.DefaultMode&0o400 == 0:
-			return tlsSecret{}, fmt.Errorf("Secret volume %s has defaultMode %#o; it must be readable by its owner alone (0400), so the guest cannot read the TLS key", t.Volume, *src.DefaultMode)
-		case src.Optional != nil && *src.Optional:
-			return tlsSecret{}, fmt.Errorf("Secret volume %s is optional; the TLS key pair is required", t.Volume)
+		case src.Driver != keyDriver:
+			return keyVolume{}, fmt.Errorf("CSI volume %s is of driver %q; the pod's key volume is %s's, and no other CSI volume is accepted", k.Volume, truncate(src.Driver, 80), keyDriver)
+		case src.ReadOnly == nil || !*src.ReadOnly:
+			return keyVolume{}, fmt.Errorf("CSI volume %s does not set readOnly: true, so the driver would mount the key pair writable", k.Volume)
 		}
-		t.SecretName, t.DefaultMode = src.SecretName, *src.DefaultMode
-		found = append(found, t)
+		k.Driver, k.Attributes = src.Driver, src.VolumeAttributes
+		found = append(found, k)
 	}
 	if len(found) != 1 {
-		return tlsSecret{}, fmt.Errorf("%d Secret volumes, want one: the TLS key pair sandboxd's terminator serves, mounted at %s", len(found), tlsMountPath)
+		return keyVolume{}, fmt.Errorf("%d key volumes, want one: a CSI volume of %s holding the pod's own key pair, which its TLS terminator serves, mounted at %s", len(found), keyDriver, tlsMountPath)
 	}
 	if len(s.Containers) != 1 {
-		return tlsSecret{}, errors.New("the execution boundary requires one container")
+		return keyVolume{}, errors.New("the execution boundary requires one container")
 	}
-	t, mounted := found[0], 0
+	k, mounted := found[0], 0
 	for _, m := range s.Containers[0].VolumeMounts {
-		if m.Name == t.Volume {
+		if m.Name == k.Volume {
 			if m.MountPath != tlsMountPath || !m.ReadOnly || m.SubPath != "" {
-				return tlsSecret{}, fmt.Errorf("the TLS Secret is mounted at %q (read-only %t, subPath %q); mount it whole and read-only at %s", m.MountPath, m.ReadOnly, m.SubPath, tlsMountPath)
+				return keyVolume{}, fmt.Errorf("the key volume is mounted at %q (read-only %t, subPath %q); mount it whole and read-only at %s", m.MountPath, m.ReadOnly, m.SubPath, tlsMountPath)
 			}
 			mounted++
 			continue
 		}
 		if m.MountPath == tlsGuardDir || strings.HasPrefix(m.MountPath, tlsGuardDir+"/") || strings.HasPrefix(tlsGuardDir, m.MountPath+"/") {
-			return tlsSecret{}, fmt.Errorf("volume %s is mounted at %s, at, over or inside %s, which must stay the image's root-only directory around the TLS key", m.Name, m.MountPath, tlsGuardDir)
+			return keyVolume{}, fmt.Errorf("volume %s is mounted at %s, at, over or inside %s, which must stay the image's root-only directory around the TLS key", m.Name, m.MountPath, tlsGuardDir)
 		}
 	}
 	if mounted != 1 {
-		return tlsSecret{}, fmt.Errorf("the TLS Secret is mounted %d times, want once at %s", mounted, tlsMountPath)
+		return keyVolume{}, fmt.Errorf("the key volume is mounted %d times, want once at %s", mounted, tlsMountPath)
 	}
-	return t, nil
+	return k, nil
+}
+
+// requiredKeyAttrs are the attributes every key volume must set.
+var requiredKeyAttrs = []string{"issuer-name", "issuer-kind", "dns-names", "uri-sans", "key-algorithm", "key-size", "key-encoding", "key-usages"}
+
+// checkKeyAttributes holds the key volume's attributes to a closed list (measured on the
+// driver, 2026-11-24): the issuer, by name and kind (and group, for an issuer outside
+// cert-manager's own API group); the certificate's names, exactly the configured DNS name
+// and the pod's identity in the configured trust domain, which the driver fills from the
+// pod being mounted, never from anything the pod says; the key, ECDSA P-256 in PKCS#8,
+// fixed whole, since the driver's defaults are RSA 2048 with no server-auth use; the
+// usages server auth and digital signature, exactly; and, optionally, the certificate's
+// lifetime. Every other attribute is refused, those in refusedKeyAttrs with their reason.
+func (p *Provider) checkKeyAttributes(k keyVolume) error {
+	exact := map[string]string{
+		"dns-names":     p.cfg.serverName(),
+		"uri-sans":      identityTemplate(p.cfg.SandboxdTrustDomain),
+		"key-algorithm": "ECDSA",
+		"key-size":      "256",
+		"key-encoding":  "PKCS8",
+	}
+	seen := map[string]bool{}
+	for _, full := range slices.Sorted(maps.Keys(k.Attributes)) {
+		value := k.Attributes[full]
+		attr, ok := strings.CutPrefix(full, keyAttr)
+		if !ok {
+			return fmt.Errorf("key volume %s sets the attribute %q, outside %s's", k.Volume, truncate(full, 80), keyDriver)
+		}
+		if why, refused := refusedKeyAttrs[attr]; refused {
+			return fmt.Errorf("key volume %s sets %s, which is refused: %s", k.Volume, full, why)
+		}
+		seen[attr] = true
+		switch attr {
+		case "issuer-name", "issuer-group":
+			if !validName(value) {
+				return fmt.Errorf("key volume %s: %s is %q, not a name", k.Volume, full, truncate(value, 80))
+			}
+		case "issuer-kind":
+			// A namespaced issuer only. A ClusterIssuer signs requests made in every namespace, so
+			// anyone who may create a pod anywhere in the cluster could mount this driver with the
+			// pool pod's identity written out literally and pass for it (security scan of
+			// 2026-11-25, F1 and F2).
+			if value != "Issuer" {
+				return fmt.Errorf("key volume %s: %s is %q; only a namespaced Issuer, in the pool's namespace, is accepted (a ClusterIssuer signs for pods in every namespace)", k.Volume, full, truncate(value, 80))
+			}
+		case "key-usages":
+			usages := strings.Split(value, ",")
+			for i := range usages {
+				usages[i] = strings.TrimSpace(usages[i])
+			}
+			slices.Sort(usages)
+			if !slices.Equal(usages, []string{"digital signature", "server auth"}) {
+				return fmt.Errorf("key volume %s: %s is %q; want exactly server auth and digital signature", k.Volume, full, truncate(value, 80))
+			}
+		case "duration":
+			if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+				return fmt.Errorf("key volume %s: %s is %q, not a positive duration", k.Volume, full, truncate(value, 80))
+			}
+		default:
+			want, known := exact[attr]
+			if !known {
+				return fmt.Errorf("key volume %s sets %s, which plimsoll does not accept (it accepts %s, issuer-group and duration)", k.Volume, truncate(full, 80), strings.Join(requiredKeyAttrs, ", "))
+			}
+			if value != want {
+				return fmt.Errorf("key volume %s: %s is %q, want %q", k.Volume, full, truncate(value, 200), want)
+			}
+		}
+	}
+	for _, attr := range requiredKeyAttrs {
+		if !seen[attr] {
+			return fmt.Errorf("key volume %s does not set %s%s, which plimsoll requires", k.Volume, keyAttr, attr)
+		}
+	}
+	return nil
 }
 
 // checkMounts requires every volume the container mounts to be mounted whole and
 // writable at a distinct absolute path, so the smoke test's writable set is exactly
-// these paths; the TLS Secret's mount, tlsVolume's to check, is the one read-only mount.
-func checkMounts(c container, tlsName string) error {
+// these paths; the key volume's mount, findKeyVolume's to check, is the one read-only mount.
+func checkMounts(c container, keyName string) error {
 	seen := map[string]bool{}
 	for _, m := range c.VolumeMounts {
-		if m.Name == tlsName {
+		if m.Name == keyName {
 			continue
 		}
 		switch {
@@ -456,17 +563,40 @@ func checkTerminationLog(c container) error {
 // does, an --auth-token-sha256 it never applies among them.
 var sandboxdFlag = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9_.-]*=`)
 
+// sandboxdFlagsCommit is the agent-sandbox commit whose sandboxd sandboxdFlags was read
+// from: docker/agentsandbox.Dockerfile's AGENT_SANDBOX_COMMIT, which a test holds it to.
+const sandboxdFlagsCommit = "807cc37107bd7c012115afac9fa9c3b77b8365c2"
+
+// sandboxdFlags is every flag that sandboxd takes, as its own -h listed them (2026-11-24,
+// the image built from sandboxdFlagsCommit): its own flags, controller-runtime's zap
+// logging flags and its kubeconfig flag. An argument naming any other is refused, so a
+// flag a later sandboxd adds (one that loosens its token check, say) cannot pass the
+// read-back unread. The TLS terminator (docker/sandboxdtls) keeps the same list, and a
+// test holds the two lists and the pin together.
+var sandboxdFlags = map[string]bool{
+	"auth-token-file": true, "auth-token-sha256": true, "grpc-port": true, "http-idle-timeout": true,
+	"kubeconfig": true, "listen-host": true, "metadata-env-prefix": true, "rest-port": true,
+	"root-dir": true, "shutdown-timeout": true, "stream-chunk-size": true, "version": true,
+	"zap-devel": true, "zap-encoder": true, "zap-log-level": true, "zap-stacktrace-level": true,
+	"zap-time-encoding": true,
+}
+
 // checkSandboxdArgs requires sandboxd to check plimsoll's token: exactly one
 // --auth-token-sha256=<hex> naming this token's digest, and no token file, whose content
 // the read-back cannot see. Without a token, guest code could call the root sandboxd on
 // loopback and run a command as root, undoing the uid drop. sandboxd must also listen on
 // loopback alone, at the port the pod's TLS terminator forwards to: exactly one
 // --listen-host=127.0.0.1 and one --grpc-port=9091, the terminator's own rule, so the
-// only way to sandboxd from outside the pod is the pinned TLS channel.
+// only way to sandboxd from outside the pod is the pinned TLS channel. Every argument is a
+// --name=value flag the pinned sandboxd takes (sandboxdFlags).
 func (p *Provider) checkSandboxdArgs(argv []string) error {
 	for _, a := range argv {
 		if !sandboxdFlag.MatchString(a) {
 			return fmt.Errorf("sandboxd's argument %q is not a --name=value flag, so sandboxd could read its flags otherwise than plimsoll does", a)
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		if !sandboxdFlags[name] {
+			return fmt.Errorf("sandboxd is started with --%s, a flag the pinned sandboxd does not take, so plimsoll cannot say what it does", name)
 		}
 	}
 	want := "--auth-token-sha256=" + p.tokenDigest

@@ -50,7 +50,7 @@ export const TIERS = ["none", "process", "container", "kernel", "vm"] as const;
 export const LANGUAGES = ["javascript", "python"] as const;
 
 /** The wire protocol number a client states on every request (protocol.Number). */
-export const PROTOCOL = 7;
+export const PROTOCOL = 8;
 
 /** The header carrying a client's ID for one request, which the daemon echoes (protocol.RequestIDHeader). */
 export const REQUEST_ID_HEADER = "Plimsoll-Request-Id";
@@ -64,7 +64,7 @@ export const TRACE_ID_PATTERN = "^[A-Za-z0-9._:-]{1,64}$";
 /** The text of a session call, close or attach refused because another worker attached (protocol.StaleOwnerText). */
 export const STALE_OWNER_TEXT = "session ownership generation is stale";
 
-/** The text of an attach refused because its checkpoint is not the session's head (protocol.CheckpointMismatchText). */
+/** The text of an attach refused because its checkpoint is not the session's head, and of a call refused because its head is not (protocol.CheckpointMismatchText). */
 export const CHECKPOINT_MISMATCH_TEXT = "session checkpoint does not match";
 
 /** The tiers a request may state as its floor, weakest first: every tier but none. */
@@ -158,7 +158,7 @@ export const SOFTWARE_IDENTITY_PATTERN = "^[A-Za-z0-9._:/@+-]+$";
 export const MAX_RESPONSE_BYTES = 33554432;
 
 /** The one version of a session checkpoint the clients write and read (client.CheckpointVersion). */
-export const CHECKPOINT_VERSION = 1;
+export const CHECKPOINT_VERSION = 2;
 
 /** A daemon name's grammar: the application's own name for a daemon, never a URL (client.DaemonNamePattern). */
 export const DAEMON_NAME_PATTERN = "^[A-Za-z0-9._-]{1,64}$";
@@ -166,5 +166,5 @@ export const DAEMON_NAME_PATTERN = "^[A-Za-z0-9._-]{1,64}$";
 /** A software rule's ID as a checkpoint states it (client.SoftwareRuleIDPattern). */
 export const SOFTWARE_RULE_ID_PATTERN = "^(?:exact:[A-Za-z0-9._:/@+-]{1,256}|approved:sha256:[0-9a-f]{64})$";
 
-/** What a client says when it refuses a repeat of a call lost across a takeover (client.CallAlreadySentText). */
-export const CALL_ALREADY_SENT_TEXT = "this call was already sent once in the session, and its answer was lost";
+/** What a client says when it refuses a call on a session recovering from a call lost across a takeover (client.RecoveringText). */
+export const RECOVERING_TEXT = "this session is recovering from a call whose answer was lost: read the lost call and resolve it before sending another call";

@@ -22,6 +22,7 @@ from .errors import (
     AtCapacityError,
     CheckpointMismatchError,
     DisabledError,
+    HeadMismatchError,
     InsufficientIsolationError,
     InvalidRequestError,
     MalformedResponseError,
@@ -61,7 +62,10 @@ CONNECT_CODES = frozenset(
 
 _SNAKE = re.compile(r"(?<!^)([A-Z])")
 _JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
-_DECIMAL_INT = re.compile(r"-?[0-9]+")
+# An integer written as a JSON string: an optional minus and decimal digits with no leading
+# zero, the form every client and the daemon write, so "5 6", "5,", "5" then NUL, "05",
+# "5.0" and "5e0" are refused (Go's record.UnmarshalJSON rule, finding release-90).
+_DECIMAL_INT = re.compile(r"-?(?:0|[1-9][0-9]*)")
 
 
 def snake(name: str) -> str:
@@ -397,6 +401,57 @@ def decode_unanswered(b: bytes) -> Optional[Dict[str, Any]]:
     return rec
 
 
+def decode_head_mismatch(b: bytes) -> Optional[Dict[str, Any]]:
+    """Decodes a SessionHeadMismatch detail (field 1, a SessionCheckpoint: generation,
+    calls, last record digest) into ``{"generation", "calls", "last_record_sha256"}``, or
+    None when it carries no head. Unknown fields are skipped; a known field of the wrong
+    wire type, a truncated value or a string that is not UTF-8 raises ValueError."""
+    head: Optional[Dict[str, Any]] = None
+    i = 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        field, wire = tag >> 3, tag & 7
+        if field == 0:
+            raise ValueError("field number 0")
+        if field == 1:
+            if wire != 2:
+                raise ValueError("SessionHeadMismatch.head is not length-delimited")
+            n, i = _varint(b, i)
+            if i + n > len(b):
+                raise ValueError("length-delimited field overruns the message")
+            head = _decode_checkpoint(b[i : i + n])
+            i += n
+        else:
+            i = _skip(b, i, wire)
+    return head
+
+
+def _decode_checkpoint(b: bytes) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"generation": 0, "calls": 0, "last_record_sha256": ""}
+    i = 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        field, wire = tag >> 3, tag & 7
+        if field == 0:
+            raise ValueError("field number 0")
+        if field in (1, 2):
+            if wire != 0:
+                raise ValueError(f"SessionCheckpoint field {field} is not a varint")
+            v, i = _varint(b, i)
+            out["generation" if field == 1 else "calls"] = v
+        elif field == 3:
+            if wire != 2:
+                raise ValueError("SessionCheckpoint.last_record_sha256 is not length-delimited")
+            n, i = _varint(b, i)
+            if i + n > len(b):
+                raise ValueError("length-delimited field overruns the message")
+            out["last_record_sha256"] = b[i : i + n].decode("utf-8")
+            i += n
+        else:
+            i = _skip(b, i, wire)
+    return out
+
+
 def _skip(b: bytes, i: int, wire: int) -> int:
     """Skips an unknown field's value of any wire type a proto3 message can carry, as
     a protobuf decoder does, so a field a newer daemon adds is not an error."""
@@ -511,6 +566,7 @@ def error_from_wire(status: int, body: bytes, *, bound: bool, mark: Optional[str
     refusal: Optional[str] = None
     end: Optional[Tuple[str, str]] = None
     unanswered: Optional[Dict[str, Any]] = None
+    head: Optional[Dict[str, Any]] = None
     details = parsed.get("details")
     # A details list with an element that is not an object (a JSON null, a number) is not
     # a Connect error this client can read; the Go client panicked on a null (finding
@@ -540,12 +596,14 @@ def error_from_wire(status: int, body: bytes, *, bound: bool, mark: Optional[str
                 end = (SESSION_END_NAMES[n] if 0 < n < len(SESSION_END_NAMES) else "unknown", text)
             elif type_name == "plimsoll.v1.UnansweredCall" and unanswered is None:
                 unanswered = decode_unanswered(raw)
+            elif type_name == "plimsoll.v1.SessionHeadMismatch" and head is None:
+                head = decode_head_mismatch(raw)
         except (ValueError, UnicodeDecodeError):
             # An undecodable detail states nothing; in particular not that nothing ran.
             continue
 
     if not bound:
-        refusal, end, unanswered = None, None, None
+        refusal, end, unanswered, head = None, None, None, None
         message = f"{message} ({NOT_BOUND})"
     elif refusal is None and not unreadable and mark in REFUSAL_NAMES and mark != "unknown":
         refusal = mark
@@ -564,7 +622,11 @@ def error_from_wire(status: int, body: bytes, *, bound: bool, mark: Optional[str
         # The ownership refusals of a session's run, close or attach (protocol 6).
         if refusal == "permission":
             return StaleOwnerError(message, **kwargs)
+        # An attach whose checkpoint is not the head, or a call whose head is not, told by
+        # the daemon's constant text and, for a call, the daemon's head beside it.
         if refusal == "request" and said == CHECKPOINT_MISMATCH_TEXT:
+            if head is not None:
+                return HeadMismatchError(message, head=head, **kwargs)
             return CheckpointMismatchError(message, **kwargs)
         return DisabledError(message, **kwargs)
     if code == "unimplemented":

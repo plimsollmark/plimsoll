@@ -7,8 +7,6 @@ model service. To use a real model, replace `FunctionModel(scripted)` below with
 "anthropic:claude-opus-5-5".
 
 Install:  pip install pydantic-ai-plimsoll pydantic-ai-harness
-          Published with plimsoll 0.28.0, after the other adapters; if pip cannot find it yet, from a
-          checkout of the repository: pip install ./clients/python ./clients/python/pydantic-ai-plimsoll pydantic-ai-harness
 Daemon:   a plimsolld with sessions on. From a checkout, after `make docker-images`
           (docs/getting-started.md has every step):
               export PLIMSOLL_TOKEN=$(openssl rand -hex 16)   # 32 characters, the daemon's minimum

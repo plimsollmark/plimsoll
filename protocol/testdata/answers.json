@@ -112,6 +112,19 @@
    }
   },
   {
+   "name": "a call whose head is not the session's",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"failed_precondition\",\"message\":\"session checkpoint does not match\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAE\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_REQUEST\"}},{\"type\":\"plimsoll.v1.SessionHeadMismatch\",\"value\":\"CkYIARABGkBhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFi\",\"debug\":{\"head\":{\"generation\":\"1\",\"calls\":\"1\",\"lastRecordSha256\":\"abababababababababababababababababababababababababababababababab\"}}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "failed_precondition",
+    "notDispatched": "request",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
    "name": "an internal fault, which may have run",
    "status": 500,
    "contentType": "application/json",

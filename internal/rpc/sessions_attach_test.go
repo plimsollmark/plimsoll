@@ -74,16 +74,16 @@ func TestAttachPreservesChainPolicyAndAccounting(t *testing.T) {
 	if !unchanged || len(p.Opened()) != 1 {
 		t.Fatal("attach changed idle time, usage, capacity, chain, or provider sessions")
 	}
-	_, err = svc.SessionRun(ctx, callReq(id, "stale"))
+	_, err = headRun(svc, ctx, callReq(id, "stale"))
 	requireAttachRefusal(t, err, connect.CodeFailedPrecondition, sandbox.RefusalPermission)
 	_, err = svc.CloseSession(ctx, closeReq(id))
 	requireAttachRefusal(t, err, connect.CodeFailedPrecondition, sandbox.RefusalPermission)
 	run := callReq(id, "1")
-	run.Msg.Generation = 2
-	_, err = svc.SessionRun(ctx, run)
+	atGeneration(svc, run.Msg, 2)
+	_, err = headRun(svc, ctx, run)
 	requireAttachRefusal(t, err, connect.CodeInvalidArgument, sandbox.RefusalRequest)
 	run.Msg.MinimumIsolation = "container"
-	out, err := svc.SessionRun(ctx, run)
+	out, err := headRun(svc, ctx, run)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestAttachWaitsForInflightRecordAndRefusesOldCheckpoint(t *testing.T) {
 	}
 	e, _ := svc.sessions.get(o.Msg.GetSessionId(), "alice")
 	runErr := make(chan error, 1)
-	go func() { _, err := svc.SessionRun(ctx, callReq(e.id, "1")); runErr <- err }()
+	go func() { _, err := headRun(svc, ctx, callReq(e.id, "1")); runErr <- err }()
 	<-held.entered
 	attachErr := make(chan error, 1)
 	go func() { _, err := svc.AttachSession(ctx, attachReq(e.fingerprint, 1, 0, "")); attachErr <- err }()
@@ -433,7 +433,7 @@ func TestQueuedRunAndCloseAreStaleAfterARealAttach(t *testing.T) {
 			go func() {
 				var err error
 				if op == "run" {
-					_, err = svc.SessionRun(ctx, callReq(e.id, "1"))
+					_, err = headRun(svc, ctx, callReq(e.id, "1"))
 				} else {
 					_, err = svc.CloseSession(ctx, closeReq(e.id))
 				}
@@ -585,7 +585,7 @@ func TestAttachCannotSkipAnUnansweredRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := callReq(o.Msg.GetSessionId(), "1")
-	_, err = svc.SessionRun(ctx, call)
+	_, err = headRun(svc, ctx, call)
 	if err == nil {
 		t.Fatal("expected lost result")
 	}
@@ -807,7 +807,7 @@ func TestRefusedAttachIsLoggedWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, fp := o.Msg.GetSessionId(), o.Msg.GetSession()
-	out, err := svc.SessionRun(alice, callReq(id, "1"))
+	out, err := headRun(svc, alice, callReq(id, "1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -882,7 +882,7 @@ func TestRunWithWeakerFloorThanOpenRefused(t *testing.T) {
 	for _, floor := range []string{"", "process"} {
 		run := callReq(o.Msg.GetSessionId(), "1")
 		run.Msg.MinimumIsolation = floor
-		_, err := svc.SessionRun(ctx, run)
+		_, err := headRun(svc, ctx, run)
 		requireAttachRefusal(t, err, connect.CodeInvalidArgument, sandbox.RefusalRequest)
 	}
 	if p.Opened()[0].Calls() != 0 {
@@ -890,7 +890,7 @@ func TestRunWithWeakerFloorThanOpenRefused(t *testing.T) {
 	}
 	run := callReq(o.Msg.GetSessionId(), "1")
 	run.Msg.MinimumIsolation = "container"
-	if _, err := svc.SessionRun(ctx, run); err != nil {
+	if _, err := headRun(svc, ctx, run); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -911,17 +911,17 @@ func TestOpenFloorAndDaemonFloorBothApply(t *testing.T) {
 	svc.Floor = sandbox.IsolationKernel
 	run := callReq(o.Msg.GetSessionId(), "1")
 	run.Msg.MinimumIsolation = "process"
-	_, err = svc.SessionRun(ctx, run)
+	_, err = headRun(svc, ctx, run)
 	requireAttachRefusal(t, err, connect.CodeFailedPrecondition, sandbox.RefusalIsolation)
 	run.Msg.MinimumIsolation = ""
-	_, err = svc.SessionRun(ctx, run)
+	_, err = headRun(svc, ctx, run)
 	requireAttachRefusal(t, err, connect.CodeInvalidArgument, sandbox.RefusalRequest)
 	if p.Opened()[0].Calls() != 0 {
 		t.Fatal("a call under a floor ran")
 	}
 	svc.Floor = sandbox.IsolationUnknown
 	run.Msg.MinimumIsolation = "process"
-	if _, err := svc.SessionRun(ctx, run); err != nil {
+	if _, err := headRun(svc, ctx, run); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -942,8 +942,8 @@ func TestZeroGenerationIsAnInvalidRequestEverywhere(t *testing.T) {
 	}
 	for _, id := range []string{o.Msg.GetSessionId(), strings.Repeat("0", 32)} {
 		run := callReq(id, "1")
-		run.Msg.Generation = 0
-		_, err := svc.SessionRun(ctx, run)
+		atGeneration(svc, run.Msg, 0)
+		_, err := headRun(svc, ctx, run)
 		requireAttachRefusal(t, err, connect.CodeInvalidArgument, sandbox.RefusalRequest)
 		c := closeReq(id)
 		c.Msg.Generation = 0
@@ -974,7 +974,7 @@ func TestStaleAndMismatchErrorsRevealNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, fp := o.Msg.GetSessionId(), o.Msg.GetSession()
-	out, err := svc.SessionRun(ctx, callReq(id, "1"))
+	out, err := headRun(svc, ctx, callReq(id, "1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func TestStaleAndMismatchErrorsRevealNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := []error{}
-	_, err = svc.SessionRun(ctx, callReq(id, "2"))
+	_, err = headRun(svc, ctx, callReq(id, "2"))
 	stale = append(stale, err)
 	_, err = svc.CloseSession(ctx, closeReq(id))
 	stale = append(stale, err)
@@ -1036,8 +1036,8 @@ func TestGenerationOverflowRefused(t *testing.T) {
 		t.Fatal("the generation wrapped")
 	}
 	run := callReq(o.Msg.GetSessionId(), "1")
-	run.Msg.Generation = math.MaxUint64
-	if _, err := svc.SessionRun(ctx, run); err != nil || p.Opened()[0].Calls() != 1 {
+	atGeneration(svc, run.Msg, math.MaxUint64)
+	if _, err := headRun(svc, ctx, run); err != nil || p.Opened()[0].Calls() != 1 {
 		t.Fatalf("the current owner was refused: %v", err)
 	}
 }

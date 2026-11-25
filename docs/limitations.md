@@ -96,20 +96,18 @@ Part of the [plimsoll README](../README.md).
   broker adds to a run's calls) only the permissions the grant means
   ([INTERNAL · capability grants →](capability-grants.md#method-and-path-override)).
 - **The [agent-sandbox (INTERNAL · glossary →)](trainers/glossary.html#agent-sandbox)
-  provider's pods all share one TLS key.** plimsolld reaches each Kubernetes pod over TLS
-  that it checks against the deployment's own certificate authority, but every pod serves
-  the same certificate from one Secret, so code that broke out to root inside one pod could
-  read the key and, from a position on the pod network, pass for any pod until the Secret is
-  rotated. Code in the sandbox cannot read the key without such a break, which the startup smoke test
-  checks; rotate the Secret on a schedule. The same fact has a second consequence: the certificate
-  proves the peer is a plimsoll sandbox pod of the deployment, not the pod plimsolld dialed, so
-  an attacker who can rewrite traffic on the pod network can redirect one caller's connection
-  into another pod of the deployment (such as one their own run holds) and receive that run's
-  code, files and token. Until each pod has a key of its own, plimsolld started with `PLIMSOLL_HARDENED=1`
-  ([what that setting enforces](hardened-mode.md)) refuses to serve this provider unless `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1` states that an authenticated,
-  encrypted pod network or a service mesh with mutual TLS runs under it, since the daemon cannot
-  check that itself
-  ([agentsandbox.md](agentsandbox.md#the-control-channel-is-tls)).
+  provider trusts every node, and whoever may have a certificate signed in the warm pool's
+  [namespace (INTERNAL · glossary →)](trainers/glossary.html#namespace).** Each sandbox pod serves a key and certificate of its own, which an issuer in
+  the cluster signs for that pod as it starts, and plimsolld checks in every handshake that
+  the certificate names the pod it read from the API server, so a party on the pod network
+  cannot redirect one caller's run into another pod, and code that broke out to root in one
+  pod holds that pod's key alone. But the node plugin that requests those certificates (the
+  certificate manager's CSI driver) may request one for any pod in the cluster, so root on
+  any node, or anyone holding that plugin's credentials, can pass for any sandbox pod; so
+  can any account that may create certificate requests in the pool's namespace while the
+  issuer signs every request made there. The operator guide says who must not hold that
+  right ([agentsandbox.md](agentsandbox.md#what-the-operator-sets-up)). The provider also
+  now requires that certificate manager and its CSI driver in every cluster it runs on.
 - **The E2B guard only works in the daemon process that started the run, so it cannot sit
   behind an ordinary load balancer.** A run's guard credential lives in the memory of the
   process that created the run, so a guard request sent to a second copy of the daemon is
@@ -207,6 +205,13 @@ Part of the [plimsoll README](../README.md).
   machine, and they have run on one machine and one WSL release. <dfn>*Hardened mode*</dfn>
   (the daemon's strict production check, `PLIMSOLL_HARDENED=1`) refuses the provider in
   both modes ([INTERNAL · WSL containers →](wslc.md)).
+- **A session call whose answer was lost does not run exactly once by itself.** The daemon
+  refuses any call made from a stale view of the session, returns the lost call's record and,
+  when it still keeps it, its answer, and the official clients refuse every call until the
+  application handles the lost one ([sessions](sessions.md#carrying-a-session-on-from-another-worker)). A call that
+  ended unanswered may have done none, part or all of its work. An effect outside the sandbox
+  happens once only when the code carries the outside service's own key for doing the work once
+  ([sessions](sessions.md#what-the-daemon-keeps-of-an-answer)).
 - **There is no single control point across several daemons.** Each daemon is configured
   and controlled on its own.
 - **Nothing updates itself.** Updates are manual. The QuickJS build is

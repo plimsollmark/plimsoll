@@ -10,8 +10,14 @@ import (
 func TestLoadSessionConfig(t *testing.T) {
 	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
 	c, err := loadSessionConfig(env(nil))
-	if err != nil || c.MaxSessions != 0 || c.Lifetime != 30*time.Minute || c.IdleTimeout != 5*time.Minute || c.DiskBytes != 1<<30 {
+	if err != nil || c.MaxSessions != 0 || c.Lifetime != 30*time.Minute || c.IdleTimeout != 5*time.Minute || c.DiskBytes != 1<<30 ||
+		c.KeptAnswerBytes != 4<<20 || c.KeptAnswersTotalBytes != 64<<20 {
 		t.Fatalf("defaults: %+v, %v", c, err)
+	}
+	// The largest per-answer cap, and a total of 0 (keep none), are accepted.
+	c, err = loadSessionConfig(env(map[string]string{"SANDBOX_SESSION_KEPT_ANSWER_BYTES": "16777216", "SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES": "0"}))
+	if err != nil || c.KeptAnswerBytes != 16<<20 || c.KeptAnswersTotalBytes != 0 {
+		t.Fatalf("kept answers: %+v, %v", c, err)
 	}
 	c, err = loadSessionConfig(env(map[string]string{"SANDBOX_MAX_SESSIONS": "3", "SANDBOX_MAX_SESSIONS_PER_CALLER": "2", "SANDBOX_MAX_SESSIONS_PER_OWNER": "3", "SANDBOX_SESSION_LIFETIME": "90s", "SANDBOX_SESSION_IDLE": "0", "SANDBOX_SESSION_DISK_MB": "0"}))
 	if err != nil || c.MaxSessions != 3 || c.MaxPerCaller != 2 || c.MaxPerOwner != 3 || c.Lifetime != 90*time.Second || c.IdleTimeout != 0 || c.DiskBytes != 0 {
@@ -34,6 +40,11 @@ func TestLoadSessionConfig(t *testing.T) {
 		{"SANDBOX_SESSION_IDLE": "1200h"},
 		{"SANDBOX_SESSION_IDLE": "13h"},
 		{"SANDBOX_SESSION_IDLE": "500ms"}, // below the 1 s floor (L2)
+		// One byte over 16 MiB: an attach answer could then pass the clients' 32 MiB limit.
+		{"SANDBOX_SESSION_KEPT_ANSWER_BYTES": "16777217"},
+		{"SANDBOX_SESSION_KEPT_ANSWER_BYTES": "-1"},
+		{"SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES": "-1"},
+		{"SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES": "1099511627777"},
 	} {
 		if _, err := loadSessionConfig(env(bad)); err == nil {
 			t.Errorf("%v was accepted", bad)

@@ -4,24 +4,26 @@
 // the in-memory session provider behind a token: a session call with trace ID drop-answer
 // runs and its answer is cut, GET /test/calls counts the calls the provider ran and GET
 // /test/checkpoint-vectors serves the vectors. The attach liar answers an attach with trace
-// ID forge-<name> with the honest answer with one thing forged, and counts each session's
-// closes.
+// ID forge-<name> with the honest answer with one thing forged, counts each session's
+// closes and calls, and sends a call with trace ID head-mismatch on with its head's count
+// raised, so the daemon refuses it as a head mismatch.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  CallAlreadySentError,
   CheckpointMismatchError,
   checkpointToJSON,
+  HeadMismatchError,
   parseCheckpoint,
   PlimsollClient,
   PlimsollError,
+  RecoveringError,
   StaleOwnerError,
   type SessionCheckpoint,
 } from "../src/index.ts";
 import { errorFromWire } from "../src/errors.ts";
-import { CALL_ALREADY_SENT_TEXT, CHECKPOINT_MISMATCH_TEXT, STALE_OWNER_TEXT } from "../src/tables.gen.ts";
+import { CHECKPOINT_MISMATCH_TEXT, RECOVERING_TEXT, STALE_OWNER_TEXT } from "../src/tables.gen.ts";
 import { saysOf, verdict } from "./cases.ts";
 
 const reattachUrl = process.env.PLIMSOLL_REATTACH_URL;
@@ -67,6 +69,27 @@ test("the stale and mismatch refusals map to their errors, and only they", () =>
   assert.equal(mismatch.notDispatched, "request");
   const other = refusal(1, "some other refusal with reason request");
   assert.ok(!(other instanceof CheckpointMismatchError) && !(other instanceof StaleOwnerError) && other.notDispatched === "request");
+});
+
+// A call's head mismatch (protocol 8) is the attach mismatch's code, reason and text with the
+// daemon's head as a SessionHeadMismatch detail; the detail is decoded by hand.
+test("a head mismatch refusal carries the daemon's head, and only with its detail", () => {
+  const nd = { type: "plimsoll.v1.NotDispatched", value: Buffer.from([0x08, 1]).toString("base64") };
+  const head = (bytes: number[]) => ({ type: "plimsoll.v1.SessionHeadMismatch", value: Buffer.from(bytes).toString("base64") });
+  const refusal = (...details: { type: string; value: string }[]) =>
+    errorFromWire(400, { code: "failed_precondition", message: CHECKPOINT_MISMATCH_TEXT, details: [nd, ...details] }, { bound: true });
+  // head { generation: 3, calls: 300, last_record_sha256: "ab" }, then a field this client does not know.
+  const cp = [0x08, 0x03, 0x10, 0xac, 0x02, 0x1a, 0x02, 0x61, 0x62, 0x20, 0x07];
+  const got = refusal(head([0x0a, cp.length, ...cp, 0x15, 1, 2, 3, 4]));
+  assert.ok(got instanceof HeadMismatchError && !(got instanceof CheckpointMismatchError), String(got));
+  assert.deepEqual(got.head, { generation: 3n, calls: 300n, lastRecordSha256: "ab" });
+  assert.equal(got.notDispatched, "request");
+  // No head in the detail, a varint past 64 bits, or a cut length: an attach's mismatch, as without the detail.
+  for (const bytes of [[0x20, 0x01], [0x0a, 11, 0x08, ...Array(9).fill(0xff), 0x7f], [0x0a, 0x05, 0x08]]) {
+    const e = refusal(head(bytes));
+    assert.ok(e instanceof CheckpointMismatchError && !(e instanceof HeadMismatchError), JSON.stringify(bytes));
+  }
+  assert.ok(refusal() instanceof CheckpointMismatchError && !(refusal() instanceof HeadMismatchError));
 });
 
 test("every client reads the shared checkpoint vectors", { skip }, async () => {
@@ -226,12 +249,13 @@ test("an attach whose answer is lost is never retried", { skip }, async () => {
   await assert.rejects(client().attachSession(cp), (e: unknown) => e instanceof StaleOwnerError, "the lost attach moved ownership");
 });
 
-// The explained gap (option A of the PydanticAI design's section 3.3): naming the call that
-// ran with its answer lost takes the session over across the gap, once, with its record;
-// the first call after may not repeat it.
+// The explained gap (option A of the PydanticAI design's section 3.3, option 3 of the lost
+// call design): naming the call that ran with its answer lost takes the session over across
+// the gap, once, with its record and, when the daemon kept it, its answer; the attached
+// session is then recovering and sends nothing until the application resolves the lost call.
 
-async function lostCall(url = reattachUrl!, minimumIsolation?: "container") {
-  const a = await client(url).openSession({ minimumIsolation });
+async function lostCall(url = reattachUrl!, opts: { minimumIsolation?: "container"; keepNoAnswer?: boolean } = {}) {
+  const a = await client(url).openSession(opts);
   await a.runCell({ language: "python", code: "x = 1" });
   const cp = await a.checkpoint();
   await assert.rejects(a.runCell({ language: "python", code: "y = 2" }, { traceId: "drop-answer" }), (e: unknown) => e instanceof PlimsollError && !e.notDispatched);
@@ -239,63 +263,183 @@ async function lostCall(url = reattachUrl!, minimumIsolation?: "container") {
   return { a, cp, lost: a.lostRequestSha256 };
 }
 
-test("naming the lost call carries the chain on across the gap", { skip }, async () => {
+const recovering = (e: unknown) =>
+  e instanceof RecoveringError && e.notDispatched === "request" && e.code === "failed_precondition" && e.message === `plimsoll: ${RECOVERING_TEXT}; nothing was sent`;
+
+test("naming the lost call carries the chain on across the gap, with its record and its kept answer", { skip }, async () => {
   const { cp, lost } = await lostCall();
   const b = await client().attachSession(cp, { lostRequestSha256: lost });
-  assert.equal(b.lostCall?.requestSha256, lost);
-  assert.equal(b.lostCall?.sequence, cp.calls + 1n);
+  const lc = b.lostCall;
+  assert.equal(lc?.requestSha256, lost);
+  assert.equal(lc?.record?.requestSha256, lost);
+  assert.equal(lc?.record?.sequence, cp.calls + 1n);
+  // The daemon kept the answer the drop cut, and the attach returned it, checked against the record.
+  assert.equal(lc?.answer?.kind, "cell");
+  assert.equal(lc?.answer?.result.stdout, "python 2: y = 2");
+  assert.equal(lc?.answer?.result.record.sha256, lc?.record?.sha256);
+  assert.deepEqual(b.chain, { calls: cp.calls + 1n, lastRecordSha256: lc?.record?.sha256 });
+  b.resolveLostCall();
+  assert.equal(b.lostCall, undefined);
   const r = await b.runCell({ language: "python", code: "z = 3" });
   assert.equal(r.stdout, "python 3: z = 3");
-  assert.deepEqual([r.record.sequence, r.record.previousSha256], [cp.calls + 2n, b.lostCall?.sha256]);
+  assert.deepEqual([r.record.sequence, r.record.previousSha256], [cp.calls + 2n, lc?.record?.sha256]);
   assert.equal((await b.close()).calls, 3n);
 });
 
-test("the first call may not repeat the lost call; the note is then spent", { skip }, async () => {
+test("a recovering session refuses every call before it is sent, the lost one and any other, until it is resolved", { skip }, async () => {
   const { cp, lost } = await lostCall();
   const b = await client().attachSession(cp, { lostRequestSha256: lost });
   const calls = await providerCalls();
-  // What the client knows, in the Go client's words (client.CallAlreadySentText, copied into
-  // tables.gen.ts by internal/wiretables): the call was sent once. The lost call's record
-  // says whether it finished.
-  await assert.rejects(b.runCell({ language: "python", code: "y = 2" }), (e: unknown) =>
-    e instanceof CallAlreadySentError && e.notDispatched === "request" &&
-    e.message === `plimsoll: ${CALL_ALREADY_SENT_TEXT}; nothing was sent` && !e.message.includes("ran once"));
-  assert.equal(await providerCalls(), calls, "the repeat ran");
+  await assert.rejects(b.runCell({ language: "python", code: "y = 2" }), recovering, "the lost call repeated");
+  await assert.rejects(b.runCell({ language: "python", code: "w = 0" }), recovering, "another call");
+  await assert.rejects(b.runJavaScript("1"), recovering, "a snippet");
+  await assert.rejects(b.runProject({ files: [], steps: ["true"] }), recovering, "a project");
+  // A refusal does not resolve it, and does not stop the session.
+  await assert.rejects(b.runCell({ language: "python", code: "w = 0" }), recovering, "after a refusal");
+  assert.equal(await providerCalls(), calls, "a call reached the provider");
   assert.equal(b.stopped, undefined);
-  await b.runCell({ language: "python", code: "y = 2" });
+  assert.equal(b.lostCall?.requestSha256, lost);
+  b.resolveLostCall();
+  b.resolveLostCall(); // resolving a session that is not recovering does nothing
+  await b.runCell({ language: "python", code: "w = 0" });
+  assert.equal(await providerCalls(), calls + 1);
   await b.close();
 });
 
-test("a checkpoint carries the note to the next worker until the first call", { skip }, async () => {
+test("a checkpoint saved while recovering carries the state to the next worker, which knows the digest alone", { skip }, async () => {
   const { cp, lost } = await lostCall();
   const b = await client().attachSession(cp, { lostRequestSha256: lost });
   const cp2 = await b.checkpoint();
-  assert.equal(cp2.lostCallSha256, lost);
-  assert.deepEqual(parseCheckpoint(checkpointToJSON(cp2)), cp2);
+  assert.equal(cp2.version, 2);
+  assert.equal(cp2.recoveringRequestSha256, lost);
+  const text = checkpointToJSON(cp2);
+  assert.equal(JSON.parse(text).recovering_request_sha256, lost);
+  assert.ok(!("lost_call_sha256" in JSON.parse(text)));
+  assert.deepEqual(parseCheckpoint(text), cp2);
   const c = await client().attachSession(cp2);
-  await assert.rejects(c.runCell({ language: "python", code: "y = 2" }), (e: unknown) => e instanceof CallAlreadySentError);
-  assert.equal((await c.checkpoint()).lostCallSha256, "");
+  assert.deepEqual(c.lostCall, { requestSha256: lost });
+  const calls = await providerCalls();
+  await assert.rejects(c.runCell({ language: "python", code: "w = 0" }), recovering);
+  assert.equal(await providerCalls(), calls);
+  assert.equal((await c.checkpoint()).recoveringRequestSha256, lost, "only resolving clears it");
+  c.resolveLostCall();
+  assert.equal((await c.checkpoint()).recoveringRequestSha256, "");
+  await c.runCell({ language: "python", code: "w = 0" });
   await c.close();
 });
 
-test("a first call the daemon refuses leaves the note", { skip }, async () => {
-  const { cp, lost } = await lostCall();
-  const b = await client().attachSession(cp, { lostRequestSha256: lost });
-  const calls = await providerCalls();
-  // A floor above the session's tier: refused with the not-dispatched mark, so nothing ran.
-  await assert.rejects(b.runCell({ language: "python", code: "w = 0" }, { minimumIsolation: "vm" }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "isolation");
-  assert.equal((await b.checkpoint()).lostCallSha256, lost);
-  await assert.rejects(b.runCell({ language: "python", code: "y = 2" }), (e: unknown) => e instanceof CallAlreadySentError);
-  assert.equal(await providerCalls(), calls, "a call ran");
+test("a session opened with keepNoAnswer gives the lost call back without its answer", { skip }, async () => {
+  const opens: unknown[] = [];
+  const spy: typeof fetch = async (input, init) => {
+    if (String(input).endsWith("/OpenSession")) opens.push(JSON.parse(String(init?.body)).keepNoAnswer);
+    return fetch(input, init);
+  };
+  const a = await client(reattachUrl, { daemonName: DAEMON, fetch: spy }).openSession({ keepNoAnswer: true });
+  assert.deepEqual(opens, [true]);
+  await a.runCell({ language: "python", code: "x = 1" });
+  const cp = await a.checkpoint();
+  await assert.rejects(a.runCell({ language: "python", code: "y = 2" }, { traceId: "drop-answer" }), (e: unknown) => e instanceof PlimsollError && !e.notDispatched);
+  const b = await client().attachSession(cp, { lostRequestSha256: a.lostRequestSha256 });
+  assert.equal(b.lostCall?.record?.requestSha256, a.lostRequestSha256);
+  assert.equal(b.lostCall?.answer, undefined, "the daemon kept an answer it was asked to keep none of");
   await b.close();
+  const silent: typeof fetch = async () => assert.fail("an open with a keepNoAnswer that is not a boolean was sent");
+  await assert.rejects(
+    client(reattachUrl, { daemonName: DAEMON, fetch: silent }).openSession({ keepNoAnswer: "yes" as unknown as boolean }),
+    (e: unknown) => e instanceof PlimsollError && e.code === "invalid_argument" && e.notDispatched === "request",
+  );
 });
 
-test("a different first call runs and spends the note", { skip }, async () => {
-  const { cp, lost } = await lostCall();
-  const b = await client().attachSession(cp, { lostRequestSha256: lost });
-  await b.runCell({ language: "python", code: "w = 0" });
-  await b.runCell({ language: "python", code: "y = 2" });
+test("every call states the head the call before it left; a close states the generation alone", { skip }, async () => {
+  const sent: { method: string; body: any }[] = [];
+  const spy: typeof fetch = async (input, init) => {
+    sent.push({ method: String(input).split("/").pop()!, body: JSON.parse(String(init?.body)) });
+    return fetch(input, init);
+  };
+  const c = client(reattachUrl, { daemonName: DAEMON, fetch: spy });
+  const a = await c.openSession();
+  const r1 = await a.runCell({ language: "python", code: "x = 1" });
+  // Two calls at once: the second's head is the one the first left, as the queue sends them in turn.
+  const [r2] = await Promise.all([a.runCell({ language: "python", code: "y = 2" }), a.runCell({ language: "python", code: "z = 3" })]);
+  const b = await c.attachSession(await a.checkpoint());
+  const r4 = await b.runCell({ language: "python", code: "w = 4" });
   await b.close();
+  const runs = sent.filter((s) => s.method === "SessionRun").map((s) => s.body);
+  assert.ok(runs.every((body) => !("generation" in body)), "a call still states the generation alone");
+  assert.deepEqual(runs.map((body) => body.head), [
+    { generation: "1", calls: "0", lastRecordSha256: "" },
+    { generation: "1", calls: "1", lastRecordSha256: r1.record.sha256 },
+    { generation: "1", calls: "2", lastRecordSha256: r2.record.sha256 },
+    { generation: "2", calls: "3", lastRecordSha256: r4.record.previousSha256 },
+  ]);
+  const close = sent.find((s) => s.method === "CloseSession")!.body;
+  assert.deepEqual(Object.keys(close).sort(), ["generation", "protocol", "sessionId"]);
+  assert.equal(close.generation, "2");
+});
+
+// The integers a session's answers state in strings (the generation, the count of calls, the
+// expiry) are whole decimals, as in a record: " 2" and "0x2" are not 2 (finding release-90).
+test("a session answer's integer strings are whole decimals", { skip }, async () => {
+  const rewriting = (method: string, edit: (body: any) => void): typeof fetch => async (input, init) => {
+    const res = await fetch(input, init);
+    if (!String(input).endsWith(`/${method}`)) return res;
+    const body = await res.json();
+    edit(body);
+    const headers = new Headers(res.headers);
+    headers.delete("content-length");
+    return new Response(JSON.stringify(body), { status: res.status, headers });
+  };
+  const a = await client().openSession();
+  await a.runCell({ language: "python", code: "x = 1" });
+  const cp = await a.checkpoint();
+  for (const [name, edit] of [
+    ["a generation with a space before it", (b: any) => (b.checkpoint.generation = ` ${b.checkpoint.generation}`)],
+    ["a generation in hex", (b: any) => (b.sessionInfo.generation = `0x${Number(b.sessionInfo.generation).toString(16)}`)],
+    ["a count with a leading zero", (b: any) => (b.checkpoint.calls = `0${b.checkpoint.calls}`)],
+    ["an expiry with a decimal point", (b: any) => (b.sessionInfo.expiresUnixMs = `${b.sessionInfo.expiresUnixMs}.0`)],
+  ] as const) {
+    const err = await attachError(client(reattachUrl, { daemonName: DAEMON, fetch: rewriting("AttachSession", edit) }).attachSession(cp));
+    assert.ok(err instanceof PlimsollError && err.code === "data_loss", `${name}: ${String(err)}`);
+    // The refused attach raised the generation all the same: carry on from the daemon's head.
+    cp.generation += 1n;
+  }
+  const s = await client(reattachUrl, { daemonName: DAEMON, fetch: rewriting("CloseSession", (b) => (b.calls = `${b.calls} `)) }).attachSession(cp);
+  await assert.rejects(s.close(), (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /whole decimal/.test(e.message));
+  await assert.rejects(
+    client(reattachUrl, { daemonName: DAEMON, fetch: rewriting("OpenSession", (b) => (b.expiresUnixMs = `${b.expiresUnixMs}e0`)) }).openSession(),
+    (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /whole decimal/.test(e.message),
+  );
+});
+
+// A call whose head the daemon refuses (the attach liar raises the head's count on a call
+// with trace ID head-mismatch) stops the session: nothing ran, and the call after it is
+// refused before it is sent (internal/clientcases, session/head-mismatch).
+test("a head mismatch stops the session, and the next call is never sent", { skip }, async () => {
+  const s = await client(liarUrl).openSession({ minimumIsolation: "container" });
+  const sent = async () => (await getJSON(`${liarUrl}/test/session-calls?session=${s.fingerprint}`)).calls;
+  let callErr: unknown;
+  try {
+    await s.runCell({ language: "python", code: "1" }, { traceId: "head-mismatch" });
+  } catch (e) {
+    callErr = e;
+  }
+  assert.ok(callErr instanceof HeadMismatchError && callErr.notDispatched === "request", String(callErr));
+  // The daemon's head, from the refusal's detail: the session's real one, which this client holds.
+  assert.deepEqual(callErr.head, { generation: 1n, calls: 0n, lastRecordSha256: "" });
+  assert.match(s.stopped ?? "", /head on the daemon is not this client's/);
+  assert.equal(s.lostRequestSha256, "", "a call that did not run is no lost call");
+  const before = await sent();
+  let nextErr: unknown;
+  try {
+    await s.runCell({ language: "python", code: "1" });
+  } catch (e) {
+    nextErr = e;
+  }
+  const nextSent = (await sent()) !== before;
+  verdict("session/head-mismatch", "session-head", { call: saysOf(callErr), next: saysOf(nextErr), nextSent });
+  assert.ok(nextErr instanceof PlimsollError && nextErr.notDispatched === "request", String(nextErr));
+  assert.equal(nextSent, false, "the call after a head mismatch was sent");
+  await assert.rejects(s.checkpoint(), /stopped/);
 });
 
 test("a wrong lost digest is the plain mismatch, and moves nothing", { skip }, async () => {
@@ -307,7 +451,7 @@ test("a wrong lost digest is the plain mismatch, and moves nothing", { skip }, a
 });
 
 test("each forged explained-gap answer is refused, and nothing is closed", { skip }, async () => {
-  const { a, cp, lost } = await lostCall(liarUrl, "container");
+  const { a, cp, lost } = await lostCall(liarUrl, { minimumIsolation: "container" });
   const b = client(liarUrl);
   for (const name of await getJSON(`${liarUrl}/test/lost-forgeries`)) {
     const err = await attachError(b.attachSession(cp, { traceId: `forge-${name}`, lostRequestSha256: lost }));
@@ -316,6 +460,7 @@ test("each forged explained-gap answer is refused, and nothing is closed", { ski
   }
   assert.equal((await getJSON(`${liarUrl}/test/closes?session=${a.fingerprint}`)).closes, 0);
   const s = await b.attachSession(cp, { traceId: "forge-lost-none", lostRequestSha256: lost });
-  assert.ok(s.lostCall);
+  // The honest answer carries the lost call's kept answer beside its record (the liar keeps it).
+  assert.ok(s.lostCall?.record && s.lostCall.answer?.kind === "cell", JSON.stringify(s.lostCall?.answer?.kind));
   verdict("attach/lost-forgeries/lost-none", "attach-live", "accept");
 });

@@ -177,8 +177,10 @@ func TestClientWarmOnlyOpen(t *testing.T) {
 	}
 }
 
-// A call made by another holder of the session ID shows as a gap in the chain at
-// this client's next call, and in the close's count.
+// A call made by another holder of the session ID moves the daemon's head, so the daemon
+// refuses this client's next call for its head before it runs, the client stops the
+// session over the broken chain, and the close's count shows the foreign call. A holder
+// that never saw the head is refused the same way.
 func TestSessionClientCatchesACallItDidNotMake(t *testing.T) {
 	url, _ := sessionServer(t)
 	r := newRemote(t, url)
@@ -189,14 +191,21 @@ func TestSessionClientCatchesACallItDidNotMake(t *testing.T) {
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	// The other holder's call executes; it sees a chain it did not start, too.
-	other := &Session{r: r, id: s.id, generation: s.generation, fingerprint: s.fingerprint}
-	if _, err := other.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); !errors.Is(err, record.ErrChain) {
+	blind := &Session{r: r, id: s.id, generation: s.generation, fingerprint: s.fingerprint}
+	if _, err := blind.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); !errors.Is(err, ErrHeadMismatch) {
+		t.Fatalf("a holder that never saw the head: %v", err)
+	}
+	// The other holder knows the head, so its call executes.
+	other := &Session{r: r, id: s.id, generation: s.generation, fingerprint: s.fingerprint, calls: s.calls, last: s.last}
+	if _, err := other.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); err != nil {
 		t.Fatalf("the other holder's call: %v", err)
 	}
 	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "3"})
-	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrChain) {
+	if _, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, ErrHeadMismatch) || !marked {
 		t.Fatalf("the call after a foreign one: %v", err)
+	}
+	if !errors.Is(s.Stopped(), record.ErrChain) {
+		t.Fatalf("the session after the foreign call: %v", s.Stopped())
 	}
 	if _, err := s.Close(context.Background()); !errors.Is(err, record.ErrChain) {
 		t.Fatalf("the close after a foreign call: %v", err)
@@ -344,7 +353,7 @@ func (h *recordingHTTP) Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		m := &plimsollv1.SessionRunRequest{Generation: 1}
+		m := &plimsollv1.SessionRunRequest{}
 		if err := proto.Unmarshal(body, m); err != nil {
 			return nil, err
 		}

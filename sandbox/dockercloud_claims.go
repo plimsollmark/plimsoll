@@ -12,7 +12,7 @@ var dockerCloudClaims = hostedMicroVMClaims("dockercloud", "sandbox/dockercloud_
 		b.WritableBounds: {Not: "the service has no disk control, so `SANDBOX_DISK_MB` is refused."},
 		b.LoopbackOnly:   {Not: "the microVM has a network interface, which the deny-all policy holds shut; the requests below test it."},
 		b.NoEgress: {Steps: []string{"SmokeTest"},
-			How: "from inside, HTTPS and HTTP requests to a raw IPv4 address, an HTTPS request to a raw IPv6 address and one to a name must all fail."},
+			How: "from inside, HTTPS and HTTP requests to a raw IPv4 address, an HTTPS request to a raw IPv6 address and one to a name must all fail, and the three DNS questions of the `e2b` entry above must get no reply but a refusal. Docker Cloud answers every DNS question on port 53, to any address, with REFUSED and no answer (measured 2026-11-24), so the question reaches Docker's side of the sandbox and nothing is resolved; what Docker's side does with the names it refuses cannot be seen from inside. The startup test with all three questions passed against Docker Cloud on 2026-11-24."},
 		b.ProcessLimit: {Not: "the service has no process limit, so `SANDBOX_PIDS` is refused."},
 		b.MemoryLimit: {Steps: []string{"SmokeTest"},
 			How: "the service's account of the new sandbox must give its memory at or under what was requested (the smallest size when none is configured): read back, not measured inside."},

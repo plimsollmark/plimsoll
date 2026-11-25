@@ -52,6 +52,7 @@ const (
 	PathAttachLive        = "attach-live"        // a whole attach against the attach liar, each answer forged in one thing
 	PathSessionUnanswered = "session-unanswered" // the record an unanswered session call's error carries
 	PathAttachLost        = "attach-lost"        // the lost call's record an attach answer returns
+	PathSessionHead       = "session-head"       // a session call the daemon refuses for its head, and the call after it
 )
 
 // Client is one client's paths, each with the test file that runs it.
@@ -79,6 +80,7 @@ var Clients = map[string]Client{
 		PathErrorAnswer:       "client/shared_cases_test.go",
 		PathAttachLive:        "client/shared_cases_test.go",
 		PathAttachLost:        "client/shared_cases_test.go",
+		PathSessionHead:       "client/shared_cases_test.go",
 	}},
 	"python": {Name: "python", Checks: true, Paths: map[string]string{
 		PathDigest:            "clients/python/tests/test_record.py",
@@ -91,6 +93,7 @@ var Clients = map[string]Client{
 		PathAttachLive:        "clients/python/tests/test_reattach.py",
 		PathSessionUnanswered: "clients/python/tests/test_shared_cases.py",
 		PathAttachLost:        "clients/python/tests/test_shared_cases.py",
+		PathSessionHead:       "clients/python/tests/test_reattach.py",
 	}},
 	// The TypeScript client's errors carry no kind of rule yet (PlimsollError has a code
 	// and flags; the rule is only in the message), so its verdicts state the outcome alone.
@@ -105,6 +108,7 @@ var Clients = map[string]Client{
 		PathAttachLive:        "clients/typescript/test/reattach.test.ts",
 		PathSessionUnanswered: "clients/typescript/test/shared-cases.test.ts",
 		PathAttachLost:        "clients/typescript/test/shared-cases.test.ts",
+		PathSessionHead:       "clients/typescript/test/reattach.test.ts",
 	}},
 }
 
@@ -419,6 +423,10 @@ func (a *Account) addForgeries() {
 		_ = a.add(one("attach/lost-forgeries/"+n, "attach/lost-forgeries", forgeriesFile, "may_have_run/chain", true, PathAttachLive))
 	}
 	_ = a.add(one("attach/lost-forgeries/lost-none", "attach/lost-forgeries", forgeriesFile, "accept", true, PathAttachLive))
+	// A call the attach liar sends on with its head's count raised (HeadMismatchTrace): the
+	// daemon refuses it before it runs, and the client stops the session, so the call after
+	// it is refused before it is sent (the liar counts no second call).
+	_ = a.add(one("session/head-mismatch", "session/head", forgeriesFile, map[string]any{"call": "not_dispatched:request", "next": "not_dispatched:request", "nextSent": false}, false, PathSessionHead))
 }
 
 // RecordsFile is this package's own cases, written by hand until a generator writes them.

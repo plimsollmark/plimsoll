@@ -22,6 +22,7 @@ from plimsoll_client import (
     AsyncSession,
     AtCapacityError,
     ChainError,
+    HeadMismatchError,
     Client,
     InsufficientIsolationError,
     InvalidRequestError,
@@ -418,20 +419,19 @@ class Sessions(unittest.TestCase):
     def test_a_call_this_client_did_not_make(self) -> None:
         s = self.c.open_session()
         s.run_javascript("1")
-        # Another holder of the session ID makes a call; it sees a chain it did not start, too.
+        # Another holder of the session ID, which has seen none of its calls, sends one. Since
+        # protocol 8 its head (no call yet) is not the session's, so the daemon refuses it
+        # before it runs, and that holder stops; the session goes on for the one whose head
+        # it is, and its chain and count stay whole.
         other = Session.__new__(Session)
         other.__dict__.update(s.__dict__)
         other._lock, other._calls, other._last = threading.Lock(), 0, ""
-        with self.assertRaises(ChainError):
+        with self.assertRaises(HeadMismatchError) as cm:
             other.run_javascript("2")
-        with self.assertRaises(ChainError) as cm:
-            s.run_javascript("3")
-        self.assertEqual(cm.exception.result.stdout, b"xxx")
-        with self.assertRaises(ChainError) as close:
-            s.close()
-        self.assertEqual(close.exception.result.calls, 3)
-        with self.assertRaises(ChainError):
-            s.close()  # the same verdict again, not a quiet summary
+        self.assertEqual(cm.exception.not_dispatched, "request")
+        self.assertIsNotNone(other.stopped)
+        self.assertEqual(s.run_javascript("3").record.sequence, 2)  # type: ignore[union-attr]
+        self.assertEqual(s.close().calls, 2)
 
     def test_an_owner_at_its_cap_replaces_its_least_recently_used_session(self) -> None:
         # The owner-cap daemon caps each owner at one session, and says so.

@@ -168,7 +168,7 @@ func parseArgonScan(txt string) (*ArgonScan, error) {
 	return a, nil
 }
 
-// canaryDemoTxt is the transcript canary-demo.sh prints: plimsoll-eval-integrity's canary run on
+// canaryDemoTxt is the transcript canary-demo.sh prints: the Python client's canary run on
 // a stand-in harness, passing, then failing on each leak put back and on a harness that planted
 // nothing. The page quotes it whole and states its results from it.
 //
@@ -191,7 +191,7 @@ type CanaryCheck struct {
 }
 
 var (
-	canaryCheckCmd = regexp.MustCompile(`^\$ plimsoll-eval-integrity canary check --sealed canary\.json --planted (\S+) --requests (\S+)$`)
+	canaryCheckCmd = regexp.MustCompile(`^\$ python3 -m plimsoll_client\.tripwire canary check --sealed canary\.json --planted (\S+) --requests (\S+)$`)
 	canaryExit     = regexp.MustCompile(`^\(exit (\d+)\)$`)
 )
 

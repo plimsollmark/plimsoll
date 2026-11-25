@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -124,6 +125,20 @@ func TestSharedCases(t *testing.T) {
 		_, err := attacher.AttachSession(NewTraceContext(ctx, "forge-"+name), gapCp, AttachOptions{LostRequestSHA256: lost})
 		say("attach/lost-forgeries/"+name, clientcases.PathAttachLive, clientcases.SaysOf(err))
 	}
+
+	// A call the daemon refuses for its head stops the session: the call after it is
+	// refused before it is sent.
+	h, err := reattachRemote(t, d.URL).OpenSession(ctx, SessionOptions{MinimumIsolation: sandbox.IsolationContainer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := func(err error) string { o, _, _ := strings.Cut(clientcases.SaysOf(err), "/"); return o }
+	_, callErr := h.RunCell(NewTraceContext(ctx, clientsuite.HeadMismatchTrace), cell("1"))
+	before := d.SessionCalls(h.Fingerprint())
+	_, nextErr := h.RunCell(ctx, cell("1"))
+	say("session/head-mismatch", clientcases.PathSessionHead, map[string]any{
+		"call": outcome(callErr), "next": outcome(nextErr), "nextSent": d.SessionCalls(h.Fingerprint()) != before,
+	})
 
 	// The record cases on the attach-lost path: the lost call's record an attach answer
 	// returns, checked by lostRecord, which the attach calls first; the attach refuses

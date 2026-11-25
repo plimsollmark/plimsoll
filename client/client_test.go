@@ -268,20 +268,22 @@ func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testin
 	}
 }
 
-// This client refuses a record whose provider name holds a control or bidirectional format
-// character (record.ValidText), so it states protocol 7, and a daemon of the release before
-// (protocol 6, whose clients accepted such a record) refuses it before anything runs. So
-// does a daemon of protocol 5 (record version 4): without that bump, it would run the code,
-// billed by the second on e2b and dockercloud, and the client would then refuse its version 4
-// answer (finding cyclonedx-20). The provider name's rule is finding hunt-security-39 (2026-11-21).
+// This client states the head on every session call, so it states protocol 8, and a daemon
+// of the release before (protocol 7, which ignored the head and would run a call made from
+// stale state) refuses it before anything runs. So do the daemons before that: protocol 6,
+// whose clients accepted a record whose provider name holds a control or bidirectional
+// format character (record.ValidText, finding hunt-security-39, 2026-11-21), and protocol 5
+// (record version 4): without that bump, it would run the code, billed by the second on e2b
+// and dockercloud, and the client would then refuse its version 4 answer (finding
+// cyclonedx-20).
 func TestAnOlderDaemonRefusesThisClientBeforeDispatch(t *testing.T) {
-	if Protocol != 7 || record.Version != 5 {
-		t.Fatalf("protocol %d with record version %d; this test pins protocol 7 to version 5 and the provider name's rule", Protocol, record.Version)
+	if Protocol != 8 || record.Version != 5 {
+		t.Fatalf("protocol %d with record version %d; this test pins protocol 8 to version 5 and the session head's rule", Protocol, record.Version)
 	}
 	if record.ValidText("wslc\x1b[2Jdocker") {
 		t.Fatal("record.ValidText accepts a provider name with an escape; protocol 7 is the client's refusal of one")
 	}
-	for _, serves := range []uint32{5, 6} {
+	for _, serves := range []uint32{5, 6, 7} {
 		backend := &otherProtocolServer{serves: serves}
 		mux := http.NewServeMux()
 		mux.Handle(rpc.NewHandler(backend))

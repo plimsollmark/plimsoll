@@ -12,14 +12,7 @@
     "record paths state mismatch. Ids are never reused: a retired case's id moves to retired."
   ],
   "retired": [],
-  "reserved": [
-    {
-      "id": "wire/number-text-after",
-      "finding": "release-90",
-      "step": "V2b",
-      "what": "an answer whose record states a number in a string with text after it (\"5 6\", \"5,\", 5 then a zero byte): Go's protobuf library reads it as 5; every client must refuse it or read the same value"
-    }
-  ],
+  "reserved": [],
   "cases": [
     {
       "id": "unanswered/accepted",
@@ -72,7 +65,7 @@
           "calls": "1",
           "last": "0000000000000000000000000000000000000000000000000000000000000001"
         },
-        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "checkpoint": "{\"version\":2,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"recovering_request_sha256\":\"\"}",
         "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
       },
       "expect": {
@@ -134,7 +127,7 @@
           "calls": "1",
           "last": "0000000000000000000000000000000000000000000000000000000000000001"
         },
-        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "checkpoint": "{\"version\":2,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"recovering_request_sha256\":\"\"}",
         "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
       },
       "expect": {
@@ -196,7 +189,7 @@
           "calls": "1",
           "last": "0000000000000000000000000000000000000000000000000000000000000001"
         },
-        "checkpoint": "{\"version\":1,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"lost_call_sha256\":\"\"}",
+        "checkpoint": "{\"version\":2,\"daemon\":\"prod-1\",\"session\":\"5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720\",\"generation\":\"1\",\"calls\":\"1\",\"last_record_sha256\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"provider\":\"openshell\",\"isolation\":\"container\",\"isolation_qualification\":\"Stated at open.\",\"software_identity\":\"\",\"open_floor\":\"\",\"open_rule\":\"\",\"expires_unix_ms\":1893456000000,\"idle_timeout_ms\":60000,\"recovering_request_sha256\":\"\"}",
         "lost": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
       },
       "expect": {

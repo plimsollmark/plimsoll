@@ -321,12 +321,13 @@ function describing(extra: Record<string, unknown>): PlimsollClient {
   });
 }
 
-// Protocol 7 came with the provider name's rule (record.ValidText, hunt-security-39,
-// 2026-11-21): this client refuses a record whose provider holds a control or
-// bidirectional character, which a protocol 6 client accepted. A daemon of protocol 6 refuses
-// this client's run before anything runs, and the refusal is marked not dispatched.
-test("this client speaks protocol 7, and a protocol 6 daemon refuses it before anything runs", async () => {
-  assert.equal(PROTOCOL, 7, "this test pins protocol 7 to the provider name's rule");
+// Protocol 8 came with the head on every session call (SessionRunRequest.head, lost-call
+// option 3): a protocol 7 daemon would ignore the head and run a call made from stale state.
+// Protocol 7 had come with the provider name's rule (record.ValidText), which still holds. A
+// daemon of protocol 7 refuses this client's run before anything runs, and the refusal is
+// marked not dispatched.
+test("this client speaks protocol 8, and a protocol 7 daemon refuses it before anything runs", async () => {
+  assert.equal(PROTOCOL, 8, "this test pins protocol 8 to the head on every session call");
   assert.equal(validText("docker\u001b[2J"), false);
   const stated: unknown[] = [];
   const client = new PlimsollClient({
@@ -334,13 +335,13 @@ test("this client speaks protocol 7, and a protocol 6 daemon refuses it before a
     fetch: async (_input, init) => {
       stated.push(JSON.parse(String(init?.body)).protocol);
       const rid = new Headers(init?.headers).get("Plimsoll-Request-Id") ?? "";
-      const body = { code: "unimplemented", message: "this daemon serves protocol 6 and the request states 7; nothing ran",
+      const body = { code: "unimplemented", message: "this daemon serves protocol 7 and the request states 8; nothing ran",
         details: [{ type: "plimsoll.v1.NotDispatched", value: "CAM" }] };
       return new Response(JSON.stringify(body), { status: 501, headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": rid } });
     },
   });
   await assert.rejects(client.runJavaScript("1"), (e: unknown) => e instanceof PlimsollError && e.code === "unimplemented" && e.notDispatched === "protocol");
-  assert.deepEqual(stated, [7]);
+  assert.deepEqual(stated, [8]);
 });
 
 test("describe reads the isolation qualification whole, and an answer without it as empty", async () => {

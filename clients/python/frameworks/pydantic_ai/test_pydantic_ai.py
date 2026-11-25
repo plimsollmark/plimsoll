@@ -6,9 +6,9 @@ real Session attribute by attribute); the cases marked "daemon" use a real Sessi
 fake sessions. What the backend does on a real sandbox is the docker check's (docker_pydantic_ai_check.py).
 
 The error mapping (map_error) has one case per kind of answer. The kinds that need a checkpoint store or a session
-reached from another process have no case, because the package has neither: a stale owner refused, a checkpoint
-that does not match, a store conflict, a store write that fails after a verified answer (a record sink's failure,
-the nearest the package has, has its case)."""
+reached from another process (a stale owner refused, a checkpoint that does not match, a store conflict, a store
+write that fails after a verified answer) have theirs in CheckpointStoreTests, over the client's MemoryCheckpointStore (the cross-process
+cases run on docker, docker_pydantic_ai_check.py)."""
 
 from __future__ import annotations
 
@@ -64,11 +64,12 @@ from plimsoll_client import (
     TransportError,
     UnsupportedError,
 )
+from plimsoll_client._lost_call import lost_call_message
 from plimsoll_client._tables import UNANSWERED_CODES
 from plimsoll_client.execution import CodeExecutor
 from plimsoll_client.pydantic_ai import (
     JsonLinesRecordSink,
-    PlimsollAlreadySentError,
+    PlimsollLostCallError,
     PlimsollOutcomeUnknownError,
     PlimsollRetryableError,
     PlimsollWorkspace,
@@ -166,7 +167,7 @@ class FakeShapeTests(unittest.TestCase):
     """The fakes against the real Session and Client, attribute by attribute."""
 
     # The fake's own handles for a test, which the real Session must not have (so none shadows a real name).
-    TEST_ONLY = {"tree", "plan", "commands", "scripts", "budgets", "closes", "end", "result", "answer", "script", "lost_command"}
+    TEST_ONLY = {"tree", "plan", "commands", "scripts", "budgets", "closes", "end", "result", "answer", "script", "resolves", "refused_recovering"}
 
     def test_the_fake_session_is_the_real_sessions_shape(self) -> None:
         fake, real = FakeSession(), real_session()
@@ -176,7 +177,7 @@ class FakeShapeTests(unittest.TestCase):
             self.assertFalse(hasattr(real, name), f"the real Session has {name}, which the fake uses for tests only")
 
     def test_every_session_member_the_backend_reads_is_on_the_fake(self) -> None:
-        used = ["run_project", "close", "fingerprint", "isolation", "ended", "stopped", "lost_call"]
+        used = ["run_project", "close", "fingerprint", "isolation", "ended", "stopped", "lost_call", "resolve_lost_call"]
         self.assertEqual(shape_differences(FakeSession(), real_session(), only=used), [])
 
     def test_the_fake_clients_open_is_the_real_ones(self) -> None:
@@ -664,11 +665,12 @@ class CheckpointStoreTests(unittest.TestCase):
         unsent = pa.map_error(plimsoll_client.CheckpointConflictError("moved", sent=False))
         self.assertIsInstance(unsent, PlimsollWorkspaceGoneError)
         self.assertEqual(unsent.reason, "store")
-        again = pa.map_error(plimsoll_client.CallAlreadySentError("sent", not_dispatched="request"))
-        self.assertIsInstance(again, PlimsollAlreadySentError)
-        self.assertIsInstance(again, PlimsollOutcomeUnknownError, "no engine retries it: the lost call may have run")
-        self.assertIn("was already sent once", str(again))
-        self.assertNotIn("ran once", str(again))
+        recovering = pa.map_error(plimsoll_client.RecoveringError("recovering", not_dispatched="request"))
+        self.assertIsInstance(recovering, PlimsollLostCallError, "a refusal of the recovering state is told, not retried")
+        self.assertNotIn("ran once", str(recovering))
+        head = pa.map_error(plimsoll_client.HeadMismatchError("head", not_dispatched="request"))
+        self.assertIsInstance(head, PlimsollWorkspaceGoneError, "a head mismatch stops the session; it is not a model's retry")
+        self.assertEqual(head.reason, "head_mismatch")
         lost = pa.map_error(plimsoll_client.CheckpointMismatchError("mismatch", not_dispatched="request"))
         self.assertIsInstance(lost, PlimsollOutcomeUnknownError)
         stale = pa.map_error(plimsoll_client.StaleOwnerError("stale", not_dispatched="permission"))
@@ -756,6 +758,49 @@ class CheckpointStoreTests(unittest.TestCase):
         self.assertEqual(len(c.attached), 1)
         self.assertNotEqual(c.attach_answer.scripts, [], "the operation was sent again on the session taken back")
 
+    def test_an_operation_refused_part_way_after_it_changed_a_file_is_not_sent_again(self) -> None:
+        # Finding release-61: a large write goes in pieces; refused as stale after its first piece ran under this
+        # worker, it is not sent again from its start on the session taken back, since that could write over what the
+        # other process changed since. A write refused at its first piece ran nothing and is sent again.
+        c, store = self.stored()
+        self.holding(store, "user-1/conv-1", "f" * 64)
+        b = cap(c, checkpoint_store=store, checkpoint_key=lambda ctx: "k").backend(key="user-1/conv-1")
+        run(b.working_dir())
+        c.attach_answer = FakeSession()
+        stale = plimsoll_client.StaleOwnerError("plimsoll: failed_precondition: stale", not_dispatched="permission")
+        c.session.plan = [lambda s, files, steps: s.answer(files, steps), stale]
+        data = b"x" * (pa._WRITE_CHUNK_BYTES * 2 + 1)
+        with self.assertRaises(PlimsollWorkspaceGoneError) as e:
+            run(b.write_bytes(ROOT + "/big.bin", data))
+        self.assertEqual(e.exception.reason, "stale")
+        self.assertIn("part way through this operation", str(e.exception))
+        self.assertEqual(c.attached, [], "the session was taken back to send the write again")
+        self.assertEqual(c.attach_answer.scripts, [])
+        # Refused at its first call, nothing of it ran: it is sent again on the session taken back.
+        c2, store2 = self.stored()
+        self.holding(store2, "user-1/conv-1", "f" * 64)
+        b2 = cap(c2, checkpoint_store=store2, checkpoint_key=lambda ctx: "k").backend(key="user-1/conv-1")
+        run(b2.working_dir())
+        c2.attach_answer = FakeSession()
+        c2.session.plan = [stale]
+        run(b2.write_bytes(ROOT + "/big.bin", data))
+        self.assertEqual(len(c2.attached), 1)
+        self.assertEqual(c2.attach_answer.tree.files[ROOT + "/big.bin"], data)
+
+    def test_an_attach_whose_store_write_failed_says_so(self) -> None:
+        # Finding release-60: the attach's own store write, refused after the daemon answered, is reported as what it is,
+        # not as a call that ran.
+        c, store = self.stored()
+        self.holding(store, "user-1/conv-1", "f" * 64)
+        c.attach_answer = plimsoll_client.CheckpointConflictError("plimsoll: the store changed during the attach", sent=True)
+        ref = WorkspaceRef(provider="plimsoll", id="plimsoll/" + "f" * 64)
+        b = cap(c, checkpoint_store=store, checkpoint_key=lambda ctx: "k").backend(ref, key="user-1/conv-1")
+        with self.assertRaises(PlimsollWorkspaceGoneError) as e:
+            run(b.working_dir())
+        self.assertEqual(e.exception.reason, "store")
+        self.assertIn("the attach went through and its checkpoint store write did not", str(e.exception))
+        self.assertNotIn("the call ran", str(e.exception))
+
     def test_a_stale_owner_refusal_without_the_mark_is_never_sent_again(self) -> None:
         # Without the mark the call may have run: the backend neither takes the session back nor sends the operation
         # again, and the run is told the outcome is unknown.
@@ -835,58 +880,74 @@ def lost_record(*, unanswered: str = "", ms: int = 3265) -> plimsoll_client.RunR
     )
 
 
-def taken_over(lost: Optional[plimsoll_client.RunRecord], **kw: Any) -> Tuple[FakeClient, PlimsollWorkspace, PlimsollWorkspaceBackend]:
+def taken_over(lost: Optional[plimsoll_client.LostCall], **kw: Any) -> Tuple[FakeClient, PlimsollWorkspace, PlimsollWorkspaceBackend]:
     """A capability with a checkpoint store, and a backend of it whose first operation takes the session over across
-    a lost call: the attach answers a session carrying ``lost`` as its ``lost_call``, whose first call is refused
-    when it repeats LOST_COMMAND (the client's rule, on the fake)."""
+    a lost call: the attach answers a session carrying ``lost`` as its ``lost_call``, recovering until resolved (the
+    client's rule, on the fake)."""
     c = FakeClient()
     c.daemon_name = "plimsoll"
     store = plimsoll_client.MemoryCheckpointStore()
     assert hold(store, TAKEOVER_KEY, "f" * 64)
     c.attach_answer = FakeSession()
-    c.attach_answer.lost_call, c.attach_answer.lost_command = lost, LOST_COMMAND
+    c.attach_answer.lost_call = lost
     workspace = cap(c, checkpoint_store=store, checkpoint_key=lambda ctx: TAKEOVER_KEY, **kw)
     return c, workspace, workspace.backend(WorkspaceRef(provider="plimsoll", id="plimsoll/" + "f" * 64), key=TAKEOVER_KEY)
 
 
-def shell_answers(result: Any) -> List[Any]:
-    """The parts that answered a plimsoll_shell call in a run's messages: tool returns and retry prompts."""
+def tool_answers(result: Any) -> List[Any]:
+    """The parts that answered a tool call in a run's messages, in order: tool returns and retry prompts."""
     return [p for m in result.all_messages() if isinstance(m, ModelRequest) for p in m.parts
-            if isinstance(p, (ToolReturnPart, RetryPromptPart)) and p.tool_name == "plimsoll_shell"]
+            if isinstance(p, (ToolReturnPart, RetryPromptPart))]
 
 
 class LostCallTests(unittest.TestCase):
-    """A call whose answer was lost before a takeover. When the run's first call after the takeover is plimsoll_shell
-    repeating it, the client refuses it with nothing sent, the model is told what the lost call's record says, in a
-    failed tool result, and the run goes on; the record reaches the sink first, once; everything else that may have
-    run still ends the run, and the refusal covers only a repeat sent first."""
+    """A call whose answer was lost before a takeover (lost call option 3). The session taken over across it is
+    recovering: the model's next tool call, whichever it is, is not run; the lost call's record reaches the sink first,
+    once; the model is told what the record says (and the lost call's output when its answer came back) in a failed
+    tool result; the backend resolves the session, and the run goes on. Everything else that may have run still ends
+    the run."""
 
-    def told(self, lost: Optional[plimsoll_client.RunRecord]) -> str:
-        c, workspace, b = taken_over(lost)
-        script = Scripted(("plimsoll_shell", {"command": LOST_COMMAND}))
-        result = run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
-        answers = shell_answers(result)
-        self.assertEqual(len(answers), 1)
-        self.assertIsInstance(answers[0], ToolReturnPart, "a retry prompt tells the model to send the command again")
-        self.assertEqual(answers[0].outcome, "failed", "a success would have the run's ledger say the command ran here")
+    def told(self, lost: plimsoll_client.LostCall, *calls: Tuple[str, Dict[str, Any]], **kw: Any) -> Tuple[str, FakeClient, Any]:
+        c, workspace, b = taken_over(lost, **kw)
+        script = Scripted(*(calls or (("plimsoll_shell", {"command": LOST_COMMAND}),)))
+        result = run(Agent(script.model, capabilities=[workspace, FileSystem(content_hashes=False)]).run("go", workspace=b))
+        answers = tool_answers(result)
+        self.assertGreaterEqual(len(answers), 1)
+        self.assertIsInstance(answers[0], ToolReturnPart, "a retry prompt tells the model to send the call again at once")
+        self.assertEqual(answers[0].outcome, "failed", "a success would have the run's ledger say the call ran here")
         self.assertEqual(result.output, "done", "the run went on to its answer")
-        self.assertEqual(c.attach_answer.commands, [], "the repeat reached the session")
+        self.assertEqual(c.attach_answer.refused_recovering, 0, "a call reached the recovering session")
+        self.assertEqual(c.attach_answer.resolves, 1)
         told = str(answers[0].content)
         for code in UNANSWERED_CODES:
-            self.assertNotIn(code, told, "a code of the protocol's, not plimsoll's words")
-        self.assertNotIn(LOST_COMMAND, told)
-        return told
+            self.assertNotIn(f" {code}", told, "a code of the protocol's, not plimsoll's words")
+        self.assertNotIn(LOST_COMMAND, told, "the command is known here by its digest only")
+        self.assertIn("this tool call was not run", told)
+        self.assertIn("send this tool call again if you still want it", told)
+        return told, c, result
 
     def test_an_answered_lost_call_is_told_only_that_the_sandbox_answered_and_the_run_goes_on(self) -> None:
         # Finding release-80: a result digest shows the daemon answered, not that the command ran to its end (the
         # answer can be a step stopped at its time limit, a setup that never ran, or a runner that did not report).
-        told = self.told(lost_record(ms=3265))
-        self.assertIn("this exact command was already sent once in this sandbox", told)
-        self.assertIn("The sandbox answered the call after 3.3 s, but the answer is lost", told)
-        self.assertIn("whether the command ran to its end, and whether it succeeded, is not known", told)
+        told, c, _ = self.told(plimsoll_client.LostCall(request_sha256="3" * 64, record=lost_record(ms=3265)))
+        self.assertIn("The sandbox answered that call after 3.3 s, but the answer is lost", told)
+        self.assertIn("whether it ran to its end, and whether it succeeded, is not known", told)
         self.assertNotIn("without an answer", told)
         for claim in ("finished", "started", "ran once"):
             self.assertNotIn(claim, told.lower())
+        self.assertEqual(c.attach_answer.commands, [], "the tool call that was told was not run")
+
+    def test_a_kept_answer_is_shown_cut_to_the_output_limit(self) -> None:
+        out = "x" * 50 + "TAIL"
+        answer = FakeSession().result(out.encode(), b"warning\n", 3)
+        lost = plimsoll_client.LostCall(request_sha256="3" * 64, record=lost_record(ms=1200), answer=answer)
+        told, _, _ = self.told(lost, max_output_chars=50)
+        self.assertIn("and kept its answer, which follows", told)
+        self.assertIn("exit code: 3", told)
+        self.assertIn("x" * 50, told)
+        self.assertNotIn("TAIL", told, "the lost call's output went past max_output_chars")
+        self.assertIn("stderr:\nwarning", told)
+        self.assertIn("[output truncated]", told)
 
     def test_an_unanswered_lost_call_is_told_only_that_it_ended_without_an_answer(self) -> None:
         # Finding release-79: an unanswered code shows the call was dispatched and ended in an error, not that the
@@ -895,67 +956,119 @@ class LostCallTests(unittest.TestCase):
                           ("canceled", "the request for it was called off"),
                           ("unavailable", "the sandbox service reported an error for it")):
             with self.subTest(code):
-                told = self.told(lost_record(unanswered=code, ms=1503))
-                self.assertIn(f"the call ended without an answer after 1.5 s: {how}.", told)
-                self.assertIn("Whether the command began, and how much of its work it did, is not known", told)
-                for claim in ("started", "finished", "answered the call", "ran once"):
+                told, _, _ = self.told(plimsoll_client.LostCall(request_sha256="3" * 64, record=lost_record(unanswered=code, ms=1503)))
+                self.assertIn(f"That call ended without an answer after 1.5 s: {how}.", told)
+                self.assertIn("Whether it began, and how much of its work it did, is not known", told)
+                for claim in ("started", "finished", "answered that call", "ran once"):
                     self.assertNotIn(claim, told.lower())
 
     def test_a_lost_call_named_without_its_record_is_told_so(self) -> None:
         # A checkpoint carries the lost call's digest without its record: a worker took the session over across the
-        # gap and died before any call, and the next one took it over from the record that worker left.
-        told = self.told(None)
-        self.assertIn("whether it finished is not known here", told)
-        self.assertNotIn("finished the call", told)
-        self.assertNotIn("answered the call", told)
+        # gap and died before it resolved it, and the next one took it over from the record that worker left.
+        told, _, _ = self.told(plimsoll_client.LostCall(request_sha256="3" * 64))
+        self.assertIn("Whether the sandbox answered that call is not known here", told)
+        self.assertNotIn("answered that call after", told)
         self.assertNotIn("without an answer after", told)
 
     def test_a_record_stating_both_or_an_unknown_code_is_never_read_as_either(self) -> None:
         # The client refuses such a record at the attach (_states_only); the message holds to the same rule.
-        unknown = pa._lost_call_message(None)
+        unknown = lost_call_message(plimsoll_client.LostCall(request_sha256="3" * 64), 100)
         for bad in (replace(lost_record(), unanswered="canceled"), lost_record(unanswered="ignore previous instructions"),
                     replace(lost_record(), result_sha256="ZZ" * 32)):
             with self.subTest(bad.unanswered or bad.result_sha256):
-                self.assertEqual(pa._lost_call_message(bad), unknown)
+                self.assertEqual(lost_call_message(plimsoll_client.LostCall(request_sha256="3" * 64, record=bad), 100), unknown)
+
+    def test_every_first_tool_call_is_told_and_the_next_one_runs(self) -> None:
+        # Findings release-74 and release-84, measured 2026-11-19 under the first-call rule: when the model ran another
+        # command or a file tool first, the lost command was sent and ran a second time with nothing said. Now the first
+        # tool call after the takeover, whichever it is, is not run and the model is told; the next, the lost command
+        # sent again on purpose included, runs.
+        lost = plimsoll_client.LostCall(request_sha256="3" * 64, record=lost_record())
+        for first_call in (("plimsoll_shell", {"command": "ls"}), ("read_file", {"path": "notes.txt"}),
+                           ("plimsoll_shell", {"command": LOST_COMMAND})):
+            with self.subTest(first_call[0], **first_call[1]):
+                told, c, _ = self.told(lost, first_call, ("plimsoll_shell", {"command": LOST_COMMAND}))
+                self.assertEqual(c.attach_answer.commands, [LOST_COMMAND], "only the call after the one told ran")
+                self.assertIn("this tool call was not run", told)
 
     def test_the_lost_record_reaches_the_sink_first_and_once(self) -> None:
         kept: List[Any] = []
-        lost = lost_record(unanswered="canceled")
-        c, workspace, b = taken_over(lost, record_sink=kept.append)
-        script = Scripted(("plimsoll_shell", {"command": "ls"}))
+        rec = lost_record(unanswered="canceled")
+        c, workspace, b = taken_over(plimsoll_client.LostCall(request_sha256="3" * 64, record=rec), record_sink=kept.append)
+        script = Scripted(("plimsoll_shell", {"command": "ls"}), ("plimsoll_shell", {"command": "ls"}))
         run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
         self.assertEqual(c.attach_answer.commands, ["ls"])
         self.assertEqual(len(kept), 2, kept)
-        self.assertIs(kept[0], lost, "the lost call's record comes before the new worker's first call's")
+        self.assertIs(kept[0], rec, "the lost call's record comes before the new worker's first call's")
         # Another backend of this process reaching the same session finds it in the registry: no second takeover,
         # and the lost record is not kept again.
         again = workspace.backend(b.ref, key=TAKEOVER_KEY)
         self.assertTrue(run(again.exists(ROOT)))
         self.assertEqual(len(c.attached), 1)
-        self.assertEqual([r for r in kept if r is lost], [lost])
+        self.assertEqual([r for r in kept if r is rec], [rec])
 
-    def test_a_sink_that_cannot_keep_the_lost_record_ends_the_run_and_nothing_is_sent(self) -> None:
-        def broken(record: Any) -> None:
-            raise OSError("the disk is full")
+    def test_another_backend_reaching_the_session_first_keeps_the_record_first(self) -> None:
+        # Finding release-83: the environment is registered before any call is sent, and a second backend of this
+        # process that reaches it first is the one whose operation sinks the lost record and tells the model; nothing
+        # of either backend's is sent before the sink takes it.
+        kept: List[Any] = []
+        rec = lost_record()
+        c, workspace, b = taken_over(plimsoll_client.LostCall(request_sha256="3" * 64, record=rec), record_sink=kept.append)
+        with self.assertRaises(pa.PlimsollLostCallError):
+            run(b.working_dir())  # the takeover; this operation is the one told
+        self.assertEqual(kept, [rec])
+        other = workspace.backend(b.ref, key=TAKEOVER_KEY)
+        self.assertTrue(run(other.exists(ROOT)), "the session is resolved for every backend of this process")
+        self.assertEqual(kept[0], rec)
+        self.assertEqual(c.attach_answer.refused_recovering, 0)
 
-        lost = lost_record()
-        c, workspace, b = taken_over(lost, record_sink=broken)
+    def test_a_sink_that_cannot_keep_the_lost_record_ends_the_run_and_it_is_offered_again(self) -> None:
+        # Finding release-83: after a sink failure the session stays recovering and the record pending, so the next
+        # operation offers the record again before anything is sent, and a later process never attaches to a session
+        # whose lost record reached no sink.
+        attempts: List[Any] = []
+        kept: List[Any] = []
+
+        def flaky(record: Any) -> None:
+            attempts.append(record)
+            if len(attempts) == 1:
+                raise OSError("the disk is full")
+            kept.append(record)
+
+        rec = lost_record()
+        c, workspace, b = taken_over(plimsoll_client.LostCall(request_sha256="3" * 64, record=rec), record_sink=flaky)
         script = Scripted(("plimsoll_shell", {"command": "ls"}))
         with self.assertRaises(PlimsollOutcomeUnknownError) as e:
             run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
-        self.assertNotIsInstance(e.exception, PlimsollAlreadySentError)
-        self.assertIs(e.exception.record, lost, "the application still gets the record")
+        self.assertNotIsInstance(e.exception, pa.PlimsollLostCallError)
+        self.assertIs(e.exception.record, rec, "the application still gets the record")
         self.assertEqual((c.attach_answer.commands, c.attach_answer.scripts), ([], []), "a call was sent")
+        self.assertIsNotNone(c.attach_answer.lost_call, "the session was resolved before its record was kept")
         self.assertEqual(script.returned("plimsoll_shell"), [])
+        with self.assertRaises(pa.PlimsollLostCallError):
+            run(b.exists(ROOT))  # the next operation: the record goes to the sink, then the model would be told
+        self.assertEqual(kept, [rec])
+        self.assertTrue(run(b.exists(ROOT)))
+
+    def test_a_session_below_the_floor_still_hands_its_lost_record_to_the_sink(self) -> None:
+        # Finding release-83: the floor refusal forgot the environment before the record was kept; it is kept first now.
+        kept: List[Any] = []
+        rec = lost_record()
+        c, workspace, b = taken_over(plimsoll_client.LostCall(request_sha256="3" * 64, record=rec), record_sink=kept.append)
+        c.attach_answer.isolation = "container"
+        with self.assertRaises(PlimsollWorkspaceGoneError) as e:
+            run(b.working_dir())
+        self.assertEqual(e.exception.reason, "isolation")
+        self.assertEqual(kept, [rec])
+        self.assertEqual(c.attach_answer.scripts, [])
 
     def test_everything_else_that_may_have_run_still_ends_the_run(self) -> None:
         # A gap the store cannot name: nothing can say what ran.
         c, workspace, b = taken_over(None)
         c.attach_answer = plimsoll_client.CheckpointMismatchError("plimsoll: the checkpoint is not the head", not_dispatched="request")
         script = Scripted(("plimsoll_shell", {"command": LOST_COMMAND}))
-        with self.assertRaises(PlimsollOutcomeUnknownError) as e:
+        with self.assertRaises(PlimsollOutcomeUnknownError):
             run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
-        self.assertNotIsInstance(e.exception, PlimsollAlreadySentError)
         self.assertEqual(script.returned("plimsoll_shell"), [], "the model was told something")
         # This worker's own command, ended without an answer, its record checked: it may have run.
         c = FakeClient()
@@ -966,23 +1079,9 @@ class LostCallTests(unittest.TestCase):
         err.record = record(c.session.calls + 1, c.session.last_record_sha256)
         c.session.plan.append(err)
         script = Scripted(("plimsoll_shell", {"command": "make"}))
-        with self.assertRaises(PlimsollOutcomeUnknownError) as e:
+        with self.assertRaises(PlimsollOutcomeUnknownError):
             run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
-        self.assertNotIsInstance(e.exception, PlimsollAlreadySentError)
         self.assertEqual(script.returned("plimsoll_shell"), [], "the model was told something")
-
-    def test_the_refusal_covers_only_a_repeat_sent_first(self) -> None:
-        # The client's rule, which the README, the module docstring and docs/sessions.md state: any other first call
-        # spends the note, so a different command and then the lost one are both sent.
-        c, workspace, b = taken_over(lost_record())
-        script = Scripted(("plimsoll_shell", {"command": "ls"}), ("plimsoll_shell", {"command": LOST_COMMAND}))
-        run(Agent(script.model, capabilities=[workspace]).run("go", workspace=b))
-        self.assertEqual(c.attach_answer.commands, ["ls", LOST_COMMAND])
-        # A file tool sends calls of its own before its read: the lost command sent after it is sent too.
-        c, workspace, b = taken_over(lost_record())
-        script = Scripted(("read_file", {"path": "notes.txt"}), ("plimsoll_shell", {"command": LOST_COMMAND}))
-        run(Agent(script.model, capabilities=[workspace, FileSystem(content_hashes=False)]).run("go", workspace=b))
-        self.assertEqual(c.attach_answer.commands, [LOST_COMMAND])
 
 
 class DurableExecutionTests(unittest.TestCase):
@@ -996,9 +1095,9 @@ class DurableExecutionTests(unittest.TestCase):
                 run(agent.run("go"))
         self.assertIn("does not support durable execution", str(e.exception))
         self.assertIn("may run again", str(e.exception))
-        # Finding release-81: the store does not keep a lost call from running again; the first-call limit stands.
+        # Finding release-81: the store does not keep a lost call from running again; the model is told of it first.
         self.assertNotIn("never run again", str(e.exception))
-        self.assertIn("refused only when it is the first call after the takeover", str(e.exception))
+        self.assertIn("the model's next tool call is not run: the model is told of the lost call first", str(e.exception))
         self.assertEqual(c.opened, [])
 
     def test_a_run_inside_a_durable_workflow_is_refused(self) -> None:
@@ -1363,8 +1462,8 @@ class PackageTests(unittest.TestCase):
         for name in pkg.__all__:
             if name != "__version__":
                 self.assertIs(getattr(pkg, name), getattr(pa, name), name)
-        # Finding release-82: the refused repeat of a lost call is named for a call already sent, not one that ran.
-        self.assertIn("PlimsollAlreadySentError", pkg.__all__)
+        # Finding release-82: no name says a lost call ran; the tool call refused for one is named for the lost call.
+        self.assertIn("PlimsollLostCallError", pkg.__all__)
         for module in (pkg, pa, plimsoll_client):
             self.assertFalse([n for n in dir(module) if "AlreadyRan" in n], module.__name__)
 
@@ -1396,29 +1495,34 @@ class PackageTests(unittest.TestCase):
             "Shell",
             "does not implement `SupportsCommands`",  # and why the tools vanish
             "needs a provider with sessions:",
-            "if `pip` cannot find it yet",
             "not a hosted service",
             "not attestation",
             "minimum_isolation",
-            # The lost-call refusal's limit (finding release-74), as test_the_refusal_covers_only_a_repeat_sent_first holds it.
-            "only when it is the first call after the takeover",
-            "any other first call, and every file tool, is sent as usual",
+            # What a lost call leaves the next process (findings release-74 and release-84), as
+            # test_every_first_tool_call_is_told_and_the_next_one_runs holds it: the next tool call, whichever it is, is
+            # told and not run, and a resend after that runs.
+            "the model's next tool call, whichever it is (`plimsoll_shell` or a file tool), is not run",
+            "once told, the model may send it again on purpose, and then it runs",
         ):
             self.assertIn(words.lower(), text)
         self.assertNotIn("already ran once", text)
+        self.assertNotIn("first call after the takeover", text, "the first-call rule was deleted")
         with open(pa.__file__, encoding="utf-8") as f:
             module = " ".join(f.read().split()).lower()
-        self.assertIn("refuses to send that call again only when it is the first call after the takeover", module)
-        self.assertIn("each file tool's included, is sent as usual", module)
+        self.assertIn("the model's next tool call after the takeover, whichever it is (``plimsoll_shell`` or a file tool), is not run", module)
+        self.assertIn("the model may then send it again on purpose", module)
 
     def test_the_readme_and_the_example_agree_on_whether_the_package_is_released(self) -> None:
         with open(os.path.join(PACKAGE, "README.md"), encoding="utf-8") as f:
             readme = f.read()
         with open(os.path.join(HERE, "..", "..", "examples", "pydantic_ai_workspace.py"), encoding="utf-8") as f:
             example = f.read()
-        # Both say the same thing about when the package reaches PyPI.
-        self.assertIn("if `pip` cannot find it yet", " ".join(readme.split()).lower())
-        self.assertIn("if pip cannot find it yet", " ".join(example.split()).lower())
+        # The package is on PyPI (0.28.0, published after the other adapters): both install it from there, and
+        # neither still tells a reader to fall back to a checkout.
+        for text in (readme, example):
+            flat = " ".join(text.split()).lower()
+            self.assertIn("pip install pydantic-ai-plimsoll pydantic-ai-harness", flat)
+            self.assertNotIn("cannot find it yet", flat)
 
     def test_the_skip_list_and_the_readme_agree(self) -> None:
         # The README counts the conformance rules the package skips; the docker test holds the list.

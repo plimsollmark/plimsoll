@@ -45,6 +45,12 @@ type SessionOptions struct {
 	// with protocol 5, which such a daemon refuses before reading the open. A cell for
 	// one call needs no session of its own: RunCell with CellOptions.PreferWarm.
 	WarmOnly bool
+	// KeepNoAnswer asks the daemon to keep no call's answer. By default it keeps the last
+	// answered call's answer in memory, until the next call starts or the session suspends
+	// or ends, so that a worker taking the session over across that call's lost answer
+	// gets it back (LostCall.Answer). Set it when the application promises its users that
+	// the daemon retains no output; it holds for the whole session.
+	KeepNoAnswer bool
 }
 
 // ownerDigest is what an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll
@@ -89,17 +95,15 @@ type Session struct {
 	mu    sync.Mutex
 	calls uint64
 	last  string
-	// lostCall is the request digest the session's next call is refused for repeating,
-	// set by an attach across an explained gap (or inherited with a checkpoint), spent by
-	// that refusal or by the next call that may have run (a call the daemon refuses with
-	// the not-dispatched mark leaves it); lostRecord is that attach's record of the lost
-	// call. Under mu.
-	lostCall   string
-	lostRecord *sandbox.RunRecord
 
 	// State accessors must not wait for mu, held across a network exchange.
 	stateMu sync.Mutex
 	end     *sandbox.SessionEndedError
+	// recovering is the lost call this session is recovering from, set by an attach
+	// across an explained gap or from a checkpoint saved while recovering, nil otherwise.
+	// While it is set every call is refused before anything is sent (ErrRecovering), until
+	// ResolveLostCall.
+	recovering *LostCall
 	// unanswered is the first call that ended without an answer this client could
 	// check: an error without a not-dispatched mark and without the record the daemon
 	// chains for such a call (lost with the answer, or failing its check). That call
@@ -244,6 +248,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		Languages:        wireLanguages,
 		Owner:            ownerDigest(r.token, opts.Owner),
 		WarmOnly:         opts.WarmOnly,
+		KeepNoAnswer:     opts.KeepNoAnswer,
 	})
 	r.auth(req)
 	resp, err := r.client.OpenSession(ctx, req)
@@ -384,17 +389,96 @@ func (s *Session) LostRequestSHA256() string {
 	return s.lostRequest
 }
 
-// LostCall is the record of the call that was sent once and whose answer was lost, on a
-// session attached across an explained gap (AttachOptions.LostRequestSHA256), or nil: what
-// the attach learned of it. Its output is lost. The record says whether the daemon
-// answered it: a result digest when the daemon answered, which does not show that the call
-// ran to its end (a step stopped at its time limit and a setup that failed are answers
-// too), an unanswered code when it ended without an answer, so that it may have done none,
-// part or all of its work.
-func (s *Session) LostCall() *sandbox.RunRecord {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lostRecord
+// LostCall is a call that was sent once and whose answer never reached the worker that
+// sent it, as a session taken over across it knows it (Session.LostCall).
+type LostCall struct {
+	// RequestSHA256 is the lost call's request digest.
+	RequestSHA256 string
+	// Record is the lost call's record, as the attach returned it and this client checked
+	// it, or nil on a session attached from a checkpoint saved while recovering, which
+	// carries the request digest alone. It says whether the daemon answered the call: a
+	// result digest when it answered, which does not show that the call ran to its end (a
+	// step stopped at its time limit and a setup that failed are answers too), or an
+	// unanswered code when it ended without an answer, so that it may have done none, part
+	// or all of its work.
+	Record *sandbox.RunRecord
+	// Answer is the lost call's answer when the daemon kept it and the attach returned it,
+	// checked against Record (the same record, its result digest recomputed), or nil: the
+	// call ended unanswered, the answer was above the daemon's cap, the session was opened
+	// with SessionOptions.KeepNoAnswer, or the daemon dropped it (a call started, or the
+	// session suspended, after the lost one).
+	Answer *plimsollv1.RunResponse
+}
+
+// RecoveringText is what every official client says when it refuses a call on a session
+// that is recovering from a lost call (ErrRecovering here; internal/wiretables writes it
+// into the Python and TypeScript clients).
+const RecoveringText = "this session is recovering from a call whose answer was lost: read the lost call and resolve it before sending another call"
+
+// ErrRecovering refuses, before anything is sent, every call on a session taken over
+// across a lost call's answer (or from a checkpoint saved while recovering), until the
+// application has read the lost call (Session.LostCall) and called
+// Session.ResolveLostCall. It is never a retry signal: the lost call was sent once and
+// may have run.
+var ErrRecovering = errors.New("client: " + RecoveringText)
+
+// LostCall is the call this session is recovering from, or nil when it is not
+// recovering: after an attach across an explained gap (AttachOptions.LostRequestSHA256),
+// or from a checkpoint saved while recovering, until ResolveLostCall. While it is not nil
+// every call is refused before it is sent (ErrRecovering).
+func (s *Session) LostCall() *LostCall {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.recovering == nil {
+		return nil
+	}
+	lc := *s.recovering
+	return &lc
+}
+
+// ResolveLostCall ends the recovering state: the application has read the lost call
+// (LostCall) and handled its outcome, or accepts it as unknown, and the session's calls
+// are sent again. Taking the session over, or copying its head, does not resolve it. On a
+// session that is not recovering it does nothing.
+func (s *Session) ResolveLostCall() {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.recovering = nil
+}
+
+// ErrHeadMismatch is a session call the daemon refused, before running anything, because
+// the head this client sent (its generation, count of calls and last record) is not the
+// session's: another holder of the session ran a call between this client's, or a bug.
+// The official clients track the head exactly, so the session stops here: this Session
+// sends nothing more on it, and, as after a record that breaks the chain, a close that
+// cannot be collected signs nothing (Stopped wraps record.ErrChain).
+var ErrHeadMismatch = errors.New("client: the session's head on the daemon is not this client's")
+
+// setHeadMismatch stops the session because the daemon's head is not this client's: proof,
+// in the daemon's own word, that its chain holds a call this client did not send.
+func (s *Session) setHeadMismatch(cause error) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.unanswered == nil {
+		s.unanswered = fmt.Errorf("%w: %w: %w; open a new session", ErrHeadMismatch, record.ErrChain, cause)
+		s.checkFailed = true
+	}
+}
+
+// headMismatchDetail reads the daemon's head off a call's head mismatch refusal, or nil.
+func headMismatchDetail(err error) *plimsollv1.SessionCheckpoint {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return nil
+	}
+	for _, d := range ce.Details() {
+		if v, derr := d.Value(); derr == nil {
+			if h, ok := v.(*plimsollv1.SessionHeadMismatch); ok && h.GetHead() != nil {
+				return h.GetHead()
+			}
+		}
+	}
+	return nil
 }
 
 // stopAfter stops the session after sending the call whose request digest is digest
@@ -532,32 +616,28 @@ func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum s
 		TraceId:          TraceIDFrom(ctx),
 		TimeoutMs:        timeoutMs(timeout),
 		SessionId:        s.id,
-		Generation:       s.generation,
 		SoftwareRule:     softwarewire.ToWire(software),
 	}
 }
 
 // call sends one session call, checks its record against the chain this client has
 // seen, and hands the exchange to the Recorder as the equivalent Run request (the
-// same digest, without the session ID). Calls are serialized here too, so the
-// chain this client tracks follows the daemon's.
+// same digest, without the session ID). Calls are serialized here, and the head the
+// call states is filled in here, inside that queue, so the head each call carries is
+// the one the call before it left and the chain this client tracks follows the daemon's.
 func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if stopped := s.Stopped(); stopped != nil {
 		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, stopped)
 	}
-	// The first call after an attach across an explained gap: a repeat of the lost call is
-	// a retry of a call that was already sent once, refused here with nothing sent, and the
-	// refusal spends the note. Only the first call is checked: any other call spends the
-	// note once it is sent, unless the daemon refuses it with the not-dispatched mark,
-	// since then nothing ran, the head is where it was, and the next call is still the
-	// first.
-	digest := record.SessionRunRequestDigest(msg)
-	if s.lostCall != "" && digest == s.lostCall {
-		s.lostCall = ""
-		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, ErrCallAlreadySent)
+	// A session recovering from a lost call sends nothing until the application has
+	// resolved it: every call is refused here, whatever it is.
+	if s.LostCall() != nil {
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, ErrRecovering)
 	}
+	msg.Head = &plimsollv1.SessionCheckpoint{Generation: s.generation, Calls: s.calls, LastRecordSha256: s.last}
+	digest := record.SessionRunRequestDigest(msg)
 	req := connect.NewRequest(msg)
 	s.r.auth(req)
 	resp, err := s.r.client.SessionRun(ctx, req)
@@ -569,12 +649,18 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 			s.setEnd(se)
 		}
 		if _, marked := sandbox.NotDispatchedReason(err); marked {
-			if errors.Is(err, ErrStaleOwner) {
+			switch {
+			case errors.Is(err, ErrStaleOwner):
 				s.setStale(err)
+			case errors.Is(err, ErrHeadMismatch):
+				h := headMismatchDetail(err)
+				// The refusal's text, not the refusal: a later close's error wraps this cause,
+				// and must carry its own code, not this one's.
+				s.setHeadMismatch(fmt.Errorf("the daemon's head is call %d ending %q, this client sent call %d ending %q: %v",
+					h.GetCalls(), h.GetLastRecordSha256(), s.calls, s.last, err))
 			}
 			return nil, nil, err
 		}
-		s.lostCall = ""
 		if rec == nil {
 			s.stopAfter(digest, err, false)
 			return nil, nil, err
@@ -598,7 +684,6 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 		}
 		return nil, nil, &UnansweredCallError{Record: r, Err: err}
 	}
-	s.lostCall = ""
 	run := resp.Msg.GetRun()
 	if run == nil {
 		s.stopAfter(digest, ErrResultKindMismatch, true)
@@ -747,7 +832,6 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		TraceId:          req.GetTraceId(),
 		TimeoutMs:        req.GetTimeoutMs(),
 		SessionId:        s.id,
-		Generation:       s.generation,
 		SoftwareRule:     req.GetSoftwareRule(),
 	}
 	switch p := req.GetPayload().(type) {

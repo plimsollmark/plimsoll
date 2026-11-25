@@ -33,19 +33,20 @@ func TestBuildAgentSandboxFromEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	good := map[string]string{
-		"SANDBOX_PROVIDER":                         "agentsandbox",
-		"SANDBOX_AGENTSANDBOX_API_SERVER":          "https://127.0.0.1:6443",
-		"SANDBOX_AGENTSANDBOX_CA_FILE":             cert,
-		"SANDBOX_AGENTSANDBOX_TOKEN_FILE":          apiToken,
-		"SANDBOX_AGENTSANDBOX_NAMESPACE":           "default",
-		"SANDBOX_AGENTSANDBOX_WARM_POOL":           "plimsoll-run",
-		"SANDBOX_AGENTSANDBOX_RUNTIME_CLASS":       "gvisor",
-		"SANDBOX_AGENTSANDBOX_IMAGE":               "plimsoll/sandbox-agentsandbox:dev",
-		"SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE": tokenFile,
-		"SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE":    cert,
-		"SANDBOX_MEMORY_MB":                        "512",
-		"SANDBOX_CPUS":                             "2",
-		"SANDBOX_DISK_MB":                          "160",
+		"SANDBOX_PROVIDER":                           "agentsandbox",
+		"SANDBOX_AGENTSANDBOX_API_SERVER":            "https://127.0.0.1:6443",
+		"SANDBOX_AGENTSANDBOX_CA_FILE":               cert,
+		"SANDBOX_AGENTSANDBOX_TOKEN_FILE":            apiToken,
+		"SANDBOX_AGENTSANDBOX_NAMESPACE":             "default",
+		"SANDBOX_AGENTSANDBOX_WARM_POOL":             "plimsoll-run",
+		"SANDBOX_AGENTSANDBOX_RUNTIME_CLASS":         "gvisor",
+		"SANDBOX_AGENTSANDBOX_IMAGE":                 "plimsoll/sandbox-agentsandbox:dev",
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE":   tokenFile,
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE":      cert,
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN": "plimsoll.test",
+		"SANDBOX_MEMORY_MB":                          "512",
+		"SANDBOX_CPUS":                               "2",
+		"SANDBOX_DISK_MB":                            "160",
 	}
 	p, err := buildProvider(getenvFrom(good))
 	if err != nil {

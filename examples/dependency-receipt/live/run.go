@@ -262,9 +262,10 @@ func runLive(ctx context.Context, c config) (err error) {
 	step("making the namespace " + namespace + ": service account, template under " + c.runtimeClass + ", warm pool")
 	var manifest bytes.Buffer
 	sum := sha256.Sum256([]byte(sandboxdToken))
-	// The key goes to the cluster in the manifest on kubectl's stdin and nowhere else; the
-	// CA certificate, which plimsolld pins, beside the other secrets.
-	tlsCA, tlsCert, tlsKey, err := sandboxdTLS(agentsandbox.DefaultServerName)
+	// The CA's key goes to the cluster in the manifest on kubectl's stdin, for the issuer
+	// that signs each pod's own pair, and nowhere else; the CA certificate, which plimsolld
+	// pins, beside the other secrets.
+	tlsCA, caKey, err := sandboxdCA()
 	if err != nil {
 		return err
 	}
@@ -274,7 +275,8 @@ func runLive(ctx context.Context, c config) (err error) {
 	if err := template.Must(template.New("cluster").Parse(clusterYAML)).Execute(&manifest, map[string]any{
 		"Namespace": namespace, "Pool": pool, "Ingress": ingress, "RuntimeClass": c.runtimeClass,
 		"Image": c.image, "TokenSHA256": hex.EncodeToString(sum[:]), "MemoryMB": memoryMB,
-		"TLSCert": base64.StdEncoding.EncodeToString(tlsCert), "TLSKey": base64.StdEncoding.EncodeToString(tlsKey),
+		"CACert": base64.StdEncoding.EncodeToString(tlsCA), "CAKey": base64.StdEncoding.EncodeToString(caKey),
+		"TrustDomain": trustDomain, "ServerName": agentsandbox.DefaultServerName,
 	}); err != nil {
 		return err
 	}
@@ -317,16 +319,17 @@ func runLive(ctx context.Context, c config) (err error) {
 	// range through the node: plimsolld reaches each pod's sandboxd at the pod's address,
 	// which only the cluster network routes (docs/agentsandbox.md).
 	setup.Daemon = map[string]string{
-		"SANDBOX_PROVIDER":                    "agentsandbox",
-		"SANDBOX_MIN_ISOLATION":               "kernel",
-		"SANDBOX_AGENTSANDBOX_API_SERVER":     "https://" + nodeIP + ":6443",
-		"SANDBOX_AGENTSANDBOX_NAMESPACE":      namespace,
-		"SANDBOX_AGENTSANDBOX_WARM_POOL":      pool,
-		"SANDBOX_AGENTSANDBOX_RUNTIME_CLASS":  c.runtimeClass,
-		"SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS": c.handler,
-		"SANDBOX_AGENTSANDBOX_IMAGE":          c.image,
-		"SANDBOX_MEMORY_MB":                   fmt.Sprint(memoryMB),
-		"SANDBOX_CPUS":                        "1",
+		"SANDBOX_PROVIDER":                           "agentsandbox",
+		"SANDBOX_MIN_ISOLATION":                      "kernel",
+		"SANDBOX_AGENTSANDBOX_API_SERVER":            "https://" + nodeIP + ":6443",
+		"SANDBOX_AGENTSANDBOX_NAMESPACE":             namespace,
+		"SANDBOX_AGENTSANDBOX_WARM_POOL":             pool,
+		"SANDBOX_AGENTSANDBOX_RUNTIME_CLASS":         c.runtimeClass,
+		"SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS":        c.handler,
+		"SANDBOX_AGENTSANDBOX_IMAGE":                 c.image,
+		"SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN": trustDomain,
+		"SANDBOX_MEMORY_MB":                          fmt.Sprint(memoryMB),
+		"SANDBOX_CPUS":                               "1",
 	}
 	files := map[string]string{
 		"SANDBOX_AGENTSANDBOX_CA_FILE":             "/cfg/ca.crt",
@@ -862,40 +865,27 @@ func readPrivateKey(path string) (ed25519.PrivateKey, error) {
 
 func step(s string) { fmt.Println("==", s) }
 
-// sandboxdTLS makes a CA for one run and a serving certificate for name signed by it, for
-// the TLS Secret the template mounts: the CA certificate, the certificate and its key, in
-// PEM. The CA's key is dropped when this returns.
-func sandboxdTLS(name string) (caPEM, certPEM, keyPEM []byte, err error) {
+// trustDomain is the trust domain of the run's pod identities.
+const trustDomain = "dependency-receipt.plimsoll.test"
+
+// sandboxdCA makes a CA for one run, for the issuer that signs each pod's own key pair: the
+// CA certificate and its key, in PEM. The key goes only to the cluster's issuer.
+func sandboxdCA() (caPEM, keyPEM []byte, err error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	now := time.Now()
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dependency-receipt sandboxd CA"}, IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour)}
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour)}
 	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	if ca, err = x509.ParseCertificate(caDER); err != nil {
-		return nil, nil, nil, err
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(caKey)
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name},
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature,
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour)}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), nil
 }

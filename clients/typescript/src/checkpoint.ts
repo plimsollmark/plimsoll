@@ -38,13 +38,14 @@ export type SessionCheckpoint = {
   expiresUnixMs: number;
   idleTimeoutMs: number;
   /**
-   * The request digest of a call that was sent once with no answer reaching any worker (an
-   * attach explained the gap it left), which the session's next call is refused for
-   * repeating (CallAlreadySentError); "" for none. A checkpoint carries it until that next
-   * call, unless the daemon refused that call with the not-dispatched mark: nothing ran, so
-   * the call after it is still the next.
+   * The request digest of the lost call the session was recovering from when the
+   * checkpoint was saved (session.lostCall), "" when it was not recovering. A session
+   * attached from such a checkpoint is recovering too: every call is refused before it is
+   * sent (RecoveringError) until session.resolveLostCall(). It knows the lost call by this
+   * digest alone; the record and the answer stayed with the worker that attached across
+   * the gap. The head (calls, lastRecordSha256) already counts the lost call.
    */
-  lostCallSha256: string;
+  recoveringRequestSha256: string;
 };
 
 const DAEMON_NAME = new RegExp(DAEMON_NAME_PATTERN);
@@ -84,8 +85,9 @@ export function checkpointProblem(cp: SessionCheckpoint): string | undefined {
   if (typeof cp.openRule !== "string" || (cp.openRule !== "" && !RULE_ID.test(cp.openRule))) return "the open rule is not a software rule's ID";
   if (!whole(cp.expiresUnixMs, 1, Number.MAX_SAFE_INTEGER)) return "the expiry is not a positive time";
   if (!whole(cp.idleTimeoutMs, 0, 2 ** 32 - 1)) return "the idle timeout is not a 32-bit number";
-  if (typeof cp.lostCallSha256 !== "string" || (cp.lostCallSha256 !== "" && (!HEX64.test(cp.lostCallSha256) || cp.calls === 0n))) {
-    return "the lost call is not a request digest of a call the session ran";
+  const rec = cp.recoveringRequestSha256;
+  if (typeof rec !== "string" || (rec !== "" && (!HEX64.test(rec) || cp.calls === 0n))) {
+    return "the lost call it recovers from is not a request digest of a call the session ran";
   }
   return undefined;
 }
@@ -116,7 +118,7 @@ const KEYS = [
   ["open_rule", "openRule"],
   ["expires_unix_ms", "expiresUnixMs"],
   ["idle_timeout_ms", "idleTimeoutMs"],
-  ["lost_call_sha256", "lostCallSha256"],
+  ["recovering_request_sha256", "recoveringRequestSha256"],
 ] as const;
 
 /**

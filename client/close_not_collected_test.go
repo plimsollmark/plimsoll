@@ -107,7 +107,8 @@ func TestACloseTheDaemonCannotFindIsSignedAsNotCollected(t *testing.T) {
 // otherCall is a call by another holder of s's session ID and credential.
 func otherCall(t *testing.T, s *Session, code string) {
 	t.Helper()
-	req := connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: Protocol, SessionId: s.id, Generation: s.generation,
+	req := connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: Protocol, SessionId: s.id,
+		Head:    &plimsollv1.SessionCheckpoint{Generation: s.generation, Calls: s.calls, LastRecordSha256: s.last},
 		Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}})
 	s.r.auth(req)
 	if _, err := s.r.client.SessionRun(context.Background(), req); err != nil {
@@ -149,11 +150,17 @@ func TestASessionCaughtWithAnotherHoldersCallSignsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherCall(t, s, "console.log('between')")
-	if _, err := s.RunJavaScript(ctx, sandbox.Request{Code: "console.log(2)"}); connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrChain) {
-		t.Fatalf("our call after the other holder's: %v; want DataLoss wrapping record.ErrChain", err)
+	// The daemon refuses our call for its head before it runs: the other holder's call
+	// moved the head. The client stops the session over it, as over a chain that breaks.
+	_, err = s.RunJavaScript(ctx, sandbox.Request{Code: "console.log(2)"})
+	if _, marked := sandbox.NotDispatchedReason(err); !errors.Is(err, ErrHeadMismatch) || !marked {
+		t.Fatalf("our call after the other holder's: %v; want a head mismatch, not dispatched", err)
 	}
-	if n := otherClose(t, s); n != 3 {
-		t.Fatalf("the daemon counted %d calls; want 3", n)
+	if stopped := s.Stopped(); !errors.Is(stopped, ErrHeadMismatch) || !errors.Is(stopped, record.ErrChain) {
+		t.Fatalf("the session after a head mismatch: %v; want it stopped over the chain", stopped)
+	}
+	if n := otherClose(t, s); n != 2 {
+		t.Fatalf("the daemon counted %d calls; want 2", n)
 	}
 	n := bundle.Len()
 	_, err = s.Close(ctx)

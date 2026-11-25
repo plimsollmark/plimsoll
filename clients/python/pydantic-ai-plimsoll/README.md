@@ -20,10 +20,6 @@ It has three parts:
 pip install pydantic-ai-plimsoll pydantic-ai-harness
 ```
 
-The package is published with plimsoll 0.28.0, a little after the other adapter packages. If `pip` cannot find it
-yet, install it from a checkout of the repository:
-`pip install ./clients/python ./clients/python/pydantic-ai-plimsoll pydantic-ai-harness`.
-
 PydanticAI's `FileSystem` capability, which the example below uses, is in `pydantic-ai-harness`. Install the two in
 one command: each `pydantic-ai-harness` release requires one exact `pydantic-ai-slim`, so in one command pip picks the
 harness release that matches this package's pin, while a later `pip install pydantic-ai-harness` on its own takes the
@@ -81,15 +77,16 @@ What the workspace needs and does:
   rebuilt there; the process that held it is refused from then on, and takes the session back from the store once,
   sending its operation again, before it gives up. Every call passes through the store, so two processes never send
   at once. A call whose answer was lost leaves the store pending with that call; the next process takes the session
-  over across it, and plimsoll returns the lost call's record, which goes to your `record_sink` before anything else
-  and says whether the daemon answered the call (which does not show that the command ran to its end) or the call
-  ended without an answer (which does not show that the command started: it may have done none, part or all of its
-  work).
-  The next process refuses to send the same command again only when it is the first call after the takeover: then
-  the model gets a failed tool result (PydanticAI's `ToolFailed`) saying what the record says, and the run goes on.
-  Any other first call, and every file tool, is sent as usual, so a lost command can run again after it, and a lost
-  file write can be written again: a file tool sends calls of its own (a stat, a read check) before its read or
-  write. The store is an object with `load` and an atomic `compare_and_set`, kept where only your application can write
+  over across it, and plimsoll returns the lost call's record, which says whether the daemon answered the call (which
+  does not show that the command ran to its end) or the call ended without an answer (which does not show that the
+  command started: it may have done none, part or all of its work), and the call's answer when the daemon kept it
+  (it keeps the last answer in memory unless the session was opened to keep none).
+  The session is then recovering, and plimsoll's client sends nothing until it is resolved. The model's next tool
+  call, whichever it is (`plimsoll_shell` or a file tool), is not run: the lost call's record goes to your
+  `record_sink` first, the model gets a failed tool result (PydanticAI's `ToolFailed`) saying what the record says and
+  the lost call's output when its answer came back (cut to `max_output_chars`), the backend resolves the session, and
+  the run goes on. So a lost command or file write is never sent again before the model has been told; once told, the
+  model may send it again on purpose, and then it runs. The store is an object with `load` and an atomic `compare_and_set`, kept where only your application can write
   ([checkpoint store (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#carrying-a-session-on-from-another-worker)),
   and the client needs `daemon_name` equal to the capability's `daemon` and a token: plimsoll refuses the takeover in
   open development mode. Without a store, another process, or this one after a restart, gets
@@ -112,9 +109,9 @@ What the workspace needs and does:
 
 The example `pydantic_ai_crash.py`
 ([the example, its page in its header (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/blob/main/clients/python/examples/pydantic_ai_crash.py))
-answers the question PydanticAI's crash recovery leaves open: did the call that was in flight run? Its refusal of a
-repeat covers one case only: the same call, sent as the first call after the takeover. Anything else sent first
-(another command, or any file tool) lets the lost command be sent again, and run a second time, with nothing said.
+answers the question PydanticAI's crash recovery leaves open: did the call that was in flight run? The second worker's
+first tool call after the takeover, whatever it is, is not run, and the model is told what plimsoll knows of the lost
+call first; a command the model then sends again on purpose runs.
 
 1. A worker process runs a PydanticAI agent that writes `triage.py` into its plimsoll sandbox and runs it with
    `plimsoll_shell`.
@@ -122,8 +119,8 @@ repeat covers one case only: the same call, sent as the first call after the tak
 3. A second worker continues the run from PydanticAI Harness's `StepPersistence` (its frontier snapshot, taken just
    before the tool ran), whose ledger marks the call "started" with no end.
 4. PydanticAI sends the call that was in flight again; the second worker takes the sandbox over across it from the
-   checkpoint store, plimsoll's record of the lost call says the call ended without an answer (canceled), the repeat
-   is not sent, and the model gets a failed tool result saying so.
+   checkpoint store, plimsoll's record of the lost call says the call ended without an answer (canceled), the resumed
+   call is not sent, and the model gets a failed tool result saying so.
 5. The model reads the file the cut command wrote, and PydanticAI accepts its typed answer only after an output
    validator checks it against that file in the sandbox.
 6. The two workers' logs of checked run records form one chain, the lost call's record included, and the daemon's own
@@ -143,10 +140,11 @@ an error's class, so this package raises its own subclasses of PydanticAI's:
 - **`PlimsollOutcomeUnknownError`**, a `WorkspaceUnavailableError`: the call may have run (its answer was lost, did
   not check, or its record could not be kept). It was not retried. Unless the session recorded the call, the session
   sends nothing more and later operations raise `PlimsollWorkspaceGoneError`.
-- **`PlimsollAlreadySentError`**, its subclass: after a takeover, the first call repeated the call whose answer was
-  lost before it, and nothing was sent; the lost call may have done none, part or all of its work, and
-  `backend.session.lost_call` holds its record. `plimsoll_shell` tells the model instead of raising it; a file
-  operation raises it.
+- **`PlimsollLostCallError`**, PydanticAI's `ToolFailed` and a plain `WorkspaceError`: the first operation after a
+  takeover across a lost call, which was not sent; its message is what the model is told (what the lost call's record
+  says, and its output when its answer came back), and `.lost` holds the lost call. The backend resolved the session
+  before raising it, so the next operation runs. Raised inside a tool, PydanticAI gives it to the model as a failed
+  tool result and the run goes on.
 - **`PlimsollWorkspaceGoneError`**, a `WorkspaceUnavailableError`: the session ended, is not open in this process, or
   plimsoll refused it for good (`reason` names which: `isolation`, `permission`, `closed`, `expired` and so on).
 - **`PlimsollRetryableError`**, a `ConnectionError`: plimsoll refused before anything ran, and another try may pass
@@ -158,8 +156,9 @@ an error's class, so this package raises its own subclasses of PydanticAI's:
 ## Records
 
 Every record the client checked goes to `record_sink=`, a function you pass; without one they are kept on the backend,
-`backend.records`. The record of a call lost before a takeover goes there too, once, at the takeover, so the logs of
-two processes that held the session form one chain with no hole. `JsonLinesRecordSink(path)` appends each to a file,
+`backend.records`. The record of a call lost before a takeover goes there too, once, before the new process sends any
+call (a sink that fails is offered it again on the next operation, and nothing is sent until it takes it), so the logs
+of two processes that held the session form one chain with no hole. `JsonLinesRecordSink(path)` appends each to a file,
 one JSON object a line; the lines of one session form its chain, each naming the one before. It is a log of checked
 records, not a signed bundle.
 
@@ -201,8 +200,9 @@ rules skip. Every one of those needs commands (every command rule, the file rule
 command: a symlink, a FIFO, a `chmod`, and the attach rule that starts a detached process). The two other attach rules
 run with a backend of a second capability, standing for another process, taking the session over from a shared
 checkpoint store; three more cases there show a session taken back after another process took it, a command whose
-answer was lost not sent again, and an agent in the next process told that its lost command's call ended without an
-answer, its run going on, with the two processes' record logs forming one chain. A separate check makes
+answer was lost not sent again before the next process's model was told, and an agent in the next process told that
+its lost command's call ended without an answer, its run going on, with the two processes' record logs forming one
+chain. A separate check makes
 those cases through `plimsoll_shell` (the links, a loop of links, a FIFO, an unreadable file) and holds the backend to
 the same rules' expectations. Agents of the real
 PydanticAI drive `FileSystem`, `Coder` and `plimsoll_shell` through a scripted model; no model provider is called by

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,14 +61,15 @@ func testCA(t *testing.T, serial int64) (caPEM, certPEM, keyPEM []byte) {
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 }
 
-// testKeys writes a pair into a 0700 directory under the test's own, key mode 0400.
+// testKeys writes a pair into a 0700 directory under the test's own, both files mode
+// 0440, as the driver writes them.
 func testKeys(t *testing.T, certPEM, keyPEM []byte) keyFiles {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "guard")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	k := keyFiles{guard: dir, cert: filepath.Join(dir, "tls.crt"), key: filepath.Join(dir, "tls.key"), owner: uint32(os.Getuid())}
+	k := keyFiles{guard: dir, cert: filepath.Join(dir, "tls.crt"), key: filepath.Join(dir, "tls.key"), owner: uint32(os.Getuid()), group: uint32(os.Getgid())}
 	writePair(t, k, certPEM, keyPEM)
 	return k
 }
@@ -76,11 +78,14 @@ func writePair(t *testing.T, k keyFiles, certPEM, keyPEM []byte) {
 	t.Helper()
 	_ = os.Remove(k.cert)
 	_ = os.Remove(k.key)
-	if err := os.WriteFile(k.cert, certPEM, 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(k.key, keyPEM, 0o400); err != nil {
-		t.Fatal(err)
+	for f, b := range map[string][]byte{k.cert: certPEM, k.key: keyPEM} {
+		if err := os.WriteFile(f, b, pairMode); err != nil {
+			t.Fatal(err)
+		}
+		// WriteFile's mode passes through the umask.
+		if err := os.Chmod(f, pairMode); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -153,6 +158,15 @@ func TestCheckArgs(t *testing.T) {
 	if err := checkArgs([]string{"-listen-host=127.0.0.1", "-grpc-port=9091", "-" + tok[1:]}); err != nil {
 		t.Fatalf("single-dash flags refused: %v", err)
 	}
+	// Every flag the pinned sandboxd takes passes, so the list refuses only what it lacks.
+	for name := range sandboxdFlags {
+		if name == "auth-token-sha256" || name == "auth-token-file" || name == "listen-host" || name == "grpc-port" {
+			continue
+		}
+		if err := checkArgs(append(slices.Clone(good), "--"+name+"=x")); err != nil {
+			t.Errorf("the pinned sandboxd's flag --%s refused: %v", name, err)
+		}
+	}
 	for name, args := range map[string][]string{
 		"no listen host":       {"--grpc-port=9091"},
 		"no gRPC port":         {"--listen-host=127.0.0.1"},
@@ -168,6 +182,11 @@ func TestCheckArgs(t *testing.T) {
 		"a token twice":        {"--listen-host=127.0.0.1", "--grpc-port=9091", tok, tok},
 		"a token not hex":      {"--listen-host=127.0.0.1", "--grpc-port=9091", "--auth-token-sha256=ab"},
 		"a token file":         {"--listen-host=127.0.0.1", "--grpc-port=9091", tok, "--auth-token-file=/t"},
+		// finding release-58: a flag the pinned sandboxd does not take, as a later one might
+		// (one that loosens its token check, say), in both dash forms and in another case
+		"an unknown flag":              {"--listen-host=127.0.0.1", "--grpc-port=9091", "--allow-unauthenticated=true"},
+		"an unknown single-dash flag":  {"--listen-host=127.0.0.1", "--grpc-port=9091", "-allow-unauthenticated=true"},
+		"a known flag in another case": {"--listen-host=127.0.0.1", "--grpc-port=9091", "--Root-Dir=/work"},
 	} {
 		// every case but the token's own carries a good token, so it is refused for its own fault
 		if !strings.Contains(name, "token") && name != "IPv6 loopback" {
@@ -253,35 +272,56 @@ func TestFrontRefusesAllButTLSWithH2(t *testing.T) {
 	}
 }
 
-// The key must be closed to everyone but its owner, and so must the directory guarding
-// it; anything looser refuses to load, at startup and at every handshake.
-func TestKeyFilesRefuseLooseModes(t *testing.T) {
+// The key and the certificate must have exactly mode 0440 for their owner and group, as
+// the driver writes them, and the directory guarding them must be closed to everyone but
+// its owner; anything else refuses to load, at startup and at every handshake. Deleting
+// the mode comparison in pairFile passes the loose modes (the build's note, 2026-11-24).
+func TestKeyFilesAcceptOnlyTheDriversModes(t *testing.T) {
 	_, certPEM, keyPEM := testCA(t, 2)
 	k := testKeys(t, certPEM, keyPEM)
 	if _, err := k.load(); err != nil {
-		t.Fatalf("closed files refused: %v", err)
+		t.Fatalf("the driver's 0440 files refused: %v", err)
 	}
-	if err := os.Chmod(k.key, 0o440); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{k.key, k.cert} {
+		for _, mode := range []os.FileMode{0o400, 0o444, 0o640, 0o460, 0o441, 0o550, 0o600, 0o040} {
+			if err := os.Chmod(f, mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := k.load(); err == nil || !strings.Contains(err.Error(), "mode 0440 exactly") {
+				t.Errorf("%s at %#o: %v", filepath.Base(f), mode, err)
+			}
+		}
+		_ = os.Chmod(f, pairMode)
 	}
-	if _, err := k.load(); err == nil || !strings.Contains(err.Error(), "no group or other permission") {
-		t.Errorf("a group-readable key: %v", err)
-	}
-	_ = os.Chmod(k.key, 0o400)
 	if err := os.Chmod(k.guard, 0o711); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := k.load(); err == nil {
 		t.Error("a guard directory others may traverse was accepted")
 	}
-	_ = os.Chmod(k.guard, 0o700)
-	k.owner++
+	if err := os.Chmod(k.guard, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := k.load(); err == nil {
+		t.Error("a guard directory its group may enter was accepted")
+	}
+	_ = os.Chmod(k.guard, 0o700)
+	other := k
+	other.owner++
+	if _, err := other.load(); err == nil {
 		t.Error("files owned by another uid were accepted")
+	}
+	other = k
+	other.group++
+	if _, err := other.load(); err == nil || !strings.Contains(err.Error(), "gid") {
+		t.Errorf("files of another group: %v", err)
+	}
+	if _, err := k.load(); err != nil {
+		t.Fatalf("restored files refused: %v", err)
 	}
 }
 
-// A Secret rotated under a running pod is served at the next handshake.
+// A pair renewed under a running pod is served at the next handshake.
 func TestRotatedPairIsServedAtTheNextHandshake(t *testing.T) {
 	caPEM, certPEM, keyPEM := testCA(t, 2)
 	k := testKeys(t, certPEM, keyPEM)
@@ -428,5 +468,87 @@ func TestAFailedHandshakeLogsNoClientBytes(t *testing.T) {
 		if got := handshakeFailure(err); strings.Contains(got, "owned") || strings.Contains(got, "\x1b") || strings.Contains(got, "first record") {
 			t.Errorf("%v logged as %q", err, got)
 		}
+	}
+}
+
+// lastAnswerBackend stands in for sandboxd ending a connection after its last answer: it
+// reads what the client sends (as sandboxd's HTTP/2 server does) while it writes n bytes,
+// then ends its side and reads on until the front closes. It does not close with bytes
+// unread, which would make its own kernel reset the connection and drop its answer's end
+// before the front saw it: what is measured here is the front's loop alone.
+func lastAnswerBackend(t *testing.T, n int) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		drained := make(chan struct{})
+		go func() { _, _ = io.Copy(io.Discard, c); close(drained) }()
+		_, _ = c.Write(bytes.Repeat([]byte{'x'}, n))
+		_ = c.(*net.TCPConn).CloseWrite()
+		<-drained
+	}()
+	return ln.Addr().String()
+}
+
+// Finding release-59: when sandboxd writes its last bytes and closes, the client reads
+// every one of them, also when it reads slowly (so they still wait in the front's buffers
+// when sandboxd's side ends) and is still sending (as an HTTP/2 client's acknowledgements
+// and pings are).
+func TestTheLastAnswerReachesTheClientWhole(t *testing.T) {
+	const n = 8 << 20
+	for _, sending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("client still sending %v", sending), func(t *testing.T) {
+			caPEM, certPEM, keyPEM := testCA(t, 2)
+			addr := front(t, testKeys(t, certPEM, keyPEM), lastAnswerBackend(t, n))
+			c, err := tls.Dial("tcp", addr, clientConfig(t, caPEM, "h2"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+			if _, err := c.Write([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			stop := make(chan struct{})
+			defer close(stop)
+			if sending {
+				go func() {
+					tick := time.NewTicker(time.Millisecond)
+					defer tick.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-tick.C:
+							if _, err := c.Write([]byte("ping-ping")); err != nil {
+								return
+							}
+						}
+					}
+				}()
+			}
+			got, buf := 0, make([]byte, 16<<10)
+			var rerr error
+			for i := 0; rerr == nil; i++ {
+				var k int
+				k, rerr = c.Read(buf)
+				got += k
+				if i%8 == 0 {
+					// fixed-wait: a slow reader on purpose, so the answer's end still waits in the front's buffers when sandboxd has closed; nothing is waited for
+					time.Sleep(time.Millisecond)
+				}
+			}
+			if got != n || !errors.Is(rerr, io.EOF) {
+				t.Fatalf("read %d of %d bytes, then %v; want every byte, then the end", got, n, rerr)
+			}
+		})
 	}
 }

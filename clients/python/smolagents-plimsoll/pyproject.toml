@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # or later; the suite in clients/python/frameworks/smolagents runs against the version below.
 [project]
 name = "smolagents-plimsoll"
-version = "0.28.0"
+version = "0.29.0"
 description = "A smolagents CodeAgent executor that runs agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
 readme = "README.md"
 license = "Apache-2.0"
@@ -17,7 +17,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "smolagents==1.26.0",
-    "plimsoll-client==0.28.0",
+    "plimsoll-client==0.29.0",
 ]
 keywords = ["smolagents", "codeagent", "sandbox", "code execution", "agents", "gvisor"]
 classifiers = [

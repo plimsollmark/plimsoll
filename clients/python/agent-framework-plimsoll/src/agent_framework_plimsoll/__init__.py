@@ -29,4 +29,4 @@ from plimsoll_client.agent_framework import PlimsollShellResult, PlimsollShellTo
 from plimsoll_client.execution import CodeExecutor
 
 __all__ = ["Client", "CodeExecutor", "PlimsollShellResult", "PlimsollShellTool", "call_labels", "plimsoll_code_tool"]
-__version__ = "0.28.0"
+__version__ = "0.29.0"

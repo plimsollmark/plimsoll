@@ -30,7 +30,7 @@ from pydantic_ai_harness import Coder, FileSystem, Shell
 from frameworks.pydantic_ai._scripted import Scripted
 from plimsoll_client import CancelHandle, Client, MemoryCheckpointStore
 from plimsoll_client.pydantic_ai import (
-    PlimsollAlreadySentError,
+    PlimsollLostCallError,
     PlimsollOutcomeUnknownError,
     PlimsollWorkspace,
     PlimsollWorkspaceBackend,
@@ -346,7 +346,8 @@ def test_another_process_takes_the_session_over_and_the_first_takes_it_back() ->
 
 def test_a_lost_command_is_not_run_again_by_the_next_process() -> None:
     # A command whose answer is cut leaves the store pending with its call. The next process takes the session over
-    # across that call (the explained gap), and refuses to send the same command again; another command runs.
+    # across that call (the explained gap) and is recovering: its first operation is not sent, whatever it is, and says
+    # what the lost call's record says; the session is then resolved, and the next command runs.
     store = MemoryCheckpointStore()
     caps = [stored(store), stored(store)]
     command = "sleep 2; echo ran >> lost.log"
@@ -362,11 +363,12 @@ def test_a_lost_command_is_not_run_again_by_the_next_process() -> None:
         record = store.load("user-1/conv-2")
         assert record is not None and record.state == "pending" and record.request_sha256
         second = caps[1].backend(ref, key="user-1/conv-2")
-        with pytest.raises(PlimsollAlreadySentError, match="was already sent once"):
+        with pytest.raises(PlimsollLostCallError, match="this tool call was not run"):
             second._shell(command, 30.0, CancelHandle())
-        assert second.session is not None and second.session.lost_call is not None
-        out = second._shell("echo next", 30.0, CancelHandle())
-        assert out.stdout_text == "next\n"
+        assert second.session is not None and second.session.lost_call is None, "the first operation resolved it"
+        assert second.resolved_lost_call is not None and second.resolved_lost_call.record is not None
+        out = second._shell("cat lost.log 2>/dev/null; echo next", 30.0, CancelHandle())
+        assert out.stdout_text.count("ran") <= 1 and out.stdout_text.endswith("next\n"), out.stdout_text
     finally:
         close_everywhere(caps)
 
@@ -375,7 +377,7 @@ def test_the_next_processs_agent_is_told_a_canceled_lost_command_may_have_done_p
     # The crash question on a real sandbox: the first process's command is cut 0.7 s into its 3 s, so the daemon's
     # record of it states an unanswered code and no result. An agent in the next process repeats the command as its
     # first call (as PydanticAI's resume of a pending tool call does): nothing is sent, the model is told the call
-    # ended without an answer and that whether the command began is not known, and the run goes on. Each process keeps the records it saw, the lost one
+    # ended without an answer and that whether it began is not known, and the run goes on. Each process keeps the records it saw, the lost one
     # the second's first, and the two logs form one chain that the daemon's close statement ends.
     store = MemoryCheckpointStore()
     logs: Tuple[List[Any], List[Any]] = ([], [])
@@ -398,10 +400,11 @@ def test_the_next_processs_agent_is_told_a_canceled_lost_command_may_have_done_p
         told, files = (str(a) for a in script.returned("plimsoll_shell"))
         print("the model was told:", told)
         print("the sandbox's files:", files)
-        lost = second.session.lost_call if second.session is not None else None
+        resolved = second.resolved_lost_call
+        lost = resolved.record if resolved is not None else None
         assert lost is not None and lost.result_sha256 == "" and lost.unanswered == "canceled", lost
-        assert "the call ended without an answer after" in told, told
-        assert "Whether the command began, and how much of its work it did, is not known" in told, told
+        assert "That call ended without an answer after" in told, told
+        assert "Whether it began, and how much of its work it did, is not known" in told, told
         assert "started" not in told and "finished" not in told, told
         assert result.output == "done", "the run did not go on to its answer"
         assert files.count("start") == 1, f"the lost command started again: {files}"

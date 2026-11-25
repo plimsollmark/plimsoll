@@ -28,6 +28,7 @@ from plimsoll_client import (
 from plimsoll_client._record import (
     _states_only,
     check,
+    check_lost_answer,
     check_single,
     valid_daemon_version,
     valid_qualification,
@@ -536,3 +537,83 @@ class KindAndTimes(unittest.TestCase):
         s["record"]["endedUnixMs"] = str(int(s["record"]["startedUnixMs"]) - 1)
         with self.assertRaises(RecordMismatchError):
             check_single(request_digest(req), "javascript", None, Msg(s, "r"))
+
+
+def _sealed(**fields: object) -> RunRecord:
+    """A record of the given fields over the golden one, its own digest recomputed."""
+    r = RunRecord(**{**golden_record().__dict__, **fields})
+    return RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
+
+
+class PerVersionKinds(unittest.TestCase):
+    # Finding release-85: which calls a record version records, as Go's record.statesOnly
+    # holds it (record.published's answered and unanswered flags): versions 1 and 2 record
+    # answered calls only, version 3 unanswered session calls only.
+    def test_a_version_records_only_its_kinds_of_call(self) -> None:
+        v3_fields = {"instance": "", "isolation_qualification": "", "warm": False, "daemon_version": ""}
+        answered_v3 = _sealed(version=3, unanswered="", **v3_fields)
+        with self.assertRaisesRegex(RecordMismatchError, "a version 3 record records only an unanswered call"):
+            _states_only(answered_v3)
+        _states_only(_sealed(version=3, unanswered="unavailable", result_sha256="", **v3_fields))
+        unanswered_v2 = _sealed(version=2, unanswered="unavailable", result_sha256="", **v3_fields)
+        with self.assertRaisesRegex(RecordMismatchError, "a version 2 record cannot record an unanswered call"):
+            _states_only(unanswered_v2)
+        _states_only(_sealed(version=2, **v3_fields))
+        self.assertEqual(states_only_says(_sealed(unanswered="unavailable", result_sha256="")), "accept", "version 5 records both")
+
+
+class WholeDecimals(unittest.TestCase):
+    # Finding release-90 and Go's record.UnmarshalJSON: an integer written in a string is an
+    # optional minus and decimal digits with no leading zero; anything else is refused when
+    # read, never read from its leading digits.
+    def test_an_integer_string_is_one_whole_decimal(self) -> None:
+        int64 = (-(1 << 63), (1 << 63) - 1)
+        for text in ("5 6", "5,", "5\x00", "5.0", "5e0", "05", "-05", " 5", "5 ", "+5", "٥", "5_0", ""):
+            with self.subTest(text=text), self.assertRaises(PlimsollError):
+                Msg({"startedUnixMs": text}, "record").get_int("startedUnixMs", int64)
+        for text, n in (("0", 0), ("-0", 0), ("5", 5), ("-12", -12), ("1790000000000", 1790000000000)):
+            with self.subTest(text=text):
+                self.assertEqual(Msg({"startedUnixMs": text}, "record").get_int("startedUnixMs", int64), n)
+
+
+class LostAnswer(unittest.TestCase):
+    # record.CheckLostAnswer's rules, on check_lost_answer: the attach liar's forgeries
+    # (tests/test_reattach.py) drive the same checks through a whole attach.
+    def setUp(self) -> None:
+        self.resp = stamped(js_request(), js_response())
+        self.lost = record_from_wire(Msg(self.resp["record"], "record"))
+
+    def test_the_honest_answer_checks(self) -> None:
+        self.assertEqual(check_lost_answer(Msg(self.resp, "lostAnswer"), self.lost), self.lost)
+
+    def test_each_forged_answer_is_refused(self) -> None:
+        def output(s: dict) -> None:
+            s["javascript"]["stdout"] = b64(b"forged\n")
+
+        def no_record(s: dict) -> None:
+            del s["record"]
+
+        def other_record(s: dict) -> None:
+            s["record"]["endedUnixMs"] = str(int(s["record"]["endedUnixMs"]) + 1)
+
+        def two_results(s: dict) -> None:
+            s["cell"] = {"exitCode": 0}
+
+        def evidence(s: dict) -> None:
+            s["instance"] = "k8s-pod-uid:0d7f1c52-2d4c-4f1e-9a4b-3c2f6e1d8a90"
+
+        for name, forge in (("output", output), ("no record", no_record), ("another record", other_record),
+                            ("two results", two_results), ("other evidence", evidence)):
+            with self.subTest(name):
+                s = copy.deepcopy(self.resp)
+                forge(s)
+                with self.assertRaises(PlimsollError):
+                    check_lost_answer(Msg(s, "lostAnswer"), self.lost)
+
+    def test_an_answer_for_an_unanswered_record_or_a_module_is_refused(self) -> None:
+        unanswered = RunRecord(**{**self.lost.__dict__, "unanswered": "unavailable", "result_sha256": ""})
+        with self.assertRaisesRegex(RecordMismatchError, "ended unanswered"):
+            check_lost_answer(Msg({**self.resp, "record": wire_record(unanswered)}, "lostAnswer"), unanswered)
+        module = stamped(js_request(), module_response())
+        with self.assertRaisesRegex(RecordMismatchError, "session call's kind"):
+            check_lost_answer(Msg(module, "lostAnswer"), record_from_wire(Msg(module["record"], "record")))

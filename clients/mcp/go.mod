@@ -1,8 +1,6 @@
 module github.com/plimsollmark/plimsoll/clients/mcp
 
-go 1.26.2
-
-toolchain go1.26.11
+go 1.26.11
 
 require (
 	connectrpc.com/connect v1.20.0

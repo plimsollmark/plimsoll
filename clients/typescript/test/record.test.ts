@@ -8,9 +8,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  checkRecord, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, statesOnlyProblem,
-  validDaemonVersion, validQualification, type DigestPayload,
+  checkLostAnswer, checkRecord, RECORD_KINDS, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId,
+  statesOnlyProblem, validDaemonVersion, validQualification, type DigestPayload,
 } from "../src/record.ts";
+import { INT64, UINT32, UINT64, wholeInt } from "../src/wire.ts";
 import { meets } from "../src/client.ts";
 import { RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT } from "../src/tables.gen.ts";
 import { PlimsollError } from "../src/errors.ts";
@@ -224,7 +225,7 @@ test("a result of another kind than the request's, or none, or a record ending b
 
 test("a bytes field that is not base64 text is refused before anything is allocated for it", () => {
   // Buffer.from given {"length": n} allocates n bytes; the check must refuse the shape
-  // instead (Claude Security scan, 2026-10-27). 2e9 would take a minute and 2 GB here.
+  // instead (security scan, 2026-10-27). 2e9 would take a minute and 2 GB here.
   const huge = { length: 2_000_000_000 } as unknown as string;
   const answers: WireRunResponse[] = [
     { javascript: { stdout: huge } },
@@ -307,4 +308,69 @@ test("the golden file's malformed records are not read", () => {
     verdict(`golden/malformed/${v.name}`, "decode", saysOf(err));
     assert.ok(err instanceof PlimsollError && err.code === "data_loss", `${v.name}: ${String(err)}`);
   }
+});
+
+// An integer written in a string is one whole decimal, as Go's record.UnmarshalJSON reads it
+// (finding release-90): never read from its leading digits, nor by BigInt's and Number's
+// grammars, which take " 5", "0x5" and "5e0".
+test("an integer string is one whole decimal", () => {
+  for (const s of ["5 6", "5,", "5\u0000", "5.0", "5e0", "05", "-05", " 5", "5 ", "+5", "0x5", "5_0", "", "٥", "1".repeat(21)]) {
+    assert.equal(wholeInt(s, INT64), undefined, JSON.stringify(s));
+    assert.throws(() => recordFromWire({ startedUnixMs: s }), (e: unknown) => e instanceof PlimsollError && e.code === "data_loss", JSON.stringify(s));
+  }
+  for (const [s, n] of [["0", 0n], ["-0", 0n], ["5", 5n], ["-12", -12n], ["1790000000000", 1790000000000n], ["-9223372036854775808", -(1n << 63n)]] as const) {
+    assert.equal(wholeInt(s, INT64), n, s);
+  }
+  assert.equal(wholeInt("18446744073709551615", UINT64), (1n << 64n) - 1n);
+  assert.equal(wholeInt("18446744073709551616", UINT64), undefined, "past 64 bits");
+  for (const v of [5.5, Number.MAX_SAFE_INTEGER + 1, NaN, true, {}, [5]]) assert.equal(wholeInt(v, INT64), undefined, String(v));
+  assert.equal(wholeInt(-1, UINT64), undefined, "below the range");
+  assert.equal(wholeInt("4294967296", UINT32), undefined, "above the range");
+  // The version reads the same way: a whole decimal string is its number, as protojson reads it.
+  assert.equal(recordFromWire({ version: "5" as unknown as number }).version, 5);
+  assert.throws(() => recordFromWire({ version: "5 6" as unknown as number }), PlimsollError);
+});
+
+// Which calls each version records (record.published's flags; finding release-85): every
+// published version has a row, so a new version cannot be read before it is given one.
+test("every published record version says which calls it records", () => {
+  assert.deepEqual(Object.keys(RECORD_KINDS).sort(), Object.keys(RECORD_FIELDS).sort());
+  const v3 = golden.refused.find((v) => v.name === "a version 3 record of an answered call")!;
+  const v2 = golden.refused.find((v) => v.name === "a version 2 record of an unanswered call")!;
+  assert.equal(statesOnlyProblem({ ...recordFromWire(v3.record), sha256: v3.sha256 }), "a version 3 record records only an unanswered call");
+  assert.equal(statesOnlyProblem({ ...recordFromWire(v2.record), sha256: v2.sha256 }), "a version 2 record cannot record an unanswered call");
+  const answered3 = recordFromWire(v3.record);
+  const unanswered3 = { ...answered3, resultSha256: "", unanswered: "unavailable" };
+  assert.equal(statesOnlyProblem({ ...unanswered3, sha256: recordDigest(unanswered3) }), undefined, "version 3 records an unanswered call");
+});
+
+// record.CheckLostAnswer's rules on checkLostAnswer; the attach liar's forgeries
+// (test/reattach.test.ts) drive the same checks through a whole attach.
+test("a lost call's answer checks only against its own record", () => {
+  const resp: WireRunResponse = { sandbox: "docker", isolation: "container", cell: { stdout: Buffer.from("python 2: y = 2").toString("base64"), interpreterStarted: true } };
+  const record: WireRecord = { version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container", startedUnixMs: 1, endedUnixMs: 2 };
+  record.recordSha256 = recordDigest(recordFromWire(record));
+  resp.record = record;
+  const lost = recordFromWire(record);
+  assert.deepEqual(checkLostAnswer(resp, lost), { kind: "cell" });
+  const unanswered: WireRecord = { ...record, resultSha256: "", unanswered: "unavailable" };
+  unanswered.recordSha256 = recordDigest(recordFromWire(unanswered));
+  const forged: [string, WireRunResponse, string][] = [
+    ["output", { ...resp, cell: { ...resp.cell, stdout: Buffer.from("forged").toString("base64") } }, "result digest"],
+    ["no record", { ...resp, record: undefined }, "no run record"],
+    ["another record", { ...resp, record: { ...record, endedUnixMs: 3 } }, "another record"],
+    ["two results", { ...resp, javascript: { stdout: "" } }, "session call's kind"],
+    ["a module", { ...resp, cell: undefined, module: {} }, "session call's kind"],
+    ["no result", { ...resp, cell: undefined }, "session call's kind"],
+    ["other evidence", { ...resp, instance: "k8s-pod-uid:7f3e9c2a" }, "other evidence"],
+    ["not warm in the record", { ...resp, warm: true }, "other evidence"],
+    ["bytes that are not base64", { ...resp, cell: { stdout: "!!" } }, "malformed"],
+    ["not an object", [] as unknown as WireRunResponse, "not an object"],
+  ];
+  for (const [name, answer, why] of forged) {
+    const got = checkLostAnswer(answer, lost);
+    assert.ok("problem" in got && got.problem.includes(why), `${name}: ${JSON.stringify(got)}`);
+  }
+  const ended = checkLostAnswer({ ...resp, record: unanswered }, recordFromWire(unanswered));
+  assert.ok("problem" in ended && ended.problem.includes("ended unanswered"), JSON.stringify(ended));
 });

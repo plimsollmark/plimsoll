@@ -13,7 +13,7 @@ Hostile production deployments require the verified kernel or VM tiers; the WASM
 option is intentionally only process-tier.
 
 - Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.11
-  toolchain** (`toolchain go1.26.11`) and `golang.org/x/net` v0.62.0: `govulncheck ./...` is
+  toolchain** (`go 1.26.11`, the line a `go install` of a release obeys) and `golang.org/x/net` v0.62.0: `govulncheck ./...` is
   clean there, modules included (v0.60.0 has GO-2026-6860 and GO-2026-6866, in its HTML parser,
   which plimsoll does not call). 1.26.10 has GO-2026-6859 (an HTTP/1 server panic when a handler reading a
   `MaxBytesReader` body sets a header, published 2026-11-11; the RPC layer caps every request
@@ -39,6 +39,7 @@ Read the document for the subsystem you touch, not all of them.
 | Results, outcomes and the not-dispatched mark | [docs/run-results.md](docs/run-results.md) |
 | Capability grants (the per-run host-API broker) | [docs/capability-grants.md](docs/capability-grants.md) |
 | The ship scan (each call's payload against the operator's withheld set; `internal/withheld`, `cmd/plimsoll-withheld`) | [docs/ship-scan.md](docs/ship-scan.md) |
+| The answer-key tripwire and canary run (the test's answers in recorded model requests; `clients/python/src/plimsoll_client/tripwire.py`) | [docs/answer-key-tripwire.md](docs/answer-key-tripwire.md) |
 | Hardened mode | [docs/hardened-mode.md](docs/hardened-mode.md) |
 | Callers and tokens | [docs/callers.md](docs/callers.md) |
 | Docker Cloud, OpenShell, Kubernetes agent-sandbox, WSL containers operator guides | [docs/dockercloud.md](docs/dockercloud.md), [docs/openshell.md](docs/openshell.md), [docs/agentsandbox.md](docs/agentsandbox.md), [docs/wslc.md](docs/wslc.md) |

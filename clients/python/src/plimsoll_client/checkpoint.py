@@ -85,12 +85,14 @@ class SessionCheckpoint:
     """The ID of the software rule sent at open, "" for none."""
     expires_unix_ms: int
     idle_timeout_ms: int
-    lost_call_sha256: str = ""
-    """The request digest of a call that was sent once with no answer reaching any worker (an
-    attach explained the gap it left), which the session's next call is refused for
-    repeating (CallAlreadySentError); "" for none. A checkpoint carries it until that next
-    call, unless the daemon refused that call with the not-dispatched mark: nothing ran, so
-    the call after it is still the next."""
+    recovering_request_sha256: str = ""
+    """The request digest of the lost call the session was recovering from when the
+    checkpoint was saved (``Session.lost_call``), "" when it was not recovering. A session
+    attached from such a checkpoint is recovering too: every call is refused before it is
+    sent (RecoveringError) until ``Session.resolve_lost_call()``. It knows the lost call by
+    this digest alone; the record and the answer stayed with the worker that attached
+    across the gap. The head (``calls``, ``last_record_sha256``) already counts the lost
+    call. Only resolving clears it."""
 
     def __post_init__(self) -> None:
         problem = self._problem()
@@ -131,10 +133,10 @@ class SessionCheckpoint:
             return "the expiry is not a positive time"
         if not _whole(self.idle_timeout_ms, 0, _UINT32):
             return "the idle timeout is not a 32-bit number"
-        if not isinstance(self.lost_call_sha256, str) or self.lost_call_sha256 and (
-            not _HEX64.fullmatch(self.lost_call_sha256) or self.calls == 0
+        if not isinstance(self.recovering_request_sha256, str) or self.recovering_request_sha256 and (
+            not _HEX64.fullmatch(self.recovering_request_sha256) or self.calls == 0
         ):
-            return "the lost call is not a request digest of a call the session ran"
+            return "the lost call it recovers from is not a request digest of a call the session ran"
         return ""
 
     def to_json(self) -> str:

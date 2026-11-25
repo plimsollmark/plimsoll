@@ -52,7 +52,7 @@ TIERS: Tuple[str, ...] = ("none", "process", "container", "kernel", "vm")
 LANGUAGES: Tuple[str, ...] = ("javascript", "python")
 
 # The wire protocol number a client states on every request (protocol.Number).
-PROTOCOL: int = 7
+PROTOCOL: int = 8
 
 # The header carrying a client's ID for one request, which the daemon echoes (protocol.RequestIDHeader).
 REQUEST_ID_HEADER: str = "Plimsoll-Request-Id"
@@ -66,7 +66,7 @@ TRACE_ID_PATTERN: str = "^[A-Za-z0-9._:-]{1,64}$"
 # The text of a session call, close or attach refused because another worker attached (protocol.StaleOwnerText).
 STALE_OWNER_TEXT: str = "session ownership generation is stale"
 
-# The text of an attach refused because its checkpoint is not the session's head (protocol.CheckpointMismatchText).
+# The text of an attach refused because its checkpoint is not the session's head, and of a call refused because its head is not (protocol.CheckpointMismatchText).
 CHECKPOINT_MISMATCH_TEXT: str = "session checkpoint does not match"
 
 # The tiers a request may state as its floor, weakest first: every tier but none.
@@ -160,7 +160,7 @@ SOFTWARE_IDENTITY_PATTERN: str = "^[A-Za-z0-9._:/@+-]+$"
 MAX_RESPONSE_BYTES: int = 33554432
 
 # The one version of a session checkpoint the clients write and read (client.CheckpointVersion).
-CHECKPOINT_VERSION: int = 1
+CHECKPOINT_VERSION: int = 2
 
 # A daemon name's grammar: the application's own name for a daemon, never a URL (client.DaemonNamePattern).
 DAEMON_NAME_PATTERN: str = "^[A-Za-z0-9._-]{1,64}$"
@@ -168,5 +168,5 @@ DAEMON_NAME_PATTERN: str = "^[A-Za-z0-9._-]{1,64}$"
 # A software rule's ID as a checkpoint states it (client.SoftwareRuleIDPattern).
 SOFTWARE_RULE_ID_PATTERN: str = "^(?:exact:[A-Za-z0-9._:/@+-]{1,256}|approved:sha256:[0-9a-f]{64})$"
 
-# What a client says when it refuses a repeat of a call lost across a takeover (client.CallAlreadySentText).
-CALL_ALREADY_SENT_TEXT: str = "this call was already sent once in the session, and its answer was lost"
+# What a client says when it refuses a call on a session recovering from a call lost across a takeover (client.RecoveringText).
+RECOVERING_TEXT: str = "this session is recovering from a call whose answer was lost: read the lost call and resolve it before sending another call"

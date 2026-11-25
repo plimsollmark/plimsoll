@@ -247,7 +247,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
     </svg>
     <div class="n">Check 2</div>
     <h3>The answer key rides along to the model</h3>
-    <p class="term">The <b>answer-key tripwire</b> and its <b>canary run</b>, a plimsoll check that is not part of the open-source release</p>
+    <p class="term">The <b>answer-key tripwire</b> and its <b>canary run</b>, in plimsoll's Python client</p>
     <p>A check on what a harness sends the model, and a test of that check itself, so that a clean report means something.</p>
     <p class="where">On this page: the check's own output on a harness that behaves, on two leaks I put back on purpose, and on a harness that forgot to plant anything. <a href="#canary">Section 2</a></p>
   </div>
@@ -354,7 +354,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
 <h2 id="canary"><span class="num">2</span>The canary run: test the leak check before you trust it</h2>
 <p>The second leak skips the sandbox entirely. The answer key rides along in what the harness sends the model: the right answer (the <dfn data-gloss="truth-label">truth label</dfn>) pasted into the <dfn data-gloss="prompt">prompt</dfn>, the written instructions a model is given; the reference answer's numbers; or a test video uploaded under a name that gives it away (a clip called <code>skip-step-3.mp4</code> rather tells the model which step is missing). The second and the third both happened in one real hackathon project, a checker that compares a worker's video of a procedure against an expert's: its requests carried the expert's step times, and its planted test clips went up under names that said which step had been removed.</p>
 <p>The <dfn data-gloss="answer-key-tripwire">answer-key tripwire</dfn> reads every request your harness recorded, exactly as it was sent, looking for <dfn data-gloss="sealed-values">sealed values</dfn>: anything the model being tested must never be sent. It protects against the harness handing the model its own answer key. A hit names where it was found and the sealed value's id, never the value itself, so the report is safe to publish.</p>
-<p>A clean tripwire says this run's secrets weren't there. It doesn't say the harness can't leak. The <dfn data-gloss="canary-run">canary run</dfn> tests the harness itself, so a clean report can be trusted: it uses made-up marker values (<dfn data-gloss="canary">canaries</dfn>, named after the birds miners took underground as an early alarm) in place of the real secrets, and fails if the check misses a planted leak or if the harness never planted anything. Neither check is part of plimsoll's open-source release.</p>
+<p>A clean tripwire says this run's secrets weren't there. It doesn't say the harness can't leak. The <dfn data-gloss="canary-run">canary run</dfn> tests the harness itself, so a clean report can be trusted: it uses made-up marker values (<dfn data-gloss="canary">canaries</dfn>, named after the birds miners took underground as an early alarm) in place of the real secrets, and fails if the check misses a planted leak or if the harness never planted anything. Both are in plimsoll's Python client, as <code>python3 -m plimsoll_client.tripwire</code>.</p>
 <div class="analogy"><b>Like a mapmaker's trap street:</b> a street that does not exist, drawn on the map on purpose, so that a copy of the map gives itself away.</div>
 </div>
 
@@ -374,7 +374,7 @@ pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
 </figure>
 
 <div class="prose">
-<p>The canary run is not part of plimsoll's open-source release: the transcript above is quoted as it printed. It finds what a harness sends by mistake, not what is hidden on purpose.</p>
+<p>The transcript above is quoted as it printed, and <a href="#run">section 15</a> prints it again. The tripwire finds what a harness sends by mistake, not what is hidden on purpose. Its documentation shows the file formats, a worked example, and the ways of writing a value that it does not read (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/answer-key-tripwire.md">EXTERNAL · official docs ↗</a>).</p>
 </div>
 
 <div class="prose part" id="squeeze-test">
@@ -655,7 +655,10 @@ go run ./cmd/plimsoll-withheld scan -set withheld.json task/   # exit 1 on a fin
 <p><b>The Argon scan in section 1.</b> It needs git, Go and Python 3, writes only under <code>tmp/argon-scan/</code>, and should print exactly <code>examples/squeeze/argon-scan.txt</code>:</p>
 <pre>git clone https://github.com/carrollco/did-it-learn ../did-it-learn
 examples/squeeze/argon-scan.sh ../did-it-learn | diff - examples/squeeze/argon-scan.txt</pre>
-<p><b>The canary run in section 2</b> is not part of the open-source release, so it cannot be rerun from the public repository: <code>examples/squeeze/canary-demo.txt</code> is its transcript as printed, and <code>go test -run TestCanaryDemoTranscript ./examples/squeeze</code> checks what it says: four runs, the clean one passing and each of the other three failing on its planted mistake.</p>
+<p><b>The tripwire and the canary run, on your own harness.</b> Install the Python client (<code>pip install plimsoll-client</code>, 0.29.0 or later), list the values your harness must never send, and scan the requests it recorded:</p>
+<pre>python3 -m plimsoll_client.tripwire tripwire --sealed sealed.json recorded-requests/   # exit 1 on a find</pre>
+<p><b>The canary run in section 2.</b> It needs Python 3, runs the checkout's Python client, writes only under <code>tmp/canary-demo/</code>, and should print exactly <code>examples/squeeze/canary-demo.txt</code>; <code>go test -run TestCanaryDemoTranscript ./examples/squeeze</code> checks what the transcript says (four runs, the clean one passing and each of the other three failing on its planted mistake), and runs the script again with <code>SQUEEZE_RERUN_CANARY=1</code>:</p>
+<pre>examples/squeeze/canary-demo.sh | diff - examples/squeeze/canary-demo.txt</pre>
 <p><b>The squeeze test.</b> The example is <code>examples/squeeze</code> in the plimsoll repository, a Go program on plimsoll's client. Grading needs docker, gVisor and the images <code>make docker-images</code> builds; it never calls a model:</p>
 <pre>git clone https://github.com/carrollco/did-it-learn ../did-it-learn
 go run ./examples/squeeze -import ../did-it-learn</pre>

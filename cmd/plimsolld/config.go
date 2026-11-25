@@ -487,6 +487,19 @@ const maxSessionLifetime = 12 * time.Hour
 // shift to bytes wrapped to 0, "no bound", at 2^44).
 const maxSessionDiskMB = 1 << 20
 
+// maxKeptAnswerBytes bounds SANDBOX_SESSION_KEPT_ANSWER_BYTES at 16 MiB, with margin
+// under the largest answer a client reads (client.MaxResponseBytes, 32 MiB): the Python
+// and TypeScript clients read an attach's answer as JSON, where the kept answer's output
+// bytes are base64 (a third larger) and the lost record and field names come beside it,
+// so a kept answer of 16 MiB is at most about 22 MiB of that answer. Until 2026-11-24 the
+// bound was 1 GiB, and a cap above about 24 MiB let an attach answer pass the clients'
+// limit after the daemon had raised the generation, leaving no worker holding the session.
+const maxKeptAnswerBytes = 16 << 20
+
+// maxKeptAnswersTotalBytes bounds SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES at 1 TiB: far
+// beyond any daemon's memory, and well inside the int the count is kept in.
+const maxKeptAnswersTotalBytes = 1 << 40
+
 func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	max, err := settings.MaxSessions.Get(getenv)
 	if err != nil {
@@ -512,6 +525,14 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
+	kept, err := settings.SessionKeptAnswerBytes.Get(getenv)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
+	keptTotal, err := settings.SessionKeptAnswersTotalBytes.Get(getenv)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
 	switch {
 	case max < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS=%d must not be negative", max)
@@ -527,8 +548,13 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must be at most %d (1 TiB)", diskMB, maxSessionDiskMB)
 	case idle < 0 || (idle > 0 && idle < time.Second) || idle > maxSessionLifetime:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must be 0 (never suspend) or between 1s and %v", idle, maxSessionLifetime)
+	case kept < 0 || kept > maxKeptAnswerBytes:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_KEPT_ANSWER_BYTES=%d must be between 0 (keep none) and %d (16 MiB, under the clients' 32 MiB answer limit)", kept, maxKeptAnswerBytes)
+	case keptTotal < 0 || keptTotal > maxKeptAnswersTotalBytes:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_KEPT_ANSWERS_TOTAL_BYTES=%d must be between 0 (keep none) and %d (1 TiB)", keptTotal, maxKeptAnswersTotalBytes)
 	}
-	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, MaxPerOwner: perOwner, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
+	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, MaxPerOwner: perOwner, Lifetime: lifetime, IdleTimeout: idle,
+		DiskBytes: int64(diskMB) << 20, KeptAnswerBytes: kept, KeptAnswersTotalBytes: int64(keptTotal)}, nil
 }
 
 // loadSessionPool reads SANDBOX_SESSION_POOL, the sandboxes kept ready for sessions:

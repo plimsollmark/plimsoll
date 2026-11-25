@@ -25,7 +25,7 @@ func podBoundary(s podSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tls, err := tlsVolume(s)
+	key, err := findKeyVolume(s)
 	if err != nil {
 		return "", err
 	}
@@ -63,8 +63,8 @@ func podBoundary(s podSpec) (string, error) {
 		Volumes                map[string]int64
 		Mounts                 []volumeMount
 		TerminationMessagePath string
-		TLS                    tlsSecret
-	}{c.Image, c.Command, c.Args, sc, podSeccomp, volumes, mounts, c.TerminationMessagePath, tls})
+		Key                    keyVolume
+	}{c.Image, c.Command, c.Args, sc, podSeccomp, volumes, mounts, c.TerminationMessagePath, key})
 	if err != nil {
 		return "", err
 	}
@@ -80,14 +80,14 @@ func podMounts(s podSpec) (map[string]int64, error) {
 	if len(s.Containers) != 1 {
 		return nil, errors.New("the execution boundary requires one container")
 	}
-	tls, err := tlsVolume(s)
+	key, err := findKeyVolume(s)
 	if err != nil {
 		return nil, err
 	}
-	// The writable mounts: every one but the TLS Secret's, which is read-only and closed.
+	// The writable mounts: every one but the key volume's, which is read-only and closed.
 	mounts := map[string]int64{}
 	for _, m := range s.Containers[0].VolumeMounts {
-		if m.Name == tls.Volume {
+		if m.Name == key.Volume {
 			continue
 		}
 		size, ok := sizes[m.Name]

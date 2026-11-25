@@ -7,20 +7,23 @@
 # port. The RuntimeClass assumes nodes whose containerd has a runsc handler (gVisor's
 # installation guide).
 #
-# The TLS Secret the template mounts, from a CA of the deployment's own (OpenSSL 3):
-#   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
-#     -subj /CN=plimsoll-sandboxd-ca -keyout ca.key -out ca.crt
-#   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=sandboxd \
-#     -addext subjectAltName=DNS:sandboxd.plimsoll.invalid -keyout tls.key -out tls.csr
-#   openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 90 \
-#     -copy_extensions copy -out tls.crt
-#   kubectl -n default create secret tls plimsoll-sandboxd-tls --cert=tls.crt --key=tls.key
-# ca.crt goes to plimsolld; keep ca.key off the cluster.
+# Each pod's own key and certificate come from cert-manager's CSI driver, signed by a CA
+# issuer in the pool's namespace (below). Install both first (versions run: cert-manager
+# v1.21.3, its CSI driver v0.16.1):
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.3/cert-manager.yaml
+#   helm install cert-manager-csi-driver oci://quay.io/jetstack/charts/cert-manager-csi-driver \
+#     --version v0.16.1 -n cert-manager
+# Once the issuer below is ready, its CA certificate goes to plimsolld:
+#   kubectl -n default get secret plimsoll-ca -o jsonpath='{.data.tls\.crt}' | base64 -d > ca.crt
+# No account but yours and the driver's may create certificaterequests in this namespace:
+# the CA issuer signs every request made here (docs/agentsandbox.md, "What the operator sets
+# up"), so bind neither the edit nor the admin role here to anyone else.
 #
 #   plimsolld: SANDBOX_PROVIDER=agentsandbox SANDBOX_AGENTSANDBOX_NAMESPACE=default
 #              SANDBOX_AGENTSANDBOX_WARM_POOL=plimsoll-run SANDBOX_AGENTSANDBOX_RUNTIME_CLASS=gvisor
 #              SANDBOX_AGENTSANDBOX_IMAGE=<the image> SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE=<file>
 #              SANDBOX_AGENTSANDBOX_SANDBOXD_CA_FILE=<ca.crt>
+#              SANDBOX_AGENTSANDBOX_SANDBOXD_TRUST_DOMAIN=plimsoll.example
 #              PLIMSOLL_ADDR=0.0.0.0:8746 (unset, it listens on its own pod's loopback only)
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
@@ -86,6 +89,31 @@ metadata: {name: plimsoll-nodes}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: plimsoll-nodes}
 subjects: [{kind: ServiceAccount, name: plimsoll, namespace: default}]
 ---
+# The CA: a self-signed root that cert-manager makes and keeps in the Secret plimsoll-ca,
+# and a CA issuer on it, in the pool's namespace. cert-manager renews the root before it
+# expires, with a new key by default; put the new certificate in plimsolld's CA file
+# beside the old one when it does (docs/agentsandbox.md, "What it does not stop").
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: selfsigned, namespace: default}
+spec: {selfSigned: {}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: plimsoll-ca, namespace: default}
+spec:
+  isCA: true
+  commonName: plimsoll-sandbox-ca
+  secretName: plimsoll-ca
+  duration: 8760h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: selfsigned, kind: Issuer, group: cert-manager.io}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: plimsoll-ca, namespace: default}
+spec: {ca: {secretName: plimsoll-ca}}
+---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata: {name: plimsoll-run, namespace: default}
@@ -128,7 +156,23 @@ spec:
       volumes:
       - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
       - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
-      - {name: sandboxd-tls, secret: {secretName: plimsoll-sandboxd-tls, defaultMode: 0400}}
+      # The pod's own key pair: made on the node as the pod starts, signed by the CA issuer
+      # above for this pod alone (its namespace, name and UID in the one URI name), mounted
+      # mode 0440 for root. plimsoll accepts exactly these attributes, duration optional.
+      - name: sandboxd-tls
+        csi:
+          driver: csi.cert-manager.io
+          readOnly: true
+          volumeAttributes:
+            csi.cert-manager.io/issuer-name: plimsoll-ca
+            csi.cert-manager.io/issuer-kind: Issuer
+            csi.cert-manager.io/dns-names: sandboxd.plimsoll.invalid
+            csi.cert-manager.io/uri-sans: "spiffe://plimsoll.example/ns/${POD_NAMESPACE}/pod/${POD_NAME}/${POD_UID}"
+            csi.cert-manager.io/key-algorithm: ECDSA
+            csi.cert-manager.io/key-size: "256"
+            csi.cert-manager.io/key-encoding: PKCS8
+            csi.cert-manager.io/key-usages: "server auth,digital signature"
+            csi.cert-manager.io/duration: 720h
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool

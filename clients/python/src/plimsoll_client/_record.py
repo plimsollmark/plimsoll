@@ -242,6 +242,10 @@ _RECORD_BOOLS = frozenset({"warm"})
 # What a record field holds when it states nothing, so a record of a version that does
 # not cover a field can be told to state none (record.statesOnly).
 _RECORD_UNSET = {"warm": False, "started_unix_ms": 0, "ended_unix_ms": 0, "sequence": 0}
+# The published record versions that record only unanswered session calls (v0.15.0 to
+# v0.22.0's version 3, record.published), which record/record.go states as a flag beside
+# each version's fields.
+_UNANSWERED_ONLY_VERSIONS = frozenset({3})
 
 
 def _states_only(r: RunRecord) -> None:
@@ -257,10 +261,17 @@ def _states_only(r: RunRecord) -> None:
         if not isinstance(text, str) or not valid_text(text):
             raise RecordMismatchError(f"plimsoll: the record's {name} is not UTF-8 or holds a control or bidirectional format character")
     covered = RECORD_FIELDS.get(r.version, ())
+    unanswered = r.unanswered != ""
+    # Which calls the version records (record.published's answered and unanswered flags):
+    # a version whose fields lack "unanswered" records answered calls only (1 and 2), and
+    # version 3 records unanswered session calls only (finding release-85).
+    if unanswered and "unanswered" not in RECORD_FIELDS.get(r.version, RECORD_FIELDS[VERSION]):
+        raise RecordMismatchError(f"plimsoll: a version {r.version} record cannot record an unanswered call")
+    if not unanswered and r.version in _UNANSWERED_ONLY_VERSIONS:
+        raise RecordMismatchError(f"plimsoll: a version {r.version} record records only an unanswered call")
     for name in RECORD_FIELDS[VERSION]:
         if name not in covered and getattr(r, name) != _RECORD_UNSET.get(name, ""):
             raise RecordMismatchError(f"plimsoll: a version {r.version} record does not cover {name}, so it cannot state one")
-    unanswered = r.unanswered != ""
     if unanswered == (r.result_sha256 != ""):
         raise RecordMismatchError("plimsoll: a record states a result or, for an unanswered call, an error code, exactly one")
     if unanswered and r.unanswered not in _UNANSWERED_CODES:
@@ -401,6 +412,47 @@ def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], 
             f"plimsoll: the unanswered call's record states {r.isolation or 'unknown'}, below the call's minimum {floor}; execution may have occurred"
         )
     return r
+
+
+def check_lost_answer(resp: Msg, lost: RunRecord) -> RunRecord:
+    """The answer an attach returned for a lost call (AttachSessionResponse.lost_answer),
+    checked against that call's record ``lost``, which the caller has already checked
+    against its checkpoint and the request digest it named (record.CheckLostAnswer): the
+    answer carries exactly that record, a live answered call's, and one result of a
+    session call's kind (javascript, project or cell) whose result digest is the record's,
+    stating the evidence the record states. The request is not at hand, only its digest, so
+    the record's request digest and software rule stand for it. Raises a DataLossError."""
+    rec_msg = resp.get_msg("record")
+    if rec_msg is None:
+        raise NoRecordError("plimsoll: the lost call's answer carries no run record")
+    if record_from_wire(rec_msg) != lost:
+        raise RecordMismatchError("plimsoll: the lost call's answer carries another record than the lost call's")
+    if lost.version != VERSION:
+        raise RecordVersionError(_version_problem(lost.version))
+    if lost.unanswered:
+        raise RecordMismatchError(f"plimsoll: an answer came for a call whose record states it ended unanswered ({lost.unanswered})")
+    _states_only(lost)
+    kinds = tuple(k for k in ("javascript", "project", "module", "cell") if resp.has(k))
+    if len(kinds) != 1 or kinds[0] == "module":
+        raise RecordMismatchError("plimsoll: the lost call's answer holds no result of a session call's kind")
+    result = result_digest(resp)
+    if lost.result_sha256 != result:
+        raise RecordMismatchError(f"plimsoll: result digest {lost.result_sha256}, the lost call's answer digests to {result}")
+    if lost.provider != resp.get_str("sandbox") or lost.isolation != resp.get_str("isolation"):
+        raise RecordMismatchError(
+            f"plimsoll: the record names {lost.provider} at {lost.isolation!r}, the lost call's answer "
+            f"{resp.get_str('sandbox')} at {resp.get_str('isolation')!r}"
+        )
+    if (lost.environment, lost.instance, lost.isolation_qualification, lost.warm, lost.daemon_version, lost.software_identity) != (
+        resp.get_str("environment"),
+        resp.get_str("instance"),
+        resp.get_str("isolationQualification"),
+        resp.get_bool("warm"),
+        resp.get_str("daemonVersion"),
+        resp.get_str("softwareIdentity"),
+    ):
+        raise RecordMismatchError("plimsoll: the lost call's answer states other evidence than its record")
+    return lost
 
 
 def check_single(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:

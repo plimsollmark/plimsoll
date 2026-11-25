@@ -8,13 +8,21 @@
 //
 // It takes sandboxd's arguments, refuses them unless sandboxd will listen on loopback
 // alone (exactly one --listen-host=127.0.0.1 and one --grpc-port=9091, every argument in
-// the --name=value form), checks that the TLS key is closed to every user but root,
-// starts /usr/local/bin/sandboxd with them, waits for its gRPC port to accept, and then
-// listens on :9090. Each connection must complete a TLS 1.3 handshake within 10 seconds
-// and negotiate HTTP/2 by ALPN; only then is a connection to sandboxd opened, and the
-// decrypted bytes are copied both ways unchanged (sandboxd's gRPC server accepts HTTP/2
-// with prior knowledge). It parses no HTTP. The certificate and key are read again at
-// every handshake, so a rotated Kubernetes Secret takes effect in a pod already running.
+// the --name=value form and a flag the pinned sandboxd takes), checks that the pod's own
+// key is closed to every user but root, starts /usr/local/bin/sandboxd with them, waits
+// for its gRPC port to accept, and then listens on :9090. Each connection must complete a
+// TLS 1.3 handshake within 10 seconds and negotiate HTTP/2 by ALPN; only then is a
+// connection to sandboxd opened, and the decrypted bytes are copied both ways unchanged
+// (sandboxd's gRPC server accepts HTTP/2 with prior knowledge), each side ended in order
+// so the last bytes arrive whole (pipe). It parses no HTTP. The certificate and key are
+// read again at every handshake, so a certificate the issuer renewed takes effect in a
+// pod already running.
+//
+// The pair is the pod's own: an issuer in the cluster signs a certificate for this pod
+// alone, naming its UID, and the key is made on the node and mounted at
+// /etc/plimsoll/sandboxd-tls, mode 0440 for owner root and group root (cert-manager's CSI
+// driver, measured 2026-11-24). plimsolld checks the UID in the handshake, so this pod's
+// key proves this pod and no other.
 // It exits with sandboxd's status, forwarding SIGTERM and SIGINT to it.
 //
 // The standard library only: this process holds the TLS key and faces the pod network.
@@ -46,7 +54,8 @@ const (
 	backendHost = "127.0.0.1"
 	backendPort = "9091"
 	// guardDir must be closed to every user but its owner (the image makes it root's,
-	// mode 0700), so the guest cannot even reach the Secret mounted inside it.
+	// mode 0700), so the guest cannot even reach the key volume mounted inside it, whose
+	// own directory the driver makes 0550.
 	guardDir = "/etc/plimsoll"
 	certFile = "/etc/plimsoll/sandboxd-tls/tls.crt"
 	keyFile  = "/etc/plimsoll/sandboxd-tls/tls.key"
@@ -82,7 +91,7 @@ func run(args []string) (int, error) {
 	if err := checkArgs(args); err != nil {
 		return 2, err
 	}
-	keys := keyFiles{guard: guardDir, cert: certFile, key: keyFile, owner: 0}
+	keys := keyFiles{guard: guardDir, cert: certFile, key: keyFile, owner: 0, group: 0}
 	if _, err := keys.load(); err != nil {
 		return 1, err
 	}
@@ -214,12 +223,31 @@ func exitCode(err error) int {
 // argument as its value, so any other form could make it listen elsewhere than checked.
 var sandboxdFlag = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9_.-]*=`)
 
+// sandboxdFlagsCommit is the agent-sandbox commit whose sandboxd sandboxdFlags was read
+// from: docker/agentsandbox.Dockerfile's AGENT_SANDBOX_COMMIT, which a test holds it to.
+const sandboxdFlagsCommit = "807cc37107bd7c012115afac9fa9c3b77b8365c2"
+
+// sandboxdFlags is every flag that sandboxd takes, as its own -h listed them (2026-11-24,
+// the image built from sandboxdFlagsCommit): its packages/sandboxd/cmd/sandboxd flags,
+// controller-runtime's zap logging flags and its kubeconfig flag. An argument naming any
+// other is refused, so a flag a later sandboxd adds (one that loosens its token check,
+// say) cannot pass this check unread. Moving the pin means reading the new sandboxd's -h
+// and this list again; sandbox/agentsandbox's read-back keeps the same list, and a test
+// there holds the two lists and the pin together.
+var sandboxdFlags = map[string]bool{
+	"auth-token-file": true, "auth-token-sha256": true, "grpc-port": true, "http-idle-timeout": true,
+	"kubeconfig": true, "listen-host": true, "metadata-env-prefix": true, "rest-port": true,
+	"root-dir": true, "shutdown-timeout": true, "stream-chunk-size": true, "version": true,
+	"zap-devel": true, "zap-encoder": true, "zap-log-level": true, "zap-stacktrace-level": true,
+	"zap-time-encoding": true,
+}
+
 // checkArgs requires sandboxd's gRPC server on loopback port 9091 and nothing else that
 // could move it: one --listen-host=127.0.0.1, one --grpc-port=9091, every argument a
-// --name=value flag; and a token it checks, one --auth-token-sha256 and no token file,
-// so the image never starts a root sandboxd that answers anyone on loopback (plimsolld's
-// read-back also requires the digest to be its own token's; this is the image's own
-// floor, for any other consumer of it).
+// --name=value flag of the pinned sandboxd's (sandboxdFlags); and a token it checks, one
+// --auth-token-sha256 and no token file, so the image never starts a root sandboxd that
+// answers anyone on loopback (plimsolld's read-back also requires the digest to be its
+// own token's; this is the image's own floor, for any other consumer of it).
 func checkArgs(args []string) error {
 	listen, port, token := 0, 0, 0
 	for _, a := range args {
@@ -227,6 +255,9 @@ func checkArgs(args []string) error {
 			return fmt.Errorf("sandboxd's argument %q is not a --name=value flag", a)
 		}
 		name, value, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		if !sandboxdFlags[name] {
+			return fmt.Errorf("sandboxd's flag --%s is not one the pinned sandboxd takes", name)
+		}
 		switch name {
 		case "listen-host":
 			if value != backendHost {
@@ -276,38 +307,70 @@ func waitFor(addr string, budget time.Duration, done <-chan struct{}) error {
 }
 
 // keyFiles names the serving certificate and key, the directory that must keep the guest
-// away from them, and the uid that must own them (root in the image; the test's own uid
-// in tests).
+// away from them, and the uid and gid that must own them (root's in the image; the test's
+// own in tests).
 type keyFiles struct {
 	guard, cert, key string
-	owner            uint32
+	owner, group     uint32
 }
 
-// closed checks that path is owned by owner with no permission bit for group or other.
-func (k keyFiles) closed(path string) error {
+// pairMode is the one mode the key and the certificate may have: readable by their owner
+// and their group, root and root, as the driver writes them. No other process in the pod
+// holds group root: plimsoll starts every guest process with its supplementary groups
+// cleared, and its smoke test fails a guest holding any (sandbox/agentsandbox).
+const pairMode = 0o440
+
+// owned reads path's mode, uid and gid.
+func owned(path string) (os.FileMode, uint32, uint32, error) {
 	st, err := os.Stat(path)
 	if err != nil {
-		return err
+		return 0, 0, 0, err
 	}
 	sys, ok := st.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("%s: no owner information", path)
+		return 0, 0, 0, fmt.Errorf("%s: no owner information", path)
 	}
-	if sys.Uid != k.owner || st.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s is owned by uid %d with mode %#o; it must be uid %d's with no group or other permission (a Secret volume with defaultMode 0400, under a 0700 directory), so the guest cannot read the key", path, sys.Uid, st.Mode().Perm(), k.owner)
+	return st.Mode().Perm(), sys.Uid, sys.Gid, nil
+}
+
+// closedDir checks that the guard directory is owned by owner with no permission bit for
+// group or other, so no other uid can reach the files inside it.
+func (k keyFiles) closedDir() error {
+	mode, uid, _, err := owned(k.guard)
+	if err != nil {
+		return err
+	}
+	if uid != k.owner || mode&0o077 != 0 {
+		return fmt.Errorf("%s is owned by uid %d with mode %#o; it must be uid %d's with no group or other permission (the image makes it 0700), so the guest cannot reach the key", k.guard, uid, mode, k.owner)
 	}
 	return nil
 }
 
-// load checks the guard directory and the key file are closed to everyone but the owner,
-// then reads the pair. A Kubernetes Secret volume swaps both files at once by one
-// symlink, so a read that straddled the swap (a certificate that does not match its key)
-// is tried once more.
+// pairFile checks that the key or certificate at path has exactly pairMode, owner and
+// group: anything else is not the pod's own key volume as plimsoll accepts it.
+func (k keyFiles) pairFile(path string) error {
+	mode, uid, gid, err := owned(path)
+	if err != nil {
+		return err
+	}
+	if mode != pairMode || uid != k.owner || gid != k.group {
+		return fmt.Errorf("%s is owned by uid %d and gid %d with mode %#o; it must be uid %d's and gid %d's with mode %#o exactly (the pod's key volume, under a 0700 directory), so the guest cannot read the key", path, uid, gid, mode, k.owner, k.group, pairMode)
+	}
+	return nil
+}
+
+// load checks the guard directory, the key and the certificate, then reads the pair. The
+// driver, as a Kubernetes Secret volume does, swaps both files at once by one symlink, so
+// a read that straddled the swap (a certificate that does not match its key) is tried
+// once more.
 func (k keyFiles) load() (*tls.Certificate, error) {
-	if err := k.closed(k.guard); err != nil {
+	if err := k.closedDir(); err != nil {
 		return nil, err
 	}
-	if err := k.closed(k.key); err != nil {
+	if err := k.pairFile(k.key); err != nil {
+		return nil, err
+	}
+	if err := k.pairFile(k.cert); err != nil {
 		return nil, err
 	}
 	pair, err := tls.LoadX509KeyPair(k.cert, k.key)
@@ -428,18 +491,82 @@ func handle(raw net.Conn, cfg *tls.Config, backend string, logf func(string, ...
 	pipe(c, b)
 }
 
-// pipe copies both ways until one direction ends, then closes both: HTTP/2 needs no half
-// close, and whatever one side wrote before its end has been copied by then.
+// endLinger bounds how long a connection whose answer has ended waits for the client to
+// read the end and close its side, and how long sandboxd gets to finish answering once
+// the client has ended its side: the bytes are already sent, so a client on a loaded pod
+// network reads them well within it, and a client that never closes holds this
+// connection's goroutines and its sandboxd connection only that long.
+const endLinger = 5 * time.Second
+
+// pipe copies both ways and ends each side in order, so the last bytes either side wrote
+// arrive whole (finding release-59):
+//   - sandboxd's side ends (its last answer written): the client's side is ended after
+//     everything copied (a TLS close_notify, then a TCP FIN), and the client gets
+//     endLinger to read it and close, while what it still sends goes on to sandboxd or is
+//     dropped. Closing at once once did this: with bytes of the client's still unread, the
+//     kernel resets the connection and drops the answer's end still in the send buffer,
+//     and when the client's next bytes met a sandboxd already gone, both sides were closed
+//     with the answer's end still being copied.
+//   - the client's side ends: its end is passed to sandboxd (a TCP FIN), and sandboxd gets
+//     endLinger to finish answering.
+//   - sandboxd stops taking bytes (it has gone): what the client sends is read and dropped,
+//     so it cannot reset the connection, until sandboxd's side ends.
+//   - the client's side fails: both are closed at once.
 func pipe(a, b net.Conn) {
-	done := make(chan struct{}, 2)
-	cp := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
-		done <- struct{}{}
+	var once sync.Once
+	closeBoth := func() { once.Do(func() { _ = a.Close(); _ = b.Close() }) }
+	defer closeBoth()
+	up := make(chan struct{})
+	go func() {
+		defer close(up)
+		readErr, writeErr := copyEnds(b, a)
+		switch {
+		case writeErr != nil:
+			_, _ = io.Copy(io.Discard, a)
+		case errors.Is(readErr, io.EOF):
+			closeWrite(b)
+			_ = b.SetReadDeadline(time.Now().Add(endLinger))
+		default:
+			closeBoth()
+		}
+	}()
+	_, _ = copyEnds(a, b)
+	closeWrite(a)
+	linger := time.NewTimer(endLinger)
+	defer linger.Stop()
+	select {
+	case <-up:
+	case <-linger.C:
 	}
-	go cp(b, a)
-	go cp(a, b)
-	<-done
-	_ = a.Close()
-	_ = b.Close()
-	<-done
+	closeBoth()
+	<-up
+}
+
+// copyEnds copies src to dst until either fails, and says which: a read error (io.EOF at
+// src's end) or a write error.
+func copyEnds(dst io.Writer, src io.Reader) (readErr, writeErr error) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return nil, werr
+			}
+		}
+		if err != nil {
+			return err, nil
+		}
+	}
+}
+
+// closeWrite ends c's sending side after everything written to it: for TLS a close_notify
+// alert, then the TCP FIN under it.
+func closeWrite(c net.Conn) {
+	if t, ok := c.(*tls.Conn); ok {
+		_ = t.CloseWrite()
+		c = t.NetConn()
+	}
+	if w, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = w.CloseWrite()
+	}
 }

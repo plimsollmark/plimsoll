@@ -541,7 +541,7 @@ not that the predicate is true: the harness signs what it is given, so a reader 
 predicate from the evidence it names and compares, as `examples/pr-receipt/verify.py` does.
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 7, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 8, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only

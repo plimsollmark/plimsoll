@@ -2389,7 +2389,17 @@ type OpenSessionRequest struct {
 	// dockercloud one billed by the second), so it came with protocol 5, which such a
 	// daemon refuses before reading the request. A cell for one call needs no session:
 	// RunRequest.prefer_warm.
-	WarmOnly      bool `protobuf:"varint,9,opt,name=warm_only,json=warmOnly,proto3" json:"warm_only,omitempty"`
+	WarmOnly bool `protobuf:"varint,9,opt,name=warm_only,json=warmOnly,proto3" json:"warm_only,omitempty"`
+	// Keep no call's answer. By default the daemon keeps, in memory only, the answer to
+	// the session's last answered call (the whole RunResponse, its output included) until
+	// the next call starts or the session suspends or ends, so that a worker taking the
+	// session over across that call's lost answer gets it back
+	// (AttachSessionResponse.lost_answer). An answer above the operator's cap
+	// (SANDBOX_SESSION_KEPT_ANSWER_BYTES) is not kept. Set this when the caller promises
+	// its users that the daemon retains no output; it holds for the whole session and
+	// cannot be changed per call. It is no way to keep a secret from the daemon: every
+	// answer passes through it.
+	KeepNoAnswer  bool `protobuf:"varint,10,opt,name=keep_no_answer,json=keepNoAnswer,proto3" json:"keep_no_answer,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2483,6 +2493,13 @@ func (x *OpenSessionRequest) GetOwner() string {
 func (x *OpenSessionRequest) GetWarmOnly() bool {
 	if x != nil {
 		return x.WarmOnly
+	}
+	return false
+}
+
+func (x *OpenSessionRequest) GetKeepNoAnswer() bool {
+	if x != nil {
+		return x.KeepNoAnswer
 	}
 	return false
 }
@@ -2618,8 +2635,10 @@ func (x *OpenSessionResponse) GetSoftwareRule() *SoftwareRule {
 	return nil
 }
 
-// SessionCheckpoint is public chain state, never a credential. Applications must
-// protect its integrity separately from conversation history.
+// SessionCheckpoint is public chain state, never a credential: the ownership
+// generation, the count of calls the session has seen and the last one's record
+// digest (empty before the first call). The daemon's own is the session's head.
+// Applications must protect its integrity separately from conversation history.
 type SessionCheckpoint struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Generation       uint64                 `protobuf:"varint,1,opt,name=generation,proto3" json:"generation,omitempty"`
@@ -2771,7 +2790,16 @@ type AttachSessionResponse struct {
 	// Set only on an attach taken over from a checkpoint one call behind: the record of
 	// the call that ran after the checkpoint, which the caller checks against the
 	// checkpoint and the digest it named before carrying the chain on.
-	LostRecord    *RunRecord `protobuf:"bytes,3,opt,name=lost_record,json=lostRecord,proto3" json:"lost_record,omitempty"`
+	LostRecord *RunRecord `protobuf:"bytes,3,opt,name=lost_record,json=lostRecord,proto3" json:"lost_record,omitempty"`
+	// Set only beside lost_record, when the daemon answered that call and still keeps its
+	// answer (OpenSessionRequest.keep_no_answer): the answer that never reached the
+	// worker which sent the call. The caller believes it only when its record is
+	// lost_record and its result digest matches, as for any run answer; an answer that
+	// comes unasked, or without lost_record, is refused. Absent when the call ended
+	// unanswered (it has no answer), when the answer was above the operator's cap, when
+	// the session opened with keep_no_answer, and when a call has started or the session
+	// has suspended since.
+	LostAnswer    *RunResponse `protobuf:"bytes,4,opt,name=lost_answer,json=lostAnswer,proto3" json:"lost_answer,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2827,6 +2855,62 @@ func (x *AttachSessionResponse) GetLostRecord() *RunRecord {
 	return nil
 }
 
+func (x *AttachSessionResponse) GetLostAnswer() *RunResponse {
+	if x != nil {
+		return x.LostAnswer
+	}
+	return nil
+}
+
+// SessionHeadMismatch is the error detail of a session call refused because the head
+// it stated (SessionRunRequest.head) carries the session's current generation but
+// another count or last record digest than the session's. It carries the daemon's
+// head, so its owner can tell how far behind or ahead it is. It goes only to the
+// current owner: a stale generation is refused without it.
+type SessionHeadMismatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Head          *SessionCheckpoint     `protobuf:"bytes,1,opt,name=head,proto3" json:"head,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionHeadMismatch) Reset() {
+	*x = SessionHeadMismatch{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionHeadMismatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionHeadMismatch) ProtoMessage() {}
+
+func (x *SessionHeadMismatch) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionHeadMismatch.ProtoReflect.Descriptor instead.
+func (*SessionHeadMismatch) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *SessionHeadMismatch) GetHead() *SessionCheckpoint {
+	if x != nil {
+		return x.Head
+	}
+	return nil
+}
+
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
 // It is a separate message so that a daemon that predates sessions refuses it
 // (Unimplemented) instead of dropping the ID and running the payload alone. A
@@ -2841,10 +2925,19 @@ type SessionRunRequest struct {
 	TimeoutMs        int32                  `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	SessionId        string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	SoftwareRule     *SoftwareRule          `protobuf:"bytes,6,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
-	// The current ownership number (OpenSessionResponse.generation, or the one
-	// AttachSession returned). Zero is InvalidArgument; any other number but the
-	// current one is FailedPrecondition, reason permission. Both are not dispatched.
-	Generation uint64 `protobuf:"varint,7,opt,name=generation,proto3" json:"generation,omitempty"`
+	// The head the caller expects the call to run on: the current ownership generation
+	// (OpenSessionResponse.generation, or the one AttachSession returned), the count of
+	// calls and the last record digest of the answers it has seen. Under the session's
+	// turn, before anything is dispatched, the daemon compares it with its own. A missing
+	// head, a zero generation or a malformed count and digest is InvalidArgument; a
+	// generation other than the current one is FailedPrecondition, reason permission (a
+	// stale owner); a current generation with another count or digest is
+	// FailedPrecondition, reason request (a head mismatch: a call ran whose answer this
+	// caller has not seen, or the caller counts calls that did not run), with the
+	// daemon's head as a SessionHeadMismatch detail. All are not dispatched, and none
+	// moves the head. It is not part of the request digest: the record already binds its
+	// predecessor.
+	Head *SessionCheckpoint `protobuf:"bytes,8,opt,name=head,proto3" json:"head,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*SessionRunRequest_Javascript
@@ -2857,7 +2950,7 @@ type SessionRunRequest struct {
 
 func (x *SessionRunRequest) Reset() {
 	*x = SessionRunRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2869,7 +2962,7 @@ func (x *SessionRunRequest) String() string {
 func (*SessionRunRequest) ProtoMessage() {}
 
 func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2882,7 +2975,7 @@ func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunRequest.ProtoReflect.Descriptor instead.
 func (*SessionRunRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SessionRunRequest) GetProtocol() uint32 {
@@ -2927,11 +3020,11 @@ func (x *SessionRunRequest) GetSoftwareRule() *SoftwareRule {
 	return nil
 }
 
-func (x *SessionRunRequest) GetGeneration() uint64 {
+func (x *SessionRunRequest) GetHead() *SessionCheckpoint {
 	if x != nil {
-		return x.Generation
+		return x.Head
 	}
-	return 0
+	return nil
 }
 
 func (x *SessionRunRequest) GetPayload() isSessionRunRequest_Payload {
@@ -3007,7 +3100,7 @@ type CellRun struct {
 
 func (x *CellRun) Reset() {
 	*x = CellRun{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3019,7 +3112,7 @@ func (x *CellRun) String() string {
 func (*CellRun) ProtoMessage() {}
 
 func (x *CellRun) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3032,7 +3125,7 @@ func (x *CellRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellRun.ProtoReflect.Descriptor instead.
 func (*CellRun) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CellRun) GetLanguage() string {
@@ -3078,7 +3171,7 @@ type CellResult struct {
 
 func (x *CellResult) Reset() {
 	*x = CellResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3090,7 +3183,7 @@ func (x *CellResult) String() string {
 func (*CellResult) ProtoMessage() {}
 
 func (x *CellResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3103,7 +3196,7 @@ func (x *CellResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CellResult.ProtoReflect.Descriptor instead.
 func (*CellResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CellResult) GetStdout() []byte {
@@ -3176,7 +3269,7 @@ type SessionRunResponse struct {
 
 func (x *SessionRunResponse) Reset() {
 	*x = SessionRunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3188,7 +3281,7 @@ func (x *SessionRunResponse) String() string {
 func (*SessionRunResponse) ProtoMessage() {}
 
 func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3201,7 +3294,7 @@ func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunResponse.ProtoReflect.Descriptor instead.
 func (*SessionRunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{28}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SessionRunResponse) GetRun() *RunResponse {
@@ -3229,8 +3322,8 @@ type CloseSessionRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Protocol  uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	SessionId string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	// The current ownership number, checked as SessionRunRequest.generation is,
-	// before anything of the session is closed.
+	// The current ownership number, checked as SessionRunRequest.head's generation is,
+	// before anything of the session is closed. A close needs no head: it runs nothing.
 	Generation    uint64 `protobuf:"varint,3,opt,name=generation,proto3" json:"generation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3238,7 +3331,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3250,7 +3343,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3263,7 +3356,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CloseSessionRequest) GetProtocol() uint32 {
@@ -3302,7 +3395,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3314,7 +3407,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3327,7 +3420,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CloseSessionResponse) GetSession() string {
@@ -3370,7 +3463,7 @@ type SessionEnded struct {
 
 func (x *SessionEnded) Reset() {
 	*x = SessionEnded{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3382,7 +3475,7 @@ func (x *SessionEnded) String() string {
 func (*SessionEnded) ProtoMessage() {}
 
 func (x *SessionEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3395,7 +3488,7 @@ func (x *SessionEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEnded.ProtoReflect.Descriptor instead.
 func (*SessionEnded) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{31}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *SessionEnded) GetReason() SessionEnd {
@@ -3426,7 +3519,7 @@ type NotDispatched struct {
 
 func (x *NotDispatched) Reset() {
 	*x = NotDispatched{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3438,7 +3531,7 @@ func (x *NotDispatched) String() string {
 func (*NotDispatched) ProtoMessage() {}
 
 func (x *NotDispatched) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3451,7 +3544,7 @@ func (x *NotDispatched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotDispatched.ProtoReflect.Descriptor instead.
 func (*NotDispatched) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{32}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *NotDispatched) GetReason() NotDispatchedReason {
@@ -3473,7 +3566,7 @@ type UnansweredCall struct {
 
 func (x *UnansweredCall) Reset() {
 	*x = UnansweredCall{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3485,7 +3578,7 @@ func (x *UnansweredCall) String() string {
 func (*UnansweredCall) ProtoMessage() {}
 
 func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3498,7 +3591,7 @@ func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnansweredCall.ProtoReflect.Descriptor instead.
 func (*UnansweredCall) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{33}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *UnansweredCall) GetRecord() *RunRecord {
@@ -3686,7 +3779,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xd2\x02\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xf8\x02\n" +
 	"\x12OpenSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3697,7 +3790,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1c\n" +
 	"\tlanguages\x18\a \x03(\tR\tlanguages\x12\x14\n" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12\x1b\n" +
-	"\twarm_only\x18\t \x01(\bR\bwarmOnly\"\xc9\x03\n" +
+	"\twarm_only\x18\t \x01(\bR\bwarmOnly\x12$\n" +
+	"\x0ekeep_no_answer\x18\n" +
+	" \x01(\bR\fkeepNoAnswer\"\xc9\x03\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -3727,14 +3822,18 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"checkpoint\x18\x03 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\n" +
 	"checkpoint\x12\x19\n" +
 	"\btrace_id\x18\x04 \x01(\tR\atraceId\x12.\n" +
-	"\x13lost_request_sha256\x18\x05 \x01(\tR\x11lostRequestSha256\"\xd5\x01\n" +
+	"\x13lost_request_sha256\x18\x05 \x01(\tR\x11lostRequestSha256\"\x90\x02\n" +
 	"\x15AttachSessionResponse\x12C\n" +
 	"\fsession_info\x18\x01 \x01(\v2 .plimsoll.v1.OpenSessionResponseR\vsessionInfo\x12>\n" +
 	"\n" +
 	"checkpoint\x18\x02 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\n" +
 	"checkpoint\x127\n" +
 	"\vlost_record\x18\x03 \x01(\v2\x16.plimsoll.v1.RunRecordR\n" +
-	"lostRecord\"\xbf\x03\n" +
+	"lostRecord\x129\n" +
+	"\vlost_answer\x18\x04 \x01(\v2\x18.plimsoll.v1.RunResponseR\n" +
+	"lostAnswer\"I\n" +
+	"\x13SessionHeadMismatch\x122\n" +
+	"\x04head\x18\x01 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\x04head\"\xd9\x03\n" +
 	"\x11SessionRunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3743,17 +3842,15 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12>\n" +
-	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1e\n" +
-	"\n" +
-	"generation\x18\a \x01(\x04R\n" +
-	"generation\x12<\n" +
+	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x122\n" +
+	"\x04head\x18\b \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\x04head\x12<\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
 	"javascript\x123\n" +
 	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x12*\n" +
 	"\x04cell\x18\f \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cellB\t\n" +
-	"\apayload\"i\n" +
+	"\apayloadJ\x04\b\a\x10\b\"i\n" +
 	"\aCellRun\x12\x1a\n" +
 	"\blanguage\x18\x01 \x01(\tR\blanguage\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12.\n" +
@@ -3844,7 +3941,7 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(ProjectOutcome)(0),           // 0: plimsoll.v1.ProjectOutcome
 	(SessionEnd)(0),               // 1: plimsoll.v1.SessionEnd
@@ -3874,15 +3971,16 @@ var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(*SessionCheckpoint)(nil),     // 25: plimsoll.v1.SessionCheckpoint
 	(*AttachSessionRequest)(nil),  // 26: plimsoll.v1.AttachSessionRequest
 	(*AttachSessionResponse)(nil), // 27: plimsoll.v1.AttachSessionResponse
-	(*SessionRunRequest)(nil),     // 28: plimsoll.v1.SessionRunRequest
-	(*CellRun)(nil),               // 29: plimsoll.v1.CellRun
-	(*CellResult)(nil),            // 30: plimsoll.v1.CellResult
-	(*SessionRunResponse)(nil),    // 31: plimsoll.v1.SessionRunResponse
-	(*CloseSessionRequest)(nil),   // 32: plimsoll.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),  // 33: plimsoll.v1.CloseSessionResponse
-	(*SessionEnded)(nil),          // 34: plimsoll.v1.SessionEnded
-	(*NotDispatched)(nil),         // 35: plimsoll.v1.NotDispatched
-	(*UnansweredCall)(nil),        // 36: plimsoll.v1.UnansweredCall
+	(*SessionHeadMismatch)(nil),   // 28: plimsoll.v1.SessionHeadMismatch
+	(*SessionRunRequest)(nil),     // 29: plimsoll.v1.SessionRunRequest
+	(*CellRun)(nil),               // 30: plimsoll.v1.CellRun
+	(*CellResult)(nil),            // 31: plimsoll.v1.CellResult
+	(*SessionRunResponse)(nil),    // 32: plimsoll.v1.SessionRunResponse
+	(*CloseSessionRequest)(nil),   // 33: plimsoll.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),  // 34: plimsoll.v1.CloseSessionResponse
+	(*SessionEnded)(nil),          // 35: plimsoll.v1.SessionEnded
+	(*NotDispatched)(nil),         // 36: plimsoll.v1.NotDispatched
+	(*UnansweredCall)(nil),        // 37: plimsoll.v1.UnansweredCall
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
@@ -3894,12 +3992,12 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	10, // 6: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
 	17, // 7: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
 	20, // 8: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	29, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
+	30, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
 	12, // 10: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
 	13, // 11: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
 	18, // 12: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
 	22, // 13: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	30, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
+	31, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
 	8,  // 15: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
 	14, // 16: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
 	15, // 17: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
@@ -3915,34 +4013,37 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	24, // 27: plimsoll.v1.AttachSessionResponse.session_info:type_name -> plimsoll.v1.OpenSessionResponse
 	25, // 28: plimsoll.v1.AttachSessionResponse.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
 	12, // 29: plimsoll.v1.AttachSessionResponse.lost_record:type_name -> plimsoll.v1.RunRecord
-	6,  // 30: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 31: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 32: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	29, // 33: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
-	14, // 34: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
-	11, // 35: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 36: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 37: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 38: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 39: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	12, // 40: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
-	9,  // 41: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 42: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 43: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	26, // 44: plimsoll.v1.SandboxService.AttachSession:input_type -> plimsoll.v1.AttachSessionRequest
-	28, // 45: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	32, // 46: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 47: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 48: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 49: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	27, // 50: plimsoll.v1.SandboxService.AttachSession:output_type -> plimsoll.v1.AttachSessionResponse
-	31, // 51: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	33, // 52: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	47, // [47:53] is the sub-list for method output_type
-	41, // [41:47] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	11, // 30: plimsoll.v1.AttachSessionResponse.lost_answer:type_name -> plimsoll.v1.RunResponse
+	25, // 31: plimsoll.v1.SessionHeadMismatch.head:type_name -> plimsoll.v1.SessionCheckpoint
+	6,  // 32: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	25, // 33: plimsoll.v1.SessionRunRequest.head:type_name -> plimsoll.v1.SessionCheckpoint
+	10, // 34: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 35: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	30, // 36: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
+	14, // 37: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
+	11, // 38: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	1,  // 39: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 40: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 41: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	2,  // 42: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	12, // 43: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
+	9,  // 44: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 45: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 46: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	26, // 47: plimsoll.v1.SandboxService.AttachSession:input_type -> plimsoll.v1.AttachSessionRequest
+	29, // 48: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	33, // 49: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 50: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 51: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 52: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	27, // 53: plimsoll.v1.SandboxService.AttachSession:output_type -> plimsoll.v1.AttachSessionResponse
+	32, // 54: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	34, // 55: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	50, // [50:56] is the sub-list for method output_type
+	44, // [44:50] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -3962,7 +4063,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 		(*RunResponse_Module)(nil),
 		(*RunResponse_Cell)(nil),
 	}
-	file_plimsoll_v1_sandbox_proto_msgTypes[25].OneofWrappers = []any{
+	file_plimsoll_v1_sandbox_proto_msgTypes[26].OneofWrappers = []any{
 		(*SessionRunRequest_Javascript)(nil),
 		(*SessionRunRequest_Project)(nil),
 		(*SessionRunRequest_Cell)(nil),
@@ -3973,7 +4074,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   34,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

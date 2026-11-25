@@ -479,14 +479,20 @@ func TestGrantRefusesOverrideHeaders(t *testing.T) {
 }
 
 // TestJSONOverrideScannerAtEverySplit: the streamed JSON scanner gives the buffered
-// reader's answer whichever byte the body is split at.
+// reader's answer whichever byte the body is split at: the same refusal, or none.
 func TestJSONOverrideScannerAtEverySplit(t *testing.T) {
 	t.Parallel()
 	for _, body := range jsonOverrideCorpus {
-		want := checkJSONBody([]byte(body)) == errOverrideField
+		want := checkJSONBody([]byte(body))
 		for i := 0; i <= len(body); i++ {
 			s := &jsonOverrideScanner{}
-			got := s.feed([]byte(body[:i])) != nil || s.feed([]byte(body[i:])) != nil
+			got := s.feed([]byte(body[:i]))
+			if got == nil {
+				got = s.feed([]byte(body[i:]))
+			}
+			if got == nil {
+				got = s.end()
+			}
 			if got != want {
 				t.Errorf("%q split at %d: scanner %v, decoder %v", body, i, got, want)
 				break
@@ -503,6 +509,165 @@ var jsonOverrideCorpus = []string{
 	// hunt-security-18: a key after a comma inside a nested object or array is no
 	// override; with the scanner's depth-1 conditions deleted these are refused.
 	`{"a":{"b":1,"_method":2}}`, `{"a":[1,{"b":2,"_method":3}],"c":4}`, `[1,{"b":2,"_method":3}]`,
+	// release-109: the grammar's edges that are JSON, which the scanner must take as the
+	// decoder does: every kind of number, the literals, empty containers, white space.
+	``, " ", "\ufeff", "\ufeff \t\r\n", `0`, `-0`, `-0.0e+0`, `1E-5`, `12.5e10`, `-1.5E+3`, `""`, `true`, ` null `, `false`,
+	`[]`, `{}`, `[[],{}]`, `[ 1 , 2 ]`, "{\t\"a\"\r\n:\n[ true , false , null ] , \"_method\" : 0 }",
+	`{"a":[true,false,null],"b":-1.5,"c":{"d":[]}}`, `{"a":0,"_method":-0.5e-7}`,
+}
+
+func init() {
+	// hunt-security-19: top-level keys that are not plain, and the near cases that are
+	// (a whole pair, a value, a nested key), built from jsonKeyCases so the fuzz seeds
+	// hold them too.
+	for _, c := range jsonKeyCases() {
+		jsonOverrideCorpus = append(jsonOverrideCorpus, c.body)
+	}
+}
+
+// jsonEscape is the JSON escape of the UTF-16 unit hex, a backslash, u and the four
+// digits (built here, not written out, so no tool between the writer and the file can
+// turn the escape into the character it names).
+func jsonEscape(hex string) string { return "\\" + "u" + hex }
+
+// jsonKeyCases are the bodies TestJSONKeyThatIsNotPlainIsRefused reads, each with the
+// refusal the buffered and the streamed check must both give (nil: none).
+func jsonKeyCases() []struct {
+	name, body string
+	want       error
+} {
+	u := jsonEscape
+	return []struct {
+		name, body string
+		want       error
+	}{
+		{"_method and an escaped NUL", `{"_method` + u("0000") + `":"DELETE"}`, errKeyNotPlain},
+		{"an escaped NUL before _method", `{"` + u("0000") + `_method":"DELETE"}`, errKeyNotPlain},
+		{"_method and an escaped unit separator", `{"_method` + u("001f") + `":"DELETE"}`, errKeyNotPlain},
+		{"_method and an escaped line feed", `{"_method\n":"DELETE"}`, errKeyNotPlain},
+		{"an escaped tab, second key", `{"a":1,"\t_method":"DELETE"}`, errKeyNotPlain},
+		{"_method and a lone high surrogate", `{"_method` + u("d800") + `":"DELETE"}`, errKeyNotPlain},
+		{"a lone high surrogate before _method", `{"` + u("dbff") + `_method":"DELETE"}`, errKeyNotPlain},
+		{"_method and a lone low surrogate", `{"_method` + u("dc00") + `":"DELETE"}`, errKeyNotPlain},
+		{"a high surrogate, then an escaped letter", `{"` + u("d83d") + u("0041") + `":1}`, errKeyNotPlain},
+		{"a high surrogate, then an escaped slash", `{"` + u("d83d") + `\/":1}`, errKeyNotPlain},
+		{"two high surrogates", `{"` + u("d800") + u("d800") + `":1}`, errKeyNotPlain},
+		{"a low surrogate, then a high one", `{"` + u("de00") + u("d83d") + `":1}`, errKeyNotPlain},
+		{"a whole pair passes", `{"` + u("d83d") + u("de00") + `_method":1}`, nil},
+		{"a whole pair, upper-case digits, passes", `{"` + u("D83D") + u("DE00") + `":1}`, nil},
+		{"an escaped DEL passes", `{"_method` + u("007f") + `":1}`, nil},
+		{"an escaped quote and slash pass", `{"a\"\/\\":1}`, nil},
+		{"a value with a NUL and a lone surrogate passes", `{"a":"_method` + u("0000") + u("d800") + `"}`, nil},
+		{"a nested key with a NUL passes", `{"a":{"_method` + u("0000") + `":1}}`, nil},
+		{"a key in an array passes", `[{"_method` + u("d800") + `":1}]`, nil},
+		{"an escaped _method is still the field", `{"` + u("005f") + `method":"DELETE"}`, errOverrideField},
+	}
+}
+
+// TestJSONKeyThatIsNotPlainIsRefused (hunt-security-19): a top-level key holding an
+// escaped control character or an escaped half of a surrogate pair without its other half
+// is refused with 400, buffered and streamed at every split, and through the broker on a
+// buffered route and on a passed-through one; the API receives no whole body that holds
+// one. The broker forwards the guest's bytes as written, so without this a parser that
+// cuts a key at a NUL or drops a lone surrogate would read _method where the broker read
+// another key.
+func TestJSONKeyThatIsNotPlainIsRefused(t *testing.T) {
+	t.Parallel()
+	standIn := &overrideStandIn{}
+	core, err := newBrokerSession(overrideGrant(), "tok", standIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+	padding := strings.Repeat("x", 2<<20) // past the default limit: the passed-through path
+	for _, c := range jsonKeyCases() {
+		if got := checkJSONBody([]byte(c.body)); got != c.want {
+			t.Errorf("%s: buffered %v, want %v", c.name, got, c.want)
+		}
+		for at := 0; at <= len(c.body); at++ {
+			s := &jsonOverrideScanner{}
+			got := s.feed([]byte(c.body[:at]))
+			if got == nil {
+				got = s.feed([]byte(c.body[at:]))
+			}
+			if got == nil {
+				got = s.end()
+			}
+			if got != c.want {
+				t.Errorf("%s split at %d: streamed %v, want %v", c.name, at, got, c.want)
+				break
+			}
+		}
+		if c.want != errKeyNotPlain {
+			continue
+		}
+		// The key last, after a long first field, on the passed-through route.
+		streamed := `{"blob":"` + padding + `",` + strings.TrimPrefix(c.body, "{")
+		for _, call := range []struct {
+			path, body string
+		}{{"/v1/items/42/comments", c.body}, {"/v1/items/42/attachments", streamed}} {
+			resp := core.Call(context.Background(), brokerCall{Method: "POST", RawTarget: call.path,
+				Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: strings.NewReader(call.body), ContentLength: int64(len(call.body))})
+			if acted := standIn.take(); resp.Status != http.StatusBadRequest || len(acted) > 0 || !strings.Contains(string(resp.Body), "unpaired surrogate") {
+				t.Errorf("%s on %s: %d %q, upstream acted on %v; want 400 and nothing acted on", c.name, call.path, resp.Status, resp.Body, acted)
+			}
+		}
+	}
+}
+
+// TestBrokerRefusesUTF16JSONStreamed (hunt-security-16): on a passed-through route that
+// lists a +json type, a UTF-16 body naming _method never reaches the API whole: under a
+// charset other than utf-8 the type is refused with 415 before a byte is read, and with
+// no charset, or utf-8, the body is refused with 400 at its first NUL, since a JSON body
+// must be UTF-8. Express's JSON parser decodes any "utf-" charset, so a body the broker
+// read as bytes would be read by it as other text.
+func TestBrokerRefusesUTF16JSONStreamed(t *testing.T) {
+	t.Parallel()
+	g := overrideGrant()
+	upload := HostRoute{Method: "POST", Path: "/v1/items/*/attachments"}
+	g.RouteContentTypes[upload] = append(g.RouteContentTypes[upload], "application/vnd.api+json")
+	standIn := &overrideStandIn{}
+	core, err := newBrokerSession(g, "tok", standIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+	utf16le := func(s string) string {
+		b := make([]byte, 0, 2*len(s))
+		for i := 0; i < len(s); i++ {
+			b = append(b, s[i], 0)
+		}
+		return string(b)
+	}
+	body := utf16le(`{"blob":"` + strings.Repeat("x", 1<<20) + `","_method":"DELETE"}`) // 2 MiB: passed through
+	for _, c := range []struct {
+		contentType string
+		status      int
+	}{
+		{"application/vnd.api+json; charset=utf-16le", http.StatusUnsupportedMediaType},
+		{"application/vnd.api+json; charset=UTF-16", http.StatusUnsupportedMediaType},
+		{"application/vnd.api+json; charset=utf-8", http.StatusBadRequest},
+		{"application/vnd.api+json", http.StatusBadRequest},
+	} {
+		for _, oneByte := range []bool{false, true} {
+			var r io.Reader = strings.NewReader(body)
+			if oneByte {
+				r = iotest.OneByteReader(r)
+			}
+			resp := core.Call(context.Background(), brokerCall{Method: "POST", RawTarget: "/v1/items/42/attachments",
+				Headers: map[string][]string{"Content-Type": {c.contentType}}, Body: r, ContentLength: int64(len(body))})
+			if acted := standIn.take(); resp.Status != c.status || len(acted) > 0 {
+				t.Errorf("%s (one byte at a time %v): %d %q, upstream acted on %v; want %d and nothing acted on", c.contentType, oneByte, resp.Status, resp.Body, acted, c.status)
+			}
+		}
+	}
+	// The same route takes the type: a UTF-8 body without the field arrives.
+	ok := `{"blob":"` + strings.Repeat("x", 2<<20) + `"}`
+	resp := core.Call(context.Background(), brokerCall{Method: "POST", RawTarget: "/v1/items/42/attachments",
+		Headers: map[string][]string{"Content-Type": {"application/vnd.api+json; charset=utf-8"}}, Body: strings.NewReader(ok), ContentLength: int64(len(ok))})
+	if acted := standIn.take(); resp.Status != http.StatusOK || len(acted) != 1 {
+		t.Errorf("a UTF-8 +json body: %d %q, acted on %v; want 200 and one call", resp.Status, resp.Body, acted)
+	}
 }
 
 // TestJSONScannerRefusesWhatIsNotUTF8 (hunt-security-16): a JSON body must be valid
@@ -581,34 +746,230 @@ func TestUTF8CheckAgreesWithTheLibrary(t *testing.T) {
 	}
 }
 
-// FuzzJSONOverrideScannerAgreesWithDecoder: on every valid JSON body, split anywhere,
-// the streamed scanner finds a top-level override key exactly when encoding/json does.
+// notJSONBodies (finding release-109) are bodies the buffered check refuses as not JSON
+// that the streamed scanner let through while it tracked strings, escapes and nesting
+// only: text, an object cut short, a trailing comma, an unquoted key and single-quoted
+// ones. A parser that takes the last two (JSON5, a lenient JavaScript reader) reads
+// _method from them.
+var notJSONBodies = []string{
+	`not json at all`, `{"a":1`, `{"a":1,}`, `{_method:"DELETE"}`, `{'_method':'DELETE'}`,
+}
+
+// moreNotJSON is the rest of the grammar the scanner checks, each refused by the
+// buffered check too: misplaced commas and colons, mismatched closes, numbers and
+// literals that are not JSON's, bad escapes, white space JSON does not allow, and
+// nesting past encoding/json's limit.
+var moreNotJSON = []string{
+	`[1,]`, `[,1]`, `{,}`, `{"a" 1}`, `{"a":}`, `{"a"::1}`, `{"a":1 "b":2}`, `[1 2]`, `{"a",1}`, `[1:2]`, `{1:2}`,
+	`}`, `]`, `,`, `:`, `{]`, `[}`, `{"a":[1,2}`, `{"a":"b"]`, `[`, `{`, `{"a"`, `{"a":`, `"abc`, `["a`,
+	`-`, `-a`, `1.`, `1.e5`, `.5`, `1e`, `1e+`, `+1`, `[01]`, `[-01]`, `[0x1]`, `[1.5.2]`, `[1e5e5]`, `[--1]`, `[Infinity]`, `[NaN]`,
+	`tru`, `nul`, `fals`, `True`, `[nulll]`, `[tRue]`, `[undefined]`,
+	`"\x"`, `"\u12g4"`, `"\u12"`, `"\` + "'" + `"`, `{"a\x":1}`, `{"\u00zz":1}`, `["\U0041"]`,
+	"{\u00a0\"a\":1}", "{\"a\":\u3000 1}", "[1,\xc2\xa0 2]",
+	strings.Repeat("[", 10001) + strings.Repeat("]", 10001),
+	strings.Repeat(`{"a":`, 10001) + "1" + strings.Repeat("}", 10001),
+}
+
+// scanPieces feeds body to a fresh scanner in pieces of the sizes sizes gives (1 or
+// more), then ends it, and returns the first refusal.
+func scanPieces(body []byte, size func(rest int) int) error {
+	s := &jsonOverrideScanner{}
+	for rest := body; len(rest) > 0; {
+		n := size(len(rest))
+		if err := s.feed(rest[:n]); err != nil {
+			return err
+		}
+		rest = rest[n:]
+	}
+	return s.end()
+}
+
+// TestStreamedScannerRefusesWhatIsNotJSON (release-109): every body the buffered check
+// refuses as not JSON, the streamed scanner refuses too, fed one byte at a time and in
+// two pieces split at every byte (the two halves among them), so a passed-through body
+// is held to the same grammar as a buffered one (docs/capability-grants.md: a body sent
+// as JSON that is not JSON is refused with 400). Through the broker, on a passed-through
+// route, the API receives none of them whole.
+func TestStreamedScannerRefusesWhatIsNotJSON(t *testing.T) {
+	t.Parallel()
+	for _, body := range append(append([]string{}, notJSONBodies...), moreNotJSON...) {
+		name := body
+		if len(name) > 40 {
+			name = name[:40] + "..."
+		}
+		if got := checkJSONBody([]byte(body)); got != errBodyNotJSON {
+			t.Errorf("%q: buffered %v, want %v", name, got, errBodyNotJSON)
+		}
+		if got := scanPieces([]byte(body), func(int) int { return 1 }); got != errBodyNotJSON {
+			t.Errorf("%q one byte at a time: streamed %v, want %v", name, got, errBodyNotJSON)
+		}
+		if got := scanPieces([]byte(body), func(rest int) int { return max(1, (rest+1)/2) }); got != errBodyNotJSON {
+			t.Errorf("%q in two halves: streamed %v, want %v", name, got, errBodyNotJSON)
+		}
+		if len(body) > 64 {
+			continue
+		}
+		for at := 0; at <= len(body); at++ {
+			s := &jsonOverrideScanner{}
+			got := s.feed([]byte(body[:at]))
+			if got == nil {
+				got = s.feed([]byte(body[at:]))
+			}
+			if got == nil {
+				got = s.end()
+			}
+			if got != errBodyNotJSON {
+				t.Errorf("%q split at %d: streamed %v, want %v", name, at, got, errBodyNotJSON)
+				break
+			}
+		}
+	}
+
+	standIn := &overrideStandIn{}
+	core, err := newBrokerSession(overrideGrant(), "tok", standIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+	padding := strings.Repeat("x", maxHostRequestBytes+1) // past the default limit: the passed-through path
+	for _, body := range notJSONBodies {
+		// The body's fault last, after a long first field (the text body has it first).
+		streamed := `{"blob":"` + padding + `",` + strings.TrimPrefix(body, "{")
+		if body[0] != '{' {
+			streamed = body + " " + padding
+		}
+		for _, oneByte := range []bool{false, true} {
+			var r io.Reader = strings.NewReader(streamed)
+			if oneByte {
+				r = iotest.OneByteReader(r)
+			}
+			resp := core.Call(context.Background(), brokerCall{Method: "POST", RawTarget: "/v1/items/42/attachments",
+				Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: r, ContentLength: int64(len(streamed))})
+			if acted := standIn.take(); resp.Status != http.StatusBadRequest || len(acted) > 0 || !strings.Contains(string(resp.Body), "is not JSON") {
+				t.Errorf("%q passed through (one byte at a time %v): %d %q, upstream acted on %v; want 400 and nothing acted on", body, oneByte, resp.Status, resp.Body, acted)
+			}
+		}
+	}
+}
+
+// TestStreamedScannerNestingLimitIsEncodingJSONs (release-109): the scanner's nesting
+// stack is bounded at encoding/json's own limit, 10000, so the two checks agree on
+// where deep nesting stops being JSON: 10000 levels pass both, 10001 are refused by
+// both.
+func TestStreamedScannerNestingLimitIsEncodingJSONs(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		depth int
+		want  error
+	}{{10000, nil}, {10001, errBodyNotJSON}} {
+		for _, body := range []string{
+			strings.Repeat("[", c.depth) + strings.Repeat("]", c.depth),
+			strings.Repeat(`{"a":`, c.depth) + "1" + strings.Repeat("}", c.depth),
+			strings.Repeat(`[{"a":`, c.depth/2) + strings.Repeat("[", c.depth%2) + "1" + strings.Repeat("]", c.depth%2) + strings.Repeat("}]", c.depth/2),
+		} {
+			if got := checkJSONBody([]byte(body)); got != c.want {
+				t.Errorf("depth %d: buffered %v, want %v", c.depth, got, c.want)
+			}
+			if got := scanPieces([]byte(body), func(rest int) int { return min(rest, 7) }); got != c.want {
+				t.Errorf("depth %d: streamed %v, want %v", c.depth, got, c.want)
+			}
+		}
+	}
+}
+
+// TestStreamedScannerReadsEveryTopLevelValue: the scanner reads a sequence of top-level
+// values separated by white space and refuses an override in any of them, and two
+// values with nothing between them. The buffered check reads the first value only, so
+// it passes the second and the last four of these (the known difference, in the
+// refusing direction for the scanner: it refuses more, never less).
+func TestStreamedScannerReadsEveryTopLevelValue(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		body string
+		want error
+	}{
+		{"{\"a\":1}\n{\"b\":2}", nil},
+		{`{"a":1} {"_method":"DELETE"}`, errOverrideField},
+		{`1 2 "x" [3] true null`, nil},
+		{`{}{}`, errBodyNotJSON},
+		{`{"a":1} x`, errBodyNotJSON},
+		{`{"a":1},{"b":2}`, errBodyNotJSON},
+		{`{"a":1}}`, errBodyNotJSON},
+	} {
+		if got := scanPieces([]byte(c.body), func(int) int { return 1 }); got != c.want {
+			t.Errorf("%q: streamed %v, want %v", c.body, got, c.want)
+		}
+	}
+}
+
+// FuzzJSONOverrideScannerAgreesWithDecoder: on any body, fed in pieces of random sizes,
+// the streamed scanner refuses whatever the buffered check refuses (release-109: not
+// JSON included), and on a valid JSON body it finds a top-level override key exactly
+// when encoding/json does.
 func FuzzJSONOverrideScannerAgreesWithDecoder(f *testing.F) {
 	for _, body := range jsonOverrideCorpus {
-		f.Add([]byte(body), uint16(3))
+		f.Add([]byte(body), uint32(3))
 	}
-	f.Add([]byte("{\"\x84\":0}"), uint16(0)) // Go's json.Valid takes invalid UTF-8 in a string; both readers refuse it
-	f.Fuzz(func(t *testing.T, body []byte, split uint16) {
+	for _, body := range append(append([]string{}, notJSONBodies...), moreNotJSON[:len(moreNotJSON)-2]...) {
+		f.Add([]byte(body), uint32(5))
+	}
+	f.Add([]byte("{\"\x84\":0}"), uint32(0)) // Go's json.Valid takes invalid UTF-8 in a string; both readers refuse it
+	f.Fuzz(func(t *testing.T, body []byte, seed uint32) {
+		want := checkJSONBody(body)
+		r := seed | 1 // xorshift32 state: the piece sizes
+		got := scanPieces(body, func(rest int) int {
+			r ^= r << 13
+			r ^= r >> 17
+			r ^= r << 5
+			return 1 + int(r%uint32(rest))
+		})
+		if want != nil && got == nil {
+			t.Fatalf("%q (seed %d): buffered %v, scanner passes it", body, seed, want)
+		}
 		if !json.Valid(bytes.TrimPrefix(body, utf8BOM)) {
 			return
 		}
 		// Valid JSON: the same answer, the override field, nothing, or (for invalid UTF-8
-		// inside a string, which encoding/json accepts) not JSON.
-		want := checkJSONBody(body)
-		at := int(split) % (len(body) + 1)
-		s := &jsonOverrideScanner{}
-		got := s.feed(body[:at])
-		if got == nil {
-			got = s.feed(body[at:])
-		}
-		if got == nil {
-			got = s.end()
-		}
-		// The buffered check reads the UTF-8 first; the scanner may meet the field first.
-		if got != want && !(want == errBodyNotJSON && got == errOverrideField) {
-			t.Fatalf("%q split at %d: scanner %v, decoder %v", body, at, got, want)
+		// inside a string, which encoding/json accepts) not JSON. The buffered check reads
+		// the UTF-8 first; the scanner may meet the field, or a key that is not plain
+		// (hunt-security-19), first.
+		if got != want && !(want == errBodyNotJSON && (got == errOverrideField || got == errKeyNotPlain)) {
+			t.Fatalf("%q (seed %d): scanner %v, decoder %v", body, seed, got, want)
 		}
 	})
+}
+
+// BenchmarkJSONOverrideScanner times the scanner on a 64 MiB valid JSON body in the
+// transport's 32 KiB pieces: records of every kind of value, and one long string (a
+// file sent as base64, the usual reason for a raised limit). It runs on every
+// passed-through JSON body.
+func BenchmarkJSONOverrideScanner(b *testing.B) {
+	const size = 64 << 20
+	record := `{"id":12345,"name":"widget \"x\" ` + jsonEscape("00e9") + ` naïve","price":-12.5e3,"tags":["a","b",[1,2,{"k":0}]],"ok":true,"none":null},`
+	var mixed bytes.Buffer
+	mixed.WriteString(`{"items":[`)
+	for mixed.Len()+len(record)+2 < size {
+		mixed.WriteString(record)
+	}
+	mixed.Truncate(mixed.Len() - 1)
+	mixed.WriteString(`]}`)
+	str := []byte(`{"blob":"` + strings.Repeat("QUJD", (size-12)/4) + `"}`)
+	for _, c := range []struct {
+		name string
+		body []byte
+	}{{"records", mixed.Bytes()}, {"one string", str}} {
+		if !json.Valid(c.body) {
+			b.Fatalf("%s: not JSON", c.name)
+		}
+		b.Run(c.name, func(b *testing.B) {
+			b.SetBytes(int64(len(c.body)))
+			for b.Loop() {
+				if err := scanPieces(c.body, func(rest int) int { return min(rest, 32<<10) }); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 // TestBrokerDefaultTransportIgnoresProxyEnvironment (hunt-security-8): the broker's

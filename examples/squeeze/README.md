@@ -287,9 +287,10 @@ examples/squeeze/argon-scan.sh ../did-it-learn | diff - examples/squeeze/argon-s
 SQUEEZE_DID_IT_LEARN=../did-it-learn go test -run TestArgonScanTranscript ./examples/squeeze   # the same, as a test
 ```
 
-The page's section on the canary run quotes `canary-demo.txt`: the transcript of plimsoll's canary check,
-which is not part of the open-source release, on a stand-in harness of a few lines that plants the markers in
-three hiding places and records the requests it would send. The clean run passes; the reference's step time
+The page's section on the canary run quotes `canary-demo.txt`: the transcript of plimsoll's canary check
+(the Python client's `plimsoll_client.tripwire`) on a stand-in harness of a few lines that plants the markers in
+three hiding places and records the requests it would send. `examples/squeeze/canary-demo.sh | diff -
+examples/squeeze/canary-demo.txt` prints it again and compares. The clean run passes; the reference's step time
 put back into the prompt, a planted clip uploaded under its plan name, and a harness that planted nothing each
 fail. The markers are random and the check never prints one. `go test -run TestCanaryDemoTranscript
 ./examples/squeeze` checks the transcript says that.

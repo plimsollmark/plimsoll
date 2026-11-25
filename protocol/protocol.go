@@ -31,13 +31,19 @@
 // the tier and the qualification were already held to), since a reader is shown the name
 // beside the tier; an older client accepted such a record, so a daemon of this number
 // refuses it before anything runs, and an older daemon refuses this client the same way.
+// 8: every session call states the head it expects (SessionRunRequest.head, the
+// generation, the count of calls and the last record digest, in place of the generation
+// alone), and the daemon runs it only on that head; a daemon that predated it would
+// ignore the head and run a call made from stale state, which this one refuses. In the
+// same number, OpenSessionRequest.keep_no_answer asks the daemon to keep no answer, which
+// an older daemon would ignore.
 package protocol
 
 import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
-const Number uint32 = 7
+const Number uint32 = 8
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
 // another number. A client recognises the refusal by its NotDispatched detail
@@ -63,9 +69,11 @@ const NotDispatchedHeader = "Plimsoll-Not-Dispatched"
 // dispatched: StaleOwnerText (reason permission) on a run, close or attach that carries
 // a generation older than the session's, because another worker attached; and
 // CheckpointMismatchText (reason request) on an attach whose checkpoint is not the
-// session's head, because a call ran after the checkpoint was saved. Each is a constant,
-// so no refusal states a number of the session's: a stale worker learns that it is
-// stale, never what the current owner holds. The clients tell a mismatch from any other
+// session's head, because a call ran after the checkpoint was saved, and on a call whose
+// head carries the current generation but is not the session's head. Each is a constant,
+// so no refusal text states a number of the session's: a stale worker learns that it is
+// stale, never what the current owner holds. A call's head mismatch, which only the
+// current owner can get, carries the daemon's head as a SessionHeadMismatch detail. The clients tell a mismatch from any other
 // refusal by code, reason and this text; internal/wiretables writes both into the Python
 // and TypeScript clients.
 const (

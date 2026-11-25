@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -816,25 +818,78 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):
 		return nil, fmt.Errorf("%w: result digest %s, the result received digests to %s", ErrMismatch, r.ResultSHA256, ResultDigest(resp))
-	case r.Provider != resp.GetSandbox() || r.Isolation != resp.GetIsolation():
-		return nil, fmt.Errorf("%w: the record names %s at %q, the response %s at %q", ErrMismatch, r.Provider, r.Isolation, resp.GetSandbox(), resp.GetIsolation())
-	case s.evidence && r.Environment != resp.GetEnvironment():
-		return nil, fmt.Errorf("%w: record environment differs from response", ErrMismatch)
-	case s.covers("instance") && r.Instance != resp.GetInstance():
-		return nil, fmt.Errorf("%w: the record's instance %q is not the response's", ErrMismatch, r.Instance)
-	case s.covers("isolation_qualification") && r.IsolationQualification != resp.GetIsolationQualification():
-		return nil, fmt.Errorf("%w: the record's isolation qualification is not the response's", ErrMismatch)
-	case s.covers("warm") && r.Warm != resp.GetWarm():
-		return nil, fmt.Errorf("%w: the record states warm %t, the response %t", ErrMismatch, r.Warm, resp.GetWarm())
-	case s.covers("daemon_version") && r.DaemonVersion != resp.GetDaemonVersion():
-		return nil, fmt.Errorf("%w: the record's daemon version %q is not the response's %q", ErrMismatch, r.DaemonVersion, resp.GetDaemonVersion())
-	case s.evidence && (r.SoftwareIdentity != resp.GetSoftwareIdentity() || r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)):
+	}
+	if err := s.answerStates(r, resp); err != nil {
+		return nil, err
+	}
+	if s.evidence && (r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)) {
 		return nil, fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
 	}
 	if err := sandbox.CheckResultIsolation(sandbox.ParseIsolationClass(r.Isolation), minimum); err != nil {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// answerStates checks that a response states the evidence its record states, field by
+// field as the record's version covers them: the provider and tier, the environment,
+// the instance, the qualification, whether a waiting sandbox ran it, the daemon's version
+// and the software identity.
+func (s spec) answerStates(r sandbox.RunRecord, resp *plimsollv1.RunResponse) error {
+	switch {
+	case r.Provider != resp.GetSandbox() || r.Isolation != resp.GetIsolation():
+		return fmt.Errorf("%w: the record names %s at %q, the response %s at %q", ErrMismatch, r.Provider, r.Isolation, resp.GetSandbox(), resp.GetIsolation())
+	case s.evidence && r.Environment != resp.GetEnvironment():
+		return fmt.Errorf("%w: record environment differs from response", ErrMismatch)
+	case s.covers("instance") && r.Instance != resp.GetInstance():
+		return fmt.Errorf("%w: the record's instance %q is not the response's", ErrMismatch, r.Instance)
+	case s.covers("isolation_qualification") && r.IsolationQualification != resp.GetIsolationQualification():
+		return fmt.Errorf("%w: the record's isolation qualification is not the response's", ErrMismatch)
+	case s.covers("warm") && r.Warm != resp.GetWarm():
+		return fmt.Errorf("%w: the record states warm %t, the response %t", ErrMismatch, r.Warm, resp.GetWarm())
+	case s.covers("daemon_version") && r.DaemonVersion != resp.GetDaemonVersion():
+		return fmt.Errorf("%w: the record's daemon version %q is not the response's %q", ErrMismatch, r.DaemonVersion, resp.GetDaemonVersion())
+	case s.evidence && r.SoftwareIdentity != resp.GetSoftwareIdentity():
+		return fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
+	}
+	return nil
+}
+
+// CheckLostAnswer verifies the answer an attach returned for a lost call
+// (AttachSessionResponse.lost_answer) against that call's record, which the caller has
+// already checked against its checkpoint and the request digest it named: the answer
+// must carry exactly that record, which must be a live answered call's, and a result of
+// a session call's kind whose result digest is the record's, stating the evidence the
+// record states. The request itself is not at hand, only its digest, so the record's
+// request digest and software rule stand for it; the record's tier was checked against
+// the session's evidence with the record.
+func CheckLostAnswer(resp *plimsollv1.RunResponse, lost *plimsollv1.RunRecord) error {
+	if resp.GetRecord() == nil {
+		return ErrNoRecord
+	}
+	if !proto.Equal(resp.GetRecord(), lost) {
+		return fmt.Errorf("%w: the lost call's answer carries another record than the lost call's", ErrMismatch)
+	}
+	r := FromWire(lost)
+	s, err := readable(r.Version, true)
+	if err != nil {
+		return err
+	}
+	if r.Unanswered != "" {
+		return fmt.Errorf("%w: an answer came for a call whose record states it ended unanswered (%s)", ErrMismatch, r.Unanswered)
+	}
+	if err := s.statesOnly(r); err != nil {
+		return err
+	}
+	switch kind := resultKind(resp); kind {
+	case "javascript", "project", "cell":
+	default:
+		return fmt.Errorf("%w: the lost call's answer holds no result of a session call's kind", ErrMismatch)
+	}
+	if got := ResultDigest(resp); r.ResultSHA256 != got {
+		return fmt.Errorf("%w: result digest %s, the lost call's answer digests to %s", ErrMismatch, r.ResultSHA256, got)
+	}
+	return s.answerStates(r, resp)
 }
 
 // floorOf reads a request's isolation floor as the daemon does: empty is none, and

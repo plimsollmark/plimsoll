@@ -129,7 +129,7 @@ func constants() []constant {
 		{"NOT_DISPATCHED_HEADER", "The daemon's mark on an answer written before any handler ran (protocol.NotDispatchedHeader).", protocol.NotDispatchedHeader},
 		{"TRACE_ID_PATTERN", "A correlation id's grammar; the daemon drops one outside it (protocol.TraceIDPattern).", protocol.TraceIDPattern},
 		{"STALE_OWNER_TEXT", "The text of a session call, close or attach refused because another worker attached (protocol.StaleOwnerText).", protocol.StaleOwnerText},
-		{"CHECKPOINT_MISMATCH_TEXT", "The text of an attach refused because its checkpoint is not the session's head (protocol.CheckpointMismatchText).", protocol.CheckpointMismatchText},
+		{"CHECKPOINT_MISMATCH_TEXT", "The text of an attach refused because its checkpoint is not the session's head, and of a call refused because its head is not (protocol.CheckpointMismatchText).", protocol.CheckpointMismatchText},
 		{"FLOORS", "The tiers a request may state as its floor, weakest first: every tier but none.", floors},
 		{"RECORD_VERSION", "The record version a live answer carries (record.Version).", record.Version},
 		{"RECORD_FIELDS", "Each published record version's digest fields, in order (record.PublishedLayouts).", record.PublishedLayouts()},
@@ -161,7 +161,7 @@ func constants() []constant {
 		{"CHECKPOINT_VERSION", "The one version of a session checkpoint the clients write and read (client.CheckpointVersion).", client.CheckpointVersion},
 		{"DAEMON_NAME_PATTERN", "A daemon name's grammar: the application's own name for a daemon, never a URL (client.DaemonNamePattern).", client.DaemonNamePattern},
 		{"SOFTWARE_RULE_ID_PATTERN", "A software rule's ID as a checkpoint states it (client.SoftwareRuleIDPattern).", client.SoftwareRuleIDPattern},
-		{"CALL_ALREADY_SENT_TEXT", "What a client says when it refuses a repeat of a call lost across a takeover (client.CallAlreadySentText).", client.CallAlreadySentText},
+		{"RECOVERING_TEXT", "What a client says when it refuses a call on a session recovering from a call lost across a takeover (client.RecoveringText).", client.RecoveringText},
 	}
 }
 

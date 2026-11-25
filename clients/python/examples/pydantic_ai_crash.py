@@ -9,17 +9,17 @@ PydanticAI's own crash recovery leaves open: did the call that was in flight run
 3. Worker B continues the run from StepPersistence's last snapshot. Its ledger marks the tool call "started" with no
    end, which PydanticAI's own guide says to treat as unknown: "the side effect may or may not have happened".
 4. PydanticAI sends the call that was in flight again. Worker B takes the sandbox over across that call, plimsoll hands
-   it the daemon's record of the lost call (no answer: canceled after 1.5 s), does not send the repeat, and tells the
-   model what the record says.
+   it the daemon's record of the lost call (no answer: canceled after 1.5 s), and the session is recovering: the kit
+   does not send that first tool call, and tells the model what the record says.
 5. The model reads by_route.json, which the cut command wrote before the kill, and PydanticAI accepts its typed answer
    only after a check against that file.
 6. One chain of checked run records, the lost call's included, covers both workers, and the daemon's own count when
    the sandbox closes matches it.
 
-What it is not: proof that a command runs at most once. plimsoll's client refuses only an exact repeat sent as the
-first call after the takeover. Here PydanticAI's frontier resume makes the repeat that first call. If anything else is
-sent first (another command, or any file tool, which sends calls of its own before its read or write), the lost
-command can be sent again, and run a second time, with nothing said.
+What it is not: proof that a command runs at most once. After the takeover the kit sends no call until the model has
+been told of the lost call: the model's next tool call, whichever it is (here PydanticAI's frontier resume of the
+same command), is not run, and the model is told instead. Once told, the model may send the command again on purpose,
+and then it runs; whether to is the model's call, from the sandbox's files.
 
 Words used here:
 
@@ -33,7 +33,8 @@ Words used here:
   Lost call    a call whose answer never reached the worker that sent it. Its record says whether the daemon
                answered it: a result digest when the daemon answered (which does not show that the command ran to
                its end), or an unanswered code when the call ended without an answer (which does not show that the
-               command began). Either way its output is lost.
+               command began). Its output is lost unless the daemon answered and kept the answer (it keeps the last
+               answer in memory until the next call), which the takeover then returns.
   Takeover     plimsoll's session reattach: another worker of the same caller attaches the session, the daemon
                raises its ownership generation (a number a call must carry; a call with an older one is refused
                before it runs), and the first worker's later calls are refused.
@@ -56,8 +57,6 @@ Words used here:
                instructions and no cost to the tool's retry budget.
 
 Install:  pip install pydantic-ai-plimsoll pydantic-ai-harness
-          Published with plimsoll 0.28.0, after the other adapters; if pip cannot find it yet, from a
-          checkout of the repository: pip install ./clients/python ./clients/python/pydantic-ai-plimsoll pydantic-ai-harness
           _conversation_lease.py, in the same directory of the repository, must sit beside this file. Python
           3.11 or later, POSIX only (signals and file locks).
 Daemon:   a plimsolld with sessions on, the Python project image, and a token (a takeover is refused in open
@@ -94,11 +93,13 @@ count and digests this run's):
     worker B   : PydanticAI resumes the call that was in flight (call-1): python3 triage.py
     worker B   : took the sandbox over (ref plimsoll/..., ownership generation 2) across that call; plimsoll's record
                  of it, call 11: the call ended without an answer (canceled), after 1.5 s
-    worker B   : plimsoll did not send call-1 again, and told the model: "plimsoll: this exact command was already
-                 sent once in this sandbox, and the call ended without an answer after 1.5 s: the request for it was
-                 called off. Whether the command began, and how much of its work it did, is not known, and any
-                 output it gave is lost. It was not run again. Look at the sandbox's files before you decide to run
-                 it again."
+    worker B   : plimsoll did not send call-1 again, and told the model: "plimsoll: this tool call was not run.
+                 Before it, plimsoll found that the last call sent to this sandbox (sent before this agent's process
+                 took the sandbox over) never got its answer back to the agent. That call ended without an answer
+                 after 1.5 s: the request for it was called off. Whether it began, and how much of its work it did,
+                 is not known, and any output it gave is lost. Anything that call wrote to files is still in the
+                 sandbox: look there before you repeat it. Then send this tool call again if you still want it; it
+                 will be run."
     worker B   : the model read by_route.json, which the cut command had written
     worker B   : first answer refused by the output check: by_route.json says /checkout has error_rate 0.31 (57
                  errors in 184 requests, the first at 12:04), not error_rate 0.5; answer with the file's figures
@@ -114,7 +115,7 @@ How to read it. plimsoll's record says the call ended without an answer: the dae
 worker that sent it went away, and the request was canceled with it. The record does not say whether the command
 began; the sandbox's files do. triage.py's first act is a line in runs.log and its second is by_route.json, and its
 4 s pause comes after both, standing for a long job, so that the kill lands while it runs. runs.log has one line, and
-worker B's repeat was refused with nothing sent, so the script began once, in worker A, and the by_route.json the
+worker B's resumed call was not sent, so the script began once, in worker A, and the by_route.json the
 model read is that run's. The answer is checked against that file by PydanticAI's output validator, which reads it
 through the run's workspace; the scripted model answers wrong once, on purpose, to show the check.
 
@@ -123,9 +124,10 @@ and its tests, not printed by this run):
 
 - Before the request reached the sandbox: the daemon is still at the stored checkpoint, so the takeover finds no
   lost call, the repeat is sent and runs once, in worker B, and the model gets its output.
-- After the sandbox answered, with the answer lost on the way back: the record carries a result digest, and the model
-  is told "The sandbox answered the call after ... s, but the answer is lost, so whether the command ran to its end,
-  and whether it succeeded, is not known. It was not run again."
+- After the sandbox answered, with the answer lost on the way back: the record carries a result digest, the daemon
+  kept the answer, and the model is told "The sandbox answered that call after ... s, and kept its answer, which
+  follows", with the command's exit code and output (cut to the kit's output limit). A session opened to keep no
+  answer gets "but the answer is lost, so whether it ran to its end, and whether it succeeded, is not known".
 
 The returning worker (--freeze). Worker A stops itself with SIGSTOP between two calls, after triage.py ran and its
 output came back; the supervisor moves the lease; worker B takes the sandbox over with no call lost and answers. Then
@@ -153,19 +155,20 @@ sanitize_messages, which strips refs).
 
 Limits, plainly:
 
-- The refusal covers one case: the same call, sent as the first call after the takeover. With StepPersistence's
-  default snapshot (the last complete one) the model is asked again from before the command, and if it runs anything
-  else first, the lost command can run a second time. No file tool is covered at all.
+- The model is told once, on its first tool call after the takeover, whichever it is; a command it sends after that
+  runs, the lost one included. With StepPersistence's default snapshot (the last complete one) the model is asked
+  again from before the command, so its first tool call may be another; it is told all the same.
 - What plimsoll knows about the lost call is what its record says: whether the daemon answered it, and the two times
-  the daemon put on the call. Not how the command exited, and not its output. That docker stopped the command where
-  it was is measured on docker only, so the sentence the model gets does not claim it.
+  the daemon put on the call, and its output when the daemon answered and kept the answer. A call that ended without
+  an answer has no output to keep. That docker stopped the command where it was is measured on docker only, so the
+  sentence the model gets does not claim it.
 - The kill is a 1.5 s timer. On a slow machine it could land before the request reaches the sandbox; the run then
   shows the first of the two other moments above, and its receipt names no lost call.
 - Two plain processes and a supervisor, not Temporal, DBOS or Prefect: the kit refuses durable execution today,
   since no engine's own test runs against it.
 - Sessions exist on docker (with a project image), E2B and OpenShell. A takeover needs an authenticated caller and the
-  client's daemon_name equal to the capability's daemon. It does not survive a daemon restart, recover a lost call's
-  output, extend the session's lifetime (30 minutes by default) or move a session between daemons.
+  client's daemon_name equal to the capability's daemon. It does not survive a daemon restart, recover the output of a
+  lost call that ended without an answer, extend the session's lifetime (30 minutes by default) or move a session between daemons.
 - PydanticAI's Coder and Shell do not work on this workspace; commands go through plimsoll_shell (BusyBox sh).
 - The tier is the daemon's configuration and provider evidence plus a startup check, not attestation.
 
@@ -348,7 +351,7 @@ class Narrator(AbstractCapability[Any]):
     freeze_at: int = 0
     requests: int = field(default=0, init=False)
     announced: bool = field(default=False, init=False)
-    refused: bool = field(default=False, init=False)  # this worker's shell command was refused as a repeat
+    refused: bool = field(default=False, init=False)  # this worker's shell command was not sent: the model was told of the lost call
     ran_shell: bool = field(default=False, init=False)  # this worker's shell command ran and answered
     executed: Set[str] = field(default_factory=set, init=False)  # the tool call IDs this worker executed
 
@@ -394,8 +397,8 @@ class Narrator(AbstractCapability[Any]):
         if self.who == "worker B" and self.ran_shell:
             return "triage.py wrote when worker B ran it"
         if self.refused:
-            lost = getattr(getattr(getattr(ctx.workspace, "backend", None), "session", None), "lost_call", None)
-            if lost is not None and lost.unanswered:
+            lost = getattr(getattr(ctx.workspace, "backend", None), "resolved_lost_call", None)
+            if lost is not None and lost.record is not None and lost.record.unanswered:
                 return "the cut command had written"
             return "worker A's command wrote before its answer was lost"
         return "worker A's triage.py wrote"
@@ -411,12 +414,20 @@ class Narrator(AbstractCapability[Any]):
             generation = session.checkpoint().generation
         except Exception:  # the takeover's generation is narration only
             generation = "?"
-        lost = session.lost_call
+        # The lost call the backend told the model of and resolved (the session's own lost_call is None by then), or
+        # the one the session is still recovering from.
+        call = backend.resolved_lost_call or session.lost_call
+        lost = call.record if call is not None else None
         if lost is None:
             say(self.who, f"took the sandbox over (ref {ref.id[:22]}..., ownership generation {generation}); no call was lost")
             return
         took = (lost.ended_unix_ms - lost.started_unix_ms) / 1000
-        kind = f"the call ended without an answer ({lost.unanswered})" if lost.unanswered else "the sandbox answered it, and the answer is lost"
+        if lost.unanswered:
+            kind = f"the call ended without an answer ({lost.unanswered})"
+        elif call is not None and call.answer is not None:
+            kind = "the sandbox answered it, and its kept answer came back with the takeover"
+        else:
+            kind = "the sandbox answered it, and the answer is lost"
         say(self.who, f"took the sandbox over (ref {ref.id[:22]}..., ownership generation {generation}) across that call; "
                       f"plimsoll's record of it, call {lost.sequence}: {kind}, after {took:.1f} s")
 
@@ -516,7 +527,8 @@ async def worker_b(state: str, mode: str, model_name: Optional[str]) -> int:
             say(who, "report.md is in the sandbox: worker A wrote it")
             return 1
         say(who, "report.md is not in the sandbox; closing it")
-    lost = backend.session.lost_call  # the record the takeover returned, which the client checked, or None
+    told = backend.resolved_lost_call  # the lost call the takeover returned, which the client checked, or None
+    lost = told.record if told is not None else None
     summary = workspace.destroy(ref)  # the client compares the daemon's count and last digest with its own chain
     assert summary is not None
     with open(os.path.join(state, "close.json"), "w", encoding="utf-8") as f:

@@ -5,11 +5,14 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +42,8 @@ const (
 	fakeTmpl   = "plimsoll-run"
 	fakeAPIKey = "api-token"
 	fakeNode   = "node-1"
+	// fakeTrustDomain is the trust domain of every fake pod's identity.
+	fakeTrustDomain = "plimsoll.test"
 	// fakeBoot is the boot ID every fake guest reports, fakeNodeBoot its node's.
 	fakeBoot     = "8d3ee747-814b-4758-9f9f-9a4511c052d9"
 	fakeNodeBoot = "0f7463ef-d5fc-4a93-9ac0-3056015fe7d3"
@@ -80,8 +85,59 @@ type fakeAPI struct {
 	// neverReady keeps every claim unready.
 	neverReady bool
 	// ips is each claim's pod address, a fresh one per claim as a cluster gives each pod
-	// its own; every address dials the one fake sandboxd (testProviderWith).
-	ips map[string]string
+	// its own, or ipFor's when it is set (an address passed from a deleted pod to the next);
+	// each address has a front of its own before the one fake sandboxd (testProviderWith).
+	ips   map[string]string
+	ipFor func(n int) string
+	// podUID, when set, is the UID the API gives the pod of a claim (default
+	// "pod-uid-" and the claim's name).
+	podUID func(claim string) string
+}
+
+// uidOf is the UID of the pod of claim, as the fake API reports it. Called with f.mu held.
+func (f *fakeAPI) uidOf(claim string) string {
+	if f.podUID != nil {
+		return f.podUID(claim)
+	}
+	return "pod-uid-" + claim
+}
+
+// podAt is the pod the cluster has at ip: the last claim given that address, with its
+// pod's name and UID.
+func (f *fakeAPI) podAt(ip string) (name, uid string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.created) - 1; i >= 0; i-- {
+		if c := f.created[i].Meta.Name; f.ips[c] == ip {
+			return "sb-" + c, f.uidOf(c), true
+		}
+	}
+	return "", "", false
+}
+
+// keyAttributes are the key volume's attributes every fake template and pod set: the
+// closed list as measured on the driver (2026-11-24).
+func keyAttributes() map[string]string {
+	return map[string]string{
+		keyAttr + "issuer-name":   "plimsoll-ca",
+		keyAttr + "issuer-kind":   "Issuer",
+		keyAttr + "dns-names":     DefaultServerName,
+		keyAttr + "uri-sans":      "spiffe://" + fakeTrustDomain + "/ns/${POD_NAMESPACE}/pod/${POD_NAME}/${POD_UID}",
+		keyAttr + "key-algorithm": "ECDSA",
+		keyAttr + "key-size":      "256",
+		keyAttr + "key-encoding":  "PKCS8",
+		keyAttr + "key-usages":    "server auth,digital signature",
+		keyAttr + "duration":      "720h",
+	}
+}
+
+// keySource is the key volume's CSI source with attrs.
+func keySource(attrs map[string]string) json.RawMessage {
+	raw, err := json.Marshal(map[string]any{"driver": keyDriver, "readOnly": true, "volumeAttributes": attrs})
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 func goodSpec(digest string) podSpec {
@@ -104,7 +160,7 @@ func goodSpec(digest string) podSpec {
 			}{Limits: map[string]string{"memory": "256Mi", "cpu": "1"}},
 		}},
 		Volumes: []volume{{"name": json.RawMessage(`"work"`), "emptyDir": json.RawMessage(`{"medium":"Memory","sizeLimit":"128Mi"}`)},
-			{"name": json.RawMessage(`"sandboxd-tls"`), "secret": json.RawMessage(`{"secretName":"plimsoll-sandboxd-tls","defaultMode":256}`)}},
+			{"name": json.RawMessage(`"sandboxd-tls"`), "csi": keySource(keyAttributes())}},
 	}
 }
 
@@ -220,6 +276,9 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.n++
 		c.Meta.UID = fmt.Sprintf("claim-uid-%d", f.n)
 		f.ips[c.Meta.Name] = fmt.Sprintf("10.244.%d.%d", f.n/200, 10+f.n%200)
+		if f.ipFor != nil {
+			f.ips[c.Meta.Name] = f.ipFor(f.n)
+		}
 		now := time.Now().Truncate(time.Second)
 		if f.createdAt != nil {
 			now = f.createdAt()
@@ -284,7 +343,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		ctl := true
 		// The API server gives every pod a UID; the fake derives one from the claim's name.
-		pd := pod{Meta: objectMeta{Name: "sb-" + name, UID: "pod-uid-" + name, Labels: map[string]string{"agents.x-k8s.io/sandbox-template-ref-hash": fakeHash},
+		pd := pod{Meta: objectMeta{Name: "sb-" + name, UID: f.uidOf(name), Labels: map[string]string{"agents.x-k8s.io/sandbox-template-ref-hash": fakeHash},
 			OwnerReferences: []ownerReference{{Kind: "Sandbox", Name: "sb-" + name, UID: "sandbox-uid-" + name, Controller: &ctl}}},
 			Spec: goodSpec(digestOf(fakeToken))}
 		pd.Spec.NodeName = fakeNode
@@ -313,8 +372,15 @@ func digestOf(s string) string {
 // given the command and its stdin once the client has closed it.
 type fakeSandboxd struct {
 	processv1connect.UnimplementedProcessServiceHandler
-	t   *testing.T
-	srv *httptest.Server
+	t *testing.T
+	// backend is the process service in cleartext HTTP/2, as sandboxd serves on loopback;
+	// every pod's address is a fakeFront of its own in front of it, as each pod's
+	// terminator is in front of its own sandboxd.
+	backend *httptest.Server
+	// certAt is the certificate the front at a pod's address serves, read at each
+	// handshake (a pod's address can pass to another pod); protos its ALPN protocols.
+	certAt func(ip string) (*tls.Certificate, error)
+	protos []string
 
 	mu     sync.Mutex
 	starts [][]string
@@ -344,38 +410,141 @@ type fakeSandboxd struct {
 	// is the last boundary script's list of connection attempts beyond the fixed ones.
 	dialed  []string
 	targets []string
+	// fronts are the pods' terminators by address; via names the front each backend
+	// connection came through, by the connection's address.
+	fronts map[string]*fakeFront
+	via    map[string]string
+	// served is, for every process start, the URI the certificate of its connection
+	// named; viaIdentity holds it by backend connection.
+	served      []string
+	viaIdentity map[string]string
 }
 
-// newFakeSandboxdWith serves the fake over TLS with cert, as a pod's terminator serves
-// sandboxd: HTTP/2 unless protos names other ALPN protocols. reached counts every request
-// that got past the handshake.
-func newFakeSandboxdWith(t *testing.T, cert tls.Certificate, protos ...string) *fakeSandboxd {
+// fakeFront stands in for one pod's TLS terminator: it completes a TLS 1.3 handshake with
+// the certificate the pod at its address holds, requires h2, and only then copies the
+// decrypted bytes to the process service. handshakes counts completed handshakes, bytes
+// the bytes it copied towards the process service, open its connections still copying.
+type fakeFront struct {
+	ip                      string
+	ln                      net.Listener
+	handshakes, bytes, open atomic.Int64
+}
+
+// countingReader counts what it reads.
+type countingReader struct {
+	r io.Reader
+	n *atomic.Int64
+}
+
+func (c countingReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	c.n.Add(int64(n))
+	return n, err
+}
+
+// front is the terminator at ip, started the first time it is asked for.
+func (f *fakeSandboxd) front(ip string) *fakeFront {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fr, ok := f.fronts[ip]; ok {
+		return fr
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	fr := &fakeFront{ip: ip, ln: ln}
+	f.fronts[ip] = fr
+	f.t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			raw, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go f.terminate(fr, raw)
+		}
+	}()
+	return fr
+}
+
+// terminate is one connection through a front, as docker/sandboxdtls handles one.
+func (f *fakeSandboxd) terminate(fr *fakeFront, raw net.Conn) {
+	defer raw.Close()
+	identity := ""
+	c := tls.Server(raw, &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: f.protos,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := f.certAt(fr.ip)
+			if err == nil && len(cert.Certificate) > 0 {
+				if leaf, perr := x509.ParseCertificate(cert.Certificate[0]); perr == nil && len(leaf.URIs) > 0 {
+					identity = leaf.URIs[0].String()
+				}
+			}
+			return cert, err
+		}})
+	_ = raw.SetDeadline(time.Now().Add(10 * time.Second))
+	if err := c.Handshake(); err != nil {
+		return
+	}
+	fr.handshakes.Add(1)
+	if c.ConnectionState().NegotiatedProtocol != "h2" {
+		return
+	}
+	_ = raw.SetDeadline(time.Time{})
+	b, err := net.Dial("tcp", f.backend.Listener.Addr().String())
+	if err != nil {
+		return
+	}
+	defer b.Close()
+	f.mu.Lock()
+	f.via[b.LocalAddr().String()] = fr.ip
+	f.viaIdentity[b.LocalAddr().String()] = identity
+	f.mu.Unlock()
+	fr.open.Add(1)
+	defer fr.open.Add(-1)
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(b, countingReader{c, &fr.bytes}); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(c, b); done <- struct{}{} }()
+	<-done
+	_ = c.Close()
+	_ = b.Close()
+	<-done
+}
+
+// newFakeSandboxdWith serves the fake behind a TLS front per pod address, as each pod's
+// terminator serves its sandboxd: every front serves cert when it is set (testProviderWith
+// sets certAt to each pod's own instead), HTTP/2 unless protos names other ALPN
+// protocols. reached counts every request that got past a handshake.
+func newFakeSandboxdWith(t *testing.T, cert *tls.Certificate, protos ...string) *fakeSandboxd {
 	f := &fakeSandboxd{t: t, stdin: map[int32]chan []byte{}, bufs: map[int32][]byte{}, cancelled: make(chan struct{}),
-		mountAnswer: strings.Join(kataMounts, "\n") + "\n",
-		tierAnswer:  "kernel [   0.000000] Starting gVisor...\nboot " + fakeBoot + "\nSeccomp:\t2\n"}
+		mountAnswer: strings.Join(kataMounts, "\n") + "\n", fronts: map[string]*fakeFront{}, via: map[string]string{}, viaIdentity: map[string]string{},
+		tierAnswer: "kernel [   0.000000] Starting gVisor...\nboot " + fakeBoot + "\nSeccomp:\t2\n"}
+	f.certAt = func(string) (*tls.Certificate, error) {
+		if cert == nil {
+			return nil, errors.New("no certificate")
+		}
+		return cert, nil
+	}
 	mux := http.NewServeMux()
 	mux.Handle(processv1connect.NewProcessServiceHandler(f))
-	f.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	f.backend = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.reached.Add(1)
 		mux.ServeHTTP(w, r)
 	}))
+	var cleartext http.Protocols
+	cleartext.SetUnencryptedHTTP2(true)
+	f.backend.Config.Protocols = &cleartext
+	f.backend.Start()
+	t.Cleanup(f.backend.Close)
 	if len(protos) == 0 {
 		protos = []string{"h2"}
 	}
-	f.srv.EnableHTTP2 = protos[0] == "h2"
-	f.srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: protos, MinVersion: tls.VersionTLS13}
-	f.srv.StartTLS()
-	t.Cleanup(f.srv.Close)
+	f.protos = protos
 	return f
 }
 
-// addr is where a pod's terminator would be: every pod IP dials it, and each is recorded.
-func (f *fakeSandboxd) addr(ip string) string {
-	f.mu.Lock()
-	f.dialed = append(f.dialed, ip)
-	f.mu.Unlock()
-	return f.srv.Listener.Addr().String()
-}
+// addr is where the pod at ip's terminator is: a front of its own.
+func (f *fakeSandboxd) addr(ip string) string { return f.front(ip).ln.Addr().String() }
 
 // boundaryTargets is the boundary script's list of extra connection targets, from its
 // source as the provider sent it on stdin.
@@ -383,6 +552,8 @@ var boundaryTargets = regexp.MustCompile(`const extra = (\[.*?\]), fills = `)
 
 func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1.StartRequest], stream *connect.ServerStream[processv1.StartResponse]) error {
 	f.mu.Lock()
+	f.dialed = append(f.dialed, f.via[req.Peer().Addr])
+	f.served = append(f.served, f.viaIdentity[req.Peer().Addr])
 	checking := slices.Equal(req.Msg.GetConfig().GetCommand(), tierCheck)
 	if checking {
 		f.tierChecks++
@@ -501,7 +672,7 @@ func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *f
 	// Every fake pod's sandboxd is served over TLS with a certificate from a CA made for
 	// this test, and the provider reaches it through its real pinned channel.
 	pki := newTestPKI(t)
-	api, sd := newFakeAPI(t), newFakeSandboxdWith(t, pki.serverCert(t, DefaultServerName))
+	api, sd := newFakeAPI(t), newFakeSandboxdWith(t, nil)
 	dir := t.TempDir()
 	ca := filepath.Join(dir, "ca.crt")
 	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.srv.Certificate().Raw}), 0o600); err != nil {
@@ -512,9 +683,20 @@ func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *f
 		t.Fatal(err)
 	}
 	cfg := Config{APIServer: api.srv.URL, CAFile: ca, TokenFile: tok, Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: pki.caFile(t)}
+		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken, SandboxdCAFile: pki.caFile(t),
+		SandboxdTrustDomain: fakeTrustDomain}
 	if edit != nil {
 		edit(&cfg)
+	}
+	// Each pod's front serves the certificate the issuer signed for the pod the cluster has
+	// at that address now: the configured name and that pod's identity.
+	sd.certAt = func(ip string) (*tls.Certificate, error) {
+		name, uid, ok := api.podAt(ip)
+		if !ok {
+			return nil, fmt.Errorf("no pod at %s", ip)
+		}
+		cert := pki.podCert(t, cfg.serverName(), podIdentity(cfg.SandboxdTrustDomain, cfg.Namespace, name, uid))
+		return &cert, nil
 	}
 	p, err := New(cfg)
 	if err != nil {

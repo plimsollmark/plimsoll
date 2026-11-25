@@ -20,8 +20,10 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-// CheckpointVersion is the one version of Checkpoint this client writes and reads.
-const CheckpointVersion = 1
+// CheckpointVersion is the one version of Checkpoint this client writes and reads. 2: the
+// note of a lost call became the recovering state (recovering_request_sha256 in place of
+// lost_call_sha256), which refuses every call until it is resolved, not only a repeat.
+const CheckpointVersion = 2
 
 // DaemonNamePattern is the grammar of a daemon's name (WithDaemonName): the application's
 // own short name for the daemon, never a URL, so a checkpoint read back from a store can
@@ -75,12 +77,14 @@ type Checkpoint struct {
 	OpenRule      string `json:"open_rule"`
 	ExpiresUnixMs int64  `json:"expires_unix_ms"`
 	IdleTimeoutMs uint32 `json:"idle_timeout_ms"`
-	// LostCallSHA256 is the request digest of a call that was sent once with no answer
-	// reaching any worker (an attach explained the gap it left), which the session's next
-	// call is refused for repeating (ErrCallAlreadySent); "" for none. A checkpoint carries
-	// it until that next call, unless the daemon refused that call with the not-dispatched
-	// mark: nothing ran, so the call after it is still the next.
-	LostCallSHA256 string `json:"lost_call_sha256"`
+	// RecoveringRequestSHA256 is the request digest of the lost call the session was
+	// recovering from when the checkpoint was saved (Session.LostCall), "" when it was not
+	// recovering. A session attached from such a checkpoint is recovering too: every call
+	// is refused before it is sent (ErrRecovering) until ResolveLostCall. It knows the lost
+	// call by this digest alone; the record and the answer stayed with the worker that
+	// attached across the gap. The head (Calls, LastRecordSHA256) already counts the lost
+	// call.
+	RecoveringRequestSHA256 string `json:"recovering_request_sha256"`
 }
 
 // AttachOptions is what an attach may name beyond its checkpoint.
@@ -89,10 +93,11 @@ type AttachOptions struct {
 	// after the checkpoint with no answer reaching it (Session.LostRequestSHA256 gives it
 	// for a call of this process), or "" for none. With it, the daemon takes the session
 	// over from a checkpoint exactly one call behind its head when its last record is that
-	// call, following the checkpoint (the explained gap), and returns the record, which
-	// AttachSession checks again before carrying the chain on; the attached session then
-	// refuses its first call if it repeats that call. Any other gap stays
-	// ErrCheckpointMismatch, and ownership does not move.
+	// call, following the checkpoint (the explained gap), and returns the record, and the
+	// call's answer when it still keeps it, which AttachSession checks before carrying the
+	// chain on; the attached session is then recovering (Session.LostCall) and refuses
+	// every call until ResolveLostCall. Any other gap stays ErrCheckpointMismatch, and
+	// ownership does not move.
 	LostRequestSHA256 string
 }
 
@@ -117,21 +122,6 @@ var ErrStaleOwner = errors.New("client: another worker owns this session")
 // session's head: a call ran after the checkpoint was saved, its answer perhaps lost.
 // Nothing ran, and ownership did not move.
 var ErrCheckpointMismatch = errors.New("client: the checkpoint is not the session's head")
-
-// CallAlreadySentText is what every official client says when it refuses a repeat of a
-// lost call (ErrCallAlreadySent here; the Python and TypeScript clients' CallAlreadySentError,
-// whose copies internal/wiretables writes). It says what the client knows: the call was
-// sent once and no answer reached a worker. The lost call's record says whether the
-// daemon answered it (Session.LostCall): a result digest when the daemon answered, which
-// does not show that the call ran to its end, an unanswered code when it ended without an
-// answer and may have done none, part or all of its work.
-const CallAlreadySentText = "this call was already sent once in the session, and its answer was lost"
-
-// ErrCallAlreadySent refuses, before anything is sent, the first call of a session taken
-// over across an explained gap when it repeats the lost call: that call was already sent
-// once and its answer was lost, so this is a retry of it. It is never a retry signal. Only
-// the first call is checked.
-var ErrCallAlreadySent = errors.New("client: " + CallAlreadySentText)
 
 // Validate reports whether c is a checkpoint this client can attach with, wrapping
 // ErrInvalidCheckpoint when it is not.
@@ -164,8 +154,8 @@ func (c Checkpoint) Validate() error {
 		return bad("the open rule is not a software rule's ID")
 	case c.ExpiresUnixMs <= 0:
 		return bad("the expiry is not a positive time")
-	case c.LostCallSHA256 != "" && (!validDigest(c.LostCallSHA256) || c.Calls == 0):
-		return bad("the lost call is not a request digest of a call the session ran")
+	case c.RecoveringRequestSHA256 != "" && (!validDigest(c.RecoveringRequestSHA256) || c.Calls == 0):
+		return bad("the lost call it recovers from is not a request digest of a call the session ran")
 	}
 	return nil
 }
@@ -191,7 +181,7 @@ func validDigest(s string) bool {
 
 // checkpointKeys is every key of the JSON form, each required.
 var checkpointKeys = []string{"version", "daemon", "session", "generation", "calls", "last_record_sha256", "provider", "isolation",
-	"isolation_qualification", "software_identity", "open_floor", "open_rule", "expires_unix_ms", "idle_timeout_ms", "lost_call_sha256"}
+	"isolation_qualification", "software_identity", "open_floor", "open_rule", "expires_unix_ms", "idle_timeout_ms", "recovering_request_sha256"}
 
 // ParseCheckpoint reads a checkpoint's JSON form and validates it: one object holding every
 // key and no other, nothing after it. Its errors wrap ErrInvalidCheckpoint.
@@ -233,7 +223,9 @@ func ParseCheckpoint(data []byte) (Checkpoint, error) {
 // Checkpoint returns the session's checkpoint, for the application to save where only it
 // can write. It refuses (ErrNoCheckpoint) when the client has no daemon name
 // (WithDaemonName) and when the session is stopped, closed or ended. It waits for a call
-// in flight, so the head it states follows that call.
+// in flight, so the head it states follows that call. A session recovering from a lost
+// call saves that state (RecoveringRequestSHA256), so the worker that attaches from it is
+// recovering too.
 func (s *Session) Checkpoint() (Checkpoint, error) {
 	if s.r.daemonName == "" {
 		return Checkpoint{}, fmt.Errorf("%w: the client has no daemon name (WithDaemonName)", ErrNoCheckpoint)
@@ -249,13 +241,17 @@ func (s *Session) Checkpoint() (Checkpoint, error) {
 	if err := s.Ended(); err != nil {
 		return Checkpoint{}, fmt.Errorf("%w: %w", ErrNoCheckpoint, err)
 	}
+	recovering := ""
+	if lc := s.LostCall(); lc != nil {
+		recovering = lc.RequestSHA256
+	}
 	return Checkpoint{
 		Version: CheckpointVersion, Daemon: s.r.daemonName, Session: s.fingerprint,
 		Generation: s.generation, Calls: s.calls, LastRecordSHA256: s.last,
 		Provider: s.provider, Isolation: s.isolation.String(), IsolationQualification: s.qualification, SoftwareIdentity: s.identity,
 		OpenFloor: minimumIsolationWire(s.openFloor), OpenRule: s.software.ID(),
 		ExpiresUnixMs: s.expires.UnixMilli(), IdleTimeoutMs: uint32(s.idle / time.Millisecond),
-		LostCallSHA256: s.lostCall,
+		RecoveringRequestSHA256: recovering,
 	}, nil
 }
 
@@ -278,8 +274,14 @@ func (s *Session) Checkpoint() (Checkpoint, error) {
 // With opts.LostRequestSHA256, the answer may instead carry the lost call's record and a
 // head one call past cp's; that record must check on its own, be the call opts named, at
 // cp's next place in the chain, stating the evidence the session stated at open, and be
-// the new head (Session.LostCall returns it). A lost call's record the attach did not
-// name is refused the same way.
+// the new head. Beside it the answer may carry the lost call's answer, which must carry
+// that same record and a result whose digest is the record's. A lost call's record the
+// attach did not name, and a lost answer with no lost record, are refused the same way.
+// A session attached across a lost call, or from a checkpoint saved while recovering,
+// is recovering: Session.LostCall returns what it knows of the lost call, and every call
+// is refused before it is sent until Session.ResolveLostCall. The lost call's record says
+// whether the daemon answered it: a result digest when it did, an unanswered code when the
+// call ended without an answer.
 //
 // A transport failure or a canceled attach comes back as it is and is never retried: the
 // daemon may have raised the generation, so cp may already be stale.
@@ -322,17 +324,27 @@ func (r *Remote) AttachSession(ctx context.Context, cp Checkpoint, opts AttachOp
 func (r *Remote) attached(cp Checkpoint, lost string, m *plimsollv1.AttachSessionResponse) (*Session, error) {
 	info, head := m.GetSessionInfo(), m.GetCheckpoint()
 	rule := softwarewire.FromWire(info.GetSoftwareRule())
-	var lostCall *sandbox.RunRecord
+	var recovering *LostCall
+	if cp.RecoveringRequestSHA256 != "" {
+		recovering = &LostCall{RequestSHA256: cp.RecoveringRequestSHA256}
+	}
+	if m.GetLostAnswer() != nil && m.GetLostRecord() == nil {
+		return nil, errors.New("carries a lost call's answer without the lost call's record")
+	}
+	calls, last := cp.Calls, cp.LastRecordSHA256
 	if m.GetLostRecord() != nil {
 		lr, err := lostRecord(cp, lost, m.GetLostRecord())
 		if err != nil {
 			return nil, err
 		}
-		lostCall = lr
-	}
-	calls, last, note := cp.Calls, cp.LastRecordSHA256, cp.LostCallSHA256
-	if lostCall != nil {
-		calls, last, note = lostCall.Sequence, lostCall.SHA256, lostCall.RequestSHA256
+		recovering = &LostCall{RequestSHA256: lr.RequestSHA256, Record: lr}
+		if a := m.GetLostAnswer(); a != nil {
+			if err := record.CheckLostAnswer(a, m.GetLostRecord()); err != nil {
+				return nil, fmt.Errorf("carries a lost call's answer that does not check against its record: %w", err)
+			}
+			recovering.Answer = a
+		}
+		calls, last = lr.Sequence, lr.SHA256
 	}
 	switch {
 	case info == nil || head == nil:
@@ -371,8 +383,7 @@ func (r *Remote) attached(cp Checkpoint, lost string, m *plimsollv1.AttachSessio
 		idle:          time.Duration(info.GetIdleTimeoutMs()) * time.Millisecond,
 		calls:         calls,
 		last:          last,
-		lostCall:      note,
-		lostRecord:    lostCall,
+		recovering:    recovering,
 	}, nil
 }
 

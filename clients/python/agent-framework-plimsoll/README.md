@@ -34,10 +34,13 @@ from agent_framework_plimsoll import Client, PlimsollShellTool
 
 async with PlimsollShellTool(Client("https://plimsoll.internal:8746", token=TOKEN),
                              minimum_isolation="kernel") as shell:
-    agent = create_harness_agent(chat_client, shell_executor=shell)
+    agent = create_harness_agent(chat_client, shell_executor=shell, disable_file_memory=True)
     session = agent.create_session()
     print(await agent.run("Count the lines in every .py file here.", session=session))
 ```
+
+`disable_file_memory=True` is there because the harness otherwise keeps a file memory in `./agent-file-memory/` on
+the machine the agent runs on, outside the sandbox; drop it if you want that memory.
 
 The tool is Agent Framework's shell executor (`start`, `run`, `close`, `as_function`), so the harness gives it to the
 model as its `run_shell` tool and its environment provider runs a few commands through it to tell the model what shell it

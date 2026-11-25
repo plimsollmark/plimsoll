@@ -880,6 +880,45 @@
       "why": "not one of the closed set of codes"
     },
     {
+      "name": "a version 3 record of an answered call",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 3
+      },
+      "sha256": "53112d8f2165989b5fe20438fbbb7f678c1a2c112c3cd93e1c4c0c8f6257943b",
+      "why": "version 3 records only unanswered calls"
+    },
+    {
+      "name": "a version 2 record of an unanswered call",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 2,
+        "unanswered": "unavailable"
+      },
+      "sha256": "da5f29395a13797a970f7be1e4587ccd389308cd8a6e5a24d96e879418db3ae0",
+      "why": "version 2 records only answered calls"
+    },
+    {
       "name": "a version 1 record that ends 1.3 s before it starts",
       "record": {
         "version": 1,
@@ -982,6 +1021,96 @@
         "endedUnixMs": "1790000000812"
       },
       "why": "the daemon version is a JSON string"
+    },
+    {
+      "name": "a start time with a second number after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000 1",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a comma after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000,",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a zero byte after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000\u0000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a version with a second number after it",
+      "record": {
+        "version": "5 6",
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a decimal point",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000.0",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with an exponent",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "179e10",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
     }
   ],
   "qualifications": [

@@ -67,12 +67,12 @@ func testSessionSoftwareRuleCannotBeDropped(t *testing.T, mode string) {
 		t.Fatalf("open: %+v, %v", opened, err)
 	}
 	call := callReq(opened.Msg.GetSessionId(), "1")
-	_, err = svc.SessionRun(ctx, call)
+	_, err = headRun(svc, ctx, call)
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("rule omitted from a call: %v", err)
 	}
 	call.Msg.SoftwareRule = openRequest.Msg.SoftwareRule
-	response, err := svc.SessionRun(ctx, call)
+	response, err := headRun(svc, ctx, call)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func openReq() *connect.Request[plimsollv1.OpenSessionRequest] {
 }
 
 func callReq(id, code string) *connect.Request[plimsollv1.SessionRunRequest] {
-	return connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id,
+	return connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id,
 		Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}})
 }
 
@@ -155,7 +155,7 @@ func closeReq(id string) *connect.Request[plimsollv1.CloseSessionRequest] {
 // closing it as unclaimed, and spends no rate, slot or idle time.
 func claimSession(t *testing.T, svc *SandboxService, ctx context.Context, id string) {
 	t.Helper()
-	_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id}))
+	_, err := headRun(svc, ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id}))
 	if _, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeInvalidArgument || !marked {
 		t.Fatalf("a call with no payload: %v; want InvalidArgument, not dispatched", err)
 	}
@@ -178,7 +178,7 @@ func TestSessionCallsChainTheirRecords(t *testing.T) {
 	prev := ""
 	for i := uint64(1); i <= 3; i++ {
 		req := callReq(id, "console.log(1)")
-		resp, err := svc.SessionRun(ctx, req)
+		resp, err := headRun(svc, ctx, req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -195,7 +195,7 @@ func TestSessionCallsChainTheirRecords(t *testing.T) {
 	if closed.Msg.GetCalls() != 3 || closed.Msg.GetLastRecordSha256() != prev || closed.Msg.GetEnded() != plimsollv1.SessionEnd_SESSION_END_CLOSED {
 		t.Fatalf("close: %+v", closed.Msg)
 	}
-	if _, err := svc.SessionRun(ctx, callReq(id, "1")); connect.CodeOf(err) != connect.CodeNotFound {
+	if _, err := headRun(svc, ctx, callReq(id, "1")); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("a call after close: %v", err)
 	}
 }
@@ -207,15 +207,15 @@ func TestSessionBelongsToItsPrincipal(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	_, foreign := svc.SessionRun(authenticatedContext("bob"), callReq(id, "1"))
-	_, unknown := svc.SessionRun(authenticatedContext("bob"), callReq(strings.Repeat("0", 32), "1"))
+	_, foreign := headRun(svc, authenticatedContext("bob"), callReq(id, "1"))
+	_, unknown := headRun(svc, authenticatedContext("bob"), callReq(strings.Repeat("0", 32), "1"))
 	if connect.CodeOf(foreign) != connect.CodeNotFound || foreign.Error() != unknown.Error() {
 		t.Fatalf("another principal's ID and an unknown ID must be the same miss: %v / %v", foreign, unknown)
 	}
 	if _, err := svc.CloseSession(authenticatedContext("bob"), closeReq(id)); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("another principal closed the session: %v", err)
 	}
-	if _, err := svc.SessionRun(authenticatedContext("alice"), callReq(id, "1")); err != nil {
+	if _, err := headRun(svc, authenticatedContext("alice"), callReq(id, "1")); err != nil {
 		t.Fatalf("the owner's call: %v", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestASessionCallRefusedAsItEndsArrivesMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	_, err = headRun(svc, ctx, callReq(id, "1"))
 	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeFailedPrecondition || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT {
 		t.Fatalf("the refused call: %v (reason %v, marked %v); want FailedPrecondition, not dispatched, environment", err, reason, marked)
 	}
@@ -285,11 +285,11 @@ func TestAnEndedSessionRefusesWithItsReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	if _, err := svc.SessionRun(ctx, callReq(id, "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(id, "1")); err != nil {
 		t.Fatal(err)
 	}
 	p.Opened()[0].End(sandbox.SessionExpired)
-	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	_, err = headRun(svc, ctx, callReq(id, "1"))
 	var ce *connect.Error
 	if !errors.As(err, &ce) || ce.Code() != connect.CodeFailedPrecondition {
 		t.Fatalf("a call on an expired session: %v", err)
@@ -353,7 +353,7 @@ func TestSessionRequestsStateTheProtocol(t *testing.T) {
 		}
 		c := callReq(strings.Repeat("0", 32), "1")
 		c.Msg.Protocol = n
-		if _, err := svc.SessionRun(ctx, c); connect.CodeOf(err) != want {
+		if _, err := headRun(svc, ctx, c); connect.CodeOf(err) != want {
 			t.Errorf("call on protocol %d: %v", n, err)
 		}
 		cl := closeReq(strings.Repeat("0", 32))
@@ -389,7 +389,7 @@ func TestSessionSlotsFollowSuspend(t *testing.T) {
 	if p.Opened()[0].Suspends() == 0 {
 		t.Fatal("the slot came back without a suspend")
 	}
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatalf("the call after a suspend: %v", err)
 	}
 	if svc.Limiter.Stats().InFlight != 1 {
@@ -423,7 +423,7 @@ func TestPausedSessionKeepsItsSlot(t *testing.T) {
 	if _, err := svc.Run(ctx, jsReq("1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("a run while a paused session holds the only slot: %v", err)
 	}
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatalf("the call after a pause: %v", err)
 	}
 	if got := svc.Limiter.Stats().InFlight; got != 1 {
@@ -528,7 +528,7 @@ func TestSessionAuditLinesCarryTheFingerprintNeverTheID(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	if _, err := svc.SessionRun(ctx, callReq(id, "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(id, "1")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.CloseSession(ctx, closeReq(id)); err != nil {
@@ -554,11 +554,11 @@ func TestSessionCallFloorIsCheckedAgainstTheSessionsTier(t *testing.T) {
 	}
 	req := callReq(open.Msg.GetSessionId(), "1")
 	req.Msg.MinimumIsolation = "vm"
-	_, err = svc.SessionRun(ctx, req)
+	_, err = headRun(svc, ctx, req)
 	wantNotDispatched(t, "a floor above the session's tier", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION)
 	empty := callReq(open.Msg.GetSessionId(), "")
 	empty.Msg.Payload = nil
-	if _, err := svc.SessionRun(ctx, empty); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	if _, err := headRun(svc, ctx, empty); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("no payload: %v", err)
 	}
 }
@@ -573,11 +573,11 @@ func TestWithoutAuthEveryCallerOwnsEverySession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SessionRun(context.Background(), callReq(open.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, context.Background(), callReq(open.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatalf("an unauthenticated caller and its own session: %v", err)
 	}
 	// An authenticated principal is still separate from the anonymous one.
-	if _, err := svc.SessionRun(authenticatedContext("alice"), callReq(open.Msg.GetSessionId(), "1")); connect.CodeOf(err) != connect.CodeNotFound {
+	if _, err := headRun(svc, authenticatedContext("alice"), callReq(open.Msg.GetSessionId(), "1")); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("a named principal reached the anonymous session: %v", err)
 	}
 }
@@ -593,7 +593,7 @@ func TestSessionCallsGetTheDaemonCeiling(t *testing.T) {
 	}
 	req := callReq(open.Msg.GetSessionId(), "1")
 	req.Msg.TimeoutMs = int32((24 * time.Hour).Milliseconds())
-	if _, err := svc.SessionRun(ctx, req); err != nil {
+	if _, err := headRun(svc, ctx, req); err != nil {
 		t.Fatal(err)
 	}
 	if got := p.Opened()[0].LastTimeout(); got != maxRunTimeout {
@@ -622,7 +622,7 @@ func TestARateRefusedCallGivesBackTheSlotItTook(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+	if _, err := headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("a call past the caller's rate: %v", err)
 	}
 	if n := svc.Limiter.Stats().InFlight; n != 0 {
@@ -701,7 +701,7 @@ func TestCellRunsInASession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
+	resp, err := headRun(svc, ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: cell}}))
 	if err != nil {
 		t.Fatal(err)
@@ -714,7 +714,7 @@ func TestCellRunsInASession(t *testing.T) {
 		t.Fatalf("record: %+v", resp.Msg.GetRun().GetRecord())
 	}
 	bad := &plimsollv1.CellRun{Language: "cobol", Code: "1"}
-	_, err = svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
+	_, err = headRun(svc, ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: bad}}))
 	wantNotDispatched(t, "an unknown language", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
 }
@@ -778,7 +778,7 @@ func TestStaleIdleTimerDoesNotSuspend(t *testing.T) {
 	e.mu.Lock()
 	stale := e.idleGen // the timer that fires, before the call below
 	e.mu.Unlock()
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatal(err)
 	}
 	svc.suspend(e, stale) // its callback runs only now
@@ -935,13 +935,13 @@ func TestUnansweredSessionCallIsInTheChain(t *testing.T) {
 	}
 	id := open.Msg.GetSessionId()
 	fp := record.SessionFingerprint(id)
-	first, err := svc.SessionRun(ctx, callReq(id, "1"))
+	first, err := headRun(svc, ctx, callReq(id, "1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r1 := first.Msg.GetRun().GetRecord()
 	second := callReq(id, "2")
-	_, err = svc.SessionRun(ctx, second)
+	_, err = headRun(svc, ctx, second)
 	if _, marked := sandbox.NotDispatchedReason(err); err == nil || marked {
 		t.Fatalf("the call that broke after running: %v; want an unmarked error", err)
 	}
@@ -960,7 +960,7 @@ func TestUnansweredSessionCallIsInTheChain(t *testing.T) {
 	if cerr != nil {
 		t.Fatalf("the unanswered call's record: %v", cerr)
 	}
-	third, err := svc.SessionRun(ctx, callReq(id, "3"))
+	third, err := headRun(svc, ctx, callReq(id, "3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +990,7 @@ func TestOnlyOneCallWaitsForASessionsTurn(t *testing.T) {
 	e.turn <- struct{}{} // a long call holds the turn
 	waitCtx, cancel := context.WithCancel(ctx)
 	waited := make(chan error, 1)
-	go func() { _, err := svc.SessionRun(waitCtx, callReq(id, "1")); waited <- err }()
+	go func() { _, err := headRun(svc, waitCtx, callReq(id, "1")); waited <- err }()
 	deadline := time.Now().Add(3 * time.Second)
 	for len(e.waiting) == 0 {
 		if time.Now().After(deadline) {
@@ -998,7 +998,7 @@ func TestOnlyOneCallWaitsForASessionsTurn(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	_, err = svc.SessionRun(ctx, callReq(id, "2"))
+	_, err = headRun(svc, ctx, callReq(id, "2"))
 	if connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("a second waiter: %v; want ResourceExhausted", err)
 	}
@@ -1009,7 +1009,7 @@ func TestOnlyOneCallWaitsForASessionsTurn(t *testing.T) {
 	cancel()
 	<-waited
 	<-e.turn
-	if _, err := svc.SessionRun(ctx, callReq(id, "3")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(id, "3")); err != nil {
 		t.Fatalf("a call once the turn is free: %v", err)
 	}
 }
@@ -1078,7 +1078,7 @@ func TestAPanickingSessionCallIsInTheChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	_, err = headRun(svc, ctx, callReq(id, "1"))
 	var ce *connect.Error
 	found := false
 	if errors.As(err, &ce) {
@@ -1156,7 +1156,7 @@ func TestEndedSessionKeepsItsSlotUntilItsSandboxIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number,
+	resp, err := headRun(svc, ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{
 			Cell: &plimsollv1.CellRun{Language: "python", Code: sandboxtest.CellEndsSession}}}))
 	if err != nil {
@@ -1315,7 +1315,7 @@ func TestSessionsPerOwnerCapReplacesTheLeastRecentlyUsed(t *testing.T) {
 	first, second := open(alice, "u1"), open(alice, "u1")
 	other, bobs := open(alice, "u2"), open(bob, "u1")
 	// first is used after second opened, so second is the least recently used.
-	if _, err := svc.SessionRun(alice, callReq(first, "1")); err != nil {
+	if _, err := headRun(svc, alice, callReq(first, "1")); err != nil {
 		t.Fatal(err)
 	}
 	third := open(alice, "u1")
@@ -1327,7 +1327,7 @@ func TestSessionsPerOwnerCapReplacesTheLeastRecentlyUsed(t *testing.T) {
 			t.Fatalf("session %d ended: %v", i, s.Err())
 		}
 	}
-	_, err := svc.SessionRun(alice, callReq(second, "2"))
+	_, err := headRun(svc, alice, callReq(second, "2"))
 	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeFailedPrecondition || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST {
 		t.Fatalf("a call on the replaced session: %v; want FailedPrecondition, marked request", err)
 	}
@@ -1339,11 +1339,11 @@ func TestSessionsPerOwnerCapReplacesTheLeastRecentlyUsed(t *testing.T) {
 		t.Fatalf("closing the replaced session: %v %v; want REPLACED", c, err)
 	}
 	for _, id := range []string{first, third, other} {
-		if _, err := svc.SessionRun(alice, callReq(id, "3")); err != nil {
+		if _, err := headRun(svc, alice, callReq(id, "3")); err != nil {
 			t.Fatalf("a session the cap left alone: %v", err)
 		}
 	}
-	if _, err := svc.SessionRun(bob, callReq(bobs, "3")); err != nil {
+	if _, err := headRun(svc, bob, callReq(bobs, "3")); err != nil {
 		t.Fatalf("another caller's session of the same owner name: %v", err)
 	}
 }
@@ -1567,7 +1567,7 @@ func TestSessionsPerOwnerAFailedCloseKeepsTheVictim(t *testing.T) {
 	if replaced || !slot {
 		t.Fatalf("the victim: replaced=%v, holds its slot=%v; want it the owner's again", replaced, slot)
 	}
-	if _, err := svc.SessionRun(alice, callReq(a.Msg.GetSessionId(), "1")); err != nil {
+	if _, err := headRun(svc, alice, callReq(a.Msg.GetSessionId(), "1")); err != nil {
 		t.Fatalf("a call on the session that stayed open: %v", err)
 	}
 	if _, err := svc.OpenSession(bob, openReq()); err != nil {
@@ -1592,7 +1592,7 @@ func TestSessionsPerOwnerAnEndedSessionIsNoVictim(t *testing.T) {
 	if _, err := svc.OpenSession(alice, ownerOpen("u1")); err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.SessionRun(alice, callReq(a.Msg.GetSessionId(), "1"))
+	_, err = headRun(svc, alice, callReq(a.Msg.GetSessionId(), "1"))
 	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_EXPIRED {
 		t.Fatalf("a call on the expired session: %v %v; want EXPIRED", end, ok)
 	}
@@ -1607,7 +1607,7 @@ func TestSessionsPerOwnerAnEndedSessionIsNoVictim(t *testing.T) {
 // not dispatched, with a session end, so a client stops using it and opens a new one.
 func TestAnUnknownSessionIsRefusedAsEnded(t *testing.T) {
 	svc, _ := sessionService()
-	_, err := svc.SessionRun(authenticatedContext("alice"), callReq("00000000000000000000000000000000", "1"))
+	_, err := headRun(svc, authenticatedContext("alice"), callReq("00000000000000000000000000000000", "1"))
 	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeNotFound || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST {
 		t.Fatalf("a call on an unknown session: %v; want NotFound, marked request", err)
 	}
@@ -1654,7 +1654,7 @@ func TestMeteredSessionsDrawOnTheAllowance(t *testing.T) {
 	if a, _ := svc.Spend.spent("alice"); a != 190 {
 		t.Fatalf("held after the open: %v, want 190", a)
 	}
-	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+	if _, err := headRun(svc, ctx, timedCall(id, 5000)); err != nil {
 		t.Fatal(err)
 	}
 	e, _ := svc.sessions.get(id, "alice")
@@ -1665,7 +1665,7 @@ func TestMeteredSessionsDrawOnTheAllowance(t *testing.T) {
 	if a, _ := svc.Spend.spent("alice"); a > 1 || e.paid.running() {
 		t.Fatalf("after the suspend: %v spent, running %v; want the open's fraction of a second, stopped", a, e.paid.running())
 	}
-	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+	if _, err := headRun(svc, ctx, timedCall(id, 5000)); err != nil {
 		t.Fatal(err)
 	}
 	if a, _ := svc.Spend.spent("alice"); a < 75 || a > 76 || !e.paid.running() {
@@ -1690,10 +1690,10 @@ func TestMeteredSessionCallRefusedKeepsTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := open.Msg.GetSessionId()
-	if _, err := svc.SessionRun(ctx, timedCall(id, 125000)); !refusedCapacity(err) { // 195 s of 190
+	if _, err := headRun(svc, ctx, timedCall(id, 125000)); !refusedCapacity(err) { // 195 s of 190
 		t.Fatalf("a call past the allowance: %v; want refused, capacity", err)
 	}
-	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+	if _, err := headRun(svc, ctx, timedCall(id, 5000)); err != nil {
 		t.Fatalf("a call within what is held after the refusal: %v", err)
 	}
 }
@@ -1820,14 +1820,14 @@ func TestRefusedSessionCallKeepsTheSuspendDeadline(t *testing.T) {
 	// fixed-wait: a measured gap, not a wait for an event: 20 ms so that a refused call moving the idle deadline would show as a later time
 	time.Sleep(20 * time.Millisecond)
 	for range 3 {
-		if _, err := svc.SessionRun(ctx, timedCall(id, 125000)); !refusedCapacity(err) {
+		if _, err := headRun(svc, ctx, timedCall(id, 125000)); !refusedCapacity(err) {
 			t.Fatalf("a call past the allowance: %v; want refused, capacity", err)
 		}
 	}
 	if after := idleAt(); !after.Equal(before) {
 		t.Fatalf("three refused calls moved the suspend from %v to %v; want it where it was", before, after)
 	}
-	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+	if _, err := headRun(svc, ctx, timedCall(id, 5000)); err != nil {
 		t.Fatalf("a call within what is held: %v", err)
 	}
 	if after := idleAt(); !after.After(before) {
@@ -1887,7 +1887,7 @@ func TestAnUnclaimedSessionIsClosedAtItsFirstIdleTimeout(t *testing.T) {
 	if n := svc.Limiter.Stats().InFlight; n != 0 {
 		t.Fatalf("%d slots held after the close; want 0", n)
 	}
-	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	_, err = headRun(svc, ctx, callReq(id, "1"))
 	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED {
 		t.Fatalf("a call after the close: %v; want the end unclaimed", err)
 	}
@@ -1925,7 +1925,7 @@ func TestACallRefusedBeforeItRanClaimsTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); !refusedCapacity(err) {
+	if _, err := headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1")); !refusedCapacity(err) {
 		t.Fatalf("a call past the caller's rate: %v; want refused, capacity", err)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -1960,11 +1960,11 @@ func TestASessionThatNeverSuspendsHasAClaimWindow(t *testing.T) {
 		entries = append(entries, e)
 	}
 	claimSession(t, svc, ctx, entries[1].id) // refused before it ran
-	if _, err := svc.SessionRun(ctx, callReq(entries[2].id, "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(entries[2].id, "1")); err != nil {
 		t.Fatal(err)
 	}
 	waitGone(t, entries[0], "the unclaimed session that never suspends")
-	if _, err := svc.SessionRun(ctx, callReq(entries[0].id, "1")); func() bool {
+	if _, err := headRun(svc, ctx, callReq(entries[0].id, "1")); func() bool {
 		end, ok := endedAs(err)
 		return !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED
 	}() {
@@ -2007,7 +2007,7 @@ func TestAFailedUnclaimedCloseIsTriedAgain(t *testing.T) {
 	if failed, gaveUp := svc.SessionCloseCounts(); failed != 3 || gaveUp != 1 {
 		t.Fatalf("close counts %d failed, %d gave up; want 3 and 1", failed, gaveUp)
 	}
-	_, err = svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1"))
+	_, err = headRun(svc, ctx, callReq(open.Msg.GetSessionId(), "1"))
 	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED {
 		t.Fatalf("a call on the session whose close failed: %v; want the end unclaimed", err)
 	}
@@ -2097,8 +2097,8 @@ func TestSessionRequiresCurrentGeneration(t *testing.T) {
 	// Zero is a malformed request, not a stale owner: TestZeroGenerationIsAnInvalidRequestEverywhere.
 	for _, generation := range []uint64{2, ^uint64(0)} {
 		run := callReq(id, "1")
-		run.Msg.Generation = generation
-		_, err = svc.SessionRun(ctx, run)
+		atGeneration(svc, run.Msg, generation)
+		_, err = headRun(svc, ctx, run)
 		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 			t.Fatalf("run: %v", err)
 		}
@@ -2114,7 +2114,7 @@ func TestSessionRequiresCurrentGeneration(t *testing.T) {
 	if p.Opened()[0].Calls() != 0 || p.Opened()[0].Err() != nil {
 		t.Fatal("refusal changed the sandbox")
 	}
-	if _, err = svc.SessionRun(ctx, callReq(id, "1")); err != nil {
+	if _, err = headRun(svc, ctx, callReq(id, "1")); err != nil {
 		t.Fatal(err)
 	}
 	closed, err := svc.CloseSession(ctx, closeReq(id))

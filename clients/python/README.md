@@ -197,15 +197,24 @@ What a takeover guarantees, and what it raises:
   The next `attach_session` sends that checkpoint and names the call. If the daemon never
   dispatched the call, the heads match and the takeover is plain. If it dispatched it and
   its answer was lost, the daemon takes the session over across that one call (the
-  *explained gap*) and returns its record, which the client checks; `session.lost_call`
-  holds it, and its output is lost. The record says whether the daemon answered it: a
-  result digest when the daemon answered, which does not show that the call ran to its end
-  (a step stopped at its time limit and a setup that failed are answers too), an
-  `unanswered` code when it ended without an answer, so that it may have done none, part or
-  all of its work. The new session's first call is then refused, with nothing
-  sent, if it repeats that call, which was already sent once (`CallAlreadySentError`): only
-  the first call is checked, so a different first call spends the check and the lost call
-  can then run again. Any other gap is `CheckpointMismatchError`, and nothing moves.
+  *explained gap*) and returns its record, and its answer when the daemon still keeps it
+  (the last answer, in memory, until the next call starts or the session suspends or ends;
+  `open_session(keep_no_answer=True)` keeps none), both checked by the client. The record
+  says whether the daemon answered it: a result digest when the daemon answered, which does
+  not show that the call ran to its end (a step stopped at its time limit and a setup that
+  failed are answers too), an `unanswered` code when it ended without an answer, so that it
+  may have done none, part or all of its work. The new session is then recovering:
+  `session.lost_call` holds the lost call (its `request_sha256`, `record` and `answer`), and
+  every call is refused with nothing sent (`RecoveringError`) until you have read it and
+  called `session.resolve_lost_call()`; a call you send after that runs, the lost one
+  again included, by your decision. A checkpoint saved while recovering carries the state
+  (`recovering_request_sha256`), so a process that takes over from it is recovering too,
+  knowing the lost call by its digest alone; resolving writes the store's record without
+  it. Any other gap is `CheckpointMismatchError`, and nothing moves.
+- Every call states the head it expects (the generation, the count of calls and the last
+  record digest). A call whose head is not the daemon's is refused before it runs
+  (`HeadMismatchError`, with the daemon's head in `.head`): something else ran a call on
+  the session between this process's calls, so the session stops here, sending nothing more.
 - A missing record is `LookupError`, never a fresh session. With `fingerprint=`, the
   session you mean, a record naming another session is `LookupError` too, with nothing
   sent: the check is made on the record the attach sends, so a store that changed since
@@ -214,7 +223,11 @@ What a takeover guarantees, and what it raises:
   canceled attach is never retried.
 - `CheckpointStoreError` (its subclass `CheckpointConflictError` when the compare-and-set
   refused) says whether the call was sent (`sent`) and carries its result or error when it
-  ran; the session then sends nothing more. No timeout ever clears a pending record.
+  ran; the session then sends nothing more. No timeout ever clears a pending record. An
+  attach whose store write finds a record a stale worker wrote after the attach read the
+  store (the same session, at no later generation) writes over it, since the daemon now
+  holds the session for this process; a record at a later generation is another
+  process's, and the attached session is dropped with `CheckpointConflictError`.
 - `session.checkpoint()` returns the checkpoint for an application that keeps it itself;
   `SessionCheckpoint.to_json` and `from_json` are the form the Go and TypeScript clients read
   too. It holds no secret: not the session ID, not the token.
@@ -631,9 +644,8 @@ edit, list and search in the sandbox, and it adds `plimsoll_shell`, a shell tool
 session. `plimsoll_code_tool(executor)` is the stateless code tool as a PydanticAI tool, and takes a
 grant through its executor ([a grant](#a-grant-the-tools-code-calls-one-web-api)); the workspace takes none. All are in
 the package `pydantic-ai-plimsoll`, which pins `pydantic-ai-slim` exactly (PydanticAI adds rules for
-workspace backends in minor releases); it ships with plimsoll's next release
+workspace backends in minor releases): `pip install pydantic-ai-plimsoll`
 ([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/pydantic-ai-plimsoll)).
-Until the next release, from a checkout: `pip install ./clients/python ./clients/python/pydantic-ai-plimsoll`.
 
 ```python
 from pydantic_ai import Agent
@@ -962,6 +974,25 @@ in `make docker-suite`: a small environment with isolated grading validates thro
 attempt through `vf-eval` with a scripted model (no model is called) and measures it; with
 `--model` it runs a real one, which spends (its limits are in `examples/verifiers/README.md`).
 
+## Answer-key tripwire and canary run
+
+`plimsoll_client.tripwire` checks the requests an AI evaluation sent to the model it tests,
+offline, with no daemon and the standard library only:
+
+```sh
+# the answer key (truth labels, reference numbers, planted file names) in recorded model requests
+python3 -m plimsoll_client.tripwire tripwire --sealed sealed.json recorded-requests/
+# a canary run: markers per hidden place, planted for one run, none may reach a request
+python3 -m plimsoll_client.tripwire canary make truth reference-times plan-names -o canary.json
+python3 -m plimsoll_client.tripwire canary check --sealed canary.json --planted hidden/ --requests recorded-requests/
+```
+
+Each exits 0 when it finds nothing, 1 on a finding and 2 when its input does not load.
+`find_sealed(request, sealed)` checks one request before it is sent. The file formats, a
+worked example, the matching rules and what it cannot catch:
+[docs/answer-key-tripwire.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/answer-key-tripwire.md).
+Tested offline by `tests/test_tripwire.py`.
+
 ## What the client checks
 
 - **The base URL.** It must be an absolute `http` or `https` URL with no user name,
@@ -1042,7 +1073,8 @@ a procedure (sessions, for one) answers it `unimplemented` without the mark:
 | `SessionEndedError` | The session has ended; `reason` says why (`closed`, `expired`, `disk_exceeded`, `main_process_ended`, `boundary_failed`, `sandbox_changed`, `shutdown`; `replaced`: the daemon closed it to open a newer session for the same `owner`, at its `SANDBOX_MAX_SESSIONS_PER_OWNER`; `not_found`: the daemon has no such session, after a restart, say; `unclaimed`: no request named it before its first idle timeout, so the daemon closed it, as it does a session whose open answer was lost; or `unknown`: an end a newer daemon has). Nothing of the refused call ran: open a new session. |
 | `StaleOwnerError` | Another process took the session over; this one must not use it again. Nothing of the refused call ran; the session goes on for its new owner. |
 | `CheckpointMismatchError` | A takeover's checkpoint is not the session's head, and the gap is not one the takeover named. Nothing moved. |
-| `CallAlreadySentError` | The first call after a takeover across a lost call repeats that call, which was already sent once; `session.lost_call` says whether the daemon answered it. Refused here, with nothing sent; never a retry signal. |
+| `RecoveringError` | A call on a session taken over across a lost call, before `session.resolve_lost_call()`; `session.lost_call` says whether the daemon answered the lost call. Refused here, with nothing sent; never a retry signal. |
+| `HeadMismatchError` | The daemon refused a session call because the head it stated is not the session's (another holder ran a call between this client's); `.head` is the daemon's. Nothing ran; the session sends nothing more. |
 
 A plain `PlimsollError` carries any other Connect status in `code` (for example
 `unauthenticated`), marked or not as the daemon sent it.
@@ -1139,8 +1171,8 @@ examples (`*_grant.py`) against a daemon of their own with a stand-in for the AP
 runs it. `pydantic_ai_crash.py` ("kill the worker, keep
 the sandbox", with the checkpoint store it uses in `_conversation_lease.py`) kills the process running
 a PydanticAI agent while its command runs, and a second process takes the session over across the
-lost call: its record says whether the daemon answered it, the repeat that PydanticAI's resume sends
-first is refused with nothing sent, and the model is told what the record says. With `--freeze`, a
+lost call: its record says whether the daemon answered it, the call that PydanticAI's resume sends
+first is not sent, and the model is told what the record says. With `--freeze`, a
 worker that returns after the takeover is refused by its own client. `TestPydanticAICrashDocker` runs
 it in both modes against a real docker daemon (`make docker-suite`), and
 `frameworks/pydantic_ai/test_crash_chain.py` holds its chain check to good and bad record logs.

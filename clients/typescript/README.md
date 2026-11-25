@@ -107,18 +107,26 @@ await t.runCell({ language: "python", code: "x" }); // the same interpreter
   is `CheckpointMismatchError`, and nothing moves. An answer that does not repeat the
   checkpoint is `data_loss`, and the session is not closed. A failed or aborted attach is
   never retried.
+- Every call states the head it expects to run on (the generation, the count of calls and
+  the last record), and the daemon runs it only on that head. A call refused because the
+  daemon's head is another (`HeadMismatchError`, marked not dispatched, with the daemon's
+  head) means another holder of the session ran a call between this client's: the session
+  stops and sends nothing more.
 - **A call whose answer was lost.** After a call ends with no answer this client could
   check, `session.lostRequestSha256` names it. `attachSession(checkpoint, {
   lostRequestSha256 })` from the checkpoint saved before that call then takes the session
   over across that one call (the *explained gap*), when the daemon's last record is that
-  call, and `session.lostCall` holds its record; its output is lost. The record says whether
-  the daemon answered it: a result digest when the daemon answered, which does not show that
-  the call ran to its end (a step stopped at its time limit and a setup that failed are
-  answers too), an `unanswered` code when it ended without an answer, so that it may have
-  done none, part or all of its work. The new session's first call is refused, with nothing sent, if it repeats that
-  call, which was already sent once (`CallAlreadySentError`). Only the first call is checked,
-  so a different first call spends the check and the lost call can then run again; the rule
-  is this client's, not the daemon's.
+  call. The new session is *recovering*: every call is refused before it is sent
+  (`RecoveringError`) until you have read `session.lostCall` and called
+  `session.resolveLostCall()`. `lostCall.record` says whether the daemon answered the call:
+  a result digest when it answered, which does not show that the call ran to its end (a
+  step stopped at its time limit and a setup that failed are answers too), an `unanswered`
+  code when it ended without an answer, so that it may have done none, part or all of its
+  work. `lostCall.answer` is the call's result when the daemon kept it (it keeps the last
+  answer in memory until the next call starts or the session suspends or ends, unless the
+  session was opened with `keepNoAnswer: true`), checked against the record. A checkpoint
+  saved while recovering carries the state (`recoveringRequestSha256`), so the worker that
+  attaches from it is recovering too, knowing the lost call by its request digest alone.
 - **The limit:** with no store, this client can name a lost call only when the answer was
   lost in the same process. A process that died mid-call leaves a gap the next one cannot
   explain unless your application recorded the call's request digest before sending.

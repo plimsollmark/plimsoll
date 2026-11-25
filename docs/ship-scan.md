@@ -28,8 +28,8 @@ those 13 files from the public repository at 12:44 and at 12:55 and scans both o
 the 16 seeds: at 12:44 the scan flags the viewer for `seeds.txt:2`, the second seed, and at 12:55
 all 13 files are clean. Its transcript is `examples/squeeze/argon-scan.txt`. It is an offline scan
 of rebuilt files, not a replay of the hackathon's sandboxes. The squeeze example's page tells it
-with the entry's other mistakes, beside the squeeze test and the canary run (which is not part
-of the open-source release):
+with the entry's other mistakes, beside the squeeze test and the canary run, which tests a harness for the leak the
+[INTERNAL · answer-key tripwire →](answer-key-tripwire.md) looks for:
 [INTERNAL · three checks for an AI score, the ship scan →](https://plimsollmark.github.io/plimsoll/examples/squeeze/index.html#ship-scan).
 
 ## The withheld set

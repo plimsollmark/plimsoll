@@ -224,9 +224,9 @@ func TestTheDaemonFloorHoldsOnSessions(t *testing.T) {
 			r.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: &plimsollv1.CellRun{Language: "python", Code: "x = 1"}}
 		}},
 	} {
-		req := &plimsollv1.SessionRunRequest{Generation: 1, Protocol: protocol.Number, SessionId: id}
+		req := &plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id}
 		c.payload(req)
-		_, err := svc.SessionRun(ctx, connect.NewRequest(req))
+		_, err := headRun(svc, ctx, connect.NewRequest(req))
 		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 			t.Fatalf("session %s under the floor: %v; want FailedPrecondition", c.name, err)
 		}
@@ -237,7 +237,7 @@ func TestTheDaemonFloorHoldsOnSessions(t *testing.T) {
 	}
 
 	svc.Floor = sandbox.IsolationUnknown
-	if _, err := svc.SessionRun(ctx, callReq(id, "1")); err != nil {
+	if _, err := headRun(svc, ctx, callReq(id, "1")); err != nil {
 		t.Fatalf("a call with no daemon floor: %v; want it run as before", err)
 	}
 }

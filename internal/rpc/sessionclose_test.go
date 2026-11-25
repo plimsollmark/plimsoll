@@ -149,7 +149,7 @@ func TestAPauseThatHangsThenCannotPayIsClosedOnItsOwnBudgetAndTriedAgain(t *test
 	if !e.paid.running() || spent < 190+500 {
 		t.Fatalf("after a failed close: meter running %v, %.0f s spent; want it running and holding the session's remaining lifetime (about 600 s) past the 190 s allowance", e.paid.running(), spent)
 	}
-	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	_, err = headRun(svc, ctx, callReq(id, "1"))
 	if _, marked := notDispatchedOf(err); !marked || fake.Calls() != 0 {
 		t.Fatalf("a call while the close is tried again: %v, %d ran; want refused, not dispatched, nothing run", err, fake.Calls())
 	}

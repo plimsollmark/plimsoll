@@ -206,13 +206,15 @@ class StaleOwnerError(PlimsollError):
     default_code = "failed_precondition"
 
 
-class CallAlreadySentError(PlimsollError):
-    """The first call of a session taken over across an explained gap repeats the lost
-    call: that call was already sent once and its answer was lost, so this is a retry of
-    it. Refused before anything was sent (``not_dispatched == "request"``), and never a
-    retry signal. Only the first call is checked (Go: ``client.ErrCallAlreadySent``, in the
-    same words). The lost call's record says whether the daemon answered it
-    (``Session.lost_call``)."""
+class RecoveringError(PlimsollError):
+    """A call on a session that is recovering from a call whose answer was lost: a session
+    taken over across that call (an attach that returned its record), or attached from a
+    checkpoint saved while recovering. Every call is refused so, before anything is sent
+    (``not_dispatched == "request"``), until the application has read the lost call
+    (``Session.lost_call``) and called ``Session.resolve_lost_call()`` (Go:
+    ``client.ErrRecovering``, in the same words). Never a retry signal: the lost call was
+    sent once and may have run. The lost call's record says whether the daemon answered
+    it: a result digest when it did, an unanswered code when it ended without an answer."""
 
     default_code = "failed_precondition"
 
@@ -223,6 +225,22 @@ class CheckpointMismatchError(PlimsollError):
     ownership did not move."""
 
     default_code = "failed_precondition"
+
+
+class HeadMismatchError(PlimsollError):
+    """A session call the daemon refused before running anything, because the head this
+    client sent (its generation, count of calls and last record) is not the session's:
+    another holder of the session ran a call between this client's, or a bug (Go:
+    ``client.ErrHeadMismatch``). ``head`` is the daemon's head as the refusal's detail
+    states it (``generation``, ``calls``, ``last_record_sha256``), or None. The client
+    tracks the head exactly, so the session stops here: it sends nothing more, and a
+    close reports the daemon's count, which differs from this client's (ChainError)."""
+
+    default_code = "failed_precondition"
+
+    def __init__(self, message: str, *, head: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.head = head
 
 
 # --- no Connect answer --------------------------------------------------------

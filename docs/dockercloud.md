@@ -100,17 +100,36 @@ checks an image against a withheld set before it is pushed
    container image format) or a store image, pinned to linux/amd64. Its name starts with a prefix
    unique to this daemon instance, and the daemon records the sandbox as its own
    before making the create call.
-2. Reads back, through the published contract, the network policy actually in force
-   on the sandbox, and refuses to run unless it is deny-all with exactly the rules the
-   run is entitled to. A run without a <dfn>*grant*</dfn> (permission to call listed
-   routes of one API) is entitled to none. A run with one is entitled to a single
+2. Reads back, through the published contract, Docker's own report of the network
+   policy on the sandbox, and refuses to run unless it is deny-all with exactly the
+   rules the run is entitled to. A run without a <dfn>*grant*</dfn> (permission to call
+   listed routes of one API) is entitled to none. A run with one is entitled to a single
    rule, for the <dfn>*guard*</dfn>'s `host:443`: the guard is the HTTPS endpoint on
-   the plimsoll daemon that is the only address a grant run may reach.
+   the plimsoll daemon that is the only address a grant run may reach. This is what
+   Docker says is in force, not a test of it: a run tries no connection. The one check of
+   behavior, a connection tried from inside a sandbox, is the startup smoke test's, made
+   once when the daemon starts ([Startup smoke test](#startup-smoke-test)), so a change
+   after startup in what Docker enforces is not caught by a run. A public report on
+   Docker's tracker says a cloud sandbox reached the internet while the account's default
+   and the sandbox's own policy listing both said deny-all
+   ([EXTERNAL · issue thread ↗](https://github.com/docker/sbx-releases/issues/758), open
+   and unanswered on 2026-11-24); it has not been reproduced here: on 2026-11-24, on a sandbox
+   made with a test account's deny-all default, the read-back and the startup test agreed,
+   and every connection tried from inside failed.
 3. Runs every command of the <dfn>*guest*</dfn>, the code in the sandbox, under a
    wrapper inside the sandbox (`timeout -s KILL`, and each output stream capped by
    `head -c`), because Docker's API for running a command has no timeout and no
    output limit. The host limits the response as well. A guest that floods its output
    is a failed user run with the truncation flags set, not an infrastructure error.
+   The wrapper's reading of a step (its exit code, and whether its time limit ended it)
+   holds against that step's own command, not against the steps before it: the guest is
+   root in the sandbox, every step's script is uploaded before the first runs, and nothing
+   is killed between steps. So an earlier step can rewrite a later step's script, and a
+   process it leaves running can replace a later step's exit code, end it early, or stop
+   it until its time limit (measured 2026-11-24 on a local stand-in that runs the wrapper
+   on a shell). A later step of a run may trust nothing an earlier step could touch; a
+   check of a run's work runs as a run of its own
+   ([INTERNAL · results →](run-results.md#did-anything-run-the-error-says-so)).
 4. Deletes the sandbox on every exit path. As a backstop, each sandbox is created with
    a time-to-live (TTL) on Docker's side, after which Docker deletes it, and
    `ReconcileOrphans` deletes any sandbox carrying this instance's prefix that the
@@ -160,8 +179,19 @@ command wrapper around `sh <script>`). That proves `node`, `timeout` and `head` 
 present, the step's working directory is honored, and <dfn>*egress*</dfn> (network
 traffic leaving the sandbox) is denied from inside the guest.
 
+Under deny-all, Docker answers every DNS question the guest sends to port 53, at any
+address, with the code REFUSED and no answer, with the outside address as its sender
+(measured 2026-11-24). A resolver on the internet never refuses a real name such as
+example.com, so the answer comes from Docker's side and no name is resolved on the
+internet, which a lookup that carries data out would need. The startup test asks
+example.com over UDP, over TCP and through node's resolver, and counts any reply but a
+refusal as egress. What Docker's side does with the names it refuses cannot be seen from
+inside the sandbox.
+
 plimsoll's startup check shows that code under the deny-all policy cannot make an
-ordinary network connection. One other connection route inside Docker's virtual
+ordinary network connection. It is the only time plimsoll tries the network from inside
+a Docker Cloud sandbox: each run reads Docker's report of the policy and tries nothing
+(step 2 of [What each run does](#what-each-run-does)). One other connection route inside Docker's virtual
 machine has not been measured.
 
 The smoke test creates a billable sandbox, so it runs once at startup and never on

@@ -45,6 +45,7 @@ FAKES: List[Tuple[str, str, type]] = [
     ("tests/test_reattach.py", "FakeInterleavingStore", MemoryCheckpointStore),
     ("tests/test_reattach.py", "FakeFailingStore", MemoryCheckpointStore),
     ("tests/test_reattach.py", "FakeHoldingStore", MemoryCheckpointStore),
+    ("tests/test_reattach.py", "FakeBeforeReadyStore", MemoryCheckpointStore),
     ("tests/docker_reattach_check.py", "FakeFileCheckpointStore", MemoryCheckpointStore),
     # The verifiers suite's session is named for the sandbox it stands in for, and the clients the suites open
     # their sessions from: a Client's members a fake defines (its own, or its overrides of a real Client's) take

@@ -62,11 +62,12 @@ type dcFake struct {
 	selectExit     int                // the artifact selection's exit code
 	listPages      [][]map[string]any // ListSandboxes pages
 	exec           func(argv []string) (exit int, stdout, stderr string)
-	execHandler    func(w http.ResponseWriter, r *http.Request) // overrides exec entirely
-	execBlock      bool                                         // Exec blocks until the request is cancelled
-	onDelete       func()                                       // runs as the sandbox is deleted, before it is recorded
-	onList         func()                                       // runs as a page of the sandbox list is read, before it is answered
-	listRefuse     string                                       // a page token the list refuses, invalid argument
+	execHandler    func(w http.ResponseWriter, r *http.Request)                     // overrides exec entirely
+	execRun        func(cmd []string, cwd string) (exit int, stdout, stderr string) // answers every exec but a mkdir with the whole command, wrapper and all
+	execBlock      bool                                                             // Exec blocks until the request is cancelled
+	onDelete       func()                                                           // runs as the sandbox is deleted, before it is recorded
+	onList         func()                                                           // runs as a page of the sandbox list is read, before it is answered
+	listRefuse     string                                                           // a page token the list refuses, invalid argument
 
 	// the undocumented per-sandbox network-policy REST call
 	policyPuts      []map[string]any
@@ -444,7 +445,13 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 			f.execHandler(w, r)
 			return
 		}
-		exit, stdout, stderr := f.answerExec(cmd)
+		var exit int
+		var stdout, stderr string
+		if f.execRun != nil && cmd[0] != "mkdir" {
+			exit, stdout, stderr = f.execRun(cmd, cwd)
+		} else {
+			exit, stdout, stderr = f.answerExec(cmd)
+		}
 		writeJSON(w, map[string]any{"exitCode": exit, "stdout": []byte(stdout), "stderr": []byte(stderr)})
 	case "/ep" + dcProcUpload:
 		if ct := r.Header.Get("Content-Type"); ct != "application/connect+json" {

@@ -50,12 +50,27 @@ Needs ``deepagents`` (``pip install 'plimsoll-client[deepagents]'``).
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import base64
+import functools
+import inspect
+import threading
 
 try:
-    from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse, GrepResult
+    from deepagents.backends.protocol import (
+        DeleteResult,
+        EditResult,
+        ExecuteOffloadResult,
+        ExecuteResponse,
+        FileDownloadResponse,
+        FileUploadResponse,
+        GlobResult,
+        GrepResult,
+        LsResult,
+        ReadResult,
+        WriteResult,
+    )
     from deepagents.backends.sandbox import BaseSandbox
 except ImportError as e:  # pragma: no cover
     raise ImportError("plimsoll_client.deepagents needs Deep Agents: pip install 'plimsoll-client[deepagents]'") from e
@@ -69,7 +84,9 @@ except ImportError as e:  # pragma: no cover
         "sandbox without GNU grep; it was checked on deepagents 0.7.38"
     ) from e
 
+from . import _code_tool as ct
 from . import _validate as v
+from ._lost_call import lost_call_message
 from ._transport import CancelHandle, in_thread
 from .checkpoint import CheckpointStore
 from .client import Client, Session
@@ -82,6 +99,14 @@ __all__ = ["PlimsollSandbox"]
 
 #: Seconds a command, or a file transfer, may run when the agent names no budget.
 DEFAULT_TIMEOUT = 120.0
+
+#: Characters of stdout and of stderr of a lost call's kept answer the model is told, each (the PydanticAI kit's
+#: shell tool limit): about 7,500 tokens per stream.
+MAX_OUTPUT_CHARS = 30_000
+
+# The exit code the backend answers an ``execute`` it did not run because the session was recovering from a lost
+# call: a failure, so no tool reads the explanation as the command's own output.
+NOT_RUN_EXIT = 1
 
 # The exit code of a command past its budget: plimsoll's own (a timed-out step), and the
 # one langchain-daytona and coreutils' timeout(1) give.
@@ -143,12 +168,19 @@ class PlimsollSandbox(BaseSandbox):
     is the budget of ``timeout=0`` (:meth:`open` sets it from the daemon's ceiling).
 
     Making one asks the sandbox for ``python3`` (one call), which Deep Agents' file tools
-    need, and refuses a sandbox without it; over a session whose next call must not repeat
-    a lost call (an attach across an explained gap: ``session.lost_call_sha256``), it asks
-    nothing, so the agent's own first command is the one that rule checks, and searches go
-    through Deep Agents' ``python3`` search. Use :meth:`open` to open a session for it, or
-    :meth:`attach` to carry on with one another process opened; :meth:`close` (or the
-    context manager) closes the session.
+    need, and refuses a sandbox without it; over a session recovering from a call whose
+    answer was lost (an attach across an explained gap: ``session.lost_call``), it asks
+    nothing, and searches go through Deep Agents' ``python3`` search.
+
+    On such a session the agent's first tool call (``execute`` or a file tool, whichever
+    comes first) is not run: the backend answers it with what plimsoll's record of the lost
+    call says (the record says whether the daemon answered the call) and the lost call's
+    output when its answer came back, each stream cut at ``max_output_chars``, as an
+    ``execute`` output or the file tool's error, so the model reads it; then it resolves the
+    session (``Session.resolve_lost_call``), and the next tool call runs. A lost command or
+    file operation is so never sent again before the model has been told. Use :meth:`open`
+    to open a session for it, or :meth:`attach` to carry on with one another process opened;
+    :meth:`close` (or the context manager) closes the session.
     """
 
     def __init__(
@@ -158,9 +190,11 @@ class PlimsollSandbox(BaseSandbox):
         minimum_isolation: str = "kernel",
         timeout: float = DEFAULT_TIMEOUT,
         max_timeout: Optional[float] = None,
+        max_output_chars: int = MAX_OUTPUT_CHARS,
     ) -> None:
         if not v.floor(minimum_isolation):
             raise ValueError("plimsoll: a Deep Agents backend needs a floor: minimum_isolation process, container, kernel or vm")
+        max_output_chars = ct.check_max_output(max_output_chars)
         if not meets(getattr(session, "isolation", "") or "", minimum_isolation):
             raise InsufficientIsolationError(
                 f"plimsoll: the session states {getattr(session, 'isolation', '') or 'no tier'}, below the required "
@@ -171,11 +205,13 @@ class PlimsollSandbox(BaseSandbox):
         self._timeout = float(timeout)
         self._max_timeout = float(max_timeout) if max_timeout is not None else None
         self._workspace = Workspace(session, timeout=timeout, max_timeout=max_timeout, confined=False)
-        if getattr(session, "lost_call_sha256", ""):
-            # The session's next call is checked against a call that ran with its answer
-            # lost (Session.lost_call_sha256): the probe would be that call and spend the
-            # check, so a retry of the lost command could run a second time. The session
-            # passed the probe when it was opened.
+        self._max_output_chars = max_output_chars
+        self._lost_lock = threading.Lock()
+        if getattr(session, "lost_call", None) is not None:
+            # The session is recovering from a call whose answer was lost (Session.lost_call):
+            # it sends nothing until it is resolved, which the agent's first tool call does
+            # after the model is told of the lost call (_recovering). The session passed the
+            # probe when it was opened.
             self._gnu_grep = False
             return
         probe = self._workspace.exec(_PROBE)
@@ -303,6 +339,19 @@ class PlimsollSandbox(BaseSandbox):
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.close()
+
+    # ---- a call lost before a takeover ----
+
+    def _recovering(self) -> Optional[str]:
+        """When the session is recovering from a call whose answer was lost, what the model is told in place of the
+        tool call that asked (nothing of it is sent), after which the session is resolved; else None. Once: of tool
+        calls made at the same moment, the first gets it and the others run."""
+        with self._lost_lock:
+            lost = getattr(self._session, "lost_call", None)
+            if lost is None:
+                return None
+            self._session.resolve_lost_call()
+        return lost_call_message(lost, self._max_output_chars)
 
     # ---- commands ----
 
@@ -466,3 +515,54 @@ class PlimsollSandbox(BaseSandbox):
 
     async def adownload_files(self, paths: List[str]) -> List[FileDownloadResponse]:
         return await in_thread(self._download, paths)
+
+
+# ---- every tool entry point answers a recovering session first ----
+#
+# Each public method a Deep Agents tool calls, and what it answers, in place of running, on a session recovering from
+# a lost call: the explanation as the method's own error field (or as an ``execute`` output with a failing exit code),
+# so the model reads it and the run goes on. BaseSandbox's file tools call ``execute`` themselves; the outermost
+# method that runs first resolves the session, so the calls it makes after that run as usual.
+
+
+def _not_run(msg: str) -> ExecuteResponse:
+    return ExecuteResponse(output=msg, exit_code=NOT_RUN_EXIT, truncated=False)
+
+
+_LOST_CALL_ANSWERS: Dict[str, Callable[[str, Tuple[Any, ...], Dict[str, Any]], Any]] = {
+    "execute": lambda msg, a, k: _not_run(msg),
+    "execute_with_offload": lambda msg, a, k: ExecuteOffloadResult(offloaded=False, response=_not_run(msg)),
+    "ls": lambda msg, a, k: LsResult(error=msg),
+    "read": lambda msg, a, k: ReadResult(error=msg),
+    "write": lambda msg, a, k: WriteResult(error=msg),
+    "edit": lambda msg, a, k: EditResult(error=msg),
+    "delete": lambda msg, a, k: DeleteResult(error=msg),
+    "grep": lambda msg, a, k: GrepResult(error=msg),
+    "glob": lambda msg, a, k: GlobResult(error=msg),
+    "upload_files": lambda msg, a, k: [FileUploadResponse(path=p, error=msg) for p, _ in (a[0] if a else k["files"])],
+    "download_files": lambda msg, a, k: [FileDownloadResponse(path=p, content=None, error=msg) for p in (a[0] if a else k["paths"])],
+}
+
+
+def _answering_a_lost_call_first(fn: Callable[..., Any], answer: Callable[[str, Tuple[Any, ...], Dict[str, Any]], Any]) -> Callable[..., Any]:
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def guarded_async(self: PlimsollSandbox, *a: Any, **k: Any) -> Any:
+            msg = self._recovering()
+            return answer(msg, a, k) if msg is not None else await fn(self, *a, **k)
+
+        return guarded_async
+
+    @functools.wraps(fn)
+    def guarded(self: PlimsollSandbox, *a: Any, **k: Any) -> Any:
+        msg = self._recovering()
+        return answer(msg, a, k) if msg is not None else fn(self, *a, **k)
+
+    return guarded
+
+
+for _name, _answer in _LOST_CALL_ANSWERS.items():
+    for _method in (_name, "a" + _name):
+        setattr(PlimsollSandbox, _method, _answering_a_lost_call_first(getattr(PlimsollSandbox, _method), _answer))
+del _name, _answer, _method

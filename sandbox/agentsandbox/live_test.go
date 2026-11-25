@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -160,5 +161,34 @@ func TestSmokeLive(t *testing.T) {
 	time.Sleep(preflightTTL + time.Second)
 	if err := p.Preflight(context.Background()); err != nil {
 		t.Fatalf("the proven template, read again: %v", err)
+	}
+}
+
+// TestRedirectRefusedLive makes, on a real cluster, the redirect each pod's own key is
+// there to stop: plimsolld's connection for a freshly claimed pod B goes to another
+// claimed pod A's terminator instead (here by the dialer, standing in for a rewritten
+// route), which answers with A's own valid certificate from the cluster's issuer. The run
+// must be refused before anything is sent, marked not dispatched, naming B's identity;
+// A, dialed as itself afterwards, must still answer, so the refusal was the identity's.
+func TestRedirectRefusedLive(t *testing.T) {
+	p := liveProvider(t)
+	defer drained(t, p)
+	ctx := context.Background()
+	a, err := p.claimSandbox(ctx, time.Minute)
+	if a.claim != "" {
+		defer p.deleteLater(ctx, a)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.dialAddr = func(string) string { return net.JoinHostPort(a.ip, strconv.Itoa(frontPort)) }
+	_, err = p.RunJavaScript(ctx, sandbox.Request{Code: `console.log("this must never run")`, MinimumIsolation: p.IsolationClass(), Timeout: 20 * time.Second})
+	reason, marked := sandbox.NotDispatchedReason(err)
+	if !marked || reason != sandbox.RefusalEnvironment || !strings.Contains(err.Error(), "another pod's") {
+		t.Fatalf("the redirected run: %v (marked %t, %s); want it refused, not dispatched, as another pod's certificate", err, marked, reason)
+	}
+	t.Logf("refused: %v", err)
+	if err := p.proveTier(ctx, a); err != nil {
+		t.Fatalf("pod A, dialed as itself after the refusal: %v", err)
 	}
 }
