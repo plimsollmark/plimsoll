@@ -1,0 +1,1387 @@
+Core dump limits :
+	soft - 0
+	hard - NONE
+Checking environment variables for a tempdir.../root/umltmp
+Checking if /root/umltmp is on tmpfs...no
+Warning: tempdir /root/umltmp is not on tmpfs
+Checking PROT_EXEC mmap in /root/umltmp...OK
+Checking that ptrace can change system call numbers...OK
+Checking syscall emulation for ptrace...OK
+Linux version 7.4.0-rc4-g4dce97c6c265 (root@sbx-001m8aphgmrqzwdnqt4ewkanckz) (gcc (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 Thu Nov 26 01:18:27 UTC 2026
+random: crng init done
+Zone ranges:
+  Normal   [mem 0x0000000000000000-0x000000009fffffff]
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000000000000000-0x000000003fffffff]
+Initmem setup node 0 [mem 0x0000000000000000-0x000000003fffffff]
+Kernel command line: kunit.enable=1 console=tty kunit_shutdown=halt root=98:0
+printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes
+Dentry cache hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+Inode-cache hash table entries: 65536 (order: 7, 524288 bytes, linear)
+Sorting __ex_table...
+Built 1 zonelists, mobility grouping on.  Total pages: 262144
+mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+NR_IRQS: 128, nr_irqs: 128, preallocated irqs: 128
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+clocksource: timer: mask: 0xffffffffffffffff max_cycles: 0x1cd42e205, max_idle_ns: 881590404426 ns
+Calibrating delay loop... 7154.89 BogoMIPS (lpj=35774464)
+Checking that host ptys support output SIGIO...Yes
+pid_max: default: 32768 minimum: 301
+VFS: Disk quotas dquot_6.6.0
+VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+Mount-cache hash table entries: 2048 (order: 2, 16384 bytes, linear)
+Mountpoint-cache hash table entries: 2048 (order: 2, 16384 bytes, linear)
+VFS: Finished mounting rootfs on nullfs
+Memory: 1023756K/1048576K available (4807K kernel code, 1410K rwdata, 1328K rodata, 152K init, 234K bss, 24004K reserved, 0K cma-reserved)
+posixtimers hash table entries: 512 (order: 0, 4096 bytes, linear)
+futex hash table entries: 256 (6144 bytes on 1 NUMA nodes, total 6 KiB, linear).
+vgaarb: loaded
+clocksource: Switched to clocksource timer
+PCI: CLS 0 bytes, default 64
+printk: legacy console [stderr0] disabled
+mconsole (version 2) initialized on /root/.uml/XGQNdj/mconsole
+Checking host MADV_REMOVE support...OK
+PCI host bridge to bus 0000:00
+pci_bus 0000:00: root bus resource [mem 0xf0000000-0xffffffff]
+pci_bus 0000:00: root bus resource [bus 00]
+pci_bus 0000:00: resource 4 [mem 0xf0000000-0xffffffff]
+workingset: timestamp_bits=62 (anon: 57) max_order=18 bucket_order=0 (anon: 0)
+io scheduler mq-deadline registered
+io scheduler kyber registered
+Initialized stdio console driver
+Using a channel type which is configured out of UML
+setup_one_line failed for device 1 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 2 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 3 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 4 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 5 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 6 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 7 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 8 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 9 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 10 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 11 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 12 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 13 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 14 : failed to parse channel pair
+Using a channel type which is configured out of UML
+setup_one_line failed for device 15 : failed to parse channel pair
+Console initialized on /dev/tty0
+printk: legacy console [tty0] enabled
+printk: legacy console [mc-1] enabled
+Key type .fscrypt registered
+Key type fscrypt-provisioning registered
+KTAP version 1
+1..23
+    KTAP version 1
+    # Subtest: ext4_inode_test
+    # module: ext4_test
+    1..26
+        KTAP version 1
+        # Subtest: inode_test_xtimestamp_decoding
+        ok 1 1901-12-13 Lower bound of 32bit < 0 timestamp, no extra bits
+        ok 2 1969-12-31 Upper bound of 32bit < 0 timestamp, no extra bits
+        ok 3 1970-01-01 Lower bound of 32bit >=0 timestamp, no extra bits
+        ok 4 2038-01-19 Upper bound of 32bit >=0 timestamp, no extra bits
+        ok 5 2038-01-19 Lower bound of 32bit <0 timestamp, lo extra sec bit on
+        ok 6 2106-02-07 Upper bound of 32bit <0 timestamp, lo extra sec bit on
+        ok 7 2106-02-07 Lower bound of 32bit >=0 timestamp, lo extra sec bit on
+        ok 8 2174-02-25 Upper bound of 32bit >=0 timestamp, lo extra sec bit on
+        ok 9 2174-02-25 Lower bound of 32bit <0 timestamp, hi extra sec bit on
+        ok 10 2242-03-16 Upper bound of 32bit <0 timestamp, hi extra sec bit on
+        ok 11 2242-03-16 Lower bound of 32bit >=0 timestamp, hi extra sec bit on
+        ok 12 2310-04-04 Upper bound of 32bit >=0 timestamp, hi extra sec bit on
+        ok 13 2310-04-04 Upper bound of 32bit>=0 timestamp, hi extra sec bit 1. 1 ns
+        ok 14 2378-04-22 Lower bound of 32bit>= timestamp. Extra sec bits 1. Max ns
+        ok 15 2378-04-22 Lower bound of 32bit >=0 timestamp. All extra sec bits on
+        ok 16 2446-05-10 Upper bound of 32bit >=0 timestamp. All extra sec bits on
+    # inode_test_xtimestamp_decoding: pass:16 fail:0 skip:0 total:16
+    ok 1 inode_test_xtimestamp_decoding
+    ok 2 inode_test_xtimestamp_encoding_roundtrip
+    ok 3 inode_test_csum_set_and_verify
+    ok 4 inode_test_blocks_encode_decode
+    ok 5 inode_test_fill_raw_inode
+    ok 6 inode_test_mark_dirty_and_update
+    ok 7 inode_test_expand_extra_isize
+    # inode_test_get_inode_loc_variants: ASSERTION FAILED at fs/ext4/inode-test.c:1846
+    Expected err == 0, but
+        err == -11 (0xfffffffffffffff5)
+    not ok 8 inode_test_get_inode_loc_variants
+    ok 9 inode_test_iget_validation_and_modes
+    ok 10 inode_test_iget_corruptions
+    ok 11 inode_test_fast_symlink_and_can_truncate
+    ok 12 inode_test_flags_aops_mapping_order
+    ok 13 inode_test_projid_dio_and_getattr
+    ok 14 inode_test_da_reserve_and_release
+    ok 15 inode_test_da_bigalloc_clusters
+    ok 16 inode_test_map_blocks_paths
+    ok 17 inode_test_get_block_bread_and_walk_buffers
+    ok 18 inode_test_iomap_and_atomic_writes
+    ok 19 inode_test_trans_credits_and_disksize
+    ok 20 inode_test_zero_partial_and_eof
+    ok 21 inode_test_punch_hole_and_truncate
+    # inode_test_write_and_sync_metadata: EXPECTATION FAILED at fs/ext4/inode-test.c:3335
+    Expected err == -5, but
+        err == 0 (0x0)
+    not ok 22 inode_test_write_and_sync_metadata
+    ok 23 inode_test_evict_inode_paths
+    ok 24 inode_test_buffered_write_and_folio_ops
+    ok 25 inode_test_setattr
+    ok 26 inode_test_page_mkwrite
+# ext4_inode_test: pass:24 fail:2 skip:0 total:26
+# Totals: pass:39 fail:2 skip:0 total:41
+not ok 1 ext4_inode_test
+    KTAP version 1
+    # Subtest: ext4_mballoc_test
+    # module: ext4_test
+    1..32
+        KTAP version 1
+        # Subtest: test_new_blocks_simple
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_new_blocks_simple: pass:3 fail:0 skip:0 total:3
+    ok 1 test_new_blocks_simple
+        KTAP version 1
+        # Subtest: test_free_blocks_simple
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_free_blocks_simple: pass:3 fail:0 skip:0 total:3
+    ok 2 test_free_blocks_simple
+        KTAP version 1
+        # Subtest: test_mb_generate_buddy
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_generate_buddy: pass:3 fail:0 skip:0 total:3
+    ok 3 test_mb_generate_buddy
+        KTAP version 1
+        # Subtest: test_mb_mark_used
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_mark_used: pass:2 fail:0 skip:1 total:3
+    ok 4 test_mb_mark_used
+        KTAP version 1
+        # Subtest: test_mb_free_blocks
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_free_blocks: pass:2 fail:0 skip:1 total:3
+    ok 5 test_mb_free_blocks
+        KTAP version 1
+        # Subtest: test_mark_diskspace_used
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mark_diskspace_used: pass:3 fail:0 skip:0 total:3
+    ok 6 test_mark_diskspace_used
+        KTAP version 1
+        # Subtest: test_mb_bit_ops
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_bit_ops: pass:3 fail:0 skip:0 total:3
+    ok 7 test_mb_bit_ops
+        KTAP version 1
+        # Subtest: test_mb_test_and_clear_bits
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_test_and_clear_bits: pass:3 fail:0 skip:0 total:3
+    ok 8 test_mb_test_and_clear_bits
+        KTAP version 1
+        # Subtest: test_mb_find_buddy_and_order
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_find_buddy_and_order: pass:2 fail:0 skip:1 total:3
+    ok 9 test_mb_find_buddy_and_order
+        KTAP version 1
+        # Subtest: test_mb_find_extent
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_find_extent: pass:2 fail:0 skip:1 total:3
+    ok 10 test_mb_find_extent
+        KTAP version 1
+        # Subtest: test_mb_generate_buddy_corrupt
+EXT4-fs error (device mballoc test): ext4_mb_generate_buddy:1312: group 1, block bitmap and bg descriptor inconsistent: 1014 vs 1024 free clusters
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+EXT4-fs error (device mballoc test): ext4_mb_generate_buddy:1312: group 1, block bitmap and bg descriptor inconsistent: 1014 vs 1024 free clusters
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+EXT4-fs error (device mballoc test): ext4_mb_generate_buddy:1312: group 1, block bitmap and bg descriptor inconsistent: 1014 vs 1024 free clusters
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_generate_buddy_corrupt: pass:3 fail:0 skip:0 total:3
+    ok 11 test_mb_generate_buddy_corrupt
+        KTAP version 1
+        # Subtest: test_mb_free_blocks_double_free_and_fc_replay
+EXT4-fs error (device mballoc test): mb_free_blocks:2044: group 1, block 8272:freeing already freed block (bit 10); block bitmap corrupt.
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+EXT4-fs error (device mballoc test): mb_free_blocks:2044: group 1, block 8272:freeing already freed block (bit 10); block bitmap corrupt.
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_free_blocks_double_free_and_fc_replay: pass:2 fail:0 skip:1 total:3
+    ok 12 test_mb_free_blocks_double_free_and_fc_replay
+        KTAP version 1
+        # Subtest: test_mb_xarray_orders_and_frag_size
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_xarray_orders_and_frag_size: pass:3 fail:0 skip:0 total:3
+    ok 13 test_mb_xarray_orders_and_frag_size
+        KTAP version 1
+        # Subtest: test_mb_good_group
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_good_group: pass:2 fail:0 skip:1 total:3
+    ok 14 test_mb_good_group
+        KTAP version 1
+        # Subtest: test_mb_find_by_goal
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_find_by_goal: pass:2 fail:0 skip:1 total:3
+    ok 15 test_mb_find_by_goal
+        KTAP version 1
+        # Subtest: test_mb_simple_and_aligned_scan
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_simple_and_aligned_scan: pass:2 fail:0 skip:1 total:3
+    ok 16 test_mb_simple_and_aligned_scan
+        KTAP version 1
+        # Subtest: test_mb_complex_scan_and_measure
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_complex_scan_and_measure: pass:2 fail:0 skip:1 total:3
+    ok 17 test_mb_complex_scan_and_measure
+        KTAP version 1
+        # Subtest: test_mb_regular_allocator
+EXT4-fs (mballoc test): pa 00000000d9504e93: logic 0, phys. 16384, len 8
+EXT4-fs error (device mballoc test): ext4_mb_release_inode_pa:5464: group 2, free 8, pa_free 4
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+EXT4-fs (mballoc test): pa 00000000d9504e93: logic 0, phys. 16384, len 8
+EXT4-fs error (device mballoc test): ext4_mb_release_inode_pa:5464: group 2, free 8, pa_free 4
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_regular_allocator: pass:2 fail:0 skip:1 total:3
+    ok 18 test_mb_regular_allocator
+        KTAP version 1
+        # Subtest: test_mb_prefetch
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_prefetch: pass:2 fail:0 skip:1 total:3
+    ok 19 test_mb_prefetch
+        KTAP version 1
+        # Subtest: test_mb_initialize_context
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_initialize_context: pass:3 fail:0 skip:0 total:3
+    ok 20 test_mb_initialize_context
+        KTAP version 1
+        # Subtest: test_mb_normalize_request
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_normalize_request: pass:3 fail:0 skip:0 total:3
+    ok 21 test_mb_normalize_request
+        KTAP version 1
+        # Subtest: test_mb_inode_pa_lifecycle
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_inode_pa_lifecycle: pass:2 fail:0 skip:1 total:3
+    ok 22 test_mb_inode_pa_lifecycle
+        KTAP version 1
+        # Subtest: test_mb_group_pa_lifecycle
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_group_pa_lifecycle: pass:2 fail:0 skip:1 total:3
+    ok 23 test_mb_group_pa_lifecycle
+        KTAP version 1
+        # Subtest: test_mb_lg_list_trim
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_lg_list_trim: pass:2 fail:0 skip:1 total:3
+    ok 24 test_mb_lg_list_trim
+        KTAP version 1
+        # Subtest: test_mb_new_blocks_and_enospc_retry
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_new_blocks_and_enospc_retry: pass:2 fail:0 skip:1 total:3
+    ok 25 test_mb_new_blocks_and_enospc_retry
+        KTAP version 1
+        # Subtest: test_mb_mark_context_and_mark_bb
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_mark_context_and_mark_bb: pass:3 fail:0 skip:0 total:3
+    ok 26 test_mb_mark_context_and_mark_bb
+        KTAP version 1
+        # Subtest: test_ext4_free_blocks_flags_and_cross_group
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_ext4_free_blocks_flags_and_cross_group: pass:2 fail:0 skip:1 total:3
+    ok 27 test_ext4_free_blocks_flags_and_cross_group
+        KTAP version 1
+        # Subtest: test_mb_free_metadata_and_process_freed_data
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_free_metadata_and_process_freed_data: pass:2 fail:0 skip:1 total:3
+    ok 28 test_mb_free_metadata_and_process_freed_data
+        KTAP version 1
+        # Subtest: test_ext4_group_add_blocks
+EXT4-fs warning (device mballoc test): ext4_group_add_blocks:6829: too many blocks added to group 1
+EXT4-fs error (device mballoc test) in ext4_group_add_blocks:6865: error 22
+mballoc test: lost filesystem error report for type 5 error -22
+EXT4-fs error (device mballoc test): ext4_group_add_blocks:6840: comm kunit_try_catch: Adding blocks in system zones - Block = 0, count = 8
+mballoc test: lost filesystem error report for type 5 error -117
+EXT4-fs error (device mballoc test) in ext4_group_add_blocks:6865: error 22
+mballoc test: lost filesystem error report for type 5 error -22
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+EXT4-fs warning (device mballoc test): ext4_group_add_blocks:6829: too many blocks added to group 1
+EXT4-fs error (device mballoc test) in ext4_group_add_blocks:6865: error 22
+mballoc test: lost filesystem error report for type 5 error -22
+EXT4-fs error (device mballoc test): ext4_group_add_blocks:6840: comm kunit_try_catch: Adding blocks in system zones - Block = 0, count = 8
+mballoc test: lost filesystem error report for type 5 error -117
+EXT4-fs error (device mballoc test) in ext4_group_add_blocks:6865: error 22
+mballoc test: lost filesystem error report for type 5 error -22
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_ext4_group_add_blocks: pass:2 fail:0 skip:1 total:3
+    ok 29 test_ext4_group_add_blocks
+        KTAP version 1
+        # Subtest: test_ext4_trim_fs
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_ext4_trim_fs: pass:2 fail:0 skip:1 total:3
+    ok 30 test_ext4_trim_fs
+        KTAP version 1
+        # Subtest: test_ext4_mballoc_query_range
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_ext4_mballoc_query_range: pass:2 fail:0 skip:1 total:3
+    ok 31 test_ext4_mballoc_query_range
+        KTAP version 1
+        # Subtest: test_mb_mark_used_cost
+    # test_mb_mark_used_cost: costed jiffies 9
+        ok 1 block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+    # test_mb_mark_used_cost: costed jiffies 11
+        ok 2 block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+        ok 3 block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+ # SKIP blocksize exceeds pagesize
+    # test_mb_mark_used_cost.speed: slow
+    # test_mb_mark_used_cost: pass:2 fail:0 skip:1 total:3
+    ok 32 test_mb_mark_used_cost
+# ext4_mballoc_test: pass:32 fail:0 skip:0 total:32
+# Totals: pass:75 fail:0 skip:21 total:96
+ok 2 ext4_mballoc_test
+    KTAP version 1
+    # Subtest: ext4_extents_test
+    # module: ext4_test
+    1..34
+        KTAP version 1
+        # Subtest: test_split_convert
+        1..12
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:1 
+# [extent 1] got: lblk:11 len:2 unwrit:1
+------------------
+        ok 1 split unwrit extent to 2 extents and convert 1st half writ 
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:0 
+# [extent 1] got: lblk:11 len:2 unwrit:0
+------------------
+        ok 2 split unwrit extent to 2 extents and convert 2nd half writ 
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+------------------
+# [extent 1] exp: lblk:11 len:1 unwrit:0 
+# [extent 1] got: lblk:11 len:1 unwrit:0
+------------------
+# [extent 2] exp: lblk:12 len:1 unwrit:1 
+# [extent 2] got: lblk:12 len:1 unwrit:1
+------------------
+        ok 3 split unwrit extent to 3 extents and convert 2nd half to writ 
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:0 
+# [extent 1] got: lblk:11 len:2 unwrit:0
+------------------
+        ok 4 split writ extent to 2 extents and convert 1st half unwrit 
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:1 
+# [extent 1] got: lblk:11 len:2 unwrit:1
+------------------
+        ok 5 split writ extent to 2 extents and convert 2nd half unwrit 
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+------------------
+# [extent 1] exp: lblk:11 len:1 unwrit:1 
+# [extent 1] got: lblk:11 len:1 unwrit:1
+------------------
+# [extent 2] exp: lblk:12 len:1 unwrit:0 
+# [extent 2] got: lblk:12 len:1 unwrit:0
+------------------
+        ok 6 split writ extent to 3 extents and convert 2nd half to unwrit 
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=2
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 7 split unwrit extent to 2 extents and convert 1st half writ (zeroout) 
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 8 split unwrit extent to 2 extents and convert 2nd half writ (zeroout) 
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+ext4_issue_zeroout_stub: lblk=12 pblk=102 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 9 split unwrit extent to 3 extents and convert 2nd half writ (zeroout) 
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 10 split writ extent to 2 extents and convert 1st half unwrit (zeroout) 
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=2
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 11 split writ extent to 2 extents and convert 2nd half unwrit (zeroout) 
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+------------------
+        ok 12 split writ extent to 3 extents and convert 2nd half unwrit (zeroout) 
+    # test_split_convert: pass:12 fail:0 skip:0 total:12
+    ok 1 test_split_convert
+        KTAP version 1
+        # Subtest: test_split_convert
+        1..6
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x2
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:0 
+# [extent 1] got: lblk:11 len:2 unwrit:0
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x1
+------------------
+        ok 1 split writ extent to 2 extents and convert 1st half unwrit (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x1
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:1 
+# [extent 1] got: lblk:11 len:2 unwrit:1
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x2
+------------------
+        ok 2 split writ extent to 2 extents and convert 2nd half unwrit (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x1
+------------------
+# [extent 1] exp: lblk:11 len:1 unwrit:1 
+# [extent 1] got: lblk:11 len:1 unwrit:1
+# [extent 1] es: lblk:11 len:1 pblk:101 type:0x2
+------------------
+# [extent 2] exp: lblk:12 len:1 unwrit:0 
+# [extent 2] got: lblk:12 len:1 unwrit:0
+# [extent 2] es: lblk:12 len:1 pblk:102 type:0x1
+------------------
+        ok 3 split writ extent to 3 extents and convert 2nd half to unwrit (highlevel)
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 4 split writ extent to 2 extents and convert 1st half unwrit (zeroout) (highlevel)
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=2
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 5 split writ extent to 2 extents and convert 2nd half unwrit (zeroout) (highlevel)
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 6 split writ extent to 3 extents and convert 2nd half unwrit (zeroout) (highlevel)
+    # test_split_convert: pass:6 fail:0 skip:0 total:6
+    ok 2 test_split_convert
+        KTAP version 1
+        # Subtest: test_split_convert
+        1..12
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x1
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:1 
+# [extent 1] got: lblk:11 len:2 unwrit:1
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x2
+------------------
+        ok 1 split unwrit extent to 2 extents and convert 1st half writ (endio) (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x2
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:0 
+# [extent 1] got: lblk:11 len:2 unwrit:0
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x1
+------------------
+        ok 2 split unwrit extent to 2 extents and convert 2nd half writ (endio) (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x2
+------------------
+# [extent 1] exp: lblk:11 len:1 unwrit:0 
+# [extent 1] got: lblk:11 len:1 unwrit:0
+# [extent 1] es: lblk:11 len:1 pblk:101 type:0x1
+------------------
+# [extent 2] exp: lblk:12 len:1 unwrit:1 
+# [extent 2] got: lblk:12 len:1 unwrit:1
+# [extent 2] es: lblk:12 len:1 pblk:102 type:0x2
+------------------
+        ok 3 split unwrit extent to 3 extents and convert 2nd half to writ (endio) (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:0 
+# [extent 0] got: lblk:10 len:1 unwrit:0
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x1
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:1 
+# [extent 1] got: lblk:11 len:2 unwrit:1
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x2
+------------------
+        ok 4 split unwrit extent to 2 extents and convert 1st half writ (non endio) (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x2
+------------------
+# [extent 1] exp: lblk:11 len:2 unwrit:0 
+# [extent 1] got: lblk:11 len:2 unwrit:0
+# [extent 1] es: lblk:11 len:2 pblk:101 type:0x1
+------------------
+        ok 5 split unwrit extent to 2 extents and convert 2nd half writ (non endio) (highlevel)
+# [extent 0] exp: lblk:10 len:1 unwrit:1 
+# [extent 0] got: lblk:10 len:1 unwrit:1
+# [extent 0] es: lblk:10 len:1 pblk:100 type:0x2
+------------------
+# [extent 1] exp: lblk:11 len:1 unwrit:0 
+# [extent 1] got: lblk:11 len:1 unwrit:0
+# [extent 1] es: lblk:11 len:1 pblk:101 type:0x1
+------------------
+# [extent 2] exp: lblk:12 len:1 unwrit:1 
+# [extent 2] got: lblk:12 len:1 unwrit:1
+# [extent 2] es: lblk:12 len:1 pblk:102 type:0x2
+------------------
+        ok 6 split unwrit extent to 3 extents and convert 2nd half to writ (non endio) (highlevel)
+ext4_issue_zeroout_stub: lblk=11 pblk=101 len=2
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 7 split unwrit extent to 2 extents and convert 1st half writ (endio, zeroout) (highlevel)
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 8 split unwrit extent to 2 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+ext4_issue_zeroout_stub: lblk=12 pblk=102 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 9 split unwrit extent to 3 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 10 split unwrit extent to 2 extents and convert 1st half writ (non-endio, zeroout) (highlevel)
+ext4_issue_zeroout_stub: lblk=10 pblk=100 len=1
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 11 split unwrit extent to 2 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+# [extent 0] exp: lblk:10 len:3 unwrit:0 
+# [extent 0] got: lblk:10 len:3 unwrit:0
+# [extent 0] es: lblk:10 len:3 pblk:100 type:0x1
+------------------
+        ok 12 split unwrit extent to 3 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+    # test_split_convert: pass:12 fail:0 skip:0 total:12
+    ok 3 test_split_convert
+    ok 4 test_ext_pblock_48bit
+    ok 5 test_ext_unwritten_len_encoding
+    ok 6 test_ext_tree_init_and_check_inode
+        KTAP version 1
+        # Subtest: test_ext_check_corruptions
+        1..13
+        ok 1 invalid eh_magic
+        ok 2 mismatched eh_depth
+        ok 3 eh_max == 0
+        ok 4 eh_max exceeds root capacity
+        ok 5 eh_entries exceeds eh_max
+        ok 6 empty index block at depth > 0
+        ok 7 extent with ee_len == 0
+        ok 8 extent logical block 32-bit wrap-around
+        ok 9 extent physical block <= first_data_block
+        ok 10 extent physical block past blocks_count
+        ok 11 overlapping/unsorted leaf extents
+        ok 12 unsorted index entries
+        ok 13 non-root leaf first ee_block != parent ei_block
+    # test_ext_check_corruptions: pass:13 fail:0 skip:0 total:13
+    ok 7 test_ext_check_corruptions
+    ok 8 test_ext_block_csum_verify
+    ok 9 test_find_extent_root_binsearch
+    ok 10 test_find_extent_multilevel_and_navigation
+    ok 11 test_ext_precache
+    ok 12 test_can_extents_be_merged
+    ok 13 test_insert_extent_merge_and_nomerge
+    ok 14 test_insert_extent_grow_and_merge_up
+    ok 15 test_insert_extent_leaf_split
+    ok 16 test_insert_extent_index_split
+    ok 17 test_remove_space_tail_and_hole_punch
+    ok 18 test_remove_space_multilevel_collapse
+    ok 19 test_remove_space_bigalloc_partial_cluster
+    ok 20 test_map_blocks_lookup_hole_and_query_last_in_leaf
+    ok 21 test_map_blocks_alloc_overlap_and_enospc
+    ok 22 test_convert_to_initialized_abut_neighbors
+    ok 23 test_map_blocks_bigalloc_implied_cluster
+    ok 24 test_ext_shift_extents
+    ok 25 test_swap_extents
+    ok 26 test_clu_mapped
+    ok 27 test_ext_credits_calculation
+    ok 28 test_ext_fast_commit_replay
+    ok 29 test_fallocate_modes_and_prealloc
+    ok 30 test_zero_range_and_write_zeroes
+    ok 31 test_collapse_range
+    ok 32 test_insert_range
+EXT4-fs (extents_kunit): inode #12: block 0: len 2: split block mapping found for atomic write, ret = 2
+    ok 33 test_convert_unwritten_extents_and_io_end
+    ok 34 test_ext_fiemap_and_get_es_cache
+# ext4_extents_test: pass:34 fail:0 skip:0 total:34
+# Totals: pass:73 fail:0 skip:0 total:73
+ok 3 ext4_extents_test
+    KTAP version 1
+    # Subtest: ext4_hash
+    # module: ext4_test
+    1..7
+    ok 1 test_ext4fs_dirhash_vectors
+    ok 2 test_ext4fs_dirhash_seed_changes_result
+EXT4-fs warning (device kunit-ext4): __ext4fs_dirhash:301: invalid/unsupported hash tree version 7
+    ok 3 test_ext4fs_dirhash_invalid_version_returns_einval
+EXT4-fs warning (device kunit-ext4): __ext4fs_dirhash:290: inode #0: comm kunit_try_catch: Siphash requires key
+    ok 4 test_ext4fs_dirhash_siphash_without_key_returns_einval
+    ok 5 test_ext4fs_dirhash_signed_unsigned_differ_on_nonascii
+    ok 6 test_ext4fs_dirhash_casefolded_names_hash_consistently
+    ok 7 test_ext4fs_dirhash_casefold_fallback
+# ext4_hash: pass:7 fail:0 skip:0 total:7
+# Totals: pass:7 fail:0 skip:0 total:7
+ok 4 ext4_hash
+    KTAP version 1
+    # Subtest: ext4_extents_status_test
+    # module: ext4_test
+    1..33
+    ok 1 test_es_bitfield_written_and_unwritten_encoding
+    ok 2 test_es_bitfield_delayed_and_hole_encoding
+    ok 3 test_es_bitfield_referenced_and_pblock_update_preserve_state
+    ok 4 test_es_lookup_empty_tree_returns_miss
+    ok 5 test_es_insert_zero_len_is_noop
+    ok 6 test_es_lookup_hits_cache_and_rbtree_with_next_lblk
+    ok 7 test_es_fc_replay_bypasses_tree_operations
+        KTAP version 1
+        # Subtest: test_es_merge_cases
+        ok 1 left merge contiguous written extents
+        ok 2 right merge contiguous written extents
+        ok 3 three-way bridge merge via try_to_merge_right
+        ok 4 three-way bridge merge via try_to_merge_left
+        ok 5 adjacent hole extents merge
+        ok 6 discontiguous physical blocks do not merge
+        ok 7 different status types with contiguous pblk do not merge
+        ok 8 logically separated extents with 1-block gap do not merge
+    # test_es_merge_cases: pass:8 fail:0 skip:0 total:8
+    ok 8 test_es_merge_cases
+    ok 9 test_es_insert_adjacent_delayed_extents_merges
+    ok 10 test_es_merge_preserves_referenced
+    ok 11 test_es_merge_at_max_blocks_boundary_succeeds
+        KTAP version 1
+        # Subtest: test_es_remove_geometries
+        ok 1 remove range before extent
+        ok 2 remove range after extent
+        ok 3 remove exact extent range
+        ok 4 remove superset of extent range
+        ok 5 prefix trim of extent
+        ok 6 suffix trim of extent
+        ok 7 middle split of extent into two
+    # test_es_remove_geometries: pass:7 fail:0 skip:0 total:7
+    ok 12 test_es_remove_geometries
+    ok 13 test_es_remove_multi_extent_span_trims_and_deletes
+    ok 14 test_es_insert_overwrite_split_and_remerge
+    ok 15 test_es_cache_extent_inserts_and_coalesces_same_status
+EXT4-fs warning (device es_kunit): ext4_es_cache_extent:1079: inode #12: comm kunit_try_catch: ES cache extent failed: add [10,4,500,0x2] conflict with existing [8,10,98,0x1]
+
+    ok 16 test_es_cache_extent_conflict_covered_range_warns
+EXT4-fs warning (device es_kunit): ext4_es_cache_extent:1079: inode #12: comm kunit_try_catch: ES cache extent failed: add [8,10,500,0x2] conflict with existing [10,5,100,0x1]
+
+    ok 17 test_es_cache_extent_conflict_partial_overlap_warns
+    ok 18 test_es_cache_extent_hole_over_delayed_does_not_warn
+    ok 19 test_es_find_extent_range_skips_nonmatching_and_finds_next
+    ok 20 test_es_scan_range_matches_only_overlapping_extents
+    ok 21 test_es_scan_clu_matches_extent_in_same_cluster
+    ok 22 test_es_delalloc_remove_and_overwrite_account_reserved_blocks
+    ok 23 test_es_bigalloc_insert_delayed_creates_and_removes_pending
+    ok 24 test_es_bigalloc_revise_pending_single_cluster_halves
+    ok 25 test_es_bigalloc_revise_pending_multi_cluster_span
+    ok 26 test_es_bigalloc_remove_partial_cluster_holds_rsvd_until_empty
+    ok 27 test_es_bigalloc_remove_fragmented_cluster_releases_once
+    ok 28 test_es_bigalloc_remove_pending_cluster_cancels_pending_only
+    ok 29 test_es_clear_inode_es_retains_only_delayed_extents
+    ok 30 test_es_shrinker_ages_referenced_and_keeps_delayed
+    ok 31 test_es_shrinker_cursor_advances_and_wraps_around
+EXT4-fs warning (device es_kunit): es_reclaim_extents:1985: forced shrink of precached extents
+    ok 32 test_es_shrinker_skips_precached_inode_until_last_resort
+    ok 33 test_es_seq_shrinker_info_show_formats_stats
+# ext4_extents_status_test: pass:33 fail:0 skip:0 total:33
+# Totals: pass:46 fail:0 skip:0 total:46
+ok 5 ext4_extents_status_test
+    KTAP version 1
+    # Subtest: ext4_xattr_test
+    # module: ext4_test
+    1..11
+    ok 1 test_xattr_macros_and_locking
+        KTAP version 1
+        # Subtest: test_xattr_check_inode
+        ok 1 valid_empty_ibody
+        ok 2 valid_two_entries
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 3 bad_magic
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 4 end_before_first_entry
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 5 entry_header_overflows_end
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 6 entry_name_overflows_end
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 7 unterminated_entry_list
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 8 ea_inode_without_feature
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 9 value_size_gt_total_size
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 10 value_offset_overlaps_entries
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -117
+        ok 11 value_end_exceeds_total_size
+    # test_xattr_check_inode: pass:11 fail:0 skip:0 total:11
+    ok 2 test_xattr_check_inode
+    ok 3 test_xattr_ibody_basic_and_flags
+    ok 4 test_xattr_ibody_replace_and_remove
+ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -74
+    ok 5 test_xattr_external_block_and_check
+    ok 6 test_xattr_block_dedup_and_cow
+    ok 7 test_xattr_list_and_handlers
+    ok 8 test_xattr_ea_inode_lifecycle_and_dedup
+ext4: filesystem with signed xattr name hash
+ext4_xattr_kunit: lost filesystem error report for type 5 error -117
+ext4_xattr_kunit: lost filesystem error report for type 5 error -117
+    ok 9 test_xattr_ea_inode_validation_and_compat
+    ok 10 test_xattr_credits_usage_expand_and_delete
+ext4_xattr_kunit: lost filesystem error report for type 5 error -5
+ext4_xattr_kunit: lost filesystem error report for type 5 error -117
+    ok 11 test_xattr_error_injection
+# ext4_xattr_test: pass:11 fail:0 skip:0 total:11
+# Totals: pass:21 fail:0 skip:0 total:21
+ok 6 ext4_xattr_test
+    KTAP version 1
+    # Subtest: ext4_namei_test
+    # module: ext4_test
+    1..15
+    ok 1 test_namei_dirent_tail_and_csum
+    ok 2 test_namei_dx_helpers_and_csum
+        KTAP version 1
+        # Subtest: test_namei_read_dirblock
+        ok 1 valid leaf block with metadata_csum
+        ok 2 valid dx_root index block with metadata_csum
+        ok 3 hole at block > 0 with EITHER returns NULL
+        ok 4 reading block past i_size returns -EFSCORRUPTED
+        ok 5 ext4_bread -EIO error propagates
+        ok 6 hole at block 0 returns -EFSCORRUPTED
+        ok 7 hole for DIRENT_HTREE returns -EFSCORRUPTED
+        ok 8 leaf block found when expecting INDEX returns -EFSCORRUPTED
+        ok 9 corrupted leaf checksum returns -EFSBADCRC
+        ok 10 corrupted index checksum returns -EFSBADCRC
+    # test_namei_read_dirblock: pass:10 fail:0 skip:0 total:10
+    ok 3 test_namei_read_dirblock
+    ok 4 test_namei_append_and_init_dir
+    ok 5 test_namei_search_insert_delete_dentry
+    ok 6 test_namei_empty_dir
+    ok 7 test_namei_dx_map_pack_and_move
+        KTAP version 1
+        # Subtest: test_namei_check_dx_root_and_probe
+        ok 1 valid 1-level dx_root binary search probe
+        ok 2 valid 2-level htree probe and ext4_htree_next_block
+        ok 3 ext4_check_dx_root rejects dot name_len != 1
+        ok 4 ext4_check_dx_root rejects dot name != '.'
+        ok 5 ext4_check_dx_root rejects dot rec_len >= blocksize
+        ok 6 ext4_check_dx_root rejects dotdot name_len != 2
+        ok 7 ext4_check_dx_root rejects dotdot name != '..'
+        ok 8 dx_probe rejects unrecognized hash_version
+        ok 9 dx_probe rejects DX_HASH_SIPHASH when not hash_in_dirent
+        ok 10 dx_probe rejects non-zero unused_flags & 1
+        ok 11 dx_probe rejects indirect_levels >= ext4_dir_htree_level
+        ok 12 dx_probe rejects root limit mismatch
+        ok 13 dx_probe rejects count == 0
+        ok 14 dx_probe detects tree cycle pointing back to block 0
+    # test_namei_check_dx_root_and_probe: pass:14 fail:0 skip:0 total:14
+    ok 8 test_namei_check_dx_root_and_probe
+    ok 9 test_namei_add_find_and_htree_split
+    ok 10 test_namei_dx_index_level_growth_and_fallback
+    ok 11 test_namei_inline_dir_lifecycle
+    ok 12 test_namei_nlink_and_lookup_parent
+    ok 13 test_namei_link_unlink_and_rmdir
+    ok 14 test_namei_rename_and_exchange
+    ok 15 test_namei_casefold_lookup_and_strict
+# ext4_namei_test: pass:15 fail:0 skip:0 total:15
+# Totals: pass:37 fail:0 skip:0 total:37
+ok 7 ext4_namei_test
+    KTAP version 1
+    # Subtest: ext4_inline_test
+    # module: ext4_test
+    1..11
+    ok 1 test_max_inline_size_variants
+    ok 2 test_find_inline_data_nolock
+    ok 3 test_write_and_destroy_inline_data
+    ok 4 test_write_inline_short_copy_and_edge_cases
+    ok 5 test_readpage_inline_link_and_iomap
+    ok 6 test_inline_data_truncate
+    ok 7 test_convert_inline_data_and_rollback
+    ok 8 test_write_triggers_inline_to_extent_conversion
+    ok 9 test_update_final_de
+    ok 10 test_inline_dir_lifecycle_and_operations
+    ok 11 test_inline_dir_conversion_and_corruptions
+# ext4_inline_test: pass:11 fail:0 skip:0 total:11
+# Totals: pass:11 fail:0 skip:0 total:11
+ok 8 ext4_inline_test
+    KTAP version 1
+    # Subtest: ext4_fast_commit_test
+    # module: ext4_test
+    1..11
+    ok 1 test_fc_init_and_eligibility
+    ok 2 test_fc_mark_ineligible
+    ok 3 test_fc_track_inode_and_range
+    ok 4 test_fc_track_dentry_and_del
+    ok 5 test_fc_reserve_space_and_tlv_writing
+    ok 6 test_fc_snapshot_inode_and_ranges
+    ok 7 test_fc_cleanup_and_stats
+    ok 8 test_fc_commit_paths
+    ok 9 test_fc_replay_regions_and_scan
+    ok 10 test_fc_replay_inode_and_dentries
+    ok 11 test_fc_replay_ranges_and_end_to_end
+# ext4_fast_commit_test: pass:11 fail:0 skip:0 total:11
+# Totals: pass:11 fail:0 skip:0 total:11
+ok 9 ext4_fast_commit_test
+    KTAP version 1
+    # Subtest: ext4_ialloc_test
+    # module: ext4_test
+    1..28
+        KTAP version 1
+        # Subtest: ialloc_test_mark_bitmap_end
+        ok 1 unaligned_start_to_aligned_end
+        ok 2 byte_aligned_memset_only
+        ok 3 single_partial_byte_no_memset
+        ok 4 unaligned_within_second_byte
+        ok 5 equal_start_and_end_noop
+        ok 6 start_greater_than_end_noop
+    # ialloc_test_mark_bitmap_end: pass:6 fail:0 skip:0 total:6
+    ok 1 ialloc_test_mark_bitmap_end
+    ok 2 ialloc_test_end_bitmap_read_ok
+    ok 3 ialloc_test_end_bitmap_read_ioerr
+    ok 4 ialloc_test_validate_ibitmap_csum
+    ok 5 ialloc_test_validate_ibitmap_short_circuits
+    ok 6 ialloc_test_read_ibitmap_disk_and_cache
+    ok 7 ialloc_test_read_ibitmap_uninit
+    ok 8 ialloc_test_read_ibitmap_errors
+    ok 9 ialloc_test_free_inode_reg_and_dir
+EXT4-fs: ext4_free_inode:258: inode on nonexistent device
+    ok 10 ialloc_test_free_inode_guards
+    ok 11 ialloc_test_free_inode_corrupt_and_journal_errors
+    ok 12 ialloc_test_orlov_topdir_spread
+    ok 13 ialloc_test_orlov_subdir_and_thresholds
+    ok 14 ialloc_test_orlov_flex_bg_and_fallback
+    ok 15 ialloc_test_find_group_other_non_flex
+    ok 16 ialloc_test_find_group_other_flex_bg
+    ok 17 ialloc_test_recently_deleted
+    ok 18 ialloc_test_find_inode_bit
+    ok 19 ialloc_test_mark_inode_used_uninit
+    ok 20 ialloc_test_mark_inode_used_errors
+    ok 21 ialloc_test_xattr_credits_for_new_inode
+    ok 22 ialloc_test_new_inode_types_and_flags
+    ok 23 ialloc_test_new_inode_ownership_and_projid
+    ok 24 ialloc_test_new_inode_goal_uninit_and_corrupt_skip
+    ok 25 ialloc_test_new_inode_errors
+ext4_test_bit(bit=0, block=1028) = 0
+ext4_test_bit(bit=0, block=1028) = 1
+is_bad_inode(inode)=0
+NEXT_ORPHAN(inode)=0
+max_ino=256
+i_nlink=1
+ext4_test_bit(bit=0, block=1028) = 1
+is_bad_inode(inode)=0
+NEXT_ORPHAN(inode)=306
+max_ino=256
+i_nlink=0
+ext4_test_bit(bit=0, block=1028) = 1
+is_bad_inode(inode)=1
+NEXT_ORPHAN(inode)=0
+max_ino=256
+i_nlink=0
+    ok 26 ialloc_test_orphan_get
+    ok 27 ialloc_test_count_free_inodes_and_dirs
+    ok 28 ialloc_test_init_inode_table
+# ext4_ialloc_test: pass:28 fail:0 skip:0 total:28
+# Totals: pass:33 fail:0 skip:0 total:33
+ok 10 ext4_ialloc_test
+    KTAP version 1
+    # Subtest: ext4_balloc_test
+    # module: ext4_test
+    1..29
+        KTAP version 1
+        # Subtest: test_group_no_and_offset_matrix
+        ok 1 std_1k_bg0_first_block
+        ok 2 std_1k_bg0_last_block
+        ok 3 std_1k_bg1_first_block
+        ok 4 std_1k_bg3_interior_block
+        ok 5 std_4k_bg0_last_block
+        ok 6 std_4k_bg1_first_block
+        ok 7 std_4k_above_32bit_blocknr
+        ok 8 nonstd_bg0_last_block
+        ok 9 nonstd_bg1_first_block
+        ok 10 nonstd_bg2_interior_block
+        ok 11 bigalloc_std_cluster_start
+        ok 12 bigalloc_std_cluster_end_same_offset
+        ok 13 bigalloc_std_next_cluster
+        ok 14 bigalloc_std_bg2_offset
+        ok 15 bigalloc_nonstd_bg3_offset
+    # test_group_no_and_offset_matrix: pass:15 fail:0 skip:0 total:15
+    ok 1 test_group_no_and_offset_matrix
+    ok 2 test_group_no_and_offset_optional_out_ptrs
+    ok 3 test_bg_has_super_dense_all_groups
+    ok 4 test_bg_has_super_sparse_super_powers
+    ok 5 test_bg_has_super_sparse_super2_explicit_backups
+    ok 6 test_bg_num_gdb_and_base_meta_non_metabg
+    ok 7 test_bg_num_gdb_and_base_meta_hybrid_metabg
+    ok 8 test_free_clusters_after_init_standard_and_partial_last
+    ok 9 test_free_clusters_after_init_external_and_spanning_meta
+    ok 10 test_free_clusters_after_init_bigalloc_cluster_sharing
+    ok 11 test_get_group_desc_lookup_and_bounds
+    ok 12 test_get_group_info_lookup_and_null_guards
+    ok 13 test_read_block_bitmap_validates_csum
+    ok 14 test_read_block_bitmap_validates_metadata_bits
+    ok 15 test_read_block_bitmap_validates_padding
+    ok 16 test_read_block_bitmap_validation_short_circuits
+    ok 17 test_read_block_bitmap_disk_and_cache_paths
+    ok 18 test_read_block_bitmap_nowait_prefetch_locked
+    ok 19 test_read_block_bitmap_uninit_group
+    ok 20 test_read_block_bitmap_uninit_errors
+    ok 21 test_read_and_wait_block_bitmap_errors
+    ok 22 test_claim_free_clusters_unprivileged_and_bigalloc
+    ok 23 test_claim_free_clusters_root_and_reserved_pools
+    ok 24 test_should_retry_alloc_no_journal_and_retry_limit
+    ok 25 test_should_retry_alloc_free_space_and_discard_flush
+    ok 26 test_new_meta_blocks_alloc_and_delalloc_quota
+    ok 27 test_count_free_clusters_corrupt_and_64bit_groups
+    ok 28 test_inode_to_goal_block_flex_bg_and_delalloc
+    ok 29 test_inode_to_goal_block_nodelalloc_colour
+# ext4_balloc_test: pass:29 fail:0 skip:0 total:29
+# Totals: pass:43 fail:0 skip:0 total:43
+ok 11 ext4_balloc_test
+    KTAP version 1
+    # Subtest: ext4_orphan_test
+    # module: ext4_test
+    1..22
+        KTAP version 1
+        # Subtest: test_inodes_per_orphan_block_param
+        ok 1 1K_blocksize
+        ok 2 2K_blocksize
+        ok 3 4K_blocksize
+        ok 4 64K_blocksize
+    # test_inodes_per_orphan_block_param: pass:4 fail:0 skip:0 total:4
+    ok 1 test_inodes_per_orphan_block_param
+    ok 2 test_orphan_file_empty
+    ok 3 test_orphan_add_early_exits_and_idempotency
+    ok 4 test_orphan_add_list_chaining_and_csum
+    ok 5 test_orphan_add_next_orphan_bounds
+    ok 6 test_orphan_add_list_error_paths
+    ok 7 test_orphan_del_early_exits
+    ok 8 test_orphan_del_list_positions_and_null_handle
+    ok 9 test_orphan_del_list_error_paths
+    ok 10 test_orphan_file_add_and_del_basic
+    ok 11 test_orphan_file_add_block_wraparound_and_last_slot
+    ok 12 test_orphan_file_add_enospc_fallback_and_write_err
+    ok 13 test_orphan_file_del_edge_and_error_paths
+    ok 14 test_orphan_file_block_trigger_and_frozen_data
+    ok 15 test_init_and_release_orphan_info_lifecycle
+    ok 16 test_init_orphan_info_max_blocks_boundary
+    ok 17 test_init_orphan_info_error_paths_and_cleanup
+    ok 18 test_orphan_cleanup_skip_guards
+    ok 19 test_orphan_cleanup_linked_list_unlinked_and_truncated
+ext4_test_bit(bit=34, block=1028) = 0
+    ok 20 test_orphan_cleanup_orphan_file_and_rdonly_restore
+    ok 21 test_orphan_cleanup_list_errors_and_truncate_fail
+    ok 22 test_orphan_cleanup_quota_paths
+# ext4_orphan_test: pass:22 fail:0 skip:0 total:22
+# Totals: pass:25 fail:0 skip:0 total:25
+ok 12 ext4_orphan_test
+    KTAP version 1
+    # Subtest: ext4_block_validity_test
+    # module: ext4_test
+    1..17
+        KTAP version 1
+        # Subtest: test_sb_block_valid_bounds
+        ok 1 1k_block_0_below_first_data
+        ok 2 1k_block_1_equals_first_data
+        ok 3 1k_block_2_just_above_first_data
+        ok 4 4k_block_0_equals_first_data
+        ok 5 4k_block_1_just_above_first_data
+        ok 6 exact_last_single_block
+        ok 7 multiblock_ending_at_last_block
+        ok 8 multiblock_exceeding_end_by_one
+        ok 9 start_at_blocks_count
+        ok 10 u64_wrap_around_into_in_bounds_value
+        ok 11 u64_max_single_block_overflow
+        ok 12 64bit_high_block_at_exact_end
+        ok 13 32bit_fs_ignores_high_blocks_count
+    # test_sb_block_valid_bounds: pass:13 fail:0 skip:0 total:13
+    ok 1 test_sb_block_valid_bounds
+    ok 2 test_release_system_zone_lifecycle
+System zones: 1-14, 20-20, 22-22, 30-37, 1025-1038, 3073-3086
+    ok 3 test_setup_multigroup_sparse_super_and_flex_bg
+    ok 4 test_rbtree_left_right_and_bridge_merges
+        KTAP version 1
+        # Subtest: test_sb_block_valid_interval_overlaps
+        ok 1 strictly_before_adjacent
+        ok 2 strictly_after_adjacent
+        ok 3 single_first_block_of_zone
+        ok 4 single_interior_block_of_zone
+        ok 5 single_last_block_of_zone
+        ok 6 straddle_left_boundary_by_one
+        ok 7 straddle_right_boundary_by_one
+        ok 8 strictly_inside_zone
+        ok 9 exact_zone_span
+        ok 10 strictly_enclosing_entire_zone
+    # test_sb_block_valid_interval_overlaps: pass:10 fail:0 skip:0 total:10
+    ok 5 test_sb_block_valid_interval_overlaps
+        KTAP version 1
+        # Subtest: test_setup_corrupt_group_metadata_overlaps
+        ok 1 bbitmap_overlaps_group0_base_meta
+        ok 2 ibitmap_collides_with_bbitmap
+        ok 3 itable_collides_with_ibitmap
+        ok 4 group2_bbitmap_collides_with_group0_itable
+        ok 5 itable_starts_before_and_overlaps_bbitmap
+        ok 6 itable_starts_before_and_encloses_ibitmap
+        ok 7 itable_u64_wrap_around_overflow
+    # test_setup_corrupt_group_metadata_overlaps: pass:7 fail:0 skip:0 total:7
+    ok 6 test_setup_corrupt_group_metadata_overlaps
+    ok 7 test_journal_inode_protection_and_ino_isolation
+    ok 8 test_journal_disabled_or_empty_skips_zones
+    ok 9 test_journal_inode_invalid_inum
+    ok 10 test_journal_inode_iget_error
+    ok 11 test_journal_inode_map_blocks_error
+    ok 12 test_journal_inode_overlap_sets_fs_error
+    ok 13 test_journal_extent_left_overlap_rejected
+    ok 14 test_check_blockref_valid_and_sparse
+    ok 15 test_check_blockref_corrupt_entries_and_journal_bypass
+    ok 16 test_ind_check_inode_and_indirect_blockref
+    ok 17 test_map_blocks_rejects_extent_in_system_zone
+# ext4_block_validity_test: pass:17 fail:0 skip:0 total:17
+# Totals: pass:44 fail:0 skip:0 total:44
+ok 13 ext4_block_validity_test
+    KTAP version 1
+    # Subtest: ext4_super_test
+    # module: ext4_test
+    1..12
+    ok 1 test_feature_set_and_compatibility
+    ok 2 test_inode_info_init
+    ok 3 test_block_group_meta_and_clustersize
+    ok 4 test_hash_info_init
+    ok 5 test_check_geometry
+    ok 6 test_descriptor_loc
+    ok 7 test_superblock_and_group_desc_csum
+    ok 8 test_check_descriptors_and_flex_info
+    ok 9 test_max_sizes_stripe_and_resv_clusters
+    ok 10 test_overhead_and_statfs
+EXT4-fs: EXT4-fs: inode_readahead_blks must be 0 or a power of 2 smaller than 2^31
+EXT4-fs: mb_optimize_scan should be set to 0 or 1.
+EXT4-fs: Invalid want_extra_isize 200
+EXT4-fs: Invalid want_extra_isize 5
+EXT4-fs: Project quota feature not enabled. Cannot enable project quota enforcement.
+EXT4-fs: journaled quota format not specified
+EXT4-fs: test_dummy_encryption requires encrypt feature
+EXT4-fs: Cannot change data mode on remount
+EXT4-fs: dax option not supported
+    ok 11 test_mount_options_and_show_options
+    ok 12 test_error_recording_and_update_super
+# ext4_super_test: pass:12 fail:0 skip:0 total:12
+# Totals: pass:12 fail:0 skip:0 total:12
+ok 14 ext4_super_test
+    KTAP version 1
+    # Subtest: ext4_sysfs_test
+    # module: ext4_test
+    1..5
+    ok 1 test_generic_pointer_attrs
+    ok 2 test_validated_rw_attrs
+    ok 3 test_computed_ro_and_error_time_attrs
+    ok 4 test_feature_attrs_and_trigger_error
+    ok 5 test_sysfs_register_notify_and_unregister
+# ext4_sysfs_test: pass:5 fail:0 skip:0 total:5
+# Totals: pass:5 fail:0 skip:0 total:5
+ok 15 ext4_sysfs_test
+    KTAP version 1
+    # Subtest: ext4_ioctl_test
+    # module: ext4_test
+    1..6
+    ok 1 test_sb_callbacks_and_setparams
+    ok 2 test_validate_tune_sb_params
+    ok 3 test_update_superblocks_and_overhead
+    ok 4 test_swap_inode_data_and_seed
+    ok 5 test_immutable_dax_and_fileattr
+    ok 6 test_force_shutdown_and_ioctl_dispatch
+# ext4_ioctl_test: pass:6 fail:0 skip:0 total:6
+# Totals: pass:6 fail:0 skip:0 total:6
+ok 16 ext4_ioctl_test
+    KTAP version 1
+    # Subtest: ext4_resize_test
+    # module: ext4_test
+    1..8
+EXT4-fs error (device ext4_resize_kunit): ext4_resize_begin:71: comm kunit_try_catch: resize_inode disabled but reserved GDT blocks non-zero
+EXT4-fs warning (device ext4_resize_kunit): ext4_resize_begin:82: won't resize using backup superblock at 1025
+EXT4-fs warning (device ext4_resize_kunit): ext4_resize_begin:92: There are errors in the filesystem, so online resizing is not allowed
+EXT4-fs (ext4_resize_kunit): Online resizing not supported with sparse_super2
+    ok 1 test_resize_begin_and_end_guards
+EXT4-fs warning (device ext4_resize_kunit): verify_reserved_gdb:789: reserved GDT 3 missing grp 5 (5123)
+    ok 2 test_list_backups_and_verify_reserved_gdb
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:149: Cannot add at group 4 (only 3 groups)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:169: Last group not full
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:171: Reserved blocks too high (205)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:171: Reserved blocks too high (50)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:179: Cannot read last block (4096)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:182: Block bitmap not in group (block 3072)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:185: Inode bitmap not in group (block 4097)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:189: Inode table not in group (blocks 4090-4097)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:192: Block bitmap same as inode bitmap (3076)
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:200: Inode bitmap (3081) in inode table (3078-3085)
+    ok 3 test_verify_group_input_rejections_and_acceptance
+    ok 4 test_alloc_setup_flex_gd_and_group_tables
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_extend:1863: can't shrink FS - resize aborted
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_extend:1892: can't read last block, resize aborted
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_extend:1886: will only finish group (2049 blocks, 124 new)
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_extend:1871: need to use ext2online to resize further
+    ok 5 test_group_extend_partial_last_group
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_add:1722: blocks_count overflow
+EXT4-fs warning (device ext4_resize_kunit): verify_group_input:182: Block bitmap not in group (block 0)
+EXT4-fs warning (device ext4_resize_kunit): ext4_group_add:1735: No reserved GDT blocks, can't resize
+    ok 6 test_group_add_with_resize_inode_and_backup_gdb
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+EXT4-fs error (device ext4_resize_kunit): ext4_convert_meta_bg:1925: comm kunit_try_catch: Unexpected non-zero s_reserved_gdt_blocks
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+EXT4-fs error (device ext4_resize_kunit): ext4_convert_meta_bg:1989: comm kunit_try_catch: corrupted/inconsistent resize inode
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+EXT4-fs error (device ext4_resize_kunit): ext4_convert_meta_bg:1989: comm kunit_try_catch: corrupted/inconsistent resize inode
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+EXT4-fs error (device ext4_resize_kunit): ext4_convert_meta_bg:1989: comm kunit_try_catch: corrupted/inconsistent resize inode
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+    ok 7 test_convert_meta_bg_validation_and_conversion
+EXT4-fs warning (device ext4_resize_kunit): ext4_resize_fs:2021: can't read last block, resize aborted
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 16385 to 16285 blocks
+EXT4-fs warning (device ext4_resize_kunit): ext4_resize_fs:2044: can't shrink FS - resize aborted
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 16385 to 16385 blocks
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 16385 to 17409 blocks
+EXT4-fs error (device ext4_resize_kunit): ext4_resize_fs:2066: comm kunit_try_catch: resize_inode and meta_bg enabled simultaneously
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 16385 to 34817 blocks
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 32769 to 34817 blocks
+EXT4-fs (ext4_resize_kunit): Converting file system to meta_bg
+EXT4-fs (ext4_resize_kunit): resizing filesystem from 32769 to 34817 blocks
+EXT4-fs (ext4_resize_kunit): resized filesystem to 34817
+    ok 8 test_resize_fs_across_resize_inode_to_meta_bg
+# ext4_resize_test: pass:8 fail:0 skip:0 total:8
+# Totals: pass:8 fail:0 skip:0 total:8
+ok 17 ext4_resize_test
+    KTAP version 1
+    # Subtest: ext4_migrate_test
+    # module: ext4_test
+    1..11
+    ok 1 test_ext_migrate_precondition_checks_and_fast_symlink
+    ok 2 test_ext_migrate_direct_and_ind_coalescing_and_holes
+    ok 3 test_ext_migrate_dind_tind_and_multilevel_tree
+    ok 4 test_ext_migrate_error_rollback_frees_tmp_extent_blocks
+    ok 5 test_ext_swap_inode_data_detects_concurrent_allocation
+    ok 6 test_ind_migrate_empty_and_single_direct_extent
+    ok 7 test_ind_migrate_rejections
+    ok 8 test_ext_migrate_caps_long_run_at_init_max_len
+    ok 9 test_ext_migrate_survives_handle_restart
+    ok 10 test_ext_migrate_reports_concurrent_allocation
+    ok 11 test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks
+# ext4_migrate_test: pass:11 fail:0 skip:0 total:11
+# Totals: pass:11 fail:0 skip:0 total:11
+ok 18 ext4_migrate_test
+    KTAP version 1
+    # Subtest: ext4_indirect_test
+    # module: ext4_test
+    1..7
+EXT4-fs warning (device ext4_indirect_kunit): ext4_block_to_path:105: block 16843020 > max in inode 12
+    ok 1 test_block_to_path_and_trans_blocks
+    ok 2 test_ind_map_blocks_lookup_mapped_and_holes
+    ok 3 test_ind_map_blocks_alloc_direct_ind_dind_tind
+EXT4-fs warning (device ext4_indirect_kunit): ext4_block_to_path:105: block 16843020 > max in inode 15
+EXT4-fs error (device ext4_indirect_kunit): ext4_ind_map_blocks:621: inode #15: comm kunit_try_catch: Can't allocate blocks for non-extent mapped inodes with bigalloc
+EXT4-fs error (device ext4_indirect_kunit): ext4_get_branch:178: inode #15: block 1: comm kunit_try_catch: invalid block
+    ok 4 test_ind_map_blocks_errors_and_alloc_branch_unwind
+    ok 5 test_ind_truncate_partial_and_full
+    ok 6 test_ind_remove_space_levels_and_convergence
+EXT4-fs error (device ext4_indirect_kunit): ext4_clear_blocks:894: inode #18: comm kunit_try_catch: attempt to clear invalid blocks 8270 len 1
+EXT4-fs error (device ext4_indirect_kunit): ext4_free_branches:1040: inode #18: comm kunit_try_catch: invalid indirect mapped block 8271 (level 0)
+    ok 7 test_ind_free_corrupt_block_numbers
+# ext4_indirect_test: pass:7 fail:0 skip:0 total:7
+# Totals: pass:7 fail:0 skip:0 total:7
+ok 19 ext4_indirect_test
+    KTAP version 1
+    # Subtest: ext4_fsmap_test
+    # module: ext4_test
+    1..7
+    ok 1 test_fsmap_unit_conversions
+    ok 2 test_getfsmap_invalid_flags_devices_and_keys
+    ok 3 test_getfsmap_fixed_metadata_and_unknown_gaps
+    ok 4 test_getfsmap_cross_group_free_and_fixed_meta_coalescing
+    ok 5 test_getfsmap_1k_bofs_bigalloc_and_meta_bg
+    ok 6 test_getfsmap_count_only_pagination_and_abort
+    ok 7 test_getfsmap_external_logdev_and_multi_device
+# ext4_fsmap_test: pass:7 fail:0 skip:0 total:7
+# Totals: pass:7 fail:0 skip:0 total:7
+ok 20 ext4_fsmap_test
+    KTAP version 1
+    # Subtest: ext4_move_extent_test
+    # module: ext4_test
+    1..6
+    ok 1 test_double_data_sem_lock_order
+EXT4-fs (ext4_mext_kunit): Online defrag not supported with bigalloc
+EXT4-fs (ext4_mext_kunit): Online defrag not supported with data journaling
+EXT4-fs (ext4_mext_kunit): Online defrag not supported for encrypted files
+EXT4-fs (ext4_mext_kunit): Online defrag not supported for non-extent files
+    ok 2 test_mext_check_validity_rejections
+    ok 3 test_mext_check_adjust_range
+    ok 4 test_move_extents_holes_and_unwritten
+    ok 5 test_move_extents_written_copy_data_and_split
+    ok 6 test_move_extents_unwritten_orig_and_ebusy
+# ext4_move_extent_test: pass:6 fail:0 skip:0 total:6
+# Totals: pass:6 fail:0 skip:0 total:6
+ok 21 ext4_move_extent_test
+    KTAP version 1
+    # Subtest: ext4_mmp_test
+    # module: ext4_test
+    1..6
+EXT4-fs warning (device ext4_mmp_kunit): ext4_update_dynamic_rev:1198: updating to rev 1 because of new feature flag, running e2fsck is recommended
+    ok 1 test_mmp_csum_set_and_verify
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -12 while reading MMP block 10
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -5 while reading MMP block 10
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -117 while reading MMP block 10
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -74 while reading MMP block 10
+    ok 2 test_read_and_write_mmp_block
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:323: Invalid MMP block in superblock
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:323: Invalid MMP block in superblock
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -5 while reading MMP block 10
+EXT4-fs warning (device ext4_mmp_kunit): read_mmp_block:135: Error -5 while reading MMP block 10
+    ok 3 test_mmp_invalid_block_and_io_errors
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:349: fsck is running on the filesystem
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:349: MMP failure info: last update time: 1700000000, last update node: init-node, last update device: init-bdev
+    ok 4 test_mmp_clean_and_fsck_sequences
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:359: MMP interval 50 higher than expected, please wait.
+
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:373: Device is already active on another node.
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:373: MMP failure info: last update time: 1700000000, last update node: other-node, last update device: init-bdev
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:359: MMP interval 50 higher than expected, please wait.
+
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:408: Device is already active on another node.
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:408: MMP failure info: last update time: 1700000000, last update node: other-node, last update device: init-bdev
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:359: MMP interval 280 higher than expected, please wait.
+
+    ok 5 test_mmp_active_seq_conflict_and_claim
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:363: MMP startup interrupted, failing mount
+
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:398: MMP startup interrupted, failing mount
+EXT4-fs warning (device ext4_mmp_kunit): ext4_multi_mount_protect:427: Unable to create kmmpd thread for ext4_mmp_kunit.
+    ok 6 test_mmp_interrupted_waits_and_kthread_failure
+# ext4_mmp_test: pass:6 fail:0 skip:0 total:6
+# Totals: pass:6 fail:0 skip:0 total:6
+ok 22 ext4_mmp_test
+    KTAP version 1
+    # Subtest: ext4_dir_test
+    # module: ext4_test
+    1..6
+    ok 1 test_check_dir_entry_and_all_de
+    ok 2 test_dx_detection_and_hash_pos_cookies
+    ok 3 test_dir_open_llseek_and_release
+    ok 4 test_htree_store_dirent_and_free
+    ok 5 test_linear_readdir
+    ok 6 test_dx_readdir
+# ext4_dir_test: pass:6 fail:0 skip:0 total:6
+# Totals: pass:6 fail:0 skip:0 total:6
+ok 23 ext4_dir_test
+reboot: System halted
+

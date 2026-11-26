@@ -1,0 +1,35 @@
+{
+ "cases": [
+  {
+   "id": "merge-suite-config",
+   "role": "control",
+   "truth": "fails",
+   "why": "breaks that apply: inode-stub (no option needed)"
+  },
+  {
+   "id": "dev-suite-config",
+   "role": "fixed",
+   "truth": "passes",
+   "why": "no break the bank names applies to tree dev with options none added"
+  },
+  {
+   "id": "tip-user-ns",
+   "role": "userns",
+   "truth": "fails",
+   "why": "breaks that apply: s_user_ns (one needs CONFIG_USER_NS=y, which this case adds)"
+  },
+  {
+   "id": "merge-user-ns",
+   "role": "userns",
+   "truth": "fails",
+   "why": "breaks that apply: inode-stub, s_user_ns (one needs CONFIG_USER_NS=y, which this case adds)"
+  },
+  {
+   "id": "dev-user-ns",
+   "role": "fixed",
+   "truth": "passes",
+   "why": "no break the bank names applies to tree dev with options ['CONFIG_USER_NS=y']"
+  }
+ ],
+ "format": "linux-witness.key/1"
+}

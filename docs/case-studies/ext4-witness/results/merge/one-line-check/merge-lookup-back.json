@@ -1,0 +1,228 @@
+{
+    "name": "KUnit Test Group",
+    "sub_groups": [
+        {
+            "name": "ext4_inode_test",
+            "sub_groups": [
+                {
+                    "name": "inode_test_xtimestamp_decoding",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "1901-12-13 Lower bound of 32bit < 0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1969-12-31 Upper bound of 32bit < 0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1970-01-01 Lower bound of 32bit >=0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2038-01-19 Upper bound of 32bit >=0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2038-01-19 Lower bound of 32bit <0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2106-02-07 Upper bound of 32bit <0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2106-02-07 Lower bound of 32bit >=0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2174-02-25 Upper bound of 32bit >=0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2174-02-25 Lower bound of 32bit <0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2242-03-16 Upper bound of 32bit <0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2242-03-16 Lower bound of 32bit >=0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2310-04-04 Upper bound of 32bit >=0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2310-04-04 Upper bound of 32bit>=0 timestamp, hi extra sec bit 1. 1 ns",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2378-04-22 Lower bound of 32bit>= timestamp. Extra sec bits 1. Max ns",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2378-04-22 Lower bound of 32bit >=0 timestamp. All extra sec bits on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2446-05-10 Upper bound of 32bit >=0 timestamp. All extra sec bits on",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 16,
+                        "passed": 16,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "inode_test_xtimestamp_encoding_roundtrip",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_csum_set_and_verify",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_blocks_encode_decode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_fill_raw_inode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_mark_dirty_and_update",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_expand_extra_isize",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_get_inode_loc_variants",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_iget_validation_and_modes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_iget_corruptions",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_fast_symlink_and_can_truncate",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_flags_aops_mapping_order",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_projid_dio_and_getattr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_da_reserve_and_release",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_da_bigalloc_clusters",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_map_blocks_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_get_block_bread_and_walk_buffers",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_iomap_and_atomic_writes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_trans_credits_and_disksize",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_zero_partial_and_eof",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_punch_hole_and_truncate",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_write_and_sync_metadata",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_evict_inode_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_buffered_write_and_folio_ops",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_setattr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_page_mkwrite",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 41,
+                "passed": 41,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        }
+    ],
+    "test_cases": [],
+    "misc": {
+        "tests": 41,
+        "passed": 41,
+        "failed": 0,
+        "crashed": 0,
+        "skipped": 0,
+        "errors": 0
+    },
+    "arch": "um",
+    "defconfig": "kunit_defconfig",
+    "build_environment": "/root/b-lm",
+    "lab_name": null,
+    "kernel": null,
+    "job": null,
+    "git_branch": "kselftest"
+}

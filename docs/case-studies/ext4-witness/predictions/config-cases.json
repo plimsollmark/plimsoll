@@ -1,0 +1,28 @@
+{
+ "format": "linux-witness.bank/1",
+ "about": "The user-namespace follow-up (2026-11-26): does run 1's claim (at the merge 4dce97c6c265, 2 of 562 ext4 KUnit tests fail; at the pull's tip bae28a1b11f4 all 562 pass) depend on the kernel configuration? Each case runs the whole ext4 KUnit suite at one commit, as run 1 did (kunit.py run --arch=um --kunitconfig=fs/ext4), with the listed options added by --kconfig_add. The trees: the pull's tip, the merge, and the ext4 tree's dev tip ad592b92d677 (the merge, then 97f29574e12e, then ad592b92d677, read on git.kernel.org 2026-11-26).",
+ "evidence": {
+  "read_at": "2026-11-26: fs/ext4/.kunitconfig at the tip and the merge (identical, from GitHub raw: KUNIT, EXT4_FS, EXT4_FS_POSIX_ACL, EXT4_FS_SECURITY, EXT4_KUNIT_TESTS, FS_VERITY, FS_ENCRYPTION, QUOTA, QFMT_V2, UNICODE; no USER_NS); tools/testing/kunit/configs/arch_uml.config at the merge (KUNIT_UML_PCI, FORTIFY_SOURCE only); init/Kconfig at the merge (USER_NS 'default n'); arch/um/kernel/trap.c at the merge (a kernel-mode fault with current->mm == NULL panics: 'Segfault with no mm'; a KUnit test runs in a kthread, which has no mm); fs/ext4/xattr-test.c and fs/ext4/inode-test.c at the merge; ad592b92d677's and 97f29574e12e's commit pages on git.kernel.org",
+  "breaks": [
+   {
+    "name": "inode-stub",
+    "what": "the merge switched ext4_get_inode_loc_noio() to ext4_sb_find_get_block_nonatomic() (d25c14b2d79e, Linus's side) while inode_test_setup() stubs only ext4_sb_find_get_block(); two ext4_inode_test cases fail (run 1). Fixed by 97f29574e12e on the ext4 dev branch.",
+    "present_in": ["merge"],
+    "needs": null
+   },
+   {
+    "name": "s_user_ns",
+    "what": "xattr_test_init() (5df08dcafa99, a test commit inside the pull) builds a fake super_block without s_user_ns; ext4_xattr_inode_create() calls i_uid_read()/i_gid_read() on the parent inode, which with CONFIG_USER_NS=y map through a NULL user namespace (ad592b92d677's message). Without USER_NS the mapping ignores the namespace. Fixed by ad592b92d677.",
+    "present_in": ["tip", "merge"],
+    "needs": "CONFIG_USER_NS=y"
+   }
+  ]
+ },
+ "cases": [
+  {"id": "merge-suite-config", "tree": "merge", "commit": "4dce97c6c265544342e716e62fd24bbb232590c5", "kconfig_add": [], "report_config": ["CONFIG_USER_NS", "CONFIG_NAMESPACES"]},
+  {"id": "dev-suite-config", "tree": "dev", "commit": "ad592b92d6774cb520d1492bf17685fb5eede99d", "kconfig_add": [], "report_config": ["CONFIG_USER_NS", "CONFIG_NAMESPACES"]},
+  {"id": "tip-user-ns", "tree": "tip", "commit": "bae28a1b11f422d0214654800d9425e042295c71", "kconfig_add": ["CONFIG_USER_NS=y"], "report_config": ["CONFIG_NAMESPACES"]},
+  {"id": "merge-user-ns", "tree": "merge", "commit": "4dce97c6c265544342e716e62fd24bbb232590c5", "kconfig_add": ["CONFIG_USER_NS=y"], "report_config": ["CONFIG_NAMESPACES"]},
+  {"id": "dev-user-ns", "tree": "dev", "commit": "ad592b92d6774cb520d1492bf17685fb5eede99d", "kconfig_add": ["CONFIG_USER_NS=y"], "report_config": ["CONFIG_NAMESPACES"]}
+ ]
+}

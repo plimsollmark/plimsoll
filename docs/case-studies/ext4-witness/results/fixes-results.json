@@ -1,0 +1,614 @@
+{
+ "about": "Each of the 48 fixes reverted at the tip bae28a1b11f4 (its changes outside fs/ext4/*-test.c reversed), then kunit.py run --arch=um --kunitconfig=fs/ext4. Derived from the raw result files in fixes/run4-results.tar.gz.",
+ "counts": {
+  "witnessed": 6,
+  "stopped part way": 1,
+  "passes both ways": 34,
+  "reversal conflicts": 7
+ },
+ "fixes": [
+  {
+   "fix": "c966757ff80fe8407e2e3acdd720964769ddf937",
+   "short": "c966757ff80f",
+   "title": "ext4: fix readdir position truncation on 32-bit kernels",
+   "files": [
+    "fs/ext4/dir.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a 32-bit-only bug, which a 64-bit build cannot show",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "3b6aee59883c3056bb0a5e7491f9dc995bbac964",
+   "short": "3b6aee59883c",
+   "title": "ext4: clear journal restart indication after inserting extent",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "1 test fails without the fix and passes with it",
+   "failing_tests": [
+    "ext4_migrate_test.test_ext_migrate_survives_handle_restart"
+   ],
+   "claimed_test": "bae28a1b11f4's migration tests"
+  },
+  {
+   "fix": "7d7c94601664d19cea230601f377e5fb8a2ec4fe",
+   "short": "7d7c94601664",
+   "title": "ext4: fix discard work use-after-free on failed mount",
+   "files": [
+    "fs/ext4/mballoc.c",
+    "fs/ext4/super.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "b0a3f2c102e8c718e03be45f831e279ba9f6b112",
+   "short": "b0a3f2c102e8",
+   "title": "ext4: cap migration extent length at EXT_INIT_MAX_LEN",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "1 test fails without the fix and passes with it",
+   "failing_tests": [
+    "ext4_migrate_test.test_ext_migrate_caps_long_run_at_init_max_len"
+   ],
+   "claimed_test": "bae28a1b11f4's migration tests"
+  },
+  {
+   "fix": "82e2a5743b6ada7c77e072ca67c9ec55e9e18923",
+   "short": "82e2a5743b6a",
+   "title": "ext4: don't clobber the migration error in ext4_ext_migrate()",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/migrate.c)",
+   "failing_tests": [],
+   "claimed_test": "bae28a1b11f4's migration tests"
+  },
+  {
+   "fix": "4e04e396207027060055119ed45925bc89843a12",
+   "short": "4e04e3962070",
+   "title": "ext4: fix the logical block counter overflow in indirect migration",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "180354ab292fae2d0448df3ea61ba9ebf1e9f3bc",
+   "short": "180354ab292f",
+   "title": "ext4: drop extra ea_inode ref in cached-block reuse path",
+   "files": [
+    "fs/ext4/xattr.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "2c1c8c412bb801c12cd6931ff626e64c45ec9c15",
+   "short": "2c1c8c412bb8",
+   "title": "ext4: propagate errors from fast commit bitmap rebuild",
+   "files": [
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "489b444770b16cfdde86e10c05766da976a57928",
+   "short": "489b444770b1",
+   "title": "ext4: propagate errors from fast commit create replay",
+   "files": [
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "4a5cc4d1a7f0b22fef7e42e6fbedd4c41ff7ac77",
+   "short": "4a5cc4d1a7f0",
+   "title": "ext4: propagate errors from fast commit block cleanup",
+   "files": [
+    "fs/ext4/extents.c",
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "b28443aa879b2b5aefe8fb5b3f9b65c31233f5d7",
+   "short": "b28443aa879b",
+   "title": "ext4: propagate errors from fast commit i_blocks replay",
+   "files": [
+    "fs/ext4/extents.c",
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "337c173f966c1fbb1aad6dfdf4243323e3b7e304",
+   "short": "337c173f966c",
+   "title": "ext4: don't free the tmp_inode tree after a partial migration swap",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; masked by the later fix 6bda1a98b7ce: see the masking check",
+   "failing_tests": [],
+   "claimed_test": "bae28a1b11f4's migration tests (cited there by its pre-rebase hash 047061e6a6da)"
+  },
+  {
+   "fix": "3b9f870a75492c1704448cd27ec13781948033ed",
+   "short": "3b9f870a7549",
+   "title": "ext4: add bounds check for e_value_offs in ext4_read_inline_data",
+   "files": [
+    "fs/ext4/inline.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "40e53dad45a92e932156de23a69c991f3e2512c9",
+   "short": "40e53dad45a9",
+   "title": "jbd2: set JBD2_LOADED under j_state_lock",
+   "files": [
+    "fs/jbd2/journal.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "e290c77088e6f829f7d1d88c915f2a2fb22241e6",
+   "short": "e290c77088e6",
+   "title": "ext4: fix OOB memmove in ext4_xattr_set_entry",
+   "files": [
+    "fs/ext4/inline.c",
+    "fs/ext4/xattr.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "020035ee8fea4b7ee0cac6197c4bc801c793d889",
+   "short": "020035ee8fea",
+   "title": "ext4: fix shrinker scan budget accounting in ext4_es_scan()",
+   "files": [
+    "fs/ext4/extents_status.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/extents_status.c)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "0bc15784860ec2c61ec7abd1ccba6e931ba830b6",
+   "short": "0bc15784860e",
+   "title": "jbd2: fix shrinker scan budget accounting in jbd2_journal_shrink_scan()",
+   "files": [
+    "fs/jbd2/journal.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "474b6405c0f6a29ab3ae749647c2bc06970bff53",
+   "short": "474b6405c0f6",
+   "title": "ext4: do not accept rec_len 0 for block sizes below 64k",
+   "files": [
+    "fs/ext4/ext4.h"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "543341eba8f4f2c6de0aa7b74b3c50dd2c5825b4",
+   "short": "543341eba8f4",
+   "title": "jbd2: don't start a fast commit while the journal is marked empty",
+   "files": [
+    "fs/jbd2/journal.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "8d90b9ab0875a6a838125e4980c8c6ab4a021c0a",
+   "short": "8d90b9ab0875",
+   "title": "ext4: save converted extent before merging",
+   "files": [
+    "fs/ext4/extents.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "daa099ec5ce3fa863886588fbc8a9af1e351e368",
+   "short": "daa099ec5ce3",
+   "title": "ext4: Fix maximum orphan file size check",
+   "files": [
+    "fs/ext4/orphan.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "1 test fails without the fix and passes with it",
+   "failing_tests": [
+    "ext4_orphan_test.test_init_orphan_info_max_blocks_boundary"
+   ],
+   "claimed_test": ""
+  },
+  {
+   "fix": "44d3b834bef881c7ee9d5454661d54e6a562c53e",
+   "short": "44d3b834bef8",
+   "title": "ext4: skip holes when shrinking the extent tree in fast commit replay",
+   "files": [
+    "fs/ext4/extents.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "79906e00636e7e7831489e9c6a53dad1ec7a3399",
+   "short": "79906e00636e",
+   "title": "ext4: don't cache unzeroed blocks as written after a failed zeroout",
+   "files": [
+    "fs/ext4/extents.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/extents.c)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "a7fd013d368a4ae6480edcd12aa6827269011f9e",
+   "short": "a7fd013d368a",
+   "title": "ext4: reject atomic writes on inodes that can't do direct I/O",
+   "files": [
+    "fs/ext4/ext4.h",
+    "fs/ext4/file.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ext4.h)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "cd169c27f0ab7fb274c2ebedf23b0e56d66e4fa0",
+   "short": "cd169c27f0ab",
+   "title": "ext4: track zeroed out blocks of unwritten extents for fast commit",
+   "files": [
+    "fs/ext4/ext4.h",
+    "fs/ext4/ext4_extents.h",
+    "fs/ext4/extents-test.c",
+    "fs/ext4/extents.c",
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ext4.h, fs/ext4/ext4_extents.h)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "ff06f373c1d796f2c4f196c8bee9cd7ea5ee3c96",
+   "short": "ff06f373c1d7",
+   "title": "ext4: don't fail journal recovery on an incomplete fast commit",
+   "files": [
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "1 test fails without the fix and passes with it",
+   "failing_tests": [
+    "ext4_fast_commit_test.test_fc_replay_regions_and_scan"
+   ],
+   "claimed_test": ""
+  },
+  {
+   "fix": "40b2a37f9a7e2264e7f62949ea5b27020a0eacb3",
+   "short": "40b2a37f9a7e",
+   "title": "jbd2: check return value of blkdev_issue_flush() when checkpointing",
+   "files": [
+    "fs/jbd2/checkpoint.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "6025f9d156cfb6cd67186dbb14ce1e277f73cc66",
+   "short": "6025f9d156cf",
+   "title": "ext4: check return value of blkdev_issue_flush() when starting a fast commit",
+   "files": [
+    "fs/ext4/fast_commit.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/fast_commit.c)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "7d7c9c83c8227c113aa4f1bae9a8d43b8ea6c839",
+   "short": "7d7c9c83c822",
+   "title": "ext4: complete dropbehind writeback in task context",
+   "files": [
+    "fs/ext4/page-io.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "8a72b083d8bcdb37bff6d42da679df528b16b452",
+   "short": "8a72b083d8bc",
+   "title": "ext4: check return value of blkdev_issue_flush() when initializing inode tables",
+   "files": [
+    "fs/ext4/ialloc.c",
+    "fs/ext4/super.c"
+   ],
+   "outcome": "reversal conflicts",
+   "reason": "the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ialloc.c)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "9e3cb03d39332370474222437660efb2ede3be6b",
+   "short": "9e3cb03d3933",
+   "title": "jbd2: check return value of blkdev_issue_flush() for async commits",
+   "files": [
+    "fs/jbd2/commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "b8e62a68c59fc6171c51e919beff5dff6e473f4e",
+   "short": "b8e62a68c59f",
+   "title": "jbd2: check return value of blkdev_issue_flush() when committing",
+   "files": [
+    "fs/jbd2/commit.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "0a10fca0f1545af1f9b55323b8d6958c12c7a7a6",
+   "short": "0a10fca0f154",
+   "title": "ext4: fix folio reference leak in mpage_submit_partial_folio()",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "2cfcd9fa8734c1c526de8a17bda00db0a454e276",
+   "short": "2cfcd9fa8734",
+   "title": "ext4: return an error when a journal block is not mapped",
+   "files": [
+    "fs/ext4/super.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "356c926061758e4a578f3d42069eca65f13d1e80",
+   "short": "356c92606175",
+   "title": "ext4: clear in-inode xattr space before adding the first xattr",
+   "files": [
+    "fs/ext4/xattr.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "8eb922c5c4672aa872d1459d74ce5d6fa8846031",
+   "short": "8eb922c5c467",
+   "title": "ext4: record writeback error when discarding pages on failed delalloc",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "bfb8f5ce8815bb99770e355a916348df98181f18",
+   "short": "bfb8f5ce8815",
+   "title": "ext4: drop tmp inode ownership before migration cleanup",
+   "files": [
+    "fs/ext4/migrate.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "1 test fails without the fix and passes with it",
+   "failing_tests": [
+    "ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks"
+   ],
+   "claimed_test": "bae28a1b11f4's migration tests"
+  },
+  {
+   "fix": "f0872c44eda1f936b766bf87a384286986ef1b7c",
+   "short": "f0872c44eda1",
+   "title": "ext4: skip eof zeroing when the zero range covers the eof block",
+   "files": [
+    "fs/ext4/extents.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "1ea9e6b3bd3136288fb8717c6899ff43e4d99524",
+   "short": "1ea9e6b3bd31",
+   "title": "ext4: return 0 instead of stale ret in ext4_iomap_writepages()",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "58b186b5bbd295b0a3001ef4d40af1ea84501e5c",
+   "short": "58b186b5bbd2",
+   "title": "ext4: validate inode block references during fast commit replay",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "cdecc68d94a7f35284e36ea80bc7a09bd7cb42b8",
+   "short": "cdecc68d94a7",
+   "title": "ext4: preserve force-fsck requests across unmount",
+   "files": [
+    "fs/ext4/ioctl.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "f62b22b69aefa031ab65b46794a64e448edaa9ae",
+   "short": "f62b22b69aef",
+   "title": "ext4: free fast commit replay state on failed mounts",
+   "files": [
+    "fs/ext4/fast_commit.c",
+    "fs/ext4/super.c"
+   ],
+   "outcome": "stopped part way",
+   "reason": "without the fix the kernel panics part way through the suite, in ext4_fast_commit_test: 342 tests pass and 220 are never reached (the laptop rerun's log shows the panic: BUG at fs/ext4/ext4_jbd2.c:36). The tool that ran this job labeled it \"cannot run\"; it was fixed afterwards to say stopped part way",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "390d69dd5c82e402882d690754a72a3e898b701b",
+   "short": "390d69dd5c82",
+   "title": "ext4: add inode to orphan list before extent conversion",
+   "files": [
+    "fs/ext4/extents.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "bbae5e26222e901ca412927ef8b4662e6586171a",
+   "short": "bbae5e26222e",
+   "title": "ext4: do not report inline conversion allocation failures as fs errors",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "d0877f8eb3c08218cb9f6165f565d90e956fb9ea",
+   "short": "d0877f8eb3c0",
+   "title": "ext4: initialize map->m_pblk in ext4_da_map_blocks()",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "d5fd7d0564d800d42302c6750b74b78f655fe81d",
+   "short": "d5fd7d0564d8",
+   "title": "ext4: fix extent status cache clearing when truncating inline data",
+   "files": [
+    "fs/ext4/inline.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "e5db68ec43e9afc56ca3141ed16c70f0c6a48b0f",
+   "short": "e5db68ec43e9",
+   "title": "ext4: do not advance i_size on a buffered write that copied nothing",
+   "files": [
+    "fs/ext4/inode.c"
+   ],
+   "outcome": "passes both ways",
+   "reason": "all 562 tests pass with the fix reverted and at the tip",
+   "failing_tests": [],
+   "claimed_test": ""
+  },
+  {
+   "fix": "9627baed418bf1200a5ec7309958f620d6e3d318",
+   "short": "9627baed418b",
+   "title": "ext4: check multi-block overlap on left traversal in add_system_zone()",
+   "files": [
+    "fs/ext4/block_validity-test.c",
+    "fs/ext4/block_validity.c"
+   ],
+   "outcome": "witnessed",
+   "reason": "4 tests fail without the fix and pass with it",
+   "failing_tests": [
+    "ext4_block_validity_test.test_journal_extent_left_overlap_rejected",
+    "ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_starts_before_and_encloses_ibitmap",
+    "ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_starts_before_and_overlaps_bbitmap",
+    "ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_u64_wrap_around_overflow"
+   ],
+   "claimed_test": "its own test, in the same commit"
+  }
+ ]
+}

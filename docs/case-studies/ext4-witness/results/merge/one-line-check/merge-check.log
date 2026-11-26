@@ -1,0 +1,47 @@
+Preparing worktree (detached HEAD 4dce97c6c)
+Updating files:  15% (15084/97393)Updating files:  16% (15583/97393)Updating files:  17% (16557/97393)Updating files:  18% (17531/97393)Updating files:  19% (18505/97393)Updating files:  20% (19479/97393)Updating files:  21% (20453/97393)Updating files:  22% (21427/97393)Updating files:  23% (22401/97393)Updating files:  24% (23375/97393)Updating files:  25% (24349/97393)Updating files:  26% (25323/97393)Updating files:  27% (26297/97393)Updating files:  28% (27271/97393)Updating files:  29% (28244/97393)Updating files:  30% (29218/97393)Updating files:  31% (30192/97393)Updating files:  32% (31166/97393)Updating files:  32% (31231/97393)Updating files:  33% (32140/97393)Updating files:  34% (33114/97393)Updating files:  35% (34088/97393)Updating files:  36% (35062/97393)Updating files:  37% (36036/97393)Updating files:  38% (37010/97393)Updating files:  39% (37984/97393)Updating files:  39% (38654/97393)Updating files:  39% (38873/97393)Updating files:  40% (38958/97393)Updating files:  41% (39932/97393)Updating files:  42% (40906/97393)Updating files:  43% (41879/97393)Updating files:  44% (42853/97393)Updating files:  45% (43827/97393)Updating files:  46% (44801/97393)Updating files:  47% (45775/97393)Updating files:  47% (46401/97393)Updating files:  48% (46749/97393)Updating files:  49% (47723/97393)Updating files:  50% (48697/97393)Updating files:  51% (49671/97393)Updating files:  52% (50645/97393)Updating files:  53% (51619/97393)Updating files:  54% (52593/97393)Updating files:  55% (53567/97393)Updating files:  56% (54541/97393)Updating files:  56% (55494/97393)Updating files:  57% (55515/97393)Updating files:  58% (56488/97393)Updating files:  59% (57462/97393)Updating files:  60% (58436/97393)Updating files:  61% (59410/97393)Updating files:  62% (60384/97393)Updating files:  63% (61358/97393)Updating files:  63% (62186/97393)Updating files:  64% (62332/97393)Updating files:  65% (63306/97393)Updating files:  66% (64280/97393)Updating files:  67% (65254/97393)Updating files:  68% (66228/97393)Updating files:  69% (67202/97393)Updating files:  70% (68176/97393)Updating files:  71% (69150/97393)Updating files:  72% (70123/97393)Updating files:  72% (70185/97393)Updating files:  73% (71097/97393)Updating files:  74% (72071/97393)Updating files:  75% (73045/97393)Updating files:  76% (74019/97393)Updating files:  77% (74993/97393)Updating files:  78% (75967/97393)Updating files:  79% (76941/97393)Updating files:  80% (77915/97393)Updating files:  81% (78889/97393)Updating files:  82% (79863/97393)Updating files:  83% (80837/97393)Updating files:  83% (81081/97393)Updating files:  84% (81811/97393)Updating files:  85% (82785/97393)Updating files:  86% (83758/97393)Updating files:  87% (84732/97393)Updating files:  88% (85706/97393)Updating files:  89% (86680/97393)Updating files:  90% (87654/97393)Updating files:  91% (88628/97393)Updating files:  92% (89602/97393)Updating files:  93% (90576/97393)Updating files:  94% (91550/97393)Updating files:  94% (92140/97393)Updating files:  95% (92524/97393)Updating files:  96% (93498/97393)Updating files:  97% (94472/97393)Updating files:  98% (95446/97393)Updating files:  99% (96420/97393)Updating files: 100% (97393/97393)Updating files: 100% (97393/97393), done.
+HEAD is now at 4dce97c6c Merge tag 'ext4_for_linus-7.4-rc5' of git://git.kernel.org/pub/scm/linux/kernel/git/tytso/ext4
+== 1 merge unchanged, ext4_inode_test
+22:03:18
+[22:04:02] # ext4_inode_test: pass:24 fail:2 skip:0 total:26
+[22:04:02] # Totals: pass:39 fail:2 skip:0 total:41
+[22:04:02] ================= [FAILED] ext4_inode_test =================
+[22:04:02] ============================================================
+[22:04:02] Testing complete. Ran 41 tests: passed: 39, failed: 2
+[22:04:02] Test results stored in /root/mc/merge-again.json
+[22:04:02] Elapsed time: 44.393s total, 4.646s configuring, 39.580s building, 0.130s running
+
+== 3 merge unchanged, whole suite
+22:04:02
+[22:04:06] Testing complete. Ran 562 tests: passed: 560, failed: 2
+[22:04:06] Failures: ext4_inode_test.inode_test_get_inode_loc_variants, ext4_inode_test.inode_test_write_and_sync_metadata
+[22:04:06] Test results stored in /root/mc/merge-again-all.json
+[22:04:06] Elapsed time: 3.698s total, 0.001s configuring, 3.081s building, 0.580s running
+
+6015:	bh = ext4_sb_find_get_block_nonatomic(sb, block);
+ fs/ext4/inode.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 07a62d856..523f07379 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -6012,7 +6012,7 @@ int ext4_get_inode_loc_noio(struct inode *inode, struct ext4_iloc *iloc)
+ 	}
+ 	block += inode_offset / inodes_per_block;
+ 
+-	bh = ext4_sb_find_get_block_nonatomic(sb, block);
++	bh = ext4_sb_find_get_block(sb, block);
+ 	if (!bh)
+ 		return -EAGAIN;
+ 	if (!ext4_buffer_uptodate(bh)) {
+== 2 merge with the noio lookup put back, ext4_inode_test
+22:04:06
+[22:04:13] [PASSED] inode_test_setattr
+[22:04:13] [PASSED] inode_test_page_mkwrite
+[22:04:13] ================= [PASSED] ext4_inode_test =================
+[22:04:13] ============================================================
+[22:04:13] Testing complete. Ran 41 tests: passed: 41
+[22:04:13] Test results stored in /root/mc/merge-lookup-back.json
+[22:04:13] Elapsed time: 6.966s total, 0.001s configuring, 6.851s building, 0.065s running
+
+done=22:04:13

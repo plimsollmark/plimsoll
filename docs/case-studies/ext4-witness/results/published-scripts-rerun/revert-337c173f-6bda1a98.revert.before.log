@@ -1,0 +1,41 @@
+[02:17:45] Configuring KUnit Kernel ...
+[02:17:45] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/out/work/b-tip olddefconfig CC=ccache gcc
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/out/work/b-tip --jobs=24 CC=ccache gcc
+[02:17:48] Starting KUnit Kernel (1/1)...
+[02:17:48] ============================================================
+Running tests with:
+$ /out/work/b-tip/linux kunit.filter_glob=ext4_migrate_test kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[02:17:48] ============= ext4_migrate_test (11 subtests) ==============
+[02:17:48] [PASSED] test_ext_migrate_precondition_checks_and_fast_symlink
+[02:17:48] [PASSED] test_ext_migrate_direct_and_ind_coalescing_and_holes
+[02:17:48] [PASSED] test_ext_migrate_dind_tind_and_multilevel_tree
+[02:17:48] [PASSED] test_ext_migrate_error_rollback_frees_tmp_extent_blocks
+[02:17:48] [PASSED] test_ext_swap_inode_data_detects_concurrent_allocation
+[02:17:48] [PASSED] test_ind_migrate_empty_and_single_direct_extent
+[02:17:48] [PASSED] test_ind_migrate_rejections
+[02:17:48] [PASSED] test_ext_migrate_caps_long_run_at_init_max_len
+[02:17:48] [PASSED] test_ext_migrate_survives_handle_restart
+[02:17:48] [PASSED] test_ext_migrate_reports_concurrent_allocation
+[02:17:48] # test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1327
+[02:17:48] Expected ctx->evict_tmp_eh_entries == 0U, but
+[02:17:48]     ctx->evict_tmp_eh_entries == 1 (0x1)
+[02:17:48]     0U == 0 (0x0)
+[02:17:48] # test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1328
+[02:17:48] Expected ctx->evict_tmp_eh_depth == 0U, but
+[02:17:48]     ctx->evict_tmp_eh_depth == 1 (0x1)
+[02:17:48]     0U == 0 (0x0)
+[02:17:48] # test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1351
+[02:17:48] Expected migrate_was_freed(ctx, ext_idx_pblk) to be false, but is true
+[02:17:48] [FAILED] test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks
+[02:17:48]     # module: ext4_test
+[02:17:48] # ext4_migrate_test: pass:10 fail:1 skip:0 total:11
+[02:17:48] # Totals: pass:10 fail:1 skip:0 total:11
+[02:17:48] ================ [FAILED] ext4_migrate_test ================
+[02:17:48] ============================================================
+[02:17:48] Testing complete. Ran 11 tests: passed: 10, failed: 1
+[02:17:48] Test results stored in /out/masking/revert-337c173f-6bda1a98.revert.before.kunit.json
+[02:17:48] Elapsed time: 3.533s total, 0.001s configuring, 3.418s building, 0.092s running
+

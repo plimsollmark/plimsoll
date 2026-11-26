@@ -1,0 +1,476 @@
+[01:18:38] Configuring KUnit Kernel ...
+Generating .config ...
+Populating config with:
+$ make ARCH=um O=/root/b-config_user_ns_y olddefconfig CC=ccache gcc
+[01:18:42] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/root/b-config_user_ns_y olddefconfig CC=ccache gcc
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/root/b-config_user_ns_y --jobs=16 CC=ccache gcc
+[01:19:18] Starting KUnit Kernel (1/1)...
+[01:19:18] ============================================================
+Running tests with:
+$ /root/b-config_user_ns_y/linux kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[01:19:18] ============== ext4_inode_test (26 subtests) ===============
+[01:19:18] ============= inode_test_xtimestamp_decoding  ==============
+[01:19:18] [PASSED] 1901-12-13 Lower bound of 32bit < 0 timestamp, no extra bits
+[01:19:18] [PASSED] 1969-12-31 Upper bound of 32bit < 0 timestamp, no extra bits
+[01:19:18] [PASSED] 1970-01-01 Lower bound of 32bit >=0 timestamp, no extra bits
+[01:19:18] [PASSED] 2038-01-19 Upper bound of 32bit >=0 timestamp, no extra bits
+[01:19:18] [PASSED] 2038-01-19 Lower bound of 32bit <0 timestamp, lo extra sec bit on
+[01:19:18] [PASSED] 2106-02-07 Upper bound of 32bit <0 timestamp, lo extra sec bit on
+[01:19:18] [PASSED] 2106-02-07 Lower bound of 32bit >=0 timestamp, lo extra sec bit on
+[01:19:18] [PASSED] 2174-02-25 Upper bound of 32bit >=0 timestamp, lo extra sec bit on
+[01:19:18] [PASSED] 2174-02-25 Lower bound of 32bit <0 timestamp, hi extra sec bit on
+[01:19:18] [PASSED] 2242-03-16 Upper bound of 32bit <0 timestamp, hi extra sec bit on
+[01:19:18] [PASSED] 2242-03-16 Lower bound of 32bit >=0 timestamp, hi extra sec bit on
+[01:19:18] [PASSED] 2310-04-04 Upper bound of 32bit >=0 timestamp, hi extra sec bit on
+[01:19:18] [PASSED] 2310-04-04 Upper bound of 32bit>=0 timestamp, hi extra sec bit 1. 1 ns
+[01:19:18] [PASSED] 2378-04-22 Lower bound of 32bit>= timestamp. Extra sec bits 1. Max ns
+[01:19:18] [PASSED] 2378-04-22 Lower bound of 32bit >=0 timestamp. All extra sec bits on
+[01:19:18] [PASSED] 2446-05-10 Upper bound of 32bit >=0 timestamp. All extra sec bits on
+[01:19:18] ========= [PASSED] inode_test_xtimestamp_decoding ==========
+[01:19:18] [PASSED] inode_test_xtimestamp_encoding_roundtrip
+[01:19:18] [PASSED] inode_test_csum_set_and_verify
+[01:19:18] [PASSED] inode_test_blocks_encode_decode
+[01:19:18] [PASSED] inode_test_fill_raw_inode
+[01:19:18] [PASSED] inode_test_mark_dirty_and_update
+[01:19:18] [PASSED] inode_test_expand_extra_isize
+[01:19:18] [PASSED] inode_test_get_inode_loc_variants
+[01:19:18] [PASSED] inode_test_iget_validation_and_modes
+[01:19:18] [PASSED] inode_test_iget_corruptions
+[01:19:18] [PASSED] inode_test_fast_symlink_and_can_truncate
+[01:19:18] [PASSED] inode_test_flags_aops_mapping_order
+[01:19:18] [PASSED] inode_test_projid_dio_and_getattr
+[01:19:18] [PASSED] inode_test_da_reserve_and_release
+[01:19:18] [PASSED] inode_test_da_bigalloc_clusters
+[01:19:18] [PASSED] inode_test_map_blocks_paths
+[01:19:18] [PASSED] inode_test_get_block_bread_and_walk_buffers
+[01:19:18] [PASSED] inode_test_iomap_and_atomic_writes
+[01:19:18] [PASSED] inode_test_trans_credits_and_disksize
+[01:19:18] [PASSED] inode_test_zero_partial_and_eof
+[01:19:18] [PASSED] inode_test_punch_hole_and_truncate
+[01:19:18] [PASSED] inode_test_write_and_sync_metadata
+[01:19:18] [PASSED] inode_test_evict_inode_paths
+[01:19:18] [PASSED] inode_test_buffered_write_and_folio_ops
+[01:19:18] [PASSED] inode_test_setattr
+[01:19:18] [PASSED] inode_test_page_mkwrite
+[01:19:18] ================= [PASSED] ext4_inode_test =================
+[01:19:18] ============= ext4_mballoc_test (32 subtests) ==============
+[01:19:18] ================= test_new_blocks_simple  ==================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============= [PASSED] test_new_blocks_simple ==============
+[01:19:18] ================= test_free_blocks_simple  =================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============= [PASSED] test_free_blocks_simple =============
+[01:19:18] ================= test_mb_generate_buddy  ==================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============= [PASSED] test_mb_generate_buddy ==============
+[01:19:18] ==================== test_mb_mark_used  ====================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ================ [PASSED] test_mb_mark_used ================
+[01:19:18] =================== test_mb_free_blocks  ===================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =============== [PASSED] test_mb_free_blocks ===============
+[01:19:18] ================ test_mark_diskspace_used  =================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============ [PASSED] test_mark_diskspace_used =============
+[01:19:18] ===================== test_mb_bit_ops  =====================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ================= [PASSED] test_mb_bit_ops =================
+[01:19:18] =============== test_mb_test_and_clear_bits  ===============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =========== [PASSED] test_mb_test_and_clear_bits ===========
+[01:19:18] ============== test_mb_find_buddy_and_order  ===============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ========== [PASSED] test_mb_find_buddy_and_order ===========
+[01:19:18] =================== test_mb_find_extent  ===================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =============== [PASSED] test_mb_find_extent ===============
+[01:19:18] ============= test_mb_generate_buddy_corrupt  ==============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ========= [PASSED] test_mb_generate_buddy_corrupt ==========
+[01:19:18] ====== test_mb_free_blocks_double_free_and_fc_replay  ======
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] == [PASSED] test_mb_free_blocks_double_free_and_fc_replay ==
+[01:19:18] =========== test_mb_xarray_orders_and_frag_size  ===========
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ======= [PASSED] test_mb_xarray_orders_and_frag_size =======
+[01:19:18] =================== test_mb_good_group  ====================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =============== [PASSED] test_mb_good_group ================
+[01:19:18] ================== test_mb_find_by_goal  ===================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============== [PASSED] test_mb_find_by_goal ===============
+[01:19:18] ============= test_mb_simple_and_aligned_scan  =============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ========= [PASSED] test_mb_simple_and_aligned_scan =========
+[01:19:18] ============ test_mb_complex_scan_and_measure  =============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ======== [PASSED] test_mb_complex_scan_and_measure =========
+[01:19:18] ================ test_mb_regular_allocator  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============ [PASSED] test_mb_regular_allocator ============
+[01:19:18] ==================== test_mb_prefetch  =====================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ================ [PASSED] test_mb_prefetch =================
+[01:19:18] =============== test_mb_initialize_context  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =========== [PASSED] test_mb_initialize_context ============
+[01:19:18] ================ test_mb_normalize_request  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============ [PASSED] test_mb_normalize_request ============
+[01:19:18] =============== test_mb_inode_pa_lifecycle  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =========== [PASSED] test_mb_inode_pa_lifecycle ============
+[01:19:18] =============== test_mb_group_pa_lifecycle  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =========== [PASSED] test_mb_group_pa_lifecycle ============
+[01:19:18] ================== test_mb_lg_list_trim  ===================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============== [PASSED] test_mb_lg_list_trim ===============
+[01:19:18] =========== test_mb_new_blocks_and_enospc_retry  ===========
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ======= [PASSED] test_mb_new_blocks_and_enospc_retry =======
+[01:19:18] ============ test_mb_mark_context_and_mark_bb  =============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ======== [PASSED] test_mb_mark_context_and_mark_bb =========
+[01:19:18] ======= test_ext4_free_blocks_flags_and_cross_group  =======
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] === [PASSED] test_ext4_free_blocks_flags_and_cross_group ===
+[01:19:18] ====== test_mb_free_metadata_and_process_freed_data  =======
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] == [PASSED] test_mb_free_metadata_and_process_freed_data ===
+[01:19:18] =============== test_ext4_group_add_blocks  ================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] =========== [PASSED] test_ext4_group_add_blocks ============
+[01:19:18] ==================== test_ext4_trim_fs  ====================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ================ [PASSED] test_ext4_trim_fs ================
+[01:19:18] ============== test_ext4_mballoc_query_range  ==============
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ========== [PASSED] test_ext4_mballoc_query_range ==========
+[01:19:18] ================= test_mb_mark_used_cost  ==================
+[01:19:18] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[01:19:18] ============= [PASSED] test_mb_mark_used_cost ==============
+[01:19:18] ================ [PASSED] ext4_mballoc_test ================
+[01:19:18] ============= ext4_extents_test (34 subtests) ==============
+[01:19:18] ============= test_split_convert (12 subtests) =============
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 1st half unwrit
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit
+[01:19:18] [PASSED] split writ extent to 3 extents and convert 2nd half to unwrit
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (zeroout)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (zeroout)
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (zeroout)
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (zeroout)
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (zeroout)
+[01:19:18] [PASSED] split writ extent to 3 extents and convert 2nd half unwrit (zeroout)
+[01:19:18] =============== [PASSED] test_split_convert ================
+[01:19:18] ============= test_split_convert (6 subtests) ==============
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (highlevel)
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (highlevel)
+[01:19:18] [PASSED] split writ extent to 3 extents and convert 2nd half to unwrit (highlevel)
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (zeroout) (highlevel)
+[01:19:18] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (zeroout) (highlevel)
+[01:19:18] [PASSED] split writ extent to 3 extents and convert 2nd half unwrit (zeroout) (highlevel)
+[01:19:18] =============== [PASSED] test_split_convert ================
+[01:19:18] ============= test_split_convert (12 subtests) =============
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ (endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (non endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (non endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ (non endio) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (endio, zeroout) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (non-endio, zeroout) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+[01:19:18] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+[01:19:18] =============== [PASSED] test_split_convert ================
+[01:19:18] [PASSED] test_ext_pblock_48bit
+[01:19:18] [PASSED] test_ext_unwritten_len_encoding
+[01:19:18] [PASSED] test_ext_tree_init_and_check_inode
+[01:19:18] ========= test_ext_check_corruptions (13 subtests) =========
+[01:19:18] [PASSED] invalid eh_magic
+[01:19:18] [PASSED] mismatched eh_depth
+[01:19:18] [PASSED] eh_max == 0
+[01:19:18] [PASSED] eh_max exceeds root capacity
+[01:19:18] [PASSED] eh_entries exceeds eh_max
+[01:19:18] [PASSED] empty index block at depth > 0
+[01:19:18] [PASSED] extent with ee_len == 0
+[01:19:18] [PASSED] extent logical block 32-bit wrap-around
+[01:19:18] [PASSED] extent physical block <= first_data_block
+[01:19:18] [PASSED] extent physical block past blocks_count
+[01:19:18] [PASSED] overlapping/unsorted leaf extents
+[01:19:18] [PASSED] unsorted index entries
+[01:19:18] [PASSED] non-root leaf first ee_block != parent ei_block
+[01:19:18] =========== [PASSED] test_ext_check_corruptions ============
+[01:19:18] [PASSED] test_ext_block_csum_verify
+[01:19:18] [PASSED] test_find_extent_root_binsearch
+[01:19:18] [PASSED] test_find_extent_multilevel_and_navigation
+[01:19:18] [PASSED] test_ext_precache
+[01:19:18] [PASSED] test_can_extents_be_merged
+[01:19:18] [PASSED] test_insert_extent_merge_and_nomerge
+[01:19:18] [PASSED] test_insert_extent_grow_and_merge_up
+[01:19:18] [PASSED] test_insert_extent_leaf_split
+[01:19:18] [PASSED] test_insert_extent_index_split
+[01:19:18] [PASSED] test_remove_space_tail_and_hole_punch
+[01:19:18] [PASSED] test_remove_space_multilevel_collapse
+[01:19:18] [PASSED] test_remove_space_bigalloc_partial_cluster
+[01:19:18] [PASSED] test_map_blocks_lookup_hole_and_query_last_in_leaf
+[01:19:18] [PASSED] test_map_blocks_alloc_overlap_and_enospc
+[01:19:18] [PASSED] test_convert_to_initialized_abut_neighbors
+[01:19:18] [PASSED] test_map_blocks_bigalloc_implied_cluster
+[01:19:18] [PASSED] test_ext_shift_extents
+[01:19:18] [PASSED] test_swap_extents
+[01:19:18] [PASSED] test_clu_mapped
+[01:19:18] [PASSED] test_ext_credits_calculation
+[01:19:18] [PASSED] test_ext_fast_commit_replay
+[01:19:18] [PASSED] test_fallocate_modes_and_prealloc
+[01:19:18] [PASSED] test_zero_range_and_write_zeroes
+[01:19:18] [PASSED] test_collapse_range
+[01:19:18] [PASSED] test_insert_range
+[01:19:18] [PASSED] test_convert_unwritten_extents_and_io_end
+[01:19:18] [PASSED] test_ext_fiemap_and_get_es_cache
+[01:19:18] ================ [PASSED] ext4_extents_test ================
+[01:19:18] ================== ext4_hash (7 subtests) ==================
+[01:19:18] [PASSED] test_ext4fs_dirhash_vectors
+[01:19:18] [PASSED] test_ext4fs_dirhash_seed_changes_result
+[01:19:18] [PASSED] test_ext4fs_dirhash_invalid_version_returns_einval
+[01:19:18] [PASSED] test_ext4fs_dirhash_siphash_without_key_returns_einval
+[01:19:18] [PASSED] test_ext4fs_dirhash_signed_unsigned_differ_on_nonascii
+[01:19:18] [PASSED] test_ext4fs_dirhash_casefolded_names_hash_consistently
+[01:19:18] [PASSED] test_ext4fs_dirhash_casefold_fallback
+[01:19:18] ==================== [PASSED] ext4_hash ====================
+[01:19:18] ========== ext4_extents_status_test (33 subtests) ==========
+[01:19:18] [PASSED] test_es_bitfield_written_and_unwritten_encoding
+[01:19:18] [PASSED] test_es_bitfield_delayed_and_hole_encoding
+[01:19:18] [PASSED] test_es_bitfield_referenced_and_pblock_update_preserve_state
+[01:19:18] [PASSED] test_es_lookup_empty_tree_returns_miss
+[01:19:18] [PASSED] test_es_insert_zero_len_is_noop
+[01:19:18] [PASSED] test_es_lookup_hits_cache_and_rbtree_with_next_lblk
+[01:19:18] [PASSED] test_es_fc_replay_bypasses_tree_operations
+[01:19:18] =================== test_es_merge_cases  ===================
+[01:19:18] [PASSED] left merge contiguous written extents
+[01:19:18] [PASSED] right merge contiguous written extents
+[01:19:18] [PASSED] three-way bridge merge via try_to_merge_right
+[01:19:18] [PASSED] three-way bridge merge via try_to_merge_left
+[01:19:18] [PASSED] adjacent hole extents merge
+[01:19:18] [PASSED] discontiguous physical blocks do not merge
+[01:19:18] [PASSED] different status types with contiguous pblk do not merge
+[01:19:18] [PASSED] logically separated extents with 1-block gap do not merge
+[01:19:18] =============== [PASSED] test_es_merge_cases ===============
+[01:19:18] [PASSED] test_es_insert_adjacent_delayed_extents_merges
+[01:19:18] [PASSED] test_es_merge_preserves_referenced
+[01:19:18] [PASSED] test_es_merge_at_max_blocks_boundary_succeeds
+[01:19:18] ================ test_es_remove_geometries  ================
+[01:19:18] [PASSED] remove range before extent
+[01:19:18] [PASSED] remove range after extent
+[01:19:18] [PASSED] remove exact extent range
+[01:19:18] [PASSED] remove superset of extent range
+[01:19:18] [PASSED] prefix trim of extent
+[01:19:18] [PASSED] suffix trim of extent
+[01:19:18] [PASSED] middle split of extent into two
+[01:19:18] ============ [PASSED] test_es_remove_geometries ============
+[01:19:18] [PASSED] test_es_remove_multi_extent_span_trims_and_deletes
+[01:19:18] [PASSED] test_es_insert_overwrite_split_and_remerge
+[01:19:18] [PASSED] test_es_cache_extent_inserts_and_coalesces_same_status
+[01:19:18] [PASSED] test_es_cache_extent_conflict_covered_range_warns
+[01:19:18] [PASSED] test_es_cache_extent_conflict_partial_overlap_warns
+[01:19:18] [PASSED] test_es_cache_extent_hole_over_delayed_does_not_warn
+[01:19:18] [PASSED] test_es_find_extent_range_skips_nonmatching_and_finds_next
+[01:19:18] [PASSED] test_es_scan_range_matches_only_overlapping_extents
+[01:19:18] [PASSED] test_es_scan_clu_matches_extent_in_same_cluster
+[01:19:18] [PASSED] test_es_delalloc_remove_and_overwrite_account_reserved_blocks
+[01:19:18] [PASSED] test_es_bigalloc_insert_delayed_creates_and_removes_pending
+[01:19:18] [PASSED] test_es_bigalloc_revise_pending_single_cluster_halves
+[01:19:18] [PASSED] test_es_bigalloc_revise_pending_multi_cluster_span
+[01:19:18] [PASSED] test_es_bigalloc_remove_partial_cluster_holds_rsvd_until_empty
+[01:19:18] [PASSED] test_es_bigalloc_remove_fragmented_cluster_releases_once
+[01:19:18] [PASSED] test_es_bigalloc_remove_pending_cluster_cancels_pending_only
+[01:19:18] [PASSED] test_es_clear_inode_es_retains_only_delayed_extents
+[01:19:18] [PASSED] test_es_shrinker_ages_referenced_and_keeps_delayed
+[01:19:18] [PASSED] test_es_shrinker_cursor_advances_and_wraps_around
+[01:19:18] [PASSED] test_es_shrinker_skips_precached_inode_until_last_resort
+[01:19:18] [PASSED] test_es_seq_shrinker_info_show_formats_stats
+[01:19:18] ============ [PASSED] ext4_extents_status_test =============
+[01:19:18] ============== ext4_xattr_test (11 subtests) ===============
+[01:19:18] [PASSED] test_xattr_macros_and_locking
+[01:19:18] ================= test_xattr_check_inode  ==================
+[01:19:18] [PASSED] valid_empty_ibody
+[01:19:18] [PASSED] valid_two_entries
+[01:19:18] [PASSED] bad_magic
+[01:19:18] [PASSED] end_before_first_entry
+[01:19:18] [PASSED] entry_header_overflows_end
+[01:19:18] [PASSED] entry_name_overflows_end
+[01:19:18] [PASSED] unterminated_entry_list
+[01:19:18] [PASSED] ea_inode_without_feature
+[01:19:18] [PASSED] value_size_gt_total_size
+[01:19:18] [PASSED] value_offset_overlaps_entries
+[01:19:18] [PASSED] value_end_exceeds_total_size
+[01:19:18] ============= [PASSED] test_xattr_check_inode ==============
+[01:19:18] [PASSED] test_xattr_ibody_basic_and_flags
+[01:19:18] [PASSED] test_xattr_ibody_replace_and_remove
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] ext4_xattr_kunit: lost file I/O error report for ino 12 type 5 pos 0x0 len 0x0 error -74
+[01:19:18] 
+[01:19:18] Pid: 573, comm: kunit_try_catch Tainted: G                 N  7.4.0-rc2-gbae28a1b11f4
+[01:19:18] RIP: 0033:map_id_range_up+0xa/0xd0
+[01:19:18] RSP: 00000000a0893a90  EFLAGS: 00010206
+[01:19:18] RAX: 00000000600fb200 RBX: 0000000000000000 RCX: 00000000bf65f7d9
+[01:19:18] RDX: 0000000000000001 RSI: 0000000000000000 RDI: 0000000000000000
+[01:19:18] RBP: 0000000060c38ce8 R08: 0000000000000394 R09: 0000000000000000
+[01:19:18] R10: 0000000000000000 R11: 00000000a0893ca0 R12: 0000000000000000
+[01:19:18] R13: 00000000a0893c80 R14: 000000000000031c R15: 0000000060b08000
+[01:19:18] Kernel panic - not syncing: Segfault with no mm
+[01:19:18] CPU: 0 UID: 0 PID: 573 Comm: kunit_try_catch Tainted: G                 N  7.4.0-rc2-gbae28a1b11f4 #1 VOLUNTARY
+[01:19:18] Tainted: [N]=TEST
+[01:19:18] Stack:
+[01:19:18]  a0893c80 0000031c 60b716c8 602aa9b5
+[01:19:18]  6079cc60 00000000 60c38ce8 00000001
+[01:19:18]  60b08000 60b716c8 0000031c bf65f7d900000000
+[01:19:18] Call Trace:
+[01:19:18]  [<602aa9b5>] ? ext4_xattr_inode_lookup_create+0x375/0xbd0
+[01:19:18]  [<60243f5c>] ? __ext4_journal_get_write_access+0xdc/0x1d0
+[01:19:18]  [<602ab51a>] ? ext4_xattr_block_set+0xca/0x1930
+[01:19:18]  [<60243e80>] ? ext4_journal_abort_handle.isra.0+0x90/0x90
+[01:19:18]  [<602a8be7>] ? check_xattrs+0x107/0x3d0
+[01:19:18]  [<602a7074>] ? xattr_find_entry+0x44/0x120
+[01:19:18]  [<602ad327>] ? ext4_xattr_set_handle+0x5a7/0x770
+[01:19:18]  [<602a8f90>] ? ext4_xattr_get_block+0xb0/0xb0
+[01:19:18]  [<602ad589>] ? ext4_xattr_set+0x99/0x180
+[01:19:18]  [<602ad5f4>] ? ext4_xattr_set+0x104/0x180
+[01:19:18]  [<602ad4f0>] ? ext4_xattr_set_handle+0x770/0x770
+[01:19:18]  [<602f65b7>] ? test_xattr_external_block_and_check+0x677/0x10e0
+[01:19:18]  [<60162b66>] ? __alloc_frozen_pages_noprof+0x146/0x2d0
+[01:19:18]  [<600e2fa0>] ? ktime_get_snapshot_id+0x380/0x380
+[01:19:18]  [<6041246b>] ? kunit_try_run_case+0x7b/0x100
+[01:19:18]  [<604146e0>] ? kunit_mem_assert_format+0x160/0x160
+[01:19:18]  [<604146f2>] ? kunit_generic_run_threadfn_adapter+0x12/0x30
+[01:19:18]  [<60095c96>] ? kthread+0xe6/0x150
+[01:19:18]  [<600582b1>] ? new_thread_handler+0x41/0x60
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: ext4_xattr_test: missing subtest result line!
+[01:19:18] # module: ext4_test
+[01:19:18] ================ [CRASHED] ext4_xattr_test =================
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] [ERROR] Test: main: missing expected subtest!
+[01:19:18] [CRASHED] 
+[01:19:18] ============================================================
+[01:19:18] Testing complete. Ran 301 tests: passed: 277, crashed: 24, errors: 25
+[01:19:18] Test results stored in /root/out-userns/tip-user-ns.plain.kunit.json
+The kernel seems to have crashed; you can decode the stack traces with:
+$ scripts/decode_stacktrace.sh /root/b-config_user_ns_y/vmlinux /root/b-config_user_ns_y < /root/b-config_user_ns_y/test.log | tee /root/b-config_user_ns_y/decoded.log | tools/testing/kunit/kunit.py parse
+[01:19:18] Elapsed time: 40.089s total, 3.989s configuring, 35.527s building, 0.572s running
+

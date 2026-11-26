@@ -1,0 +1,719 @@
+[23:08:33] Configuring KUnit Kernel ...
+[23:08:33] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/root/b-tip olddefconfig CC=ccache gcc
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/root/b-tip --jobs=16 CC=ccache gcc
+[23:08:37] Starting KUnit Kernel (1/1)...
+[23:08:37] ============================================================
+Running tests with:
+$ /root/b-tip/linux kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[23:08:37] ============== ext4_inode_test (26 subtests) ===============
+[23:08:37] ============= inode_test_xtimestamp_decoding  ==============
+[23:08:37] [PASSED] 1901-12-13 Lower bound of 32bit < 0 timestamp, no extra bits
+[23:08:37] [PASSED] 1969-12-31 Upper bound of 32bit < 0 timestamp, no extra bits
+[23:08:37] [PASSED] 1970-01-01 Lower bound of 32bit >=0 timestamp, no extra bits
+[23:08:37] [PASSED] 2038-01-19 Upper bound of 32bit >=0 timestamp, no extra bits
+[23:08:37] [PASSED] 2038-01-19 Lower bound of 32bit <0 timestamp, lo extra sec bit on
+[23:08:37] [PASSED] 2106-02-07 Upper bound of 32bit <0 timestamp, lo extra sec bit on
+[23:08:37] [PASSED] 2106-02-07 Lower bound of 32bit >=0 timestamp, lo extra sec bit on
+[23:08:37] [PASSED] 2174-02-25 Upper bound of 32bit >=0 timestamp, lo extra sec bit on
+[23:08:37] [PASSED] 2174-02-25 Lower bound of 32bit <0 timestamp, hi extra sec bit on
+[23:08:37] [PASSED] 2242-03-16 Upper bound of 32bit <0 timestamp, hi extra sec bit on
+[23:08:37] [PASSED] 2242-03-16 Lower bound of 32bit >=0 timestamp, hi extra sec bit on
+[23:08:37] [PASSED] 2310-04-04 Upper bound of 32bit >=0 timestamp, hi extra sec bit on
+[23:08:37] [PASSED] 2310-04-04 Upper bound of 32bit>=0 timestamp, hi extra sec bit 1. 1 ns
+[23:08:37] [PASSED] 2378-04-22 Lower bound of 32bit>= timestamp. Extra sec bits 1. Max ns
+[23:08:37] [PASSED] 2378-04-22 Lower bound of 32bit >=0 timestamp. All extra sec bits on
+[23:08:37] [PASSED] 2446-05-10 Upper bound of 32bit >=0 timestamp. All extra sec bits on
+[23:08:37] ========= [PASSED] inode_test_xtimestamp_decoding ==========
+[23:08:37] [PASSED] inode_test_xtimestamp_encoding_roundtrip
+[23:08:37] [PASSED] inode_test_csum_set_and_verify
+[23:08:37] [PASSED] inode_test_blocks_encode_decode
+[23:08:37] [PASSED] inode_test_fill_raw_inode
+[23:08:37] [PASSED] inode_test_mark_dirty_and_update
+[23:08:37] [PASSED] inode_test_expand_extra_isize
+[23:08:37] [PASSED] inode_test_get_inode_loc_variants
+[23:08:37] [PASSED] inode_test_iget_validation_and_modes
+[23:08:37] [PASSED] inode_test_iget_corruptions
+[23:08:37] [PASSED] inode_test_fast_symlink_and_can_truncate
+[23:08:37] [PASSED] inode_test_flags_aops_mapping_order
+[23:08:37] [PASSED] inode_test_projid_dio_and_getattr
+[23:08:37] [PASSED] inode_test_da_reserve_and_release
+[23:08:37] [PASSED] inode_test_da_bigalloc_clusters
+[23:08:37] [PASSED] inode_test_map_blocks_paths
+[23:08:37] [PASSED] inode_test_get_block_bread_and_walk_buffers
+[23:08:37] [PASSED] inode_test_iomap_and_atomic_writes
+[23:08:37] [PASSED] inode_test_trans_credits_and_disksize
+[23:08:37] [PASSED] inode_test_zero_partial_and_eof
+[23:08:37] [PASSED] inode_test_punch_hole_and_truncate
+[23:08:37] [PASSED] inode_test_write_and_sync_metadata
+[23:08:37] [PASSED] inode_test_evict_inode_paths
+[23:08:37] [PASSED] inode_test_buffered_write_and_folio_ops
+[23:08:37] [PASSED] inode_test_setattr
+[23:08:37] [PASSED] inode_test_page_mkwrite
+[23:08:37] ================= [PASSED] ext4_inode_test =================
+[23:08:37] ============= ext4_mballoc_test (32 subtests) ==============
+[23:08:37] ================= test_new_blocks_simple  ==================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============= [PASSED] test_new_blocks_simple ==============
+[23:08:37] ================= test_free_blocks_simple  =================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============= [PASSED] test_free_blocks_simple =============
+[23:08:37] ================= test_mb_generate_buddy  ==================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============= [PASSED] test_mb_generate_buddy ==============
+[23:08:37] ==================== test_mb_mark_used  ====================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ================ [PASSED] test_mb_mark_used ================
+[23:08:37] =================== test_mb_free_blocks  ===================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =============== [PASSED] test_mb_free_blocks ===============
+[23:08:37] ================ test_mark_diskspace_used  =================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============ [PASSED] test_mark_diskspace_used =============
+[23:08:37] ===================== test_mb_bit_ops  =====================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ================= [PASSED] test_mb_bit_ops =================
+[23:08:37] =============== test_mb_test_and_clear_bits  ===============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =========== [PASSED] test_mb_test_and_clear_bits ===========
+[23:08:37] ============== test_mb_find_buddy_and_order  ===============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ========== [PASSED] test_mb_find_buddy_and_order ===========
+[23:08:37] =================== test_mb_find_extent  ===================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =============== [PASSED] test_mb_find_extent ===============
+[23:08:37] ============= test_mb_generate_buddy_corrupt  ==============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ========= [PASSED] test_mb_generate_buddy_corrupt ==========
+[23:08:37] ====== test_mb_free_blocks_double_free_and_fc_replay  ======
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] == [PASSED] test_mb_free_blocks_double_free_and_fc_replay ==
+[23:08:37] =========== test_mb_xarray_orders_and_frag_size  ===========
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ======= [PASSED] test_mb_xarray_orders_and_frag_size =======
+[23:08:37] =================== test_mb_good_group  ====================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =============== [PASSED] test_mb_good_group ================
+[23:08:37] ================== test_mb_find_by_goal  ===================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============== [PASSED] test_mb_find_by_goal ===============
+[23:08:37] ============= test_mb_simple_and_aligned_scan  =============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ========= [PASSED] test_mb_simple_and_aligned_scan =========
+[23:08:37] ============ test_mb_complex_scan_and_measure  =============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ======== [PASSED] test_mb_complex_scan_and_measure =========
+[23:08:37] ================ test_mb_regular_allocator  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============ [PASSED] test_mb_regular_allocator ============
+[23:08:37] ==================== test_mb_prefetch  =====================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ================ [PASSED] test_mb_prefetch =================
+[23:08:37] =============== test_mb_initialize_context  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =========== [PASSED] test_mb_initialize_context ============
+[23:08:37] ================ test_mb_normalize_request  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============ [PASSED] test_mb_normalize_request ============
+[23:08:37] =============== test_mb_inode_pa_lifecycle  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =========== [PASSED] test_mb_inode_pa_lifecycle ============
+[23:08:37] =============== test_mb_group_pa_lifecycle  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =========== [PASSED] test_mb_group_pa_lifecycle ============
+[23:08:37] ================== test_mb_lg_list_trim  ===================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ============== [PASSED] test_mb_lg_list_trim ===============
+[23:08:37] =========== test_mb_new_blocks_and_enospc_retry  ===========
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ======= [PASSED] test_mb_new_blocks_and_enospc_retry =======
+[23:08:37] ============ test_mb_mark_context_and_mark_bb  =============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ======== [PASSED] test_mb_mark_context_and_mark_bb =========
+[23:08:37] ======= test_ext4_free_blocks_flags_and_cross_group  =======
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] === [PASSED] test_ext4_free_blocks_flags_and_cross_group ===
+[23:08:37] ====== test_mb_free_metadata_and_process_freed_data  =======
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] == [PASSED] test_mb_free_metadata_and_process_freed_data ===
+[23:08:37] =============== test_ext4_group_add_blocks  ================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] =========== [PASSED] test_ext4_group_add_blocks ============
+[23:08:37] ==================== test_ext4_trim_fs  ====================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ================ [PASSED] test_ext4_trim_fs ================
+[23:08:37] ============== test_ext4_mballoc_query_range  ==============
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:37] ========== [PASSED] test_ext4_mballoc_query_range ==========
+[23:08:37] ================= test_mb_mark_used_cost  ==================
+[23:08:37] [PASSED] block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:38] [PASSED] block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:38] [PASSED] block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64
+[23:08:38] ============= [PASSED] test_mb_mark_used_cost ==============
+[23:08:38] ================ [PASSED] ext4_mballoc_test ================
+[23:08:38] ============= ext4_extents_test (34 subtests) ==============
+[23:08:38] ============= test_split_convert (12 subtests) =============
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 1st half unwrit
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit
+[23:08:38] [PASSED] split writ extent to 3 extents and convert 2nd half to unwrit
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (zeroout)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (zeroout)
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (zeroout)
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (zeroout)
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (zeroout)
+[23:08:38] [PASSED] split writ extent to 3 extents and convert 2nd half unwrit (zeroout)
+[23:08:38] =============== [PASSED] test_split_convert ================
+[23:08:38] ============= test_split_convert (6 subtests) ==============
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (highlevel)
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (highlevel)
+[23:08:38] [PASSED] split writ extent to 3 extents and convert 2nd half to unwrit (highlevel)
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 1st half unwrit (zeroout) (highlevel)
+[23:08:38] [PASSED] split writ extent to 2 extents and convert 2nd half unwrit (zeroout) (highlevel)
+[23:08:38] [PASSED] split writ extent to 3 extents and convert 2nd half unwrit (zeroout) (highlevel)
+[23:08:38] =============== [PASSED] test_split_convert ================
+[23:08:38] ============= test_split_convert (12 subtests) =============
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ (endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (non endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (non endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half to writ (non endio) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (endio, zeroout) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (endio, zeroout) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 1st half writ (non-endio, zeroout) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 2 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+[23:08:38] [PASSED] split unwrit extent to 3 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)
+[23:08:38] =============== [PASSED] test_split_convert ================
+[23:08:38] [PASSED] test_ext_pblock_48bit
+[23:08:38] [PASSED] test_ext_unwritten_len_encoding
+[23:08:38] [PASSED] test_ext_tree_init_and_check_inode
+[23:08:38] ========= test_ext_check_corruptions (13 subtests) =========
+[23:08:38] [PASSED] invalid eh_magic
+[23:08:38] [PASSED] mismatched eh_depth
+[23:08:38] [PASSED] eh_max == 0
+[23:08:38] [PASSED] eh_max exceeds root capacity
+[23:08:38] [PASSED] eh_entries exceeds eh_max
+[23:08:38] [PASSED] empty index block at depth > 0
+[23:08:38] [PASSED] extent with ee_len == 0
+[23:08:38] [PASSED] extent logical block 32-bit wrap-around
+[23:08:38] [PASSED] extent physical block <= first_data_block
+[23:08:38] [PASSED] extent physical block past blocks_count
+[23:08:38] [PASSED] overlapping/unsorted leaf extents
+[23:08:38] [PASSED] unsorted index entries
+[23:08:38] [PASSED] non-root leaf first ee_block != parent ei_block
+[23:08:38] =========== [PASSED] test_ext_check_corruptions ============
+[23:08:38] [PASSED] test_ext_block_csum_verify
+[23:08:38] [PASSED] test_find_extent_root_binsearch
+[23:08:38] [PASSED] test_find_extent_multilevel_and_navigation
+[23:08:38] [PASSED] test_ext_precache
+[23:08:38] [PASSED] test_can_extents_be_merged
+[23:08:38] [PASSED] test_insert_extent_merge_and_nomerge
+[23:08:38] [PASSED] test_insert_extent_grow_and_merge_up
+[23:08:38] [PASSED] test_insert_extent_leaf_split
+[23:08:38] [PASSED] test_insert_extent_index_split
+[23:08:38] [PASSED] test_remove_space_tail_and_hole_punch
+[23:08:38] [PASSED] test_remove_space_multilevel_collapse
+[23:08:38] [PASSED] test_remove_space_bigalloc_partial_cluster
+[23:08:38] [PASSED] test_map_blocks_lookup_hole_and_query_last_in_leaf
+[23:08:38] [PASSED] test_map_blocks_alloc_overlap_and_enospc
+[23:08:38] [PASSED] test_convert_to_initialized_abut_neighbors
+[23:08:38] [PASSED] test_map_blocks_bigalloc_implied_cluster
+[23:08:38] [PASSED] test_ext_shift_extents
+[23:08:38] [PASSED] test_swap_extents
+[23:08:38] [PASSED] test_clu_mapped
+[23:08:38] [PASSED] test_ext_credits_calculation
+[23:08:38] [PASSED] test_ext_fast_commit_replay
+[23:08:38] [PASSED] test_fallocate_modes_and_prealloc
+[23:08:38] [PASSED] test_zero_range_and_write_zeroes
+[23:08:38] [PASSED] test_collapse_range
+[23:08:38] [PASSED] test_insert_range
+[23:08:38] [PASSED] test_convert_unwritten_extents_and_io_end
+[23:08:38] [PASSED] test_ext_fiemap_and_get_es_cache
+[23:08:38] ================ [PASSED] ext4_extents_test ================
+[23:08:38] ================== ext4_hash (7 subtests) ==================
+[23:08:38] [PASSED] test_ext4fs_dirhash_vectors
+[23:08:38] [PASSED] test_ext4fs_dirhash_seed_changes_result
+[23:08:38] [PASSED] test_ext4fs_dirhash_invalid_version_returns_einval
+[23:08:38] [PASSED] test_ext4fs_dirhash_siphash_without_key_returns_einval
+[23:08:38] [PASSED] test_ext4fs_dirhash_signed_unsigned_differ_on_nonascii
+[23:08:38] [PASSED] test_ext4fs_dirhash_casefolded_names_hash_consistently
+[23:08:38] [PASSED] test_ext4fs_dirhash_casefold_fallback
+[23:08:38] ==================== [PASSED] ext4_hash ====================
+[23:08:38] ========== ext4_extents_status_test (33 subtests) ==========
+[23:08:38] [PASSED] test_es_bitfield_written_and_unwritten_encoding
+[23:08:38] [PASSED] test_es_bitfield_delayed_and_hole_encoding
+[23:08:38] [PASSED] test_es_bitfield_referenced_and_pblock_update_preserve_state
+[23:08:38] [PASSED] test_es_lookup_empty_tree_returns_miss
+[23:08:38] [PASSED] test_es_insert_zero_len_is_noop
+[23:08:38] [PASSED] test_es_lookup_hits_cache_and_rbtree_with_next_lblk
+[23:08:38] [PASSED] test_es_fc_replay_bypasses_tree_operations
+[23:08:38] =================== test_es_merge_cases  ===================
+[23:08:38] [PASSED] left merge contiguous written extents
+[23:08:38] [PASSED] right merge contiguous written extents
+[23:08:38] [PASSED] three-way bridge merge via try_to_merge_right
+[23:08:38] [PASSED] three-way bridge merge via try_to_merge_left
+[23:08:38] [PASSED] adjacent hole extents merge
+[23:08:38] [PASSED] discontiguous physical blocks do not merge
+[23:08:38] [PASSED] different status types with contiguous pblk do not merge
+[23:08:38] [PASSED] logically separated extents with 1-block gap do not merge
+[23:08:38] =============== [PASSED] test_es_merge_cases ===============
+[23:08:38] [PASSED] test_es_insert_adjacent_delayed_extents_merges
+[23:08:38] [PASSED] test_es_merge_preserves_referenced
+[23:08:38] [PASSED] test_es_merge_at_max_blocks_boundary_succeeds
+[23:08:38] ================ test_es_remove_geometries  ================
+[23:08:38] [PASSED] remove range before extent
+[23:08:38] [PASSED] remove range after extent
+[23:08:38] [PASSED] remove exact extent range
+[23:08:38] [PASSED] remove superset of extent range
+[23:08:38] [PASSED] prefix trim of extent
+[23:08:38] [PASSED] suffix trim of extent
+[23:08:38] [PASSED] middle split of extent into two
+[23:08:38] ============ [PASSED] test_es_remove_geometries ============
+[23:08:38] [PASSED] test_es_remove_multi_extent_span_trims_and_deletes
+[23:08:38] [PASSED] test_es_insert_overwrite_split_and_remerge
+[23:08:38] [PASSED] test_es_cache_extent_inserts_and_coalesces_same_status
+[23:08:38] [PASSED] test_es_cache_extent_conflict_covered_range_warns
+[23:08:38] [PASSED] test_es_cache_extent_conflict_partial_overlap_warns
+[23:08:38] [PASSED] test_es_cache_extent_hole_over_delayed_does_not_warn
+[23:08:38] [PASSED] test_es_find_extent_range_skips_nonmatching_and_finds_next
+[23:08:38] [PASSED] test_es_scan_range_matches_only_overlapping_extents
+[23:08:38] [PASSED] test_es_scan_clu_matches_extent_in_same_cluster
+[23:08:38] [PASSED] test_es_delalloc_remove_and_overwrite_account_reserved_blocks
+[23:08:38] [PASSED] test_es_bigalloc_insert_delayed_creates_and_removes_pending
+[23:08:38] [PASSED] test_es_bigalloc_revise_pending_single_cluster_halves
+[23:08:38] [PASSED] test_es_bigalloc_revise_pending_multi_cluster_span
+[23:08:38] [PASSED] test_es_bigalloc_remove_partial_cluster_holds_rsvd_until_empty
+[23:08:38] [PASSED] test_es_bigalloc_remove_fragmented_cluster_releases_once
+[23:08:38] [PASSED] test_es_bigalloc_remove_pending_cluster_cancels_pending_only
+[23:08:38] [PASSED] test_es_clear_inode_es_retains_only_delayed_extents
+[23:08:38] [PASSED] test_es_shrinker_ages_referenced_and_keeps_delayed
+[23:08:38] [PASSED] test_es_shrinker_cursor_advances_and_wraps_around
+[23:08:38] [PASSED] test_es_shrinker_skips_precached_inode_until_last_resort
+[23:08:38] [PASSED] test_es_seq_shrinker_info_show_formats_stats
+[23:08:38] ============ [PASSED] ext4_extents_status_test =============
+[23:08:38] ============== ext4_xattr_test (11 subtests) ===============
+[23:08:38] [PASSED] test_xattr_macros_and_locking
+[23:08:38] ================= test_xattr_check_inode  ==================
+[23:08:38] [PASSED] valid_empty_ibody
+[23:08:38] [PASSED] valid_two_entries
+[23:08:38] [PASSED] bad_magic
+[23:08:38] [PASSED] end_before_first_entry
+[23:08:38] [PASSED] entry_header_overflows_end
+[23:08:38] [PASSED] entry_name_overflows_end
+[23:08:38] [PASSED] unterminated_entry_list
+[23:08:38] [PASSED] ea_inode_without_feature
+[23:08:38] [PASSED] value_size_gt_total_size
+[23:08:38] [PASSED] value_offset_overlaps_entries
+[23:08:38] [PASSED] value_end_exceeds_total_size
+[23:08:38] ============= [PASSED] test_xattr_check_inode ==============
+[23:08:38] [PASSED] test_xattr_ibody_basic_and_flags
+[23:08:38] [PASSED] test_xattr_ibody_replace_and_remove
+[23:08:38] [PASSED] test_xattr_external_block_and_check
+[23:08:38] [PASSED] test_xattr_block_dedup_and_cow
+[23:08:38] [PASSED] test_xattr_list_and_handlers
+[23:08:38] [PASSED] test_xattr_ea_inode_lifecycle_and_dedup
+[23:08:38] [PASSED] test_xattr_ea_inode_validation_and_compat
+[23:08:38] [PASSED] test_xattr_credits_usage_expand_and_delete
+[23:08:38] [PASSED] test_xattr_error_injection
+[23:08:38] ================= [PASSED] ext4_xattr_test =================
+[23:08:38] ============== ext4_namei_test (15 subtests) ===============
+[23:08:38] [PASSED] test_namei_dirent_tail_and_csum
+[23:08:38] [PASSED] test_namei_dx_helpers_and_csum
+[23:08:38] ================ test_namei_read_dirblock  =================
+[23:08:38] [PASSED] valid leaf block with metadata_csum
+[23:08:38] [PASSED] valid dx_root index block with metadata_csum
+[23:08:38] [PASSED] hole at block > 0 with EITHER returns NULL
+[23:08:38] [PASSED] reading block past i_size returns -EFSCORRUPTED
+[23:08:38] [PASSED] ext4_bread -EIO error propagates
+[23:08:38] [PASSED] hole at block 0 returns -EFSCORRUPTED
+[23:08:38] [PASSED] hole for DIRENT_HTREE returns -EFSCORRUPTED
+[23:08:38] [PASSED] leaf block found when expecting INDEX returns -EFSCORRUPTED
+[23:08:38] [PASSED] corrupted leaf checksum returns -EFSBADCRC
+[23:08:38] [PASSED] corrupted index checksum returns -EFSBADCRC
+[23:08:38] ============ [PASSED] test_namei_read_dirblock =============
+[23:08:38] [PASSED] test_namei_append_and_init_dir
+[23:08:38] [PASSED] test_namei_search_insert_delete_dentry
+[23:08:38] [PASSED] test_namei_empty_dir
+[23:08:38] [PASSED] test_namei_dx_map_pack_and_move
+[23:08:38] =========== test_namei_check_dx_root_and_probe  ============
+[23:08:38] [PASSED] valid 1-level dx_root binary search probe
+[23:08:38] [PASSED] valid 2-level htree probe and ext4_htree_next_block
+[23:08:38] [PASSED] ext4_check_dx_root rejects dot name_len != 1
+[23:08:38] [PASSED] ext4_check_dx_root rejects dot name != '.'
+[23:08:38] [PASSED] ext4_check_dx_root rejects dot rec_len >= blocksize
+[23:08:38] [PASSED] ext4_check_dx_root rejects dotdot name_len != 2
+[23:08:38] [PASSED] ext4_check_dx_root rejects dotdot name != '..'
+[23:08:38] [PASSED] dx_probe rejects unrecognized hash_version
+[23:08:38] [PASSED] dx_probe rejects DX_HASH_SIPHASH when not hash_in_dirent
+[23:08:38] [PASSED] dx_probe rejects non-zero unused_flags & 1
+[23:08:38] [PASSED] dx_probe rejects indirect_levels >= ext4_dir_htree_level
+[23:08:38] [PASSED] dx_probe rejects root limit mismatch
+[23:08:38] [PASSED] dx_probe rejects count == 0
+[23:08:38] [PASSED] dx_probe detects tree cycle pointing back to block 0
+[23:08:38] ======= [PASSED] test_namei_check_dx_root_and_probe ========
+[23:08:38] [PASSED] test_namei_add_find_and_htree_split
+[23:08:38] [PASSED] test_namei_dx_index_level_growth_and_fallback
+[23:08:38] [PASSED] test_namei_inline_dir_lifecycle
+[23:08:38] [PASSED] test_namei_nlink_and_lookup_parent
+[23:08:38] [PASSED] test_namei_link_unlink_and_rmdir
+[23:08:38] [PASSED] test_namei_rename_and_exchange
+[23:08:38] [PASSED] test_namei_casefold_lookup_and_strict
+[23:08:38] ================= [PASSED] ext4_namei_test =================
+[23:08:38] ============== ext4_inline_test (11 subtests) ==============
+[23:08:38] [PASSED] test_max_inline_size_variants
+[23:08:38] [PASSED] test_find_inline_data_nolock
+[23:08:38] [PASSED] test_write_and_destroy_inline_data
+[23:08:38] [PASSED] test_write_inline_short_copy_and_edge_cases
+[23:08:38] [PASSED] test_readpage_inline_link_and_iomap
+[23:08:38] [PASSED] test_inline_data_truncate
+[23:08:38] [PASSED] test_convert_inline_data_and_rollback
+[23:08:38] [PASSED] test_write_triggers_inline_to_extent_conversion
+[23:08:38] [PASSED] test_update_final_de
+[23:08:38] [PASSED] test_inline_dir_lifecycle_and_operations
+[23:08:38] [PASSED] test_inline_dir_conversion_and_corruptions
+[23:08:38] ================ [PASSED] ext4_inline_test =================
+[23:08:38] =========== ext4_fast_commit_test (11 subtests) ============
+[23:08:38] [PASSED] test_fc_init_and_eligibility
+[23:08:38] [PASSED] test_fc_mark_ineligible
+[23:08:38] [PASSED] test_fc_track_inode_and_range
+[23:08:38] [PASSED] test_fc_track_dentry_and_del
+[23:08:38] [PASSED] test_fc_reserve_space_and_tlv_writing
+[23:08:38] [PASSED] test_fc_snapshot_inode_and_ranges
+[23:08:38] [PASSED] test_fc_cleanup_and_stats
+[23:08:38] [PASSED] test_fc_commit_paths
+[23:08:38] [PASSED] test_fc_replay_regions_and_scan
+[23:08:38] [PASSED] test_fc_replay_inode_and_dentries
+[23:08:38] [PASSED] test_fc_replay_ranges_and_end_to_end
+[23:08:38] ============== [PASSED] ext4_fast_commit_test ==============
+[23:08:38] ============== ext4_ialloc_test (28 subtests) ==============
+[23:08:38] =============== ialloc_test_mark_bitmap_end  ===============
+[23:08:38] [PASSED] unaligned_start_to_aligned_end
+[23:08:38] [PASSED] byte_aligned_memset_only
+[23:08:38] [PASSED] single_partial_byte_no_memset
+[23:08:38] [PASSED] unaligned_within_second_byte
+[23:08:38] [PASSED] equal_start_and_end_noop
+[23:08:38] [PASSED] start_greater_than_end_noop
+[23:08:38] =========== [PASSED] ialloc_test_mark_bitmap_end ===========
+[23:08:38] [PASSED] ialloc_test_end_bitmap_read_ok
+[23:08:38] [PASSED] ialloc_test_end_bitmap_read_ioerr
+[23:08:38] [PASSED] ialloc_test_validate_ibitmap_csum
+[23:08:38] [PASSED] ialloc_test_validate_ibitmap_short_circuits
+[23:08:38] [PASSED] ialloc_test_read_ibitmap_disk_and_cache
+[23:08:38] [PASSED] ialloc_test_read_ibitmap_uninit
+[23:08:38] [PASSED] ialloc_test_read_ibitmap_errors
+[23:08:38] [PASSED] ialloc_test_free_inode_reg_and_dir
+[23:08:38] [PASSED] ialloc_test_free_inode_guards
+[23:08:38] [PASSED] ialloc_test_free_inode_corrupt_and_journal_errors
+[23:08:38] [PASSED] ialloc_test_orlov_topdir_spread
+[23:08:38] [PASSED] ialloc_test_orlov_subdir_and_thresholds
+[23:08:38] [PASSED] ialloc_test_orlov_flex_bg_and_fallback
+[23:08:38] [PASSED] ialloc_test_find_group_other_non_flex
+[23:08:38] [PASSED] ialloc_test_find_group_other_flex_bg
+[23:08:38] [PASSED] ialloc_test_recently_deleted
+[23:08:38] [PASSED] ialloc_test_find_inode_bit
+[23:08:38] [PASSED] ialloc_test_mark_inode_used_uninit
+[23:08:38] [PASSED] ialloc_test_mark_inode_used_errors
+[23:08:38] [PASSED] ialloc_test_xattr_credits_for_new_inode
+[23:08:38] [PASSED] ialloc_test_new_inode_types_and_flags
+[23:08:38] [PASSED] ialloc_test_new_inode_ownership_and_projid
+[23:08:38] [PASSED] ialloc_test_new_inode_goal_uninit_and_corrupt_skip
+[23:08:38] [PASSED] ialloc_test_new_inode_errors
+[23:08:38] [PASSED] ialloc_test_orphan_get
+[23:08:38] [PASSED] ialloc_test_count_free_inodes_and_dirs
+[23:08:38] [PASSED] ialloc_test_init_inode_table
+[23:08:38] ================ [PASSED] ext4_ialloc_test =================
+[23:08:38] ============== ext4_balloc_test (29 subtests) ==============
+[23:08:38] ============= test_group_no_and_offset_matrix  =============
+[23:08:38] [PASSED] std_1k_bg0_first_block
+[23:08:38] [PASSED] std_1k_bg0_last_block
+[23:08:38] [PASSED] std_1k_bg1_first_block
+[23:08:38] [PASSED] std_1k_bg3_interior_block
+[23:08:38] [PASSED] std_4k_bg0_last_block
+[23:08:38] [PASSED] std_4k_bg1_first_block
+[23:08:38] [PASSED] std_4k_above_32bit_blocknr
+[23:08:38] [PASSED] nonstd_bg0_last_block
+[23:08:38] [PASSED] nonstd_bg1_first_block
+[23:08:38] [PASSED] nonstd_bg2_interior_block
+[23:08:38] [PASSED] bigalloc_std_cluster_start
+[23:08:38] [PASSED] bigalloc_std_cluster_end_same_offset
+[23:08:38] [PASSED] bigalloc_std_next_cluster
+[23:08:38] [PASSED] bigalloc_std_bg2_offset
+[23:08:38] [PASSED] bigalloc_nonstd_bg3_offset
+[23:08:38] ========= [PASSED] test_group_no_and_offset_matrix =========
+[23:08:38] [PASSED] test_group_no_and_offset_optional_out_ptrs
+[23:08:38] [PASSED] test_bg_has_super_dense_all_groups
+[23:08:38] [PASSED] test_bg_has_super_sparse_super_powers
+[23:08:38] [PASSED] test_bg_has_super_sparse_super2_explicit_backups
+[23:08:38] [PASSED] test_bg_num_gdb_and_base_meta_non_metabg
+[23:08:38] [PASSED] test_bg_num_gdb_and_base_meta_hybrid_metabg
+[23:08:38] [PASSED] test_free_clusters_after_init_standard_and_partial_last
+[23:08:38] [PASSED] test_free_clusters_after_init_external_and_spanning_meta
+[23:08:38] [PASSED] test_free_clusters_after_init_bigalloc_cluster_sharing
+[23:08:38] [PASSED] test_get_group_desc_lookup_and_bounds
+[23:08:38] [PASSED] test_get_group_info_lookup_and_null_guards
+[23:08:38] [PASSED] test_read_block_bitmap_validates_csum
+[23:08:38] [PASSED] test_read_block_bitmap_validates_metadata_bits
+[23:08:38] [PASSED] test_read_block_bitmap_validates_padding
+[23:08:38] [PASSED] test_read_block_bitmap_validation_short_circuits
+[23:08:38] [PASSED] test_read_block_bitmap_disk_and_cache_paths
+[23:08:38] [PASSED] test_read_block_bitmap_nowait_prefetch_locked
+[23:08:38] [PASSED] test_read_block_bitmap_uninit_group
+[23:08:38] [PASSED] test_read_block_bitmap_uninit_errors
+[23:08:38] [PASSED] test_read_and_wait_block_bitmap_errors
+[23:08:38] [PASSED] test_claim_free_clusters_unprivileged_and_bigalloc
+[23:08:38] [PASSED] test_claim_free_clusters_root_and_reserved_pools
+[23:08:38] [PASSED] test_should_retry_alloc_no_journal_and_retry_limit
+[23:08:38] [PASSED] test_should_retry_alloc_free_space_and_discard_flush
+[23:08:38] [PASSED] test_new_meta_blocks_alloc_and_delalloc_quota
+[23:08:38] [PASSED] test_count_free_clusters_corrupt_and_64bit_groups
+[23:08:38] [PASSED] test_inode_to_goal_block_flex_bg_and_delalloc
+[23:08:38] [PASSED] test_inode_to_goal_block_nodelalloc_colour
+[23:08:38] ================ [PASSED] ext4_balloc_test =================
+[23:08:38] ============== ext4_orphan_test (22 subtests) ==============
+[23:08:38] =========== test_inodes_per_orphan_block_param  ============
+[23:08:38] [PASSED] 1K_blocksize
+[23:08:38] [PASSED] 2K_blocksize
+[23:08:38] [PASSED] 4K_blocksize
+[23:08:38] [PASSED] 64K_blocksize
+[23:08:38] ======= [PASSED] test_inodes_per_orphan_block_param ========
+[23:08:38] [PASSED] test_orphan_file_empty
+[23:08:38] [PASSED] test_orphan_add_early_exits_and_idempotency
+[23:08:38] [PASSED] test_orphan_add_list_chaining_and_csum
+[23:08:38] [PASSED] test_orphan_add_next_orphan_bounds
+[23:08:38] [PASSED] test_orphan_add_list_error_paths
+[23:08:38] [PASSED] test_orphan_del_early_exits
+[23:08:38] [PASSED] test_orphan_del_list_positions_and_null_handle
+[23:08:38] [PASSED] test_orphan_del_list_error_paths
+[23:08:38] [PASSED] test_orphan_file_add_and_del_basic
+[23:08:38] [PASSED] test_orphan_file_add_block_wraparound_and_last_slot
+[23:08:38] [PASSED] test_orphan_file_add_enospc_fallback_and_write_err
+[23:08:38] [PASSED] test_orphan_file_del_edge_and_error_paths
+[23:08:38] [PASSED] test_orphan_file_block_trigger_and_frozen_data
+[23:08:38] [PASSED] test_init_and_release_orphan_info_lifecycle
+[23:08:38] [PASSED] test_init_orphan_info_max_blocks_boundary
+[23:08:38] [PASSED] test_init_orphan_info_error_paths_and_cleanup
+[23:08:38] [PASSED] test_orphan_cleanup_skip_guards
+[23:08:38] [PASSED] test_orphan_cleanup_linked_list_unlinked_and_truncated
+[23:08:38] [PASSED] test_orphan_cleanup_orphan_file_and_rdonly_restore
+[23:08:38] [PASSED] test_orphan_cleanup_list_errors_and_truncate_fail
+[23:08:38] [PASSED] test_orphan_cleanup_quota_paths
+[23:08:38] ================ [PASSED] ext4_orphan_test =================
+[23:08:38] ========== ext4_block_validity_test (17 subtests) ==========
+[23:08:38] =============== test_sb_block_valid_bounds  ================
+[23:08:38] [PASSED] 1k_block_0_below_first_data
+[23:08:38] [PASSED] 1k_block_1_equals_first_data
+[23:08:38] [PASSED] 1k_block_2_just_above_first_data
+[23:08:38] [PASSED] 4k_block_0_equals_first_data
+[23:08:38] [PASSED] 4k_block_1_just_above_first_data
+[23:08:38] [PASSED] exact_last_single_block
+[23:08:38] [PASSED] multiblock_ending_at_last_block
+[23:08:38] [PASSED] multiblock_exceeding_end_by_one
+[23:08:38] [PASSED] start_at_blocks_count
+[23:08:38] [PASSED] u64_wrap_around_into_in_bounds_value
+[23:08:38] [PASSED] u64_max_single_block_overflow
+[23:08:38] [PASSED] 64bit_high_block_at_exact_end
+[23:08:38] [PASSED] 32bit_fs_ignores_high_blocks_count
+[23:08:38] =========== [PASSED] test_sb_block_valid_bounds ============
+[23:08:38] [PASSED] test_release_system_zone_lifecycle
+[23:08:38] [PASSED] test_setup_multigroup_sparse_super_and_flex_bg
+[23:08:38] [PASSED] test_rbtree_left_right_and_bridge_merges
+[23:08:38] ========== test_sb_block_valid_interval_overlaps  ==========
+[23:08:38] [PASSED] strictly_before_adjacent
+[23:08:38] [PASSED] strictly_after_adjacent
+[23:08:38] [PASSED] single_first_block_of_zone
+[23:08:38] [PASSED] single_interior_block_of_zone
+[23:08:38] [PASSED] single_last_block_of_zone
+[23:08:38] [PASSED] straddle_left_boundary_by_one
+[23:08:38] [PASSED] straddle_right_boundary_by_one
+[23:08:38] [PASSED] strictly_inside_zone
+[23:08:38] [PASSED] exact_zone_span
+[23:08:38] [PASSED] strictly_enclosing_entire_zone
+[23:08:38] ====== [PASSED] test_sb_block_valid_interval_overlaps ======
+[23:08:38] ======= test_setup_corrupt_group_metadata_overlaps  ========
+[23:08:38] [PASSED] bbitmap_overlaps_group0_base_meta
+[23:08:38] [PASSED] ibitmap_collides_with_bbitmap
+[23:08:38] [PASSED] itable_collides_with_ibitmap
+[23:08:38] [PASSED] group2_bbitmap_collides_with_group0_itable
+[23:08:38] [PASSED] itable_starts_before_and_overlaps_bbitmap
+[23:08:38] [PASSED] itable_starts_before_and_encloses_ibitmap
+[23:08:38] [PASSED] itable_u64_wrap_around_overflow
+[23:08:38] === [PASSED] test_setup_corrupt_group_metadata_overlaps ====
+[23:08:38] [PASSED] test_journal_inode_protection_and_ino_isolation
+[23:08:38] [PASSED] test_journal_disabled_or_empty_skips_zones
+[23:08:38] [PASSED] test_journal_inode_invalid_inum
+[23:08:38] [PASSED] test_journal_inode_iget_error
+[23:08:38] [PASSED] test_journal_inode_map_blocks_error
+[23:08:38] [PASSED] test_journal_inode_overlap_sets_fs_error
+[23:08:38] [PASSED] test_journal_extent_left_overlap_rejected
+[23:08:38] [PASSED] test_check_blockref_valid_and_sparse
+[23:08:38] [PASSED] test_check_blockref_corrupt_entries_and_journal_bypass
+[23:08:38] [PASSED] test_ind_check_inode_and_indirect_blockref
+[23:08:38] [PASSED] test_map_blocks_rejects_extent_in_system_zone
+[23:08:38] ============ [PASSED] ext4_block_validity_test =============
+[23:08:38] ============== ext4_super_test (12 subtests) ===============
+[23:08:38] [PASSED] test_feature_set_and_compatibility
+[23:08:38] [PASSED] test_inode_info_init
+[23:08:38] [PASSED] test_block_group_meta_and_clustersize
+[23:08:38] [PASSED] test_hash_info_init
+[23:08:38] [PASSED] test_check_geometry
+[23:08:38] [PASSED] test_descriptor_loc
+[23:08:38] [PASSED] test_superblock_and_group_desc_csum
+[23:08:38] [PASSED] test_check_descriptors_and_flex_info
+[23:08:38] [PASSED] test_max_sizes_stripe_and_resv_clusters
+[23:08:38] [PASSED] test_overhead_and_statfs
+[23:08:38] [PASSED] test_mount_options_and_show_options
+[23:08:38] [PASSED] test_error_recording_and_update_super
+[23:08:38] ================= [PASSED] ext4_super_test =================
+[23:08:38] =============== ext4_sysfs_test (5 subtests) ===============
+[23:08:38] [PASSED] test_generic_pointer_attrs
+[23:08:38] [PASSED] test_validated_rw_attrs
+[23:08:38] [PASSED] test_computed_ro_and_error_time_attrs
+[23:08:38] [PASSED] test_feature_attrs_and_trigger_error
+[23:08:38] [PASSED] test_sysfs_register_notify_and_unregister
+[23:08:38] ================= [PASSED] ext4_sysfs_test =================
+[23:08:38] =============== ext4_ioctl_test (6 subtests) ===============
+[23:08:38] [PASSED] test_sb_callbacks_and_setparams
+[23:08:38] [PASSED] test_validate_tune_sb_params
+[23:08:38] [PASSED] test_update_superblocks_and_overhead
+[23:08:38] [PASSED] test_swap_inode_data_and_seed
+[23:08:38] [PASSED] test_immutable_dax_and_fileattr
+[23:08:38] [PASSED] test_force_shutdown_and_ioctl_dispatch
+[23:08:38] ================= [PASSED] ext4_ioctl_test =================
+[23:08:38] ============== ext4_resize_test (8 subtests) ===============
+[23:08:38] [PASSED] test_resize_begin_and_end_guards
+[23:08:38] [PASSED] test_list_backups_and_verify_reserved_gdb
+[23:08:38] [PASSED] test_verify_group_input_rejections_and_acceptance
+[23:08:38] [PASSED] test_alloc_setup_flex_gd_and_group_tables
+[23:08:38] [PASSED] test_group_extend_partial_last_group
+[23:08:38] [PASSED] test_group_add_with_resize_inode_and_backup_gdb
+[23:08:38] [PASSED] test_convert_meta_bg_validation_and_conversion
+[23:08:38] [PASSED] test_resize_fs_across_resize_inode_to_meta_bg
+[23:08:38] ================ [PASSED] ext4_resize_test =================
+[23:08:38] ============= ext4_migrate_test (11 subtests) ==============
+[23:08:38] [PASSED] test_ext_migrate_precondition_checks_and_fast_symlink
+[23:08:38] [PASSED] test_ext_migrate_direct_and_ind_coalescing_and_holes
+[23:08:38] [PASSED] test_ext_migrate_dind_tind_and_multilevel_tree
+[23:08:38] [PASSED] test_ext_migrate_error_rollback_frees_tmp_extent_blocks
+[23:08:38] [PASSED] test_ext_swap_inode_data_detects_concurrent_allocation
+[23:08:38] [PASSED] test_ind_migrate_empty_and_single_direct_extent
+[23:08:38] [PASSED] test_ind_migrate_rejections
+[23:08:38] [PASSED] test_ext_migrate_caps_long_run_at_init_max_len
+[23:08:38] [PASSED] test_ext_migrate_survives_handle_restart
+[23:08:38] [PASSED] test_ext_migrate_reports_concurrent_allocation
+[23:08:38] [PASSED] test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks
+[23:08:38] ================ [PASSED] ext4_migrate_test ================
+[23:08:38] ============= ext4_indirect_test (7 subtests) ==============
+[23:08:38] [PASSED] test_block_to_path_and_trans_blocks
+[23:08:38] [PASSED] test_ind_map_blocks_lookup_mapped_and_holes
+[23:08:38] [PASSED] test_ind_map_blocks_alloc_direct_ind_dind_tind
+[23:08:38] [PASSED] test_ind_map_blocks_errors_and_alloc_branch_unwind
+[23:08:38] [PASSED] test_ind_truncate_partial_and_full
+[23:08:38] [PASSED] test_ind_remove_space_levels_and_convergence
+[23:08:38] [PASSED] test_ind_free_corrupt_block_numbers
+[23:08:38] =============== [PASSED] ext4_indirect_test ================
+[23:08:38] =============== ext4_fsmap_test (7 subtests) ===============
+[23:08:38] [PASSED] test_fsmap_unit_conversions
+[23:08:38] [PASSED] test_getfsmap_invalid_flags_devices_and_keys
+[23:08:38] [PASSED] test_getfsmap_fixed_metadata_and_unknown_gaps
+[23:08:38] [PASSED] test_getfsmap_cross_group_free_and_fixed_meta_coalescing
+[23:08:38] [PASSED] test_getfsmap_1k_bofs_bigalloc_and_meta_bg
+[23:08:38] [PASSED] test_getfsmap_count_only_pagination_and_abort
+[23:08:38] [PASSED] test_getfsmap_external_logdev_and_multi_device
+[23:08:38] ================= [PASSED] ext4_fsmap_test =================
+[23:08:38] ============ ext4_move_extent_test (6 subtests) ============
+[23:08:38] [PASSED] test_double_data_sem_lock_order
+[23:08:38] [PASSED] test_mext_check_validity_rejections
+[23:08:38] [PASSED] test_mext_check_adjust_range
+[23:08:38] [PASSED] test_move_extents_holes_and_unwritten
+[23:08:38] [PASSED] test_move_extents_written_copy_data_and_split
+[23:08:38] [PASSED] test_move_extents_unwritten_orig_and_ebusy
+[23:08:38] ============== [PASSED] ext4_move_extent_test ==============
+[23:08:38] ================ ext4_mmp_test (6 subtests) ================
+[23:08:38] [PASSED] test_mmp_csum_set_and_verify
+[23:08:38] [PASSED] test_read_and_write_mmp_block
+[23:08:38] [PASSED] test_mmp_invalid_block_and_io_errors
+[23:08:38] [PASSED] test_mmp_clean_and_fsck_sequences
+[23:08:38] [PASSED] test_mmp_active_seq_conflict_and_claim
+[23:08:38] [PASSED] test_mmp_interrupted_waits_and_kthread_failure
+[23:08:38] ================== [PASSED] ext4_mmp_test ==================
+[23:08:38] ================ ext4_dir_test (6 subtests) ================
+[23:08:38] [PASSED] test_check_dir_entry_and_all_de
+[23:08:38] [PASSED] test_dx_detection_and_hash_pos_cookies
+[23:08:38] [PASSED] test_dir_open_llseek_and_release
+[23:08:38] [PASSED] test_htree_store_dirent_and_free
+[23:08:38] [PASSED] test_linear_readdir
+[23:08:38] [PASSED] test_dx_readdir
+[23:08:38] ================== [PASSED] ext4_dir_test ==================
+[23:08:38] ============================================================
+[23:08:38] Testing complete. Ran 562 tests: passed: 562
+[23:08:38] Test results stored in /root/out-m337c/tip-control.plain.kunit.json
+[23:08:38] Elapsed time: 4.476s total, 0.001s configuring, 3.859s building, 0.566s running
+

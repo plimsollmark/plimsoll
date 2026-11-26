@@ -1,0 +1,53 @@
+{
+ "format": "linux-witness.bank/1",
+ "about": "The 337c173f follow-up (2026-11-25): is fix 337c173f966c masked at the tip by 6bda1a98b7ce, or does the migration test not reach its bug? Each case reverses the listed fixes' non-test changes at the pull's tip bae28a1b11f4, in the listed order, runs ext4_migrate_test, and watches one expectation: fs/ext4/migrate-test.c:1351, KUNIT_EXPECT_FALSE(test, migrate_was_freed(ctx, ext_idx_pblk)) in part 2 of test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks, which fails ext4_mark_inode_dirty() inside ext4_ext_swap_inode_data() after the swap and checks that the migrated inode's extent index block was not freed (337c173f's bug, by its own message).",
+ "tip": "bae28a1b11f422d0214654800d9425e042295c71",
+ "evidence": {
+  "read_at": "bae28a1b11f4, fs/ext4/migrate.c and fs/ext4/migrate-test.c from GitHub's raw files, 2026-11-25; the three fixes' diffs from GitHub's commit API (step 1's copies)",
+  "watched": "fs/ext4/migrate-test.c:1351",
+  "guards": {
+   "337c173f966c1fbb1aad6dfdf4243323e3b7e304": "after ext4_ext_swap_inode_data() fails, ext4_ext_migrate() calls free_ext_block(handle, tmp_inode) only when the inode has no EXTENTS flag (migrate.c:574 at the tip); in part 2 the flag is set (migrate.c:327) before the failing ext4_mark_inode_dirty() (migrate.c:358), so the call is skipped",
+   "6bda1a98b7ce2f88a0e206756999f608f8437722": "ext4_ext_swap_inode_data() calls ext4_ext_init_root(tmp_inode) right after copying i_data (migrate.c:334 at the tip), so tmp_inode's tree has depth 0 before anything can fail, and free_ext_block() returns at once on depth 0 (migrate.c:409)"
+  },
+  "not_guards": {
+   "bfb8f5ce8815bb99770e355a916348df98181f18": "moves the resets of tmp_inode's size, block count and checksum seed before ext4_journal_ensure_credits() in ext4_ext_migrate(); part 2 fails no credit call, so it does not touch whether free_ext_block() runs there (its own test is part 1, lines 1324 to 1329)"
+  }
+ },
+ "cases": [
+  {
+   "id": "revert-337c173f",
+   "fix": "337c173f966c1fbb1aad6dfdf4243323e3b7e304",
+   "revert": ["337c173f966c1fbb1aad6dfdf4243323e3b7e304"],
+   "suite": "ext4_migrate_test",
+   "watch": ["fs/ext4/migrate-test.c:1351"]
+  },
+  {
+   "id": "revert-6bda1a98",
+   "fix": "6bda1a98b7ce2f88a0e206756999f608f8437722",
+   "revert": ["6bda1a98b7ce2f88a0e206756999f608f8437722"],
+   "suite": "ext4_migrate_test",
+   "watch": ["fs/ext4/migrate-test.c:1351"]
+  },
+  {
+   "id": "revert-bfb8f5ce",
+   "fix": "bfb8f5ce8815bb99770e355a916348df98181f18",
+   "revert": ["bfb8f5ce8815bb99770e355a916348df98181f18"],
+   "suite": "ext4_migrate_test",
+   "watch": ["fs/ext4/migrate-test.c:1351"]
+  },
+  {
+   "id": "revert-337c173f-6bda1a98",
+   "fix": "337c173f966c1fbb1aad6dfdf4243323e3b7e304",
+   "revert": ["6bda1a98b7ce2f88a0e206756999f608f8437722", "337c173f966c1fbb1aad6dfdf4243323e3b7e304"],
+   "suite": "ext4_migrate_test",
+   "watch": ["fs/ext4/migrate-test.c:1351"]
+  },
+  {
+   "id": "revert-337c173f-bfb8f5ce",
+   "fix": "337c173f966c1fbb1aad6dfdf4243323e3b7e304",
+   "revert": ["337c173f966c1fbb1aad6dfdf4243323e3b7e304", "bfb8f5ce8815bb99770e355a916348df98181f18"],
+   "suite": "ext4_migrate_test",
+   "watch": ["fs/ext4/migrate-test.c:1351"]
+  }
+ ]
+}

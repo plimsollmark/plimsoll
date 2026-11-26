@@ -1,0 +1,3769 @@
+{
+    "name": "KUnit Test Group",
+    "sub_groups": [
+        {
+            "name": "ext4_inode_test",
+            "sub_groups": [
+                {
+                    "name": "inode_test_xtimestamp_decoding",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "1901-12-13 Lower bound of 32bit < 0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1969-12-31 Upper bound of 32bit < 0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1970-01-01 Lower bound of 32bit >=0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2038-01-19 Upper bound of 32bit >=0 timestamp, no extra bits",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2038-01-19 Lower bound of 32bit <0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2106-02-07 Upper bound of 32bit <0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2106-02-07 Lower bound of 32bit >=0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2174-02-25 Upper bound of 32bit >=0 timestamp, lo extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2174-02-25 Lower bound of 32bit <0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2242-03-16 Upper bound of 32bit <0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2242-03-16 Lower bound of 32bit >=0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2310-04-04 Upper bound of 32bit >=0 timestamp, hi extra sec bit on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2310-04-04 Upper bound of 32bit>=0 timestamp, hi extra sec bit 1. 1 ns",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2378-04-22 Lower bound of 32bit>= timestamp. Extra sec bits 1. Max ns",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2378-04-22 Lower bound of 32bit >=0 timestamp. All extra sec bits on",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2446-05-10 Upper bound of 32bit >=0 timestamp. All extra sec bits on",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 16,
+                        "passed": 16,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "inode_test_xtimestamp_encoding_roundtrip",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_csum_set_and_verify",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_blocks_encode_decode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_fill_raw_inode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_mark_dirty_and_update",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_expand_extra_isize",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_get_inode_loc_variants",
+                    "status": "FAIL"
+                },
+                {
+                    "name": "inode_test_iget_validation_and_modes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_iget_corruptions",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_fast_symlink_and_can_truncate",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_flags_aops_mapping_order",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_projid_dio_and_getattr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_da_reserve_and_release",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_da_bigalloc_clusters",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_map_blocks_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_get_block_bread_and_walk_buffers",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_iomap_and_atomic_writes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_trans_credits_and_disksize",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_zero_partial_and_eof",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_punch_hole_and_truncate",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_write_and_sync_metadata",
+                    "status": "FAIL"
+                },
+                {
+                    "name": "inode_test_evict_inode_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_buffered_write_and_folio_ops",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_setattr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "inode_test_page_mkwrite",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 41,
+                "passed": 39,
+                "failed": 2,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_mballoc_test",
+            "sub_groups": [
+                {
+                    "name": "test_new_blocks_simple",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_free_blocks_simple",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_generate_buddy",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_mark_used",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_free_blocks",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mark_diskspace_used",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_bit_ops",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_test_and_clear_bits",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_find_buddy_and_order",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_find_extent",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_generate_buddy_corrupt",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_free_blocks_double_free_and_fc_replay",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_xarray_orders_and_frag_size",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_good_group",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_find_by_goal",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_simple_and_aligned_scan",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_complex_scan_and_measure",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_regular_allocator",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_prefetch",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_initialize_context",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_normalize_request",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_inode_pa_lifecycle",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_group_pa_lifecycle",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_lg_list_trim",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_new_blocks_and_enospc_retry",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_mark_context_and_mark_bb",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_ext4_free_blocks_flags_and_cross_group",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_free_metadata_and_process_freed_data",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_ext4_group_add_blocks",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_ext4_trim_fs",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_ext4_mballoc_query_range",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_mb_mark_used_cost",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "block_bits=10 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=12 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "block_bits=16 cluster_bits=3 blocks_per_group=8192 group_count=4 desc_size=64",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [],
+            "misc": {
+                "tests": 96,
+                "passed": 96,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_extents_test",
+            "sub_groups": [
+                {
+                    "name": "test_split_convert",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half to writ",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 1st half unwrit",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 2nd half unwrit",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 3 extents and convert 2nd half to unwrit",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ (zeroout)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ (zeroout)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half writ (zeroout)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 1st half unwrit (zeroout)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 2nd half unwrit (zeroout)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 3 extents and convert 2nd half unwrit (zeroout)",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 12,
+                        "passed": 12,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_split_convert",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "split writ extent to 2 extents and convert 1st half unwrit (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 2nd half unwrit (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 3 extents and convert 2nd half to unwrit (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 1st half unwrit (zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 2 extents and convert 2nd half unwrit (zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split writ extent to 3 extents and convert 2nd half unwrit (zeroout) (highlevel)",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 6,
+                        "passed": 6,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_split_convert",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ (endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ (endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half to writ (endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ (non endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ (non endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half to writ (non endio) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ (endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ (endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half writ (endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 1st half writ (non-endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 2 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "split unwrit extent to 3 extents and convert 2nd half writ (non-endio, zeroout) (highlevel)",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 12,
+                        "passed": 12,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_ext_check_corruptions",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "invalid eh_magic",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "mismatched eh_depth",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "eh_max == 0",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "eh_max exceeds root capacity",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "eh_entries exceeds eh_max",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "empty index block at depth > 0",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "extent with ee_len == 0",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "extent logical block 32-bit wrap-around",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "extent physical block <= first_data_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "extent physical block past blocks_count",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "overlapping/unsorted leaf extents",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "unsorted index entries",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "non-root leaf first ee_block != parent ei_block",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 13,
+                        "passed": 13,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_ext_pblock_48bit",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_unwritten_len_encoding",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_tree_init_and_check_inode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_block_csum_verify",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_find_extent_root_binsearch",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_find_extent_multilevel_and_navigation",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_precache",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_can_extents_be_merged",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_insert_extent_merge_and_nomerge",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_insert_extent_grow_and_merge_up",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_insert_extent_leaf_split",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_insert_extent_index_split",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_remove_space_tail_and_hole_punch",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_remove_space_multilevel_collapse",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_remove_space_bigalloc_partial_cluster",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_map_blocks_lookup_hole_and_query_last_in_leaf",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_map_blocks_alloc_overlap_and_enospc",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_convert_to_initialized_abut_neighbors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_map_blocks_bigalloc_implied_cluster",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_shift_extents",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_swap_extents",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_clu_mapped",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_credits_calculation",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_fast_commit_replay",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fallocate_modes_and_prealloc",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_zero_range_and_write_zeroes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_collapse_range",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_insert_range",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_convert_unwritten_extents_and_io_end",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_fiemap_and_get_es_cache",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 73,
+                "passed": 73,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_hash",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_ext4fs_dirhash_vectors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_seed_changes_result",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_invalid_version_returns_einval",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_siphash_without_key_returns_einval",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_signed_unsigned_differ_on_nonascii",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_casefolded_names_hash_consistently",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext4fs_dirhash_casefold_fallback",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 7,
+                "passed": 7,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_extents_status_test",
+            "sub_groups": [
+                {
+                    "name": "test_es_merge_cases",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "left merge contiguous written extents",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "right merge contiguous written extents",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "three-way bridge merge via try_to_merge_right",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "three-way bridge merge via try_to_merge_left",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "adjacent hole extents merge",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "discontiguous physical blocks do not merge",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "different status types with contiguous pblk do not merge",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "logically separated extents with 1-block gap do not merge",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 8,
+                        "passed": 8,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_es_remove_geometries",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "remove range before extent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "remove range after extent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "remove exact extent range",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "remove superset of extent range",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "prefix trim of extent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "suffix trim of extent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "middle split of extent into two",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 7,
+                        "passed": 7,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_es_bitfield_written_and_unwritten_encoding",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bitfield_delayed_and_hole_encoding",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bitfield_referenced_and_pblock_update_preserve_state",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_lookup_empty_tree_returns_miss",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_insert_zero_len_is_noop",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_lookup_hits_cache_and_rbtree_with_next_lblk",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_fc_replay_bypasses_tree_operations",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_insert_adjacent_delayed_extents_merges",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_merge_preserves_referenced",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_merge_at_max_blocks_boundary_succeeds",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_remove_multi_extent_span_trims_and_deletes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_insert_overwrite_split_and_remerge",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_cache_extent_inserts_and_coalesces_same_status",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_cache_extent_conflict_covered_range_warns",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_cache_extent_conflict_partial_overlap_warns",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_cache_extent_hole_over_delayed_does_not_warn",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_find_extent_range_skips_nonmatching_and_finds_next",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_scan_range_matches_only_overlapping_extents",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_scan_clu_matches_extent_in_same_cluster",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_delalloc_remove_and_overwrite_account_reserved_blocks",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_insert_delayed_creates_and_removes_pending",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_revise_pending_single_cluster_halves",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_revise_pending_multi_cluster_span",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_remove_partial_cluster_holds_rsvd_until_empty",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_remove_fragmented_cluster_releases_once",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_bigalloc_remove_pending_cluster_cancels_pending_only",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_clear_inode_es_retains_only_delayed_extents",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_shrinker_ages_referenced_and_keeps_delayed",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_shrinker_cursor_advances_and_wraps_around",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_shrinker_skips_precached_inode_until_last_resort",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_es_seq_shrinker_info_show_formats_stats",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 46,
+                "passed": 46,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_xattr_test",
+            "sub_groups": [
+                {
+                    "name": "test_xattr_check_inode",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "valid_empty_ibody",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "valid_two_entries",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bad_magic",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "end_before_first_entry",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "entry_header_overflows_end",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "entry_name_overflows_end",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "unterminated_entry_list",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ea_inode_without_feature",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "value_size_gt_total_size",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "value_offset_overlaps_entries",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "value_end_exceeds_total_size",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 11,
+                        "passed": 11,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_xattr_macros_and_locking",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_ibody_basic_and_flags",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_ibody_replace_and_remove",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_external_block_and_check",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_block_dedup_and_cow",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_list_and_handlers",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_ea_inode_lifecycle_and_dedup",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_ea_inode_validation_and_compat",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_credits_usage_expand_and_delete",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_xattr_error_injection",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 21,
+                "passed": 21,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_namei_test",
+            "sub_groups": [
+                {
+                    "name": "test_namei_read_dirblock",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "valid leaf block with metadata_csum",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "valid dx_root index block with metadata_csum",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "hole at block > 0 with EITHER returns NULL",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "reading block past i_size returns -EFSCORRUPTED",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_bread -EIO error propagates",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "hole at block 0 returns -EFSCORRUPTED",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "hole for DIRENT_HTREE returns -EFSCORRUPTED",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "leaf block found when expecting INDEX returns -EFSCORRUPTED",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "corrupted leaf checksum returns -EFSBADCRC",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "corrupted index checksum returns -EFSBADCRC",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 10,
+                        "passed": 10,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_namei_check_dx_root_and_probe",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "valid 1-level dx_root binary search probe",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "valid 2-level htree probe and ext4_htree_next_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_check_dx_root rejects dot name_len != 1",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_check_dx_root rejects dot name != '.'",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_check_dx_root rejects dot rec_len >= blocksize",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_check_dx_root rejects dotdot name_len != 2",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ext4_check_dx_root rejects dotdot name != '..'",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects unrecognized hash_version",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects DX_HASH_SIPHASH when not hash_in_dirent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects non-zero unused_flags & 1",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects indirect_levels >= ext4_dir_htree_level",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects root limit mismatch",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe rejects count == 0",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "dx_probe detects tree cycle pointing back to block 0",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 14,
+                        "passed": 14,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_namei_dirent_tail_and_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_dx_helpers_and_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_append_and_init_dir",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_search_insert_delete_dentry",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_empty_dir",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_dx_map_pack_and_move",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_add_find_and_htree_split",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_dx_index_level_growth_and_fallback",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_inline_dir_lifecycle",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_nlink_and_lookup_parent",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_link_unlink_and_rmdir",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_rename_and_exchange",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_namei_casefold_lookup_and_strict",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 37,
+                "passed": 37,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_inline_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_max_inline_size_variants",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_find_inline_data_nolock",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_write_and_destroy_inline_data",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_write_inline_short_copy_and_edge_cases",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_readpage_inline_link_and_iomap",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inline_data_truncate",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_convert_inline_data_and_rollback",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_write_triggers_inline_to_extent_conversion",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_update_final_de",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inline_dir_lifecycle_and_operations",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inline_dir_conversion_and_corruptions",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 11,
+                "passed": 11,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_fast_commit_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_fc_init_and_eligibility",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_mark_ineligible",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_track_inode_and_range",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_track_dentry_and_del",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_reserve_space_and_tlv_writing",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_snapshot_inode_and_ranges",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_cleanup_and_stats",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_commit_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_replay_regions_and_scan",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_replay_inode_and_dentries",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_fc_replay_ranges_and_end_to_end",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 11,
+                "passed": 11,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_ialloc_test",
+            "sub_groups": [
+                {
+                    "name": "ialloc_test_mark_bitmap_end",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "unaligned_start_to_aligned_end",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "byte_aligned_memset_only",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "single_partial_byte_no_memset",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "unaligned_within_second_byte",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "equal_start_and_end_noop",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "start_greater_than_end_noop",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 6,
+                        "passed": 6,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "ialloc_test_end_bitmap_read_ok",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_end_bitmap_read_ioerr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_validate_ibitmap_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_validate_ibitmap_short_circuits",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_read_ibitmap_disk_and_cache",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_read_ibitmap_uninit",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_read_ibitmap_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_free_inode_reg_and_dir",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_free_inode_guards",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_free_inode_corrupt_and_journal_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_orlov_topdir_spread",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_orlov_subdir_and_thresholds",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_orlov_flex_bg_and_fallback",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_find_group_other_non_flex",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_find_group_other_flex_bg",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_recently_deleted",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_find_inode_bit",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_mark_inode_used_uninit",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_mark_inode_used_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_xattr_credits_for_new_inode",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_new_inode_types_and_flags",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_new_inode_ownership_and_projid",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_new_inode_goal_uninit_and_corrupt_skip",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_new_inode_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_orphan_get",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_count_free_inodes_and_dirs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "ialloc_test_init_inode_table",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 33,
+                "passed": 33,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_balloc_test",
+            "sub_groups": [
+                {
+                    "name": "test_group_no_and_offset_matrix",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "std_1k_bg0_first_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_1k_bg0_last_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_1k_bg1_first_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_1k_bg3_interior_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_4k_bg0_last_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_4k_bg1_first_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "std_4k_above_32bit_blocknr",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "nonstd_bg0_last_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "nonstd_bg1_first_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "nonstd_bg2_interior_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bigalloc_std_cluster_start",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bigalloc_std_cluster_end_same_offset",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bigalloc_std_next_cluster",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bigalloc_std_bg2_offset",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "bigalloc_nonstd_bg3_offset",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 15,
+                        "passed": 15,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_group_no_and_offset_optional_out_ptrs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_bg_has_super_dense_all_groups",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_bg_has_super_sparse_super_powers",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_bg_has_super_sparse_super2_explicit_backups",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_bg_num_gdb_and_base_meta_non_metabg",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_bg_num_gdb_and_base_meta_hybrid_metabg",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_free_clusters_after_init_standard_and_partial_last",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_free_clusters_after_init_external_and_spanning_meta",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_free_clusters_after_init_bigalloc_cluster_sharing",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_get_group_desc_lookup_and_bounds",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_get_group_info_lookup_and_null_guards",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_validates_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_validates_metadata_bits",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_validates_padding",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_validation_short_circuits",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_disk_and_cache_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_nowait_prefetch_locked",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_uninit_group",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_block_bitmap_uninit_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_and_wait_block_bitmap_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_claim_free_clusters_unprivileged_and_bigalloc",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_claim_free_clusters_root_and_reserved_pools",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_should_retry_alloc_no_journal_and_retry_limit",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_should_retry_alloc_free_space_and_discard_flush",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_new_meta_blocks_alloc_and_delalloc_quota",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_count_free_clusters_corrupt_and_64bit_groups",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inode_to_goal_block_flex_bg_and_delalloc",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inode_to_goal_block_nodelalloc_colour",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 43,
+                "passed": 43,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_orphan_test",
+            "sub_groups": [
+                {
+                    "name": "test_inodes_per_orphan_block_param",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "1K_blocksize",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "2K_blocksize",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "4K_blocksize",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "64K_blocksize",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 4,
+                        "passed": 4,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_orphan_file_empty",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_add_early_exits_and_idempotency",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_add_list_chaining_and_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_add_next_orphan_bounds",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_add_list_error_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_del_early_exits",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_del_list_positions_and_null_handle",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_del_list_error_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_file_add_and_del_basic",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_file_add_block_wraparound_and_last_slot",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_file_add_enospc_fallback_and_write_err",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_file_del_edge_and_error_paths",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_file_block_trigger_and_frozen_data",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_init_and_release_orphan_info_lifecycle",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_init_orphan_info_max_blocks_boundary",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_init_orphan_info_error_paths_and_cleanup",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_cleanup_skip_guards",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_cleanup_linked_list_unlinked_and_truncated",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_cleanup_orphan_file_and_rdonly_restore",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_cleanup_list_errors_and_truncate_fail",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_orphan_cleanup_quota_paths",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 25,
+                "passed": 25,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_block_validity_test",
+            "sub_groups": [
+                {
+                    "name": "test_sb_block_valid_bounds",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "1k_block_0_below_first_data",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1k_block_1_equals_first_data",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "1k_block_2_just_above_first_data",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "4k_block_0_equals_first_data",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "4k_block_1_just_above_first_data",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "exact_last_single_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "multiblock_ending_at_last_block",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "multiblock_exceeding_end_by_one",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "start_at_blocks_count",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "u64_wrap_around_into_in_bounds_value",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "u64_max_single_block_overflow",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "64bit_high_block_at_exact_end",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "32bit_fs_ignores_high_blocks_count",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 13,
+                        "passed": 13,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_sb_block_valid_interval_overlaps",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "strictly_before_adjacent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "strictly_after_adjacent",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "single_first_block_of_zone",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "single_interior_block_of_zone",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "single_last_block_of_zone",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "straddle_left_boundary_by_one",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "straddle_right_boundary_by_one",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "strictly_inside_zone",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "exact_zone_span",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "strictly_enclosing_entire_zone",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 10,
+                        "passed": 10,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                },
+                {
+                    "name": "test_setup_corrupt_group_metadata_overlaps",
+                    "sub_groups": [],
+                    "test_cases": [
+                        {
+                            "name": "bbitmap_overlaps_group0_base_meta",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "ibitmap_collides_with_bbitmap",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "itable_collides_with_ibitmap",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "group2_bbitmap_collides_with_group0_itable",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "itable_starts_before_and_overlaps_bbitmap",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "itable_starts_before_and_encloses_ibitmap",
+                            "status": "PASS"
+                        },
+                        {
+                            "name": "itable_u64_wrap_around_overflow",
+                            "status": "PASS"
+                        }
+                    ],
+                    "misc": {
+                        "tests": 7,
+                        "passed": 7,
+                        "failed": 0,
+                        "crashed": 0,
+                        "skipped": 0,
+                        "errors": 0
+                    },
+                    "arch": "um",
+                    "defconfig": "kunit_defconfig",
+                    "build_environment": "/root/b-lm",
+                    "lab_name": null,
+                    "kernel": null,
+                    "job": null,
+                    "git_branch": "kselftest"
+                }
+            ],
+            "test_cases": [
+                {
+                    "name": "test_release_system_zone_lifecycle",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_setup_multigroup_sparse_super_and_flex_bg",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_rbtree_left_right_and_bridge_merges",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_inode_protection_and_ino_isolation",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_disabled_or_empty_skips_zones",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_inode_invalid_inum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_inode_iget_error",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_inode_map_blocks_error",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_inode_overlap_sets_fs_error",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_journal_extent_left_overlap_rejected",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_check_blockref_valid_and_sparse",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_check_blockref_corrupt_entries_and_journal_bypass",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_check_inode_and_indirect_blockref",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_map_blocks_rejects_extent_in_system_zone",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 44,
+                "passed": 44,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_super_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_feature_set_and_compatibility",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_inode_info_init",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_block_group_meta_and_clustersize",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_hash_info_init",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_check_geometry",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_descriptor_loc",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_superblock_and_group_desc_csum",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_check_descriptors_and_flex_info",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_max_sizes_stripe_and_resv_clusters",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_overhead_and_statfs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mount_options_and_show_options",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_error_recording_and_update_super",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 12,
+                "passed": 12,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_sysfs_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_generic_pointer_attrs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_validated_rw_attrs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_computed_ro_and_error_time_attrs",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_feature_attrs_and_trigger_error",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_sysfs_register_notify_and_unregister",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 5,
+                "passed": 5,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_ioctl_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_sb_callbacks_and_setparams",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_validate_tune_sb_params",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_update_superblocks_and_overhead",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_swap_inode_data_and_seed",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_immutable_dax_and_fileattr",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_force_shutdown_and_ioctl_dispatch",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 6,
+                "passed": 6,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_resize_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_resize_begin_and_end_guards",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_list_backups_and_verify_reserved_gdb",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_verify_group_input_rejections_and_acceptance",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_alloc_setup_flex_gd_and_group_tables",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_group_extend_partial_last_group",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_group_add_with_resize_inode_and_backup_gdb",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_convert_meta_bg_validation_and_conversion",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_resize_fs_across_resize_inode_to_meta_bg",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 8,
+                "passed": 8,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_migrate_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_ext_migrate_precondition_checks_and_fast_symlink",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_direct_and_ind_coalescing_and_holes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_dind_tind_and_multilevel_tree",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_error_rollback_frees_tmp_extent_blocks",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_swap_inode_data_detects_concurrent_allocation",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_migrate_empty_and_single_direct_extent",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_migrate_rejections",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_caps_long_run_at_init_max_len",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_survives_handle_restart",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_reports_concurrent_allocation",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 11,
+                "passed": 11,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_indirect_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_block_to_path_and_trans_blocks",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_map_blocks_lookup_mapped_and_holes",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_map_blocks_alloc_direct_ind_dind_tind",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_map_blocks_errors_and_alloc_branch_unwind",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_truncate_partial_and_full",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_remove_space_levels_and_convergence",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_ind_free_corrupt_block_numbers",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 7,
+                "passed": 7,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_fsmap_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_fsmap_unit_conversions",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_invalid_flags_devices_and_keys",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_fixed_metadata_and_unknown_gaps",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_cross_group_free_and_fixed_meta_coalescing",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_1k_bofs_bigalloc_and_meta_bg",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_count_only_pagination_and_abort",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_getfsmap_external_logdev_and_multi_device",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 7,
+                "passed": 7,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_move_extent_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_double_data_sem_lock_order",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mext_check_validity_rejections",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mext_check_adjust_range",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_move_extents_holes_and_unwritten",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_move_extents_written_copy_data_and_split",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_move_extents_unwritten_orig_and_ebusy",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 6,
+                "passed": 6,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_mmp_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_mmp_csum_set_and_verify",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_read_and_write_mmp_block",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mmp_invalid_block_and_io_errors",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mmp_clean_and_fsck_sequences",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mmp_active_seq_conflict_and_claim",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_mmp_interrupted_waits_and_kthread_failure",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 6,
+                "passed": 6,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        },
+        {
+            "name": "ext4_dir_test",
+            "sub_groups": [],
+            "test_cases": [
+                {
+                    "name": "test_check_dir_entry_and_all_de",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_dx_detection_and_hash_pos_cookies",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_dir_open_llseek_and_release",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_htree_store_dirent_and_free",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_linear_readdir",
+                    "status": "PASS"
+                },
+                {
+                    "name": "test_dx_readdir",
+                    "status": "PASS"
+                }
+            ],
+            "misc": {
+                "tests": 6,
+                "passed": 6,
+                "failed": 0,
+                "crashed": 0,
+                "skipped": 0,
+                "errors": 0
+            },
+            "arch": "um",
+            "defconfig": "kunit_defconfig",
+            "build_environment": "/root/b-lm",
+            "lab_name": null,
+            "kernel": null,
+            "job": null,
+            "git_branch": "kselftest"
+        }
+    ],
+    "test_cases": [],
+    "misc": {
+        "tests": 562,
+        "passed": 560,
+        "failed": 2,
+        "crashed": 0,
+        "skipped": 0,
+        "errors": 0
+    },
+    "arch": "um",
+    "defconfig": "kunit_defconfig",
+    "build_environment": "/root/b-lm",
+    "lab_name": null,
+    "kernel": null,
+    "job": null,
+    "git_branch": "kselftest"
+}

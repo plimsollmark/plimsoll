@@ -1,0 +1,20 @@
+start=2026-11-26T01:37:08Z
+tip1 exit=0 [01:37:33] Testing complete. Ran 562 tests: passed: 562
+tip2 exit=0 [01:37:35] Testing complete. Ran 562 tests: passed: 562
+r-daa099ec5ce3 exit=1 [01:37:39] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-ff06f373c1d7 exit=1 [01:37:43] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-f62b22b69aef exit=1 [01:37:49] Testing complete. Ran 357 tests: passed: 342, crashed: 15, errors: 16
+r-9627baed418b exit=1 [01:37:54] Testing complete. Ran 562 tests: passed: 558, failed: 4
+r-b0a3f2c102e8 exit=1 [01:37:58] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-3b6aee59883c exit=1 [01:38:02] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-bfb8f5ce8815 exit=1 [01:38:06] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-337c173f966c exit=0 [01:38:10] Testing complete. Ran 562 tests: passed: 562
+r-82e2a5743b6a CONFLICT Applied patch to 'fs/ext4/migrate.c' with conflicts. U fs/ext4/migrate.c 
+r-40e53dad45a9 exit=0 [01:38:15] Testing complete. Ran 562 tests: passed: 562
+r-c966757ff80f exit=0 [01:38:19] Testing complete. Ran 562 tests: passed: 562
+r-f62b22b69aef-again exit=1 [01:38:25] Testing complete. Ran 357 tests: passed: 342, crashed: 15, errors: 16
+r-daa099ec5ce3-again exit=1 [01:38:29] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-ff06f373c1d7-again exit=1 [01:38:33] Testing complete. Ran 562 tests: passed: 561, failed: 1
+r-6bda1a98-337c173f exit=1 [01:38:39] Testing complete. Ran 562 tests: passed: 561, failed: 1
+tip3 exit=0 [01:38:45] Testing complete. Ran 562 tests: passed: 562
+done=2026-11-26T01:38:45Z

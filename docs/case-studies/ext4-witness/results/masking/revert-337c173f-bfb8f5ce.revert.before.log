@@ -1,0 +1,39 @@
+[23:08:27] Configuring KUnit Kernel ...
+[23:08:27] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/root/b-tip olddefconfig CC=ccache gcc
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/root/b-tip --jobs=16 CC=ccache gcc
+[23:08:32] Starting KUnit Kernel (1/1)...
+[23:08:32] ============================================================
+Running tests with:
+$ /root/b-tip/linux kunit.filter_glob=ext4_migrate_test kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[23:08:32] ============= ext4_migrate_test (11 subtests) ==============
+[23:08:32] [PASSED] test_ext_migrate_precondition_checks_and_fast_symlink
+[23:08:32] [PASSED] test_ext_migrate_direct_and_ind_coalescing_and_holes
+[23:08:32] [PASSED] test_ext_migrate_dind_tind_and_multilevel_tree
+[23:08:32] [PASSED] test_ext_migrate_error_rollback_frees_tmp_extent_blocks
+[23:08:32] [PASSED] test_ext_swap_inode_data_detects_concurrent_allocation
+[23:08:32] [PASSED] test_ind_migrate_empty_and_single_direct_extent
+[23:08:32] [PASSED] test_ind_migrate_rejections
+[23:08:32] [PASSED] test_ext_migrate_caps_long_run_at_init_max_len
+[23:08:32] [PASSED] test_ext_migrate_survives_handle_restart
+[23:08:32] [PASSED] test_ext_migrate_reports_concurrent_allocation
+[23:08:32] # test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1325
+[23:08:32] Expected ctx->evict_tmp_isize == 0LL, but
+[23:08:32]     ctx->evict_tmp_isize == 12288 (0x3000)
+[23:08:32]     0LL == 0 (0x0)
+[23:08:32] # test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1329
+[23:08:32] Expected ctx->evict_tmp_csum_seed == 0xabcdef01U, but
+[23:08:32]     ctx->evict_tmp_csum_seed == 1437226410 (0x55aa55aa)
+[23:08:32]     0xabcdef01U == 2882400001 (0xabcdef01)
+[23:08:32] [FAILED] test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks
+[23:08:32]     # module: ext4_test
+[23:08:32] # ext4_migrate_test: pass:10 fail:1 skip:0 total:11
+[23:08:32] # Totals: pass:10 fail:1 skip:0 total:11
+[23:08:32] ================ [FAILED] ext4_migrate_test ================
+[23:08:32] ============================================================
+[23:08:32] Testing complete. Ran 11 tests: passed: 10, failed: 1
+[23:08:32] Test results stored in /root/out-m337c/revert-337c173f-bfb8f5ce.revert.before.kunit.json
+[23:08:32] Elapsed time: 4.671s total, 0.001s configuring, 4.555s building, 0.108s running
+

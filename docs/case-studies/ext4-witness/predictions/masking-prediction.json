@@ -1,0 +1,35 @@
+{
+ "cases": [
+  {
+   "id": "revert-337c173f",
+   "role": "baseline",
+   "truth": "not-witnessed",
+   "why": "a guard remains (6bda1a98b7ce), so the hypothesis says the block is not freed"
+  },
+  {
+   "id": "revert-6bda1a98",
+   "role": "baseline",
+   "truth": "not-witnessed",
+   "why": "a guard remains (337c173f966c), so the hypothesis says the block is not freed"
+  },
+  {
+   "id": "revert-bfb8f5ce",
+   "role": "baseline",
+   "truth": "not-witnessed",
+   "why": "a guard remains (337c173f966c, 6bda1a98b7ce), so the hypothesis says the block is not freed"
+  },
+  {
+   "id": "revert-337c173f-6bda1a98",
+   "role": "deciding",
+   "truth": "witnessed",
+   "why": "every guard of the block is reverted, so the hypothesis says it is freed"
+  },
+  {
+   "id": "revert-337c173f-bfb8f5ce",
+   "role": "baseline",
+   "truth": "not-witnessed",
+   "why": "a guard remains (6bda1a98b7ce), so the hypothesis says the block is not freed"
+  }
+ ],
+ "format": "linux-witness.key/1"
+}

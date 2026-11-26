@@ -1,0 +1,81 @@
+{
+ "after_exit": 0,
+ "after_failed_at": [],
+ "after_seconds": 28.9,
+ "after_tail": "",
+ "after_tests": {
+  "ext4_migrate_test.test_ext_migrate_caps_long_run_at_init_max_len": "PASS",
+  "ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks": "PASS",
+  "ext4_migrate_test.test_ext_migrate_dind_tind_and_multilevel_tree": "PASS",
+  "ext4_migrate_test.test_ext_migrate_direct_and_ind_coalescing_and_holes": "PASS",
+  "ext4_migrate_test.test_ext_migrate_error_rollback_frees_tmp_extent_blocks": "PASS",
+  "ext4_migrate_test.test_ext_migrate_precondition_checks_and_fast_symlink": "PASS",
+  "ext4_migrate_test.test_ext_migrate_reports_concurrent_allocation": "PASS",
+  "ext4_migrate_test.test_ext_migrate_survives_handle_restart": "PASS",
+  "ext4_migrate_test.test_ext_swap_inode_data_detects_concurrent_allocation": "PASS",
+  "ext4_migrate_test.test_ind_migrate_empty_and_single_direct_extent": "PASS",
+  "ext4_migrate_test.test_ind_migrate_rejections": "PASS"
+ },
+ "before_exit": 1,
+ "before_failed_at": [
+  "fs/ext4/migrate-test.c:1327",
+  "fs/ext4/migrate-test.c:1328"
+ ],
+ "before_note": "",
+ "before_seconds": 6.0,
+ "before_tail": "",
+ "before_tests": {
+  "ext4_migrate_test.test_ext_migrate_caps_long_run_at_init_max_len": "PASS",
+  "ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks": "FAIL",
+  "ext4_migrate_test.test_ext_migrate_dind_tind_and_multilevel_tree": "PASS",
+  "ext4_migrate_test.test_ext_migrate_direct_and_ind_coalescing_and_holes": "PASS",
+  "ext4_migrate_test.test_ext_migrate_error_rollback_frees_tmp_extent_blocks": "PASS",
+  "ext4_migrate_test.test_ext_migrate_precondition_checks_and_fast_symlink": "PASS",
+  "ext4_migrate_test.test_ext_migrate_reports_concurrent_allocation": "PASS",
+  "ext4_migrate_test.test_ext_migrate_survives_handle_restart": "PASS",
+  "ext4_migrate_test.test_ext_swap_inode_data_detects_concurrent_allocation": "PASS",
+  "ext4_migrate_test.test_ind_migrate_empty_and_single_direct_extent": "PASS",
+  "ext4_migrate_test.test_ind_migrate_rejections": "PASS"
+ },
+ "category": "witnessed",
+ "counts": {
+  "passes-both": 10,
+  "witness": 1
+ },
+ "form": "revert",
+ "id": "revert-6bda1a98",
+ "job": {
+  "fix": "6bda1a98b7ce2f88a0e206756999f608f8437722",
+  "form": "revert",
+  "id": "revert-6bda1a98",
+  "revert": [
+   "6bda1a98b7ce2f88a0e206756999f608f8437722"
+  ],
+  "suite": "ext4_migrate_test",
+  "watch": [
+   "fs/ext4/migrate-test.c:1351"
+  ]
+ },
+ "per_test": {
+  "ext4_migrate_test.test_ext_migrate_caps_long_run_at_init_max_len": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks": "witness",
+  "ext4_migrate_test.test_ext_migrate_dind_tind_and_multilevel_tree": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_direct_and_ind_coalescing_and_holes": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_error_rollback_frees_tmp_extent_blocks": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_precondition_checks_and_fast_symlink": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_reports_concurrent_allocation": "passes-both",
+  "ext4_migrate_test.test_ext_migrate_survives_handle_restart": "passes-both",
+  "ext4_migrate_test.test_ext_swap_inode_data_detects_concurrent_allocation": "passes-both",
+  "ext4_migrate_test.test_ind_migrate_empty_and_single_direct_extent": "passes-both",
+  "ext4_migrate_test.test_ind_migrate_rejections": "passes-both"
+ },
+ "started": "2026-11-26T02:17:32Z",
+ "test_verdict": "witnessed",
+ "verdict": "not-witnessed",
+ "watched": {
+  "fs/ext4/migrate-test.c:1351": "passes-both"
+ },
+ "witnesses": [
+  "ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks"
+ ]
+}

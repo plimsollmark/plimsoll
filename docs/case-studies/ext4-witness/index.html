@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Undoing ext4's fixes, one at a time: which tests notice?</title>
+<meta name="description" content="When someone fixes a bug and adds a test, that test should fail if you undo the fix. I undid each of the 48 fixes in the ext4 pull for Linux 7.4-rc5 and checked, with the scripts, the raw results and the commands to rerun it.">
+<meta name="author" content="Carroll Guertin">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Undoing ext4's fixes, one at a time: which tests notice?">
+<meta property="og:description" content="I undid each of the 48 fixes in the ext4 pull for Linux 7.4-rc5 and checked which KUnit tests notice. Scripts, raw results and the commands to rerun it.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/case-studies/ext4-witness/index.html">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/case-studies/ext4-witness/index.html">
+<style>
+:root { color-scheme: light; --ink:#1a1a1a; --mut:#5d5d5d; --rule:#dcd7cd;
+        --bg:#fbfaf7; --card:#ffffff; --accent:#0f4a85;
+        --o-w:#2a78d6; --o-s:#eb6834; --o-p:#1baf7a; --o-c:#eda100; }
+* { box-sizing: border-box; }
+body { margin:0; padding:2.2rem 1.3rem 4rem; background:var(--bg); color:var(--ink);
+       font:16px/1.65 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+main { max-width: 52rem; margin: 0 auto; }
+nav { font-size:.85rem; color:var(--mut); margin-bottom:1.6rem; }
+nav a { color:var(--mut); }
+h1 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.85rem;
+     line-height:1.25; margin:0 0 .4rem; letter-spacing:-.01em; }
+h2 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.3rem; margin:2.4rem 0 .5rem; }
+h3 { font-size:1rem; margin:1.6rem 0 .3rem; }
+.byline { color:var(--mut); font-size:.9rem; margin:0 0 1.4rem; }
+a { color:var(--accent); }
+code { background:#f0ede6; padding:.1rem .3rem; border-radius:3px;
+       font:.86em ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
+pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; padding:.75rem .9rem;
+      overflow-x:auto; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre code { background:none; padding:0; font:inherit; overflow-wrap:normal; }
+.summary { background:var(--card); border:1px solid var(--rule); border-left:4px solid var(--accent);
+           border-radius:7px; padding:.9rem 1.1rem; margin:1.2rem 0 1.6rem; }
+.summary p { margin:.45rem 0; }
+.credit { background:#eef4fb; border:1px solid #c8daf0; border-radius:7px; padding:.75rem 1rem; margin:1rem 0; }
+.wrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; width:100%; font-size:.9rem; background:var(--card); }
+th, td { text-align:left; vertical-align:top; padding:.42rem .55rem; border-bottom:1px solid var(--rule); }
+th { font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mut);
+     border-bottom:1.5px solid #c9c3b7; }
+td.n { text-align:right; font-variant-numeric:tabular-nums; }
+.tag { display:inline-block; white-space:nowrap; font-size:.78rem; padding:.05rem .45rem .05rem .35rem;
+       border-radius:4px; background:#f3f1ec; border-left:4px solid var(--rule); }
+.tag.o-w { border-left-color:var(--o-w); } .tag.o-s { border-left-color:var(--o-s); }
+.tag.o-p { border-left-color:var(--o-p); } .tag.o-c { border-left-color:var(--o-c); }
+#fixes { min-width:44rem; } #fixes td:first-child code { white-space:nowrap; overflow-wrap:normal; }
+#fixes td:last-child code { font-size:.8em; }
+.claim { display:block; color:var(--mut); font-size:.82rem; margin-top:.15rem; }
+dl.terms { margin:.6rem 0; } dl.terms dt { font-weight:600; margin-top:.55rem; }
+dl.terms dd { margin:0 0 0 1.1rem; }
+figure.fig { margin:1.4rem 0; }
+figure.fig svg { display:block; width:100%; height:auto; }
+figure.fig figcaption { font-size:.86rem; color:var(--mut); margin:.4rem 0 0; }
+.legend { display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; font-size:.85rem; margin:.5rem 0 0; padding:0; list-style:none; }
+.legend li::before { content:""; display:inline-block; width:.8rem; height:.8rem; border-radius:2px;
+                     margin-right:.35rem; vertical-align:-.1rem; background:var(--c); }
+.ext { font-size:.78rem; white-space:nowrap; }
+footer { margin-top:2.8rem; padding-top:1rem; border-top:1px solid var(--rule); font-size:.82rem; color:var(--mut); }
+@media (max-width: 760px) { body { padding:1.4rem 1rem 3rem; } h1 { font-size:1.5rem; } }
+</style></head>
+<body><main>
+<nav><a href="../../index.html">plimsoll</a> / case studies</nav>
+<article>
+<h1>Undoing ext4's fixes, one at a time: which tests notice?</h1>
+<p class="byline">Carroll Guertin · 2026-11-26 · every script, raw result and command is on this page</p>
+
+<div class="summary">
+<p><strong>The idea, for anyone:</strong> when someone fixes a bug and adds a test, that test should fail if you undo the
+fix. If it still passes, it is not guarding that fix. So I took the 48 bug fixes in one big Linux pull, undid each one,
+and ran the tests.</p>
+<p><strong>What came back:</strong> 41 of the 48 could be undone on their own. For 6 of those, some test failed (the
+test is doing its job). For 1, the test kernel crashed part way through, which is also the tests noticing. For 34,
+every test still passed. 7 could not be undone alone, because later fixes changed the same lines.</p>
+<p><strong>The interesting one:</strong> a fix whose test claims to cover it, yet the test passed with the fix removed.
+It looked like a missing test. It was not: a later fix in the same pull prevents the same damage. Undo both, and the
+test fails at the exact line I predicted, in writing, before the run.</p>
+</div>
+
+<div class="credit">
+<strong>Credit first.</strong> Ted Ts'o, the ext4 maintainer, had already fixed both problems this page runs into:
+the two tests that fail at Linus's merge (ext4 <code>dev</code> commit
+<a href="https://git.kernel.org/pub/scm/linux/kernel/git/tytso/ext4.git/commit/?id=97f29574e12e">97f29574e12e</a>,
+dated 19:13 UTC on 2026-11-25, two and a half hours before my first run) and a crash of the new tests when the kernel is
+built with <code>CONFIG_USER_NS=y</code>
+(<a href="https://git.kernel.org/pub/scm/linux/kernel/git/tytso/ext4.git/commit/?id=ad592b92d677">ad592b92d677</a>).
+Nothing here is a new bug report. The kernel code was right in both cases; what was missing was a test stub and a field
+in a test's fake superblock.
+</div>
+
+<h2>Words used on this page</h2>
+<dl class="terms">
+<dt>ext4</dt><dd>A Linux filesystem, the default on many distributions: the code that lays files out on a disk.</dd>
+<dt>KUnit</dt><dd>The Linux kernel's built-in unit test framework. Each test calls a small piece of kernel code
+directly and checks the answer, with no real disk.
+<span class="ext"><a href="https://docs.kernel.org/dev-tools/kunit/">EXTERNAL · official docs ↗</a></span></dd>
+<dt>kunit.py</dt><dd>KUnit's runner: it builds a test kernel, boots it, and reports each test as passed or failed.
+<span class="ext"><a href="https://docs.kernel.org/dev-tools/kunit/run_wrapper.html">EXTERNAL · official docs ↗</a></span></dd>
+<dt>UML (User Mode Linux)</dt><dd>The kernel built as an ordinary program, so the tests run on a laptop without a
+virtual machine. Every run here is 64-bit x86 UML.</dd>
+<dt>A <code>Fixes:</code> tag</dt><dd>The line in a kernel commit message that names the commit whose bug it fixes.
+<span class="ext"><a href="https://docs.kernel.org/process/submitting-patches.html">EXTERNAL · official docs ↗</a></span></dd>
+<dt>Undoing (reverting) a fix</dt><dd>Here, always: at the pull's last commit, reverse the fix's changes outside the
+test files (<code>fs/ext4/*-test.c</code>) and keep the tests as they are. A plain <code>git revert</code> would also
+delete a test that arrived in the same commit as its fix.</dd>
+<dt>Witnessed</dt><dd>Some test fails with the fix undone and passes with it in place. That test is a witness for the
+fix.</dd>
+<dt>Passes both ways</dt><dd>Every test passes with the fix undone too. This does <em>not</em> mean the fix is
+untested: ext4's main regression suite is xfstests, which tests a real mounted filesystem and was not run here
+(<a href="https://kernel.googlesource.com/pub/scm/fs/ext2/xfstests-bld/+/HEAD/Documentation/what-is-xfstests.md">EXTERNAL · project docs ↗</a>).
+It means the KUnit tests did not catch that fix being undone, under this one configuration.</dd>
+<dt>KASAN</dt><dd>The kernel's memory-error detector, a build option that turns an out-of-bounds access or a use after
+free into a report. <span class="ext"><a href="https://docs.kernel.org/dev-tools/kasan.html">EXTERNAL · official docs ↗</a></span></dd>
+<dt>jbd2</dt><dd>The journaling layer ext4 sits on, in <code>fs/jbd2/</code>, a separate directory from
+<code>fs/ext4/</code>.</dd>
+<dt>Kernel configuration</dt><dd>The list of options a kernel is built with. <code>CONFIG_USER_NS</code> turns on user
+namespaces (separate user id ranges, the thing containers use); kunit.py's <code>--kconfig_add</code> adds an option on
+top of the suite's own list, <code>fs/ext4/.kunitconfig</code>.</dd>
+</dl>
+
+<h2>Why this pull</h2>
+<p>On 2026-11-24 Ted sent the ext4 pull for 7.4-rc5 (base <code>7475ea8b5861</code>, which is v7.4-rc2, tip
+<code>bae28a1b11f4</code>, 94 commits, 41,197 added lines). Most of the new lines are KUnit tests; his message says they
+make it "safer to validate AI generated patches"
+(<a href="https://lkml.iu.edu/hypermail/linux/kernel/2611.3/01855.html">EXTERNAL · mailing list ↗</a>). Linus merged it
+as <a href="https://github.com/torvalds/linux/commit/4dce97c6c265544342e716e62fd24bbb232590c5"><code>4dce97c6c265</code></a>
+and, replying to Ted, wrote that the test conflict resolutions looked right to him "but I didn't *run* any of them"
+(<a href="https://lkml.iu.edu/hypermail/linux/kernel/2611.3/03265.html">EXTERNAL · mailing list ↗</a>).</p>
+<p>That raises a question you can answer with a computer: do the new tests notice when the fixes they ship with are
+taken away?</p>
+
+<h2>1. The merge, under two kernel configurations</h2>
+<p>The whole ext4 KUnit suite (562 tests), run with
+<code>kunit.py run --arch=um --kunitconfig=fs/ext4</code>, with and without <code>CONFIG_USER_NS=y</code> added.</p>
+<div class="wrap"><table>
+<thead><tr><th>Tree</th><th>The suite's own config (<code>CONFIG_USER_NS</code> off)</th><th>Plus <code>CONFIG_USER_NS=y</code></th></tr></thead>
+<tbody>
+<tr><td>The pull's tip <code>bae28a1b11f4</code></td><td>562 of 562 pass</td><td>277 pass, then the kernel panics in the new xattr test; the other 285 never run</td></tr>
+<tr><td>Linus's merge <code>4dce97c6c265</code></td><td>560 pass, 2 fail (the same 2 in each of three runs)</td><td>275 pass, the same 2 fail, then the same panic</td></tr>
+<tr><td>Ted's ext4 dev tip <code>ad592b92d677</code> (the merge plus his two fixes)</td><td>562 of 562 pass</td><td>562 of 562 pass</td></tr>
+</tbody></table></div>
+<p><strong>The 2 failures at the merge</strong> are <code>ext4_inode_test.inode_test_get_inode_loc_variants</code> and
+<code>ext4_inode_test.inode_test_write_and_sync_metadata</code>. Linus's side of the merge had switched
+<code>ext4_get_inode_loc_noio()</code> to a non-atomic block lookup (<code>d25c14b2d79e</code>), and the merge kept that
+through a new wrapper, <code>ext4_sb_find_get_block_nonatomic()</code>. The pull's test replaces only the old lookup,
+<code>ext4_sb_find_get_block()</code>, with its fake buffer cache, so the fake is never asked and the function returns
+"try again" (<code>-EAGAIN</code>). Putting that one call back to the old lookup makes all 41 inode tests pass, which
+located the cause; Ted's actual fix adds the missing stub to the test instead (2 lines in
+<code>fs/ext4/inode-test.c</code>), which is the right fix: the code was correct.</p>
+<pre><code># inode_test_get_inode_loc_variants: ASSERTION FAILED at fs/ext4/inode-test.c:1846
+Expected err == 0, but
+    err == -11 (0xfffffffffffffff5)
+# inode_test_write_and_sync_metadata: EXPECTATION FAILED at fs/ext4/inode-test.c:3335
+Expected err == -5, but
+    err == 0 (0x0)</code></pre>
+<p><strong>The panic with <code>CONFIG_USER_NS=y</code></strong> is the one Ted's second fix describes: the xattr test's
+fake superblock has no user namespace, and creating an extended-attribute inode reads the owner through it. On UML a
+fault in kernel code with no memory map stops the whole kernel, not one test:</p>
+<pre><code>RIP: 0033:map_id_range_up+0xa/0xd0
+Kernel panic - not syncing: Segfault with no mm
+ [&lt;602aa9b5&gt;] ? ext4_xattr_inode_lookup_create+0x375/0xbd0
+ [&lt;602ad589&gt;] ? ext4_xattr_set+0x99/0x180
+ [&lt;602f65b7&gt;] ? test_xattr_external_block_and_check+0x677/0x10e0</code></pre>
+<p>Every run before this check used the suite's own configuration, so every count below holds for that configuration:
+<code>fs/ext4/.kunitconfig</code> does not set <code>CONFIG_USER_NS</code> and the kernel's default is off. The
+configuration check's outcome for each tree (fails or passes) was written down and committed before it ran
+(<a href="predictions/config-prediction.json">prediction</a>, <a href="predictions/config-cases.json">cases</a>;
+committed 01:10 UTC on 2026-11-26, first job 01:17 UTC); each came out as written.
+Raw results: <a href="results/merge/merge-4dce97c6.plain.log">merge log</a>,
+<a href="results/merge/tip-bae28a1b.plain.log">tip log</a>,
+<a href="results/merge/one-line-check/merge-check.log">the repeat and the one-line check</a>,
+<a href="results/config/tip-user-ns.plain.kernel.log">the tip's kernel log with <code>CONFIG_USER_NS=y</code></a>, and
+every case's result, kunit.py output, kernel log and generated <code>.config</code> in
+<a href="results/config/progress.txt">results/config/</a>.</p>
+
+<h2>2. Undoing each of the 48 fixes</h2>
+<p>The pull has 50 commits with a <code>Fixes:</code> line; one touches only test files and one changes only a comment,
+which leaves 48 that change code. For each, at the tip:</p>
+<pre><code>git diff FIX^ FIX -- . ':!fs/ext4/*-test.c' | git apply -R --3way
+python3 tools/testing/kunit/kunit.py run --arch=um --kunitconfig=fs/ext4</code></pre>
+<figure class="fig" aria-labelledby="bar-cap">
+<svg viewBox="0 0 800 70" role="img" aria-label="48 fixes: 6 witnessed, 1 stopped part way, 34 pass both ways, 7 reversal conflicts">
+<g>
+<rect x="0" y="8" width="98" height="34" rx="4" fill="#2a78d6"><title>Witnessed: 6 of 48</title></rect>
+<rect x="100" y="8" width="14.7" height="34" rx="2" fill="#eb6834"><title>Stopped part way: 1 of 48</title></rect>
+<rect x="116.7" y="8" width="565.3" height="34" rx="4" fill="#1baf7a"><title>Passes both ways: 34 of 48</title></rect>
+<rect x="684" y="8" width="116" height="34" rx="4" fill="#eda100"><title>Reversal conflicts: 7 of 48</title></rect>
+</g>
+<g font-size="13" fill="#1a1a1a" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<text x="4" y="62">6 witnessed</text><text x="104" y="62">1</text>
+<text x="400" y="62" text-anchor="middle">34 pass both ways</text>
+<text x="796" y="62" text-anchor="end">7 conflict</text>
+</g>
+</svg>
+<ul class="legend" id="bar-cap">
+<li style="--c:#2a78d6">witnessed (6)</li><li style="--c:#eb6834">stopped part way (1)</li>
+<li style="--c:#1baf7a">passes both ways (34)</li><li style="--c:#eda100">reversal conflicts (7)</li>
+</ul>
+</figure>
+<ul>
+<li><strong>41 undid cleanly.</strong> 6 made some test fail. 1 (<code>f62b22b69aef</code>) made the kernel panic part
+way through the suite (342 tests pass, 220 are never reached). 34 left all 562 passing.</li>
+<li><strong>7 could not be undone alone</strong>: a later commit of the same pull changed the same lines, so "the tip
+without this one fix" is not a well-defined tree.</li>
+<li><strong>Two of the 6 were caught by tests that name no bug</strong>: <code>daa099ec5ce3</code> (orphan file size
+check) and <code>ff06f373c1d7</code> (journal recovery on an incomplete fast commit) were caught by the pull's general
+coverage tests. The other 4 are caught by a test that says it covers them.</li>
+<li><strong>What the 34 are.</strong> Of the 34, only one (<code>337c173f966c</code>, next section) is a fix a test in
+the pull claims to cover. 6 are jbd2 fixes, outside <code>fs/ext4/</code> entirely, and <code>c966757ff80f</code> is a
+bug in 32-bit kernels, which a 64-bit build cannot show. Five are memory-safety fixes, the most likely to hide from a
+build without KASAN, so they were rerun on a laptop with <code>CONFIG_KASAN=y</code>: the tip and each of the five
+undone still pass 562 of 562 with no KASAN report
+(<a href="results/laptop-rerun/kasan-summary.txt">KASAN summary</a>).</li>
+</ul>
+<p>Every job took about 7 seconds (an incremental rebuild plus the whole suite) on a 16-CPU cloud sandbox. The tool's
+verdicts are derived from each job's raw result file, which lists every test's status with and without the fix:
+<a href="results/fixes/run4-results.tar.gz">all 48 result files</a> and
+<a href="results/fixes-results.json">this table as JSON</a>. One correction to the tool, made after this run: it
+labeled the crash "cannot run", the same words as a conflict; it now reports such a job as stopped part way, and the
+table says what happened.</p>
+<div class="wrap">
+<!-- fixes-table:start -->
+<table id="fixes">
+<thead><tr><th>Fix</th><th>Title</th><th>Outcome</th><th>Why, or which tests</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/torvalds/linux/commit/3b6aee59883c3056bb0a5e7491f9dc995bbac964"><code>3b6aee59883c</code></a></td><td>ext4: clear journal restart indication after inserting extent</td><td><span class="tag o-w">witnessed</span></td><td>1 test fails without the fix and passes with it: <code>ext4_migrate_test.test_ext_migrate_survives_handle_restart</code> <span class="claim">A test claims it: bae28a1b11f4&#x27;s migration tests.</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/9627baed418bf1200a5ec7309958f620d6e3d318"><code>9627baed418b</code></a></td><td>ext4: check multi-block overlap on left traversal in add_system_zone()</td><td><span class="tag o-w">witnessed</span></td><td>4 tests fail without the fix and pass with it: <code>ext4_block_validity_test.test_journal_extent_left_overlap_rejected</code>, <code>ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_starts_before_and_encloses_ibitmap</code>, <code>ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_starts_before_and_overlaps_bbitmap</code>, <code>ext4_block_validity_test.test_setup_corrupt_group_metadata_overlaps.itable_u64_wrap_around_overflow</code> <span class="claim">A test claims it: its own test, in the same commit.</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/b0a3f2c102e8c718e03be45f831e279ba9f6b112"><code>b0a3f2c102e8</code></a></td><td>ext4: cap migration extent length at EXT_INIT_MAX_LEN</td><td><span class="tag o-w">witnessed</span></td><td>1 test fails without the fix and passes with it: <code>ext4_migrate_test.test_ext_migrate_caps_long_run_at_init_max_len</code> <span class="claim">A test claims it: bae28a1b11f4&#x27;s migration tests.</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/bfb8f5ce8815bb99770e355a916348df98181f18"><code>bfb8f5ce8815</code></a></td><td>ext4: drop tmp inode ownership before migration cleanup</td><td><span class="tag o-w">witnessed</span></td><td>1 test fails without the fix and passes with it: <code>ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks</code> <span class="claim">A test claims it: bae28a1b11f4&#x27;s migration tests.</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/daa099ec5ce3fa863886588fbc8a9af1e351e368"><code>daa099ec5ce3</code></a></td><td>ext4: Fix maximum orphan file size check</td><td><span class="tag o-w">witnessed</span></td><td>1 test fails without the fix and passes with it: <code>ext4_orphan_test.test_init_orphan_info_max_blocks_boundary</code></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/ff06f373c1d796f2c4f196c8bee9cd7ea5ee3c96"><code>ff06f373c1d7</code></a></td><td>ext4: don&#x27;t fail journal recovery on an incomplete fast commit</td><td><span class="tag o-w">witnessed</span></td><td>1 test fails without the fix and passes with it: <code>ext4_fast_commit_test.test_fc_replay_regions_and_scan</code></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/f62b22b69aefa031ab65b46794a64e448edaa9ae"><code>f62b22b69aef</code></a></td><td>ext4: free fast commit replay state on failed mounts</td><td><span class="tag o-s">stopped part way</span></td><td>without the fix the kernel panics part way through the suite, in ext4_fast_commit_test: 342 tests pass and 220 are never reached (the laptop rerun&#x27;s log shows the panic: BUG at fs/ext4/ext4_jbd2.c:36). The tool that ran this job labeled it &quot;cannot run&quot;; it was fixed afterwards to say stopped part way</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/0a10fca0f1545af1f9b55323b8d6958c12c7a7a6"><code>0a10fca0f154</code></a></td><td>ext4: fix folio reference leak in mpage_submit_partial_folio()</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/0bc15784860ec2c61ec7abd1ccba6e931ba830b6"><code>0bc15784860e</code></a></td><td>jbd2: fix shrinker scan budget accounting in jbd2_journal_shrink_scan()</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/180354ab292fae2d0448df3ea61ba9ebf1e9f3bc"><code>180354ab292f</code></a></td><td>ext4: drop extra ea_inode ref in cached-block reuse path</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/1ea9e6b3bd3136288fb8717c6899ff43e4d99524"><code>1ea9e6b3bd31</code></a></td><td>ext4: return 0 instead of stale ret in ext4_iomap_writepages()</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/2c1c8c412bb801c12cd6931ff626e64c45ec9c15"><code>2c1c8c412bb8</code></a></td><td>ext4: propagate errors from fast commit bitmap rebuild</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/2cfcd9fa8734c1c526de8a17bda00db0a454e276"><code>2cfcd9fa8734</code></a></td><td>ext4: return an error when a journal block is not mapped</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/337c173f966c1fbb1aad6dfdf4243323e3b7e304"><code>337c173f966c</code></a></td><td>ext4: don&#x27;t free the tmp_inode tree after a partial migration swap</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; masked by the later fix 6bda1a98b7ce: see the masking check <span class="claim">A test claims it: bae28a1b11f4&#x27;s migration tests (cited there by its pre-rebase hash 047061e6a6da).</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/356c926061758e4a578f3d42069eca65f13d1e80"><code>356c92606175</code></a></td><td>ext4: clear in-inode xattr space before adding the first xattr</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/390d69dd5c82e402882d690754a72a3e898b701b"><code>390d69dd5c82</code></a></td><td>ext4: add inode to orphan list before extent conversion</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/3b9f870a75492c1704448cd27ec13781948033ed"><code>3b9f870a7549</code></a></td><td>ext4: add bounds check for e_value_offs in ext4_read_inline_data</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/40b2a37f9a7e2264e7f62949ea5b27020a0eacb3"><code>40b2a37f9a7e</code></a></td><td>jbd2: check return value of blkdev_issue_flush() when checkpointing</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/40e53dad45a92e932156de23a69c991f3e2512c9"><code>40e53dad45a9</code></a></td><td>jbd2: set JBD2_LOADED under j_state_lock</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/44d3b834bef881c7ee9d5454661d54e6a562c53e"><code>44d3b834bef8</code></a></td><td>ext4: skip holes when shrinking the extent tree in fast commit replay</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/474b6405c0f6a29ab3ae749647c2bc06970bff53"><code>474b6405c0f6</code></a></td><td>ext4: do not accept rec_len 0 for block sizes below 64k</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/489b444770b16cfdde86e10c05766da976a57928"><code>489b444770b1</code></a></td><td>ext4: propagate errors from fast commit create replay</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/4a5cc4d1a7f0b22fef7e42e6fbedd4c41ff7ac77"><code>4a5cc4d1a7f0</code></a></td><td>ext4: propagate errors from fast commit block cleanup</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/4e04e396207027060055119ed45925bc89843a12"><code>4e04e3962070</code></a></td><td>ext4: fix the logical block counter overflow in indirect migration</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/543341eba8f4f2c6de0aa7b74b3c50dd2c5825b4"><code>543341eba8f4</code></a></td><td>jbd2: don&#x27;t start a fast commit while the journal is marked empty</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/58b186b5bbd295b0a3001ef4d40af1ea84501e5c"><code>58b186b5bbd2</code></a></td><td>ext4: validate inode block references during fast commit replay</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/7d7c94601664d19cea230601f377e5fb8a2ec4fe"><code>7d7c94601664</code></a></td><td>ext4: fix discard work use-after-free on failed mount</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/7d7c9c83c8227c113aa4f1bae9a8d43b8ea6c839"><code>7d7c9c83c822</code></a></td><td>ext4: complete dropbehind writeback in task context</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/8d90b9ab0875a6a838125e4980c8c6ab4a021c0a"><code>8d90b9ab0875</code></a></td><td>ext4: save converted extent before merging</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/8eb922c5c4672aa872d1459d74ce5d6fa8846031"><code>8eb922c5c467</code></a></td><td>ext4: record writeback error when discarding pages on failed delalloc</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/9e3cb03d39332370474222437660efb2ede3be6b"><code>9e3cb03d3933</code></a></td><td>jbd2: check return value of blkdev_issue_flush() for async commits</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/b28443aa879b2b5aefe8fb5b3f9b65c31233f5d7"><code>b28443aa879b</code></a></td><td>ext4: propagate errors from fast commit i_blocks replay</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/b8e62a68c59fc6171c51e919beff5dff6e473f4e"><code>b8e62a68c59f</code></a></td><td>jbd2: check return value of blkdev_issue_flush() when committing</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a jbd2 fix (fs/jbd2/ only, the journaling layer under ext4)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/bbae5e26222e901ca412927ef8b4662e6586171a"><code>bbae5e26222e</code></a></td><td>ext4: do not report inline conversion allocation failures as fs errors</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/c966757ff80fe8407e2e3acdd720964769ddf937"><code>c966757ff80f</code></a></td><td>ext4: fix readdir position truncation on 32-bit kernels</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a 32-bit-only bug, which a 64-bit build cannot show</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/cdecc68d94a7f35284e36ea80bc7a09bd7cb42b8"><code>cdecc68d94a7</code></a></td><td>ext4: preserve force-fsck requests across unmount</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/d0877f8eb3c08218cb9f6165f565d90e956fb9ea"><code>d0877f8eb3c0</code></a></td><td>ext4: initialize map-&gt;m_pblk in ext4_da_map_blocks()</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/d5fd7d0564d800d42302c6750b74b78f655fe81d"><code>d5fd7d0564d8</code></a></td><td>ext4: fix extent status cache clearing when truncating inline data</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/e290c77088e6f829f7d1d88c915f2a2fb22241e6"><code>e290c77088e6</code></a></td><td>ext4: fix OOB memmove in ext4_xattr_set_entry</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip; a memory-safety fix: rerun with KASAN on a laptop, still 562 of 562 and no KASAN report</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/e5db68ec43e9afc56ca3141ed16c70f0c6a48b0f"><code>e5db68ec43e9</code></a></td><td>ext4: do not advance i_size on a buffered write that copied nothing</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/f0872c44eda1f936b766bf87a384286986ef1b7c"><code>f0872c44eda1</code></a></td><td>ext4: skip eof zeroing when the zero range covers the eof block</td><td><span class="tag o-p">passes both ways</span></td><td>all 562 tests pass with the fix reverted and at the tip</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/020035ee8fea4b7ee0cac6197c4bc801c793d889"><code>020035ee8fea</code></a></td><td>ext4: fix shrinker scan budget accounting in ext4_es_scan()</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/extents_status.c)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/6025f9d156cfb6cd67186dbb14ce1e277f73cc66"><code>6025f9d156cf</code></a></td><td>ext4: check return value of blkdev_issue_flush() when starting a fast commit</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/fast_commit.c)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/79906e00636e7e7831489e9c6a53dad1ec7a3399"><code>79906e00636e</code></a></td><td>ext4: don&#x27;t cache unzeroed blocks as written after a failed zeroout</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/extents.c)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/82e2a5743b6ada7c77e072ca67c9ec55e9e18923"><code>82e2a5743b6a</code></a></td><td>ext4: don&#x27;t clobber the migration error in ext4_ext_migrate()</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/migrate.c) <span class="claim">A test claims it: bae28a1b11f4&#x27;s migration tests.</span></td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/8a72b083d8bcdb37bff6d42da679df528b16b452"><code>8a72b083d8bc</code></a></td><td>ext4: check return value of blkdev_issue_flush() when initializing inode tables</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ialloc.c)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/a7fd013d368a4ae6480edcd12aa6827269011f9e"><code>a7fd013d368a</code></a></td><td>ext4: reject atomic writes on inodes that can&#x27;t do direct I/O</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ext4.h)</td></tr>
+<tr><td><a href="https://github.com/torvalds/linux/commit/cd169c27f0ab7fb274c2ebedf23b0e56d66e4fa0"><code>cd169c27f0ab</code></a></td><td>ext4: track zeroed out blocks of unwritten extents for fast commit</td><td><span class="tag o-c">reversal conflicts</span></td><td>the reverse of its changes does not apply at the tip: a later commit of the pull changed the same lines (git reports a conflict in fs/ext4/ext4.h, fs/ext4/ext4_extents.h)</td></tr>
+</tbody>
+</table>
+<!-- fixes-table:end -->
+</div>
+
+<h2>3. Masked, not missing: 337c173f</h2>
+<p>The pull's last commit, <code>bae28a1b11f4</code>, adds migration tests and says in its message that they cover
+several fixes, among them "ext4: don't free the tmp_inode tree after a partial migration swap". That is
+<code>337c173f966c</code>; the message cites it by its pre-rebase hash, <code>047061e6a6da</code>, so searching the
+message for 337c173f finds nothing. Undo it, and all 11 migration tests still pass.</p>
+<p>Reading the code first, without running anything: the test does check the outcome that fix protects. Line 1351 of
+<code>fs/ext4/migrate-test.c</code>,
+<code>KUNIT_EXPECT_FALSE(test, migrate_was_freed(ctx, ext_idx_pblk))</code>, asks whether the migrated inode's extent
+index block was freed after a failed swap, which is the bug in 337c173f's own message. But a later fix in the same pull,
+<code>6bda1a98b7ce</code> (another author's; it carries no <code>Fixes:</code> line, so it is not one of the 48), empties
+the temporary inode's extent tree before anything can fail. With it in place, the call 337c173f skips frees nothing
+anyway. A belt where the braces are already on.</p>
+<p>So the guess was <em>masked</em>: line 1351 should fail only when both are undone. The other guess, that no test
+reaches this bug, says line 1351 never fails. I wrote down, for each of five cases, which way line 1351 would go, and
+committed that before the run (<a href="predictions/masking-prediction.json">prediction</a>,
+<a href="predictions/masking-cases.json">cases</a>; committed 23:02 UTC on 2026-11-25, first job 23:07 UTC, per the
+<a href="results/masking/progress.txt">run's own log</a>). Those commit times are from my private repository, so for the
+order you have my word, not a public timestamp; the laptop rerun below reproduces the outcome either way.</p>
+<div class="wrap"><table>
+<thead><tr><th>Undone at the tip</th><th>Predicted at line 1351</th><th>Line 1351</th><th>Expectations that failed</th></tr></thead>
+<tbody>
+<tr><td>nothing (the tip)</td><td>holds</td><td>holds</td><td>none; 11 of 11, and the whole suite 562 of 562</td></tr>
+<tr><td>337c173f alone</td><td>holds</td><td>holds</td><td>none</td></tr>
+<tr><td>6bda1a98 alone</td><td>holds</td><td>holds</td><td>1327, 1328</td></tr>
+<tr><td>bfb8f5ce alone</td><td>holds</td><td>holds</td><td>1325, 1329</td></tr>
+<tr><td><strong>337c173f and 6bda1a98</strong></td><td><strong>fails</strong></td><td><strong>fails</strong></td><td>1327, 1328, <strong>1351</strong></td></tr>
+<tr><td>337c173f and bfb8f5ce</td><td>holds</td><td>holds</td><td>1325, 1329</td></tr>
+</tbody></table></div>
+<pre><code># test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks: EXPECTATION FAILED at fs/ext4/migrate-test.c:1351
+Expected migrate_was_freed(ctx, ext_idx_pblk) to be false, but is true</code></pre>
+<p>(<a href="results/masking/revert-337c173f-6bda1a98.revert.before.log">that run's log</a>; every case's result and
+log are in <a href="results/masking/progress.txt">results/masking/</a>.) The pull's claim holds in the sense that matters:
+the test checks what 337c173f protects. What no test at the tip can do is fail for 337c173f's absence alone, because
+6bda1a98 makes it redundant there. Not run, so a reading only: on a tree that takes 337c173f without 6bda1a98 (a stable
+backport picked one at a time, say; both carry <code>Cc: stable</code>), 337c173f alone would decide line 1351.</p>
+<p>The general lesson for anyone checking tests this way: "passes both ways" can mean a later fix is doing the same
+job. Undoing fixes that touch the same code in pairs, and watching the one line that names the bug, told the two apart
+in one run.</p>
+
+<h2>4. Rerun it on your laptop</h2>
+<p>You need Docker, Python 3 and about 3 GB of disk. The first run fetches the kernel history since 2026-11-01
+from GitHub (633 MB) and two commits of Ted's tree from git.kernel.org, and builds the test kernel; later runs reuse
+both. On my laptop the first <code>masking</code> run, fetch and build included, took about 4 minutes.</p>
+<pre><code>curl -sLO https://plimsollmark.github.io/plimsoll/case-studies/ext4-witness/scripts/reproduce.sh
+for f in setup.sh witness.py queues.py fixes.json; do
+  curl -sLO https://plimsollmark.github.io/plimsoll/case-studies/ext4-witness/scripts/$f
+done
+sh reproduce.sh masking     # section 3: six jobs
+sh reproduce.sh merge       # section 1, the suite's own config
+sh reproduce.sh config      # section 1, both configs and Ted's dev tip
+sh reproduce.sh fixes       # section 2: all 48</code></pre>
+<p>Each prints one line per job and leaves every result file and kunit.py log in <code>ext4-witness-out/</code>.
+These exact scripts were run that way before this page went up (<code>sh reproduce.sh masking</code>, on a laptop,
+2026-11-26): line 1351 failed only with 337c173f and 6bda1a98 both undone, every other failed expectation matched the
+table in section 3, and the tip passed 562 of 562
+(<a href="results/published-scripts-rerun/summary.txt">its summary</a>,
+<a href="results/published-scripts-rerun/progress.txt">its result files</a>).</p>
+<ul>
+<li><a href="scripts/witness.py">witness.py</a>: the program that runs each job (undo the fixes, run the suite, compare
+every test). Standard library Python only.</li>
+<li><a href="scripts/queues.py">queues.py</a>: the job lists for each section, every commit spelled out;
+<a href="scripts/fixes.json">fixes.json</a>: the 48 fixes with titles and files.</li>
+<li><a href="scripts/setup.sh">setup.sh</a>: the build tools and the two public fetches, inside the container.</li>
+<li><a href="scripts/reproduce.sh">reproduce.sh</a>: runs the above in a Debian container pinned by digest.</li>
+</ul>
+<p>The runs on this page were made in a 16-CPU cloud sandbox, driven by a small script of mine that creates the
+sandbox, copies <code>witness.py</code> and a queue in, and copies the results out. That script is specific to the cloud
+service and its billing and is left out; nothing in it changes a result. <code>witness.py</code> here is the version
+that ran last, changed only so its paths can be moved and ccache is optional.</p>
+<p><strong>Already rerun once, on a different machine.</strong> A second check, written separately from
+<code>witness.py</code> (its own undo and run commands), ran on a laptop: Debian bookworm's gcc 12, no ccache, a fresh
+clone. The tip passed 562 of 562 three times; the same 6 fixes were caught by the same tests; <code>f62b22b69aef</code>
+stopped at the same 342 with <code>BUG: failure at fs/ext4/ext4_jbd2.c:36</code>; <code>82e2a5743b6a</code>
+conflicted the same way; undoing 6bda1a98 and 337c173f together failed lines 1327, 1328 and 1351 and nothing else. After
+the first build each run took 4 to 6 seconds; the whole rerun took under two minutes
+(<a href="results/laptop-rerun/rerun-summary.txt">summary</a>,
+<a href="results/laptop-rerun/rerun-vs-run4.txt">test-for-test comparison</a>,
+<a href="results/laptop-rerun/rerun-results.tar.gz">every log</a>,
+<a href="results/laptop-rerun/rerun-tip.config">its <code>.config</code></a>).</p>
+
+<h2>What this shows, and what it does not</h2>
+<ul>
+<li><strong>Shows:</strong> under UML, 64-bit, the suite's own configuration, which of the pull's 48 fixes the ext4 KUnit
+tests notice being undone, one at a time, with the test files kept. And that the one apparent miss among the fixes a
+test claims is a fix made redundant by a later one.</li>
+<li><strong>Does not show:</strong> that the 34 are untested (xfstests was not run, and most of them never claimed a
+KUnit test); anything about other configurations (KASAN only for five fixes; no lockdep, no QEMU, no other
+architecture); anything about the 7 that conflict; that the fixes are correct; or that tests like these validate
+AI-written patches in general.</li>
+<li><strong>About run records.</strong> I build plimsoll (<a href="../../index.html">INTERNAL · plimsoll site →</a>), a sandbox for untrusted code
+that returns a run record with each run: SHA-256 digests binding the request and result bytes to the daemon's account
+of the run (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md">EXTERNAL · source repo ↗</a>;
+even there a record is the daemon's statement, never proof of what a machine actually ran). <strong>The runs on this page
+did not go through plimsoll and carry no run record.</strong> What you can check instead is every raw result file and
+log, the exact commits, and the rerun above, which gives the same answer test for test.</li>
+</ul>
+</article>
+<footer>All files on this page are in the public repository's history:
+<a href="https://github.com/plimsollmark/plimsoll/tree/main/docs/case-studies/ext4-witness">EXTERNAL · source repo ↗</a>.
+Commit links go to the GitHub mirror of Linus's tree and to git.kernel.org.</footer>
+</main></body></html>

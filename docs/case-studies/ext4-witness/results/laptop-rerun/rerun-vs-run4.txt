@@ -1,0 +1,19 @@
+tip1 562 not PASS: []
+tip2 562 not PASS: []
+tip3 562 not PASS: []
+tip runs identical: True
+rerun tip test names == run 4 tip test names: True
+337c173f966c rerun: 562 tests, 0 not PASS | run 4: 562 tests, 0 not PASS | same: True
+3b6aee59883c rerun: 562 tests, 1 not PASS | run 4: 562 tests, 1 not PASS | same: True
+40e53dad45a9 rerun: 562 tests, 0 not PASS | run 4: 562 tests, 0 not PASS | same: True
+6bda1a98-337c173f rerun: 562 tests, not PASS: ['ext4_migrate_test.test_ext_migrate_credit_or_dirty_failure_keeps_live_blocks']
+9627baed418b rerun: 562 tests, 4 not PASS | run 4: 562 tests, 4 not PASS | same: True
+b0a3f2c102e8 rerun: 562 tests, 1 not PASS | run 4: 562 tests, 1 not PASS | same: True
+bfb8f5ce8815 rerun: 562 tests, 1 not PASS | run 4: 562 tests, 1 not PASS | same: True
+c966757ff80f rerun: 562 tests, 0 not PASS | run 4: 562 tests, 0 not PASS | same: True
+daa099ec5ce3-again rerun: 562 tests, not PASS: ['ext4_orphan_test.test_init_orphan_info_max_blocks_boundary']
+daa099ec5ce3 rerun: 562 tests, 1 not PASS | run 4: 562 tests, 1 not PASS | same: True
+f62b22b69aef-again rerun: 344 tests, not PASS: ['', 'ext4_fast_commit_test.']
+f62b22b69aef rerun: 344 tests, 2 not PASS | run 4: 344 tests, 2 not PASS | same: True
+ff06f373c1d7-again rerun: 562 tests, not PASS: ['ext4_fast_commit_test.test_fc_replay_regions_and_scan']
+ff06f373c1d7 rerun: 562 tests, 1 not PASS | run 4: 562 tests, 1 not PASS | same: True
