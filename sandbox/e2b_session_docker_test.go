@@ -444,9 +444,14 @@ func (f *e2bFake) create(w http.ResponseWriter, r *http.Request) {
 	// bind-mounts the work folder on itself as root (e2b_session.js, ownMount), which a
 	// container's root may do only with it. The guest holds none: setpriv's drop to another
 	// uid clears them, and no-new-privs keeps a program from gaining one
-	// (TestE2BSessionDockerGuestIsUnprivileged reads CapEff).
+	// (TestE2BSessionDockerGuestIsUnprivileged reads CapEff). apparmor=unconfined: on a host
+	// that runs AppArmor (GitHub's Ubuntu runners), docker's default profile denies mount
+	// whatever the capabilities, so the open's bind mount failed there ("mounting /work on
+	// /work failed: Permission denied", the v0.30.0 push's CI) while it passed here, where WSL
+	// runs no AppArmor; an E2B microVM's root has no such profile either.
 	args := []string{"run", "-d", "--init", "--name", f.container(b.id),
 		"--label", "io.plimsoll.e2bfake=" + f.run, "--network", "none", "--user", "0", "--cap-add", "SYS_ADMIN",
+		"--security-opt", "apparmor=unconfined",
 		"-v", f.bin + ":/opt/envd/envd:ro", "-v", sockDir + ":/run/envd"}
 	if f.fakeSetpriv {
 		args = append(args, "-v", f.bin+":/usr/sbin/setpriv:ro")

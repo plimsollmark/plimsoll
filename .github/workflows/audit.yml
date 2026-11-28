@@ -104,6 +104,18 @@ jobs:
       - name: Install the pinned gate tools
         run: make tools
 
+      # The sweep's real-walk tests (sandbox/internal/sessionkit/sweep_real_test.go) run the walk
+      # in a user and PID namespace of their own, and the race pass fails on a test skipped and
+      # selected by no suite: Ubuntu's AppArmor default refuses that namespace to an unprivileged
+      # process, so it is lifted here as in the clients job (the v0.30.0 push's audit job failed
+      # on exactly these two skips).
+      - name: Allow unprivileged user namespaces
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare -rpf --mount-proc true
+
       - name: make audit
         run: make audit
 
