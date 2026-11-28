@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -154,6 +155,26 @@ func TestShipScanRefusesBeforeAdmission(t *testing.T) {
 	}
 	if runs := runLines(t, logs); len(runs) != 1 || runs[0].WithheldScan != withheldScanned || runs[0].WithheldSet != set.Digest() || runs[0].WithheldFound != nil {
 		t.Fatalf("a clean call's audit line: %+v", runs)
+	}
+}
+
+// A file entry written by hand, the harness file's sha256sum (it ends in a newline the
+// builder's normalized digest drops), refuses the file shipped byte for byte through the
+// daemon as the builder's entry does: the daemon hands the scan each file whole, the path
+// the withheld package's own test of such an entry runs.
+func TestShipScanRefusesAHandWrittenFileEntry(t *testing.T) {
+	d := sha256.Sum256([]byte(harnessSource))
+	set := withheldSetOf(t, withheld.ModeRefuse, nil, map[string]any{"kind": "file", "sha256": hex.EncodeToString(d[:]), "label": "harness/sim.py"})
+	if withheld.FileDigest([]byte(harnessSource)) == d {
+		t.Fatal("the harness source is in normalized form; the case needs a file that is not")
+	}
+	svc, fake, _ := scanService(set)
+	_, err := leakyProject(svc, authenticatedContext("agent-harness"))
+	if reason, marked := notDispatchedOf(err); !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION || !strings.Contains(err.Error(), "harness/sim.py (files[1].content)") {
+		t.Fatalf("got %v (marked %v, %v); want the hand-written entry's refusal", err, marked, reason)
+	}
+	if fake.lastProj.Files != nil {
+		t.Error("the provider was handed a refused call")
 	}
 }
 

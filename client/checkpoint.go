@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/fileswire"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
@@ -381,6 +382,8 @@ func (r *Remote) attached(cp Checkpoint, lost string, m *plimsollv1.AttachSessio
 		openFloor:     floor,
 		expires:       time.UnixMilli(info.GetExpiresUnixMs()),
 		idle:          time.Duration(info.GetIdleTimeoutMs()) * time.Millisecond,
+		fileScopes:    fileswire.ScopesFrom(info.GetFileScopes()),
+		workDir:       info.GetWorkDir(),
 		calls:         calls,
 		last:          last,
 		recovering:    recovering,

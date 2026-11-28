@@ -47,12 +47,15 @@ type e2bFake struct {
 	// control PATH, for an image with none of util-linux's; an image built from
 	// e2b/e2b.Dockerfile has its own.
 	fakeSetpriv bool
-	run         string // the label value of this test's containers
-	bin         string // the envd stand-in
-	dir         string // one socket directory per sandbox
-	srv         *httptest.Server
-	mu          sync.Mutex
-	boxes       map[string]*e2bFakeBox
+	// runArgs are more `docker run` arguments for every sandbox, as a template's own mounts
+	// (a test's: none by default).
+	runArgs []string
+	run     string // the label value of this test's containers
+	bin     string // the envd stand-in
+	dir     string // one socket directory per sandbox
+	srv     *httptest.Server
+	mu      sync.Mutex
+	boxes   map[string]*e2bFakeBox
 }
 
 type e2bFakeBox struct {
@@ -437,12 +440,18 @@ func (f *e2bFake) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.sock = filepath.Join(sockDir, "envd.sock")
+	// SYS_ADMIN: root in an E2B microVM holds every capability, and a session's open
+	// bind-mounts the work folder on itself as root (e2b_session.js, ownMount), which a
+	// container's root may do only with it. The guest holds none: setpriv's drop to another
+	// uid clears them, and no-new-privs keeps a program from gaining one
+	// (TestE2BSessionDockerGuestIsUnprivileged reads CapEff).
 	args := []string{"run", "-d", "--init", "--name", f.container(b.id),
-		"--label", "io.plimsoll.e2bfake=" + f.run, "--network", "none", "--user", "0",
+		"--label", "io.plimsoll.e2bfake=" + f.run, "--network", "none", "--user", "0", "--cap-add", "SYS_ADMIN",
 		"-v", f.bin + ":/opt/envd/envd:ro", "-v", sockDir + ":/run/envd"}
 	if f.fakeSetpriv {
 		args = append(args, "-v", f.bin+":/usr/sbin/setpriv:ro")
 	}
+	args = append(args, f.runArgs...)
 	// No --runtime: these containers take docker's default runtime (runc on this project's
 	// machines) whatever the suite's runtime setting says, so a run of these tests "under
 	// gVisor" runs their sandboxes under runc. Tried 2026-11-20 with the variable passed
@@ -642,14 +651,17 @@ func TestE2BSessionDockerGuestIsUnprivileged(t *testing.T) {
 	s := openE2B(t, f.provider())
 	res := e2bSnippet(t, s, `const st = require("fs").readFileSync("/proc/self/status", "latin1");
 const f = (n) => (new RegExp("^" + n + ":[ \\t]*(.*)$", "m").exec(st) || [])[1];
-console.log(JSON.stringify({uid: f("Uid"), gid: f("Gid"), groups: f("Groups").trim(), nnp: f("NoNewPrivs"), cwd: process.cwd(), home: process.env.HOME}))`)
-	var got struct{ UID, GID, Groups, NNP, Cwd, Home string }
+console.log(JSON.stringify({uid: f("Uid"), gid: f("Gid"), groups: f("Groups").trim(), nnp: f("NoNewPrivs"), capEff: f("CapEff"), capPrm: f("CapPrm"), cwd: process.cwd(), home: process.env.HOME}))`)
+	var got struct{ UID, GID, Groups, NNP, CapEff, CapPrm, Cwd, Home string }
 	if err := json.Unmarshal([]byte(res.Stdout), &got); err != nil {
 		t.Fatalf("snippet output %q: %v (stderr %q)", res.Stdout, err, res.Stderr)
 	}
 	want := "61000\t61000\t61000\t61000"
 	if got.UID != want || got.GID != want || got.Groups != "" || got.NNP != "1" {
 		t.Fatalf("the guest runs as %+v; want uid and gid 61000, no groups, no-new-privs", got)
+	}
+	if got.CapEff != "0000000000000000" || got.CapPrm != "0000000000000000" {
+		t.Fatalf("the guest holds capabilities %+v; want none (the stand-in's root holds SYS_ADMIN)", got)
 	}
 	if got.Cwd != "/work" || got.Home != "/work" {
 		t.Fatalf("the guest's directory and HOME: %+v, want /work", got)

@@ -247,15 +247,17 @@
       <li><b>The exception is proved separately.</b> The startup smoke test proves deny-all, not "denied except for the guard". <code>make e2b-guard-live</code> proves the path through the guard, and it fails rather than skips when its settings are missing, so a pass can only come from having actually used that path.</li>
     </ol>
     <div class="card warn">
-      <p><b>Docker Cloud Sandboxes reaches the guard too.</b> The other VM provider,
+      <p><b>Docker Cloud Sandboxes refuses grants.</b> The other VM provider,
       <code>dockercloud</code>, runs each sandbox on Docker-managed compute with its network
-      policy at deny-all, read back and checked on every run. With <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> set, a run
-      with a grant gets exactly one network rule, the guard’s <code>host:443</code>, and the provider reads
-      it back before any code runs. Two things differ from E2B. The rule is applied through a
-      Docker call outside its published API (the one its own <code>sbx</code> CLI makes). And
-      Docker’s proxy only injects credentials for its own fixed list of services, so the guest
-      holds its own run’s guard credential: short-lived, good only at the guard, only for this
-      run’s routes and budget, dead when the run ends. The API key still never enters the VM.</p>
+      policy at deny-all, read back and checked on every run. A granted run would need one
+      network rule, the guard’s <code>host:443</code>, and Docker’s allow rules cannot hold a
+      sandbox to one server: Docker’s own page on network rules says a rule matches the
+      hostname attributed to the connection, such as the server name the code announces when
+      it opens a TLS connection
+      (<a href="https://docs.docker.com/ai/governance/local/network-rules/">EXTERNAL · official docs ↗</a>),
+      and the code chooses that name. So every granted run there is refused before any sandbox
+      is made, marked as not run; send it to <code>docker</code>, <code>e2b</code> or
+      <code>openshell</code>.</p>
       <p><b><dfn>OpenShell</dfn>, NVIDIA’s agent sandbox runtime, keeps its sandbox at no
       network rules at all, grant or not.</b> The <code>openshell</code> provider reaches in
       instead of letting the guest reach out: a small relay program in the sandbox listens

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/tetratelabs/wazero"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // testWasm is DefaultWasm with a timeout sized for a test machine instead of for a
@@ -85,6 +87,7 @@ func TestWasmRunJavaScript(t *testing.T) {
 	if res.Sandbox != "wasm" {
 		t.Fatalf("sandbox = %q, want wasm", res.Sandbox)
 	}
+	tiercheck.Stated(t, "snippet", res.Isolation, w.IsolationClass())
 }
 
 func TestWasmEnforcesMinimumIsolationBeforeExecution(t *testing.T) {

@@ -1,6 +1,7 @@
 package wireenum
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -37,8 +38,25 @@ func TestEveryProtocolValueRoundTrips(t *testing.T) {
 		w := plimsollv1.NotDispatchedReason(n)
 		return protoreflect.EnumNumber(RefusalToWire(RefusalFromWire(w))), RefusalToWire(RefusalFromWire(w)) != 0
 	})
+	check(plimsollv1.CapacityLimit(0).Descriptor(), func(n protoreflect.EnumNumber) (protoreflect.EnumNumber, bool) {
+		w := plimsollv1.CapacityLimit(n)
+		return protoreflect.EnumNumber(CapacityLimitToWire(CapacityLimitFromWire(w))), CapacityLimitToWire(CapacityLimitFromWire(w)) != 0
+	})
+	// Each limit's short name is the protocol's, as the Python and TypeScript clients
+	// name it (internal/wiretables), so the three clients say the same word.
+	for _, e := range capacityLimits {
+		if want := strings.ToLower(strings.TrimPrefix(e.w.String(), "CAPACITY_LIMIT_")); e.s.String() != want {
+			t.Errorf("capacity limit %s is named %q in package sandbox, the protocol's name is %q", e.w, e.s, want)
+		}
+	}
 	// No sandbox value appears twice, which would make the reverse direction ambiguous.
 	seen := map[any]bool{}
+	for _, e := range capacityLimits {
+		if seen[e.s] {
+			t.Errorf("capacity limit %v twice", e.s)
+		}
+		seen[e.s] = true
+	}
 	for _, e := range outcomes {
 		if seen[e.s] {
 			t.Errorf("outcome %v twice", e.s)

@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/fileswire"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/record"
@@ -91,6 +93,8 @@ type Session struct {
 	floor         sandbox.IsolationClass // the floor sent with every call: the open's
 	expires       time.Time
 	idle          time.Duration
+	fileScopes    []sandbox.FilesScope // the scopes the open stated the session takes file calls in
+	workDir       string               // the work folder's absolute path, as the open stated it
 
 	mu    sync.Mutex
 	calls uint64
@@ -270,6 +274,8 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		floor:         opts.MinimumIsolation,
 		expires:       time.UnixMilli(m.GetExpiresUnixMs()),
 		idle:          time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
+		fileScopes:    fileswire.ScopesFrom(m.GetFileScopes()),
+		workDir:       m.GetWorkDir(),
 	}
 	// A session refused here is closed (it exists on the daemon either way, and nothing
 	// else holds its ID), but its close is not signed: it names whatever fingerprint the
@@ -339,6 +345,17 @@ func (s *Session) ExpiresAt() time.Time { return s.expires }
 // IdleTimeout is how long the session may go without a call before the daemon
 // suspends it (the next call resumes it).
 func (s *Session) IdleTimeout() time.Duration { return s.idle }
+
+// FileScopes are the scopes the daemon stated at open that the session takes file calls in
+// (RunFiles), in the wire's order (work, then sandbox); empty when it takes none. An
+// OpenShell session states the sandbox scope alone (docs/openshell.md). It is
+// informational: the daemon refuses a file call in a scope it does not take, not
+// dispatched, reason unsupported, whatever this says.
+func (s *Session) FileScopes() []sandbox.FilesScope { return slices.Clone(s.fileScopes) }
+
+// WorkDir is the absolute path of the session's work folder as the daemon stated it at
+// open, the folder a WORK path resolves from; empty when it stated none.
+func (s *Session) WorkDir() string { return s.workDir }
 
 // Ended returns the session's end once a response has reported it, else nil.
 func (s *Session) Ended() error {
@@ -575,6 +592,37 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	}
 	res, ok := projectResult(resp, rec)
 	if !ok {
+		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	return res, err
+}
+
+// RunFiles carries out one operation on the session's files, inside its sandbox, as the
+// guest's own user (docs/session-files.md): a session call like any other, in the chain,
+// with its record checked against the request sent, the operation included. A file that is
+// not there is an answered result (FilesResult.Error), not an error. Every path is bytes,
+// sent and returned as they are, with no decoding, normalizing or cleaning.
+func (s *Session) RunFiles(ctx context.Context, in sandbox.FilesRequest) (sandbox.FilesResult, error) {
+	fail := sandbox.FilesResult{Sandbox: s.r.Name()}
+	if err := sandbox.ValidateFilesRequest(in); err != nil {
+		return fail, err
+	}
+	software, err := sandbox.MergeSoftwareRules(s.software, in.Software)
+	if err != nil {
+		return fail, err
+	}
+	floor := max(s.floor, in.MinimumIsolation)
+	req := s.envelope(ctx, in.Timeout, floor, software)
+	req.Payload = &plimsollv1.SessionRunRequest_Files{Files: fileswire.Run(in.FilesCall)}
+	resp, rec, err := s.call(ctx, req)
+	if resp == nil {
+		return fail, err
+	}
+	res, ok := filesResult(resp, rec)
+	if !ok {
+		if err != nil {
+			return fail, err // the record's own refusal names the kind it found
+		}
 		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
 	return res, err
@@ -841,8 +889,10 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		msg.Payload = &plimsollv1.SessionRunRequest_Project{Project: p.Project}
 	case *plimsollv1.RunRequest_Cell:
 		msg.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: p.Cell}
+	case *plimsollv1.RunRequest_Files:
+		msg.Payload = &plimsollv1.SessionRunRequest_Files{Files: p.Files}
 	default:
-		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: only snippets, projects and cells run in a session", sandbox.ErrInvalidRequest))
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: only snippets, projects, cells and file calls run in a session", sandbox.ErrInvalidRequest))
 	}
 	return s.call(ctx, msg)
 }

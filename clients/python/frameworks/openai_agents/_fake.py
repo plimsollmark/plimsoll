@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from plimsoll_client import AtCapacityError, InsufficientIsolationError, PlimsollError
 from plimsoll_client.types import ProjectResult, RunRecord, StepResult
+from plimsoll_client.files import FilesReadAnswer
 from plimsoll_client.workspace import ExecOutcome, Workspace, WorkspaceCallError
 
 CANARY = "GUEST-CANARY-7f3a"
@@ -140,16 +141,20 @@ class FakeWorkspace:
         return ExecOutcome(stdout=f"{size} {path}\n".encode(), stderr=b"", exit_code=0 if path in self.files else 1, timed_out=False,
                            stdout_truncated=False, stderr_truncated=False, cwd="/work", result=project(self.calls))
 
-    # The whole-file reads are the real Workspace's, over this fake's read and run, so the
+    # The whole-file reads are the real Workspace's, over this fake's read, so the
     # adapter's reads past one call's budget run the code they run on a real session.
     read_whole = Workspace.read_whole
     read_pieces = Workspace.read_pieces
     read_head = Workspace.read_head
     _pieces = Workspace._pieces
-    _size = Workspace._size
 
-    def _file_path(self, path: str) -> str:
+    def _path(self, path: str, *, folder: bool) -> str:
         return path
+
+    def _read(self, rel: str, shown: Any, offset: int, max_bytes: int, cancel: Any) -> FilesReadAnswer:
+        # A read states the file's size as its open saw it, as a file call's does.
+        content = self.read(rel, max_bytes=max_bytes, offset=offset, cancel=cancel)
+        return FilesReadAnswer(content=content, size_at_open=len(self.files.get(rel, b"")))
 
     def read(self, path: str, *, max_bytes: int = 1 << 20, offset: int = 0, cancel: Any = None) -> bytes:
         self._enter(cancel)

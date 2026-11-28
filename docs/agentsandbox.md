@@ -121,10 +121,16 @@ the control channel was encrypted, so its pods ran sandboxd directly on cleartex
   `SANDBOX_AGENTSANDBOX_IMAGE` names it exactly as the template writes it; with
   `SANDBOX_REQUIRE_PINNED_IMAGES=1` it must be pinned by `@sha256:`, and that digest is
   checked against each pod's image on every run. plimsoll's runner is the native helper it
-  inherits from `plimsoll/sandbox`, `/usr/local/libexec/plimsoll-helper` (root's, mode 0755,
+  inherits from `plimsoll/sandbox`, `/usr/local/libexec/plimsoll-helper` (root's, mode 0711,
   [docs/guest-dependencies.md](guest-dependencies.md)): the startup test reads it from inside a
-  pod and refuses the image unless it is a regular file, root's, writable by no one else, with
-  no setuid or setgid bit, and byte for byte the helper this plimsolld was built with. So an
+  pod, as the guest, and refuses the image unless it is a regular file, root's, writable by no
+  one else, readable by root alone (the guest's read of it is refused), with no setuid or setgid
+  bit, the size of the helper this plimsolld was built with, and, started with its `identity`
+  command, prints that build's line (`inputs` and the SHA-256 of the build's inputs, compiled
+  in). The guest cannot read its bytes, so the test also reads the file as root, on the second
+  pod it claims (sandboxd starts every command as root; plimsoll's drop to the guest is
+  `setpriv`), before any guest code has run there, and requires the SHA-256 of the copy inside
+  plimsolld. So an
   image built on a `plimsoll/sandbox` from before v0.28.0 (whose runner was the Node program
   `/runner.mjs`) or from another release is refused; rebuild it from the same release as
   plimsolld (`make docker-images`, then this Dockerfile). Only an x86-64 build exists, so the

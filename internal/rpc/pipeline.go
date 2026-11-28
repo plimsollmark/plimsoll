@@ -149,6 +149,13 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	runCtx, teardownGaveUp := sandbox.WatchTeardownUntil(runCtx)
 	started := time.Now()
 	panicked, err := s.dispatch(runCtx, k, t)
+	if err == nil && k.ran().isolation.String() == sandbox.IsolationUnknown.String() {
+		// The provider's bug, after its code may have run: answered as an internal error,
+		// unmarked, and logged as a failed run naming the provider, rather than as a
+		// record naming "unknown", which every official client refuses only after the
+		// fact (release-51) and which says nothing to the operator (release-55).
+		err = errUnstatedTier
+	}
 	billed := time.Since(started)
 	gaveUp, billsUntil := teardownGaveUp()
 	leaked := whole > 0 && gaveUp
@@ -244,6 +251,12 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	k.answer(resp, adviceWire(caller))
 	return resp, nil
 }
+
+// errUnstatedTier is a run whose result names no isolation tier: a provider's bug, met
+// after the code may have run, so an internal fault, answered as "internal error <id>"
+// and unmarked. Every in-tree provider states one on every result (release-55: the
+// tiercheck assertion in each provider's tests, and cmd/plimsolld's registry of them).
+var errUnstatedTier = errors.New("the provider's result named no isolation tier")
 
 // errProviderPanicked is a run whose provider panicked: an internal fault, answered as
 // "internal error <id>" and unmarked, since the code may have run.

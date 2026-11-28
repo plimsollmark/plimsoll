@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // StepOutputCap is the per-stream output a project step keeps: the bytes past it are
@@ -29,6 +30,18 @@ const FloodExit = 153
 // one sandbox (the cases write distinct files, so they may).
 type Projects interface {
 	RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error)
+}
+
+// stated is the tier sb states: a provider's IsolationClass, a session's Isolation;
+// unknown for anything else, which no result can then match.
+func stated(sb Projects) sandbox.IsolationClass {
+	switch s := sb.(type) {
+	case interface{ IsolationClass() sandbox.IsolationClass }:
+		return s.IsolationClass()
+	case interface{ Isolation() sandbox.IsolationClass }:
+		return s.Isolation()
+	}
+	return sandbox.IsolationUnknown
 }
 
 // Run runs every case against sb, each in a call of its own. timeout is the budget of
@@ -47,6 +60,10 @@ func Run(t *testing.T, sb Projects, timeout time.Duration) {
 		if err != nil {
 			t.Fatalf("RunProject: %v", err)
 		}
+		// Every outcome names the tier the provider (or the session) states: the daemon
+		// would answer one that names none as "unknown", which every official client
+		// refuses after the code ran (release-55).
+		tiercheck.Stated(t, "project", res.Isolation, stated(sb))
 		return res
 	}
 	artifact := func(res sandbox.ProjectResult, path string) (string, bool) {

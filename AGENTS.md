@@ -43,6 +43,7 @@ Read the document for the subsystem you touch, not all of them.
 | Hardened mode | [docs/hardened-mode.md](docs/hardened-mode.md) |
 | Callers and tokens | [docs/callers.md](docs/callers.md) |
 | Docker Cloud, OpenShell, Kubernetes agent-sandbox, WSL containers operator guides | [docs/dockercloud.md](docs/dockercloud.md), [docs/openshell.md](docs/openshell.md), [docs/agentsandbox.md](docs/agentsandbox.md), [docs/wslc.md](docs/wslc.md) |
+| The native helper's file commands (stat, read, write, list, readmany and the rest, framed and paged, as the guest; the sandbox half of the daemon's session file interface) | [docs/session-files.md](docs/session-files.md) |
 | Guest dependencies and images | [docs/guest-dependencies.md](docs/guest-dependencies.md), [docs/dependencies.md](docs/dependencies.md) |
 | The efficiency advisor | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) |
 | Placement across daemons | [docs/placement.md](docs/placement.md) |
@@ -95,7 +96,7 @@ Read the document for the subsystem you touch, not all of them.
   the simulation worker [sim/](docker/sim/), the audited seccomp allowlist `seccomp.json`.
 - [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`, `fanout`, `fanout-cartpole`,
   `wasm-controller`, `wasm-buck`, `providers`, `sessions`, `capsule`, `sbom`, `agentsandbox`,
-  `adapter`, `trigger-chat`, `agent-session`, `squeeze`, `ship-scan`, `memory-grant`); their pages are under `docs/examples/`.
+  `adapter`, `agent-session`, `squeeze`, `ship-scan`, `memory-grant`); their pages are under `docs/examples/`.
   [docs/example-programs.md](docs/example-programs.md) says what each proves.
 - [measurements/](measurements/): timing programs; the gate builds them and never runs them.
 - [proto/](proto/) and `gen/go`: the service definition and generated code (`make generate`,
@@ -296,3 +297,17 @@ spent tags: never reuse one). **Do not re-add a `GONOSUMDB` exemption for this m
   published version is retired only by a dated, announced decision. Bundles from before
   links (v0.10.0 to v0.17.x) are not read whole: their records verify one line at a time
   (`plimsoll-attest verify-record`, `attest.VerifyCall`).
+  A second exception: **the Python client calls a framework's own in-tree adapter depends
+  on stay compatible within 0.x**, because that framework pins a version range and its users
+  upgrade the client with their daemon. Today that is everything the Google ADK environment
+  adapter uses: the `Client` and `Workspace` constructors and `Workspace.root`,
+  `Client.describe`, `Client.open_session`, `Session.close`, `stopped`, `ended` (with its
+  `reason`) and `fingerprint`, `Workspace.run`, `read_whole` and `write`, `meets`,
+  `CancelHandle`, the errors `UnsupportedError`, `InsufficientIsolationError`,
+  `WorkspaceCallError`, `AtCapacityError`, `SessionEndedError`, `ChainError`,
+  `StaleOwnerError`, `RequestCanceledError` and their base `PlimsollError`, and each field
+  the adapter reads of what these return. A gate test runs the adapter's unit tests against the client on main,
+  and a test kept with the adapter's copy for ADK itself (published once ADK merges it)
+  binds each call to the client's real signature and fails when the adapter uses a client
+  name it does not hold; a change that breaks one of these needs a dated, announced decision,
+  as a record version does.

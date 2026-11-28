@@ -209,7 +209,7 @@ func (p *Provider) admitRun() (release func(), err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.running >= p.cfg.MaxSessions {
-		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity,
+		return nil, sandbox.AtCapacity(sandbox.CapacityProvider,
 			fmt.Errorf("wslc: %d per-run sessions are already running, the most SANDBOX_WSLC_MAX_SESSIONS allows", s.running))
 	}
 	s.running++
@@ -226,7 +226,7 @@ func (p *Provider) takeSlot(ctx context.Context) error {
 	case p.pr.alive <- struct{}{}:
 		return nil
 	case <-ctx.Done():
-		return sandbox.NotDispatched(sandbox.RefusalCapacity, fmt.Errorf("wslc: waiting for a session to end: %w", ctx.Err()))
+		return sandbox.RefuseDeadline(ctx, fmt.Errorf("wslc: waiting for a session to end: %w", ctx.Err()))
 	}
 }
 
@@ -566,11 +566,10 @@ func (p *Provider) openRunSession(ctx context.Context) (*holder, string, error) 
 		if tErr := p.endSession(h, false, false); tErr != nil {
 			slog.Error("wslc: a per-run session that failed to start was not fully torn down", "session", h.name, "err", tErr)
 		}
-		reason := sandbox.RefusalEnvironment
 		if ctx.Err() != nil {
-			reason = sandbox.RefusalCapacity
+			return nil, "", sandbox.RefuseDeadline(ctx, err)
 		}
-		return nil, "", sandbox.NotDispatched(reason, err)
+		return nil, "", sandbox.NotDispatched(sandbox.RefusalEnvironment, err)
 	}
 	if err := p.copyTemplate(ctx, h); err != nil {
 		return fail(fmt.Errorf("wslc: copying the template disk: %w", err))

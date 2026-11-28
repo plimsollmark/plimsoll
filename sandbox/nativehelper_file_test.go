@@ -40,18 +40,22 @@ func TestNativeRunnerKeepsTheSharedLimits(t *testing.T) {
 	}
 }
 
-// TestNativeHelperWantIsThePin: the startup test requires the committed helper's SHA-256,
-// and a handed-in build's when a test set one.
+// TestNativeHelperWantIsThePin: the startup test requires the committed helper's SHA-256 and
+// identity, and a handed-in build's when a test set one.
 func TestNativeHelperWantIsThePin(t *testing.T) {
-	pin, err := nativehelper.SHA256(runtime.GOARCH)
+	pin, err := nativehelper.Pinned(runtime.GOARCH)
 	if err != nil {
 		t.Skip(err)
 	}
 	got, err := nativeHelperWant()
-	if err != nil || (dockerNativeHelperSum == "" && got != pin) || (dockerNativeHelperSum != "" && got != dockerNativeHelperSum) {
-		t.Fatalf("nativeHelperWant: %s, %v; the pin is %s, the handed-in sum %q", got, err, pin, dockerNativeHelperSum)
+	handed := dockerNativeHelperWant.SHA256 != ""
+	if err != nil || (!handed && got != pin) || (handed && got != dockerNativeHelperWant) {
+		t.Fatalf("nativeHelperWant: %+v, %v; the pin is %+v, the handed-in build %+v", got, err, pin, dockerNativeHelperWant)
 	}
-	if len(pin) != 64 || strings.Trim(pin, "0123456789abcdef") != "" {
-		t.Fatalf("the pin %q is not a hex SHA-256", pin)
+	if len(pin.SHA256) != 64 || strings.Trim(pin.SHA256, "0123456789abcdef") != "" {
+		t.Fatalf("the pin %q is not a hex SHA-256", pin.SHA256)
+	}
+	if id := strings.TrimPrefix(pin.Identity, "inputs "); len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Fatalf("the pinned identity %q is not inputs and a hex SHA-256", pin.Identity)
 	}
 }

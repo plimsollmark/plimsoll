@@ -45,7 +45,7 @@ func TestARunStatesTheQualificationAndTheDaemonVersion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if r.Version != 5 || r.IsolationQualification != tc.want || r.DaemonVersion != "(devel)" || r.Warm {
+		if r.Version != record.Version || r.IsolationQualification != tc.want || r.DaemonVersion != "(devel)" || r.Warm {
 			t.Errorf("%s: record %+v", name, r)
 		}
 	}
@@ -160,7 +160,7 @@ func TestASessionStatesTheQualificationOnEveryRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the unanswered call's record: %v", err)
 	}
-	if r2.Version != 5 || r2.IsolationQualification != wslSentence || r2.DaemonVersion != "(devel)" || r2.Warm {
+	if r2.Version != record.Version || r2.IsolationQualification != wslSentence || r2.DaemonVersion != "(devel)" || r2.Warm {
 		t.Fatalf("the unanswered call's record states %+v; want version 5 with the session's sentence", r2)
 	}
 	if _, err := svc.CloseSession(ctx, closeReq(id)); err != nil {

@@ -26,6 +26,22 @@ build reads. It gives:
   writable to the session's user after that (a file the template gave the session's uid, 61000, a mount
   that ignores permissions) is refused at the open, in words that name the path. A single
   run is left as E2B builds it, `/usr/local` writable to the run's user.
+- **File calls in a session** (a read, a write or a listing of the session's files, carried
+  out by plimsoll's native helper: [docs/session-files.md](../docs/session-files.md)). The
+  open makes the work folder, `/work`, a mount of its own with `mount --bind` (so the template
+  needs a `mount` in its system folders: Debian's is there) and puts the helper this
+  plimsolld carries at `/usr/lib/plimsoll/plimsoll-helper`, about 570 KiB through E2B's agent,
+  before any of the session's code runs. A template may hold the helper there already to save
+  that upload: the file of the plimsoll release the daemon runs (in plimsoll's repository,
+  `sandbox/internal/nativehelper/program/plimsoll-helper_amd64`), the root's, mode 0711
+  (runnable by every user, readable and writable by the root alone: a program its user cannot
+  read is non-dumpable from its exec), in a folder of the root's. The open reads it back as root
+  and checks it by SHA-256 either way, and refuses the session when it holds other bytes (a
+  helper of another release), is a link, is readable by its group or every user, or is not the
+  root's alone. The open also refuses a machine where the work folder's files are under a second
+  mount of their device (a second mount of the root disk, say), through which a folder a file
+  call holds could be moved out of `/work`. This recipe does not bake it in, so its
+  template takes the upload.
 - **Project steps with the TypeScript toolchain and no network.** tsc, tsx and eslint are
   baked in, as in [docker/Dockerfile](../docker/Dockerfile). plimsoll turns general internet
   access off for every E2B run (`network.denyOut: ["0.0.0.0/0"]`), so a step cannot
@@ -105,8 +121,9 @@ docker build -f e2b/e2b.Dockerfile -t plimsoll-local/e2b-template:dev e2b
 PLIMSOLL_E2B_TEMPLATE_IMAGE=plimsoll-local/e2b-template:dev go test -count=1 -run TestE2BTemplateRecipeOnALocalImage ./sandbox/
 ```
 
-The test runs the startup check, the session open (which pins node, `sh`, `setpriv` and
-`python3` and checks node's version) and a JavaScript and a Python cell in that image.
+The test runs the startup check, the session open (which pins node, `sh`, `setpriv`,
+`mount` and `python3`, checks node's version, makes `/work` a mount and puts the native helper
+in) and a JavaScript and a Python cell in that image.
 
 Toolchain versions are the single source of truth in
 [../toolchain.versions](../toolchain.versions); both this template and

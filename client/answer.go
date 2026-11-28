@@ -187,7 +187,7 @@ func (ex *exchange) settle(resp connect.AnyResponse, err error) (connect.AnyResp
 		return nil, connect.NewError(codeForHTTPStatus(status), fmt.Errorf("%w (HTTP status %d)", errNullDetail, status))
 	}
 	if mark != "" && errors.As(err, &ce) {
-		if _, marked := notDispatchedDetail(ce); !marked {
+		if _, _, marked := notDispatchedDetail(ce); !marked {
 			if reason, ok := refusalWireByName(mark); ok {
 				if d, derr := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: reason}); derr == nil {
 					ce.AddDetail(d)

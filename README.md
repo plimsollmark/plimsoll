@@ -109,8 +109,8 @@ what the signer said about them. It does not independently repeat the inspection
   requires beside its tier (WSL's: Microsoft states that WSL is not a security
   sandbox), whether a waiting sandbox ran the call, and the daemon's version; the
   daemon only states them, and a program outside it signs the record. New live
-  calls use protocol 7. Upgrade server and clients together; stored-record verifiers
-  also read published versions 1 through 4.
+  calls use protocol 9 and record version 6. Upgrade server and clients together;
+  stored-record verifiers also read published versions 1 through 5.
 - **Check test results against the code revision they tested.** The pull-request
   recipe produces signed <dfn>*in-toto*</dfn> statements, a standard layout for signed claims;
   JUnit test reports; and Cobertura coverage reports showing which code the tests
@@ -148,7 +148,7 @@ first: `process`, `container`, `kernel`, `vm`.
 | `wasm` | QuickJS inside the server: `process`. Snippets only. | Fast local development; no operating-system isolation. |
 | `docker` | Default Docker runtime: `container`. Verified gVisor runtime (`runsc`): `kernel`. | Runs and persistent workspaces on your infrastructure. [INTERNAL · gVisor setup →](docs/gvisor.md) |
 | `e2b` | <dfn>*E2B*</dfn>, a hosted service, runs each sandbox in a <dfn>*microVM*</dfn>, a small virtual machine, under <dfn>*Firecracker*</dfn>, the open-source monitor AWS built for them: `vm`. | Hosted runs and sessions, billed while active. [INTERNAL · E2B setup →](e2b/README.md) |
-| `dockercloud` | <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted service, one microVM per run: `vm`. | Hosted runs. The default <dfn>*Connect*</dfn> API, an RPC protocol over ordinary HTTP, supports grants and hardened mode; the REST API has narrower support. [INTERNAL · API differences and setup →](docs/dockercloud.md) |
+| `dockercloud` | <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted service, one microVM per run: `vm`. | Hosted runs. The default <dfn>*Connect*</dfn> API, an RPC protocol over ordinary HTTP, supports hardened mode; the REST API has narrower support. Neither takes grants. [INTERNAL · API differences and setup →](docs/dockercloud.md) |
 | `openshell` | <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, through its gateway: `container`. | Existing OpenShell deployments; runs and sessions. [INTERNAL · OpenShell setup →](docs/openshell.md) |
 | `agentsandbox` | Kubernetes pod from a warm pool: `vm` with supported <dfn>*Kata*</dfn> runtime classes (a small virtual machine per pod), `kernel` with gVisor, `container` with <dfn>*runc*</dfn>, Docker's default, which shares the host kernel. Other classes are refused. | Deployments of <dfn>*agent-sandbox*</dfn>, the Kubernetes component that lends ready sandbox pods; the tier is read from the pod's runtime class. [INTERNAL · Kubernetes setup →](docs/agentsandbox.md) |
 | `wslc` | WSL containers (WSLC), the container engine Microsoft ships inside the Windows Subsystem for Linux, driven from a daemon in a WSL distribution. Per-run mode, the default: `container`, or `vm` with `SANDBOX_WSLC_ACCEPT_VM_TIER=1`. The per-run mode gives each run its own Hyper-V VM. It reports the `container` tier, because Microsoft states that WSL is not a security sandbox for running untrusted code; an operator who accepts that statement sets `SANDBOX_WSLC_ACCEPT_VM_TIER=1`, and it then reports `vm` with that statement attached. Shared mode, every run a container in one long-lived virtual machine: `container`. Hardened mode refuses both. | A Windows machine with nothing installed beyond WSL; snippets and projects only. [INTERNAL · WSL containers setup and limits →](docs/wslc.md) |
@@ -225,15 +225,13 @@ Whatever kit your agent is built with, the moment it runs code it wrote, plimsol
 
 An <dfn>*agent kit*</dfn> is a library for building an AI agent, a program in which a language
 model picks each next step, such as running code it wrote. SDK means software development kit;
-ADK means Google's Agent Development Kit. <dfn>*Trigger.dev*</dfn> is a hosted job runner for
-TypeScript, and its add-on gives a chat task running there the same code tool as the AI SDK's.
+ADK means Google's Agent Development Kit.
 
 <!-- agent kits table: generated from the integration pages' data; edit that, not these rows -->
 | How it plugs in | Kit | Package or extra | Guide | See a run |
 |---|---|---|---|---|
 | Code tool | Vercel AI SDK | `@plimsollmark/client/ai-sdk` | [Vercel AI SDK guide (INTERNAL · documentation →)](docs/ai-sdk.md) | [Vercel AI SDK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/vercel-ai-sdk/index.html) |
 | Code tool | Mastra | `@plimsollmark/client/mastra` | [TypeScript client guide, Mastra (INTERNAL · documentation →)](clients/typescript/README.md#mastra) | [Mastra page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html) |
-| Code tool | [Trigger.dev](docs/trainers/glossary.html#trigger-dev) | `@plimsollmark/client/trigger` | [Trigger.dev guide (INTERNAL · documentation →)](docs/trigger-dev.md) | [Trigger.dev page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/trigger-dev/index.html) |
 | Code tool | Google ADK | `plimsoll-client[adk]` | [Google ADK guide (INTERNAL · documentation →)](docs/google-adk.md) | [Google ADK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/google-adk/index.html) |
 | Code tool | Agno | `plimsoll-client[agno]` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [Agno page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/agno/index.html) |
 | Code tool | CrewAI | `crewai-plimsoll` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [CrewAI page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/crewai/index.html) |
@@ -247,11 +245,6 @@ TypeScript, and its add-on gives a chat task running there the same code tool as
 | Sandbox backend | Claude Managed Agents | `plimsoll-client[anthropic]` | [Python client guide, Claude Managed Agents worker (INTERNAL · documentation →)](clients/python/README.md#claude-managed-agents-self-hosted-worker) | no page yet |
 | MCP | Claude Code, Codex, Claude Desktop and other MCP clients | `clients/mcp` | [MCP server setup, with the Reflection Mirror recipe (INTERNAL · documentation →)](clients/mcp/README.md#setup) | no page yet |
 <!-- end of the agent kits table -->
-
-For a complete Trigger.dev chat task, use the
-[EXTERNAL · deployable starter repo ↗](https://github.com/plimsollmark/plimsoll-trigger-starter).
-It includes a check that two <dfn>*cells*</dfn>, pieces of code run in one kept
-interpreter, share it through a real server, without making a model call.
 
 Not through a kit:
 

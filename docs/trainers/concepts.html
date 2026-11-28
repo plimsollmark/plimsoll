@@ -247,7 +247,7 @@
           </div>
         </div>
         <div class="control" id="guardControl">
-          <p class="control-label">Guard <code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> <span style="font-weight:500;color:var(--muted)">daemon setting</span></p>
+          <p class="control-label">Guard <code>E2B_GUARD_URL</code> <span style="font-weight:500;color:var(--muted)">daemon setting</span></p>
           <div class="seg" role="group" aria-label="Egress guard" data-key="guard">
             <button type="button" data-value="unset">unset<small>no route out of the VM</small></button>
             <button type="button" data-value="set">set<small>one exit, to the guard</small></button>
@@ -668,7 +668,7 @@
       <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's filesystem and socket checks, the real throwaway VM that E2B or Docker Cloud Sandboxes creates, or the throwaway sandbox an OpenShell gateway creates, in the deployment environment, plus the one real session the daemon opens when sessions are on.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Every run is bounded.</b><small>Memory, CPUs, processes, disk, time and output per run; count, rate and total memory across runs.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image, an E2B template (E2B's prebuilt VM image), or the image Docker Cloud Sandboxes or OpenShell boots already carries every build, lint and run program, because the run has no network to fetch one.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential; OpenShell reaches the same broker through a relay in the sandbox that plimsoll dials into, so its sandboxes keep no network rules at all. A cell carries no grant, and in a docker session the broker serves the grant of the call in progress to anything in the container, so a call that must not lend its grant runs outside a session.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes refuses every grant; OpenShell reaches the same broker through a relay in the sandbox that plimsoll dials into, so its sandboxes keep no network rules at all. A cell carries no grant, and in a docker session the broker serves the grant of the call in progress to anything in the container, so a call that must not lend its grant runs outside a session.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Describe and readiness are recorded.</b> <span class="opt">recommended</span><small>The active provider, tier, which operations it supports, each payload kind's software identity and longest allowed timeout, the per-run limits and readiness state, kept where an operator will look for them later. The identities and timeouts are configuration, like the tier, not proof.</small></span></label></li>
     </ul>
     <div class="card gate-readout" id="gateReadout"></div>
@@ -745,7 +745,11 @@
       return { rows: rows, ran: false, ev: ev, note: 'The Go daemon never links the WebAssembly runtime the models need; it supervises a worker inside the container. Neither the in-process engine nor any other provider’s image carries that worker today.' };
     }
     if (s.grant === 'profile' && s.payload !== 'module') {
-      if ((s.provider === 'e2b' || s.provider === 'dockercloud') && s.guard === 'unset') {
+      if (s.provider === 'dockercloud') {
+        rows.push({ k: 'dispatch', ok: false, v: 'Docker Cloud refuses every grant: its allow rules match the host name a connection announces (Docker documents this), so the one rule a granted run would get, the guard’s host:443, cannot hold the code to the guard · <b>ErrUnsupported → Unimplemented</b>' });
+        return { rows: rows, ran: false, ev: ev, note: 'Refused before any sandbox is made, marked as not run, so another provider may take it. Runs without a grant are unchanged.' };
+      }
+      if (s.provider === 'e2b' && s.guard === 'unset') {
         rows.push({ k: 'dispatch', ok: false, v: 'a grant needs the forced, authenticated exit to the host-side guard, and none is configured · <b>ErrUnsupported → Unimplemented</b>' });
         return { rows: rows, ran: false, ev: ev, note: 'Refused outright rather than quietly downgraded. The credential and the route check must stay outside the hostile VM, and without a guard there is nowhere outside to put them.' };
       }
@@ -756,7 +760,7 @@
     }
     var transport = '';
     if (s.grant === 'profile' && s.payload !== 'module') {
-      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker', dockercloud: 'host.* calls leave by the one network rule the provider sets and reads back, the guard’s host:443, carrying this run’s short-lived guard credential; the guard delegates to the same broker, and the API key never enters the VM', openshell: 'host.* calls go to a relay in the sandbox, and plimsoll dials into it through the gateway’s ForwardTcp; the sandbox keeps no network rules at all and the credential stays in plimsoll’s process' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : '') }[s.provider];
+      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker', openshell: 'host.* calls go to a relay in the sandbox, and plimsoll dials into it through the gateway’s ForwardTcp; the sandbox keeps no network rules at all and the credential stays in plimsoll’s process' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : '') }[s.provider];
       rows.push({ k: 'grant', ok: true, v: transport + ' · <b>brokered</b>' });
     }
     var sandboxName = s.provider;
@@ -826,7 +830,7 @@
     });
     el('runtimeControl').hidden = s.provider !== 'docker';
     el('agentRuntimeControl').hidden = s.provider !== 'agentsandbox';
-    el('guardControl').hidden = s.provider !== 'e2b' && s.provider !== 'dockercloud';
+    el('guardControl').hidden = s.provider !== 'e2b';
     var g = el('grantControl');
     var note = el('grantNote');
     if (s.payload === 'module') {

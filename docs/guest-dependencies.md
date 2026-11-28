@@ -150,10 +150,22 @@ and signs its report: one static program with no outside library (built from
 [sandbox/internal/nativehelper](../sandbox/internal/nativehelper/), fixed by its SHA-256), which
 stops a project step from reading its plan, its report or its memory by making itself
 <dfn>*non-dumpable*</dfn> (no other program of the same user may open its descriptors or
-read its memory) before it reads anything. A project image must keep it at exactly that path,
-root's and unchanged: the startup smoke test reads it in each project image and refuses the
-image unless its SHA-256 is the one compiled into plimsolld, so an image built `FROM` the
-`plimsoll/sandbox` of an earlier release is refused until it is rebuilt on the current one.
+read its memory) from its exec. A project image must keep it at exactly that path, root's,
+mode 0711 (every user may run it, root alone may read it: the kernel makes a process that runs
+a program its user cannot read non-dumpable at the exec) and unchanged: the docker provider's
+startup smoke test reads it in each project image, as root, and refuses the image unless its
+SHA-256 is the one compiled into plimsolld, so an image built `FROM` the `plimsoll/sandbox` of
+an earlier release is refused until it is rebuilt on the current one. [agent-sandbox](trainers/glossary.html#agent-sandbox) and
+[WSL containers](wslc.md) read it as root the same way, in a pod or a container of the startup
+test's own. [OpenShell](trainers/glossary.html#openshell) runs every command as the guest, who
+cannot read it, and checks its type, owner, mode and size. Every one of them also starts it with
+its `identity` command and requires the line the build this plimsolld carries prints (`inputs` and the SHA-256
+of the build's inputs, compiled in by `build.sh`), so a helper of the same size from another
+build is refused where the bytes cannot be read; that line names a build and is no defense
+against an image made to lie.
+The same file, under the same check, also carries the file commands
+(`plimsoll-helper files`), which run as the guest's own user and read nothing of the runner's:
+their contract is [session-files.md](session-files.md).
 Only an x86-64 build of the helper exists, so plimsoll's project images are built for x86-64
 alone. The library is for plimsoll's own node programs beside guest code, and a project image
 must keep it at exactly that path too. The provider loads it, through the `LD_PRELOAD` setting

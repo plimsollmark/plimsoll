@@ -8,14 +8,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  checkLostAnswer, checkRecord, RECORD_KINDS, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId,
+  checkLostAnswer, checkRecord, filesOp, RECORD_KINDS, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId,
   statesOnlyProblem, validDaemonVersion, validQualification, type DigestPayload,
 } from "../src/record.ts";
 import { INT64, UINT32, UINT64, wholeInt } from "../src/wire.ts";
 import { meets } from "../src/client.ts";
-import { RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT } from "../src/tables.gen.ts";
+import { RECORD_FIELDS, RECORD_VERSION, RETIRED_END_BEFORE_START_TEXT } from "../src/tables.gen.ts";
 import { PlimsollError } from "../src/errors.ts";
-import type { WireRecord, WireRunResponse, WireSoftwareRule } from "../src/wire.ts";
+import type { WireFilesRun, WireRecord, WireRunResponse, WireSoftwareRule } from "../src/wire.ts";
 import { saysOf, saysOfProblem, verdict } from "./cases.ts";
 
 type Files = { path: string; content: string }[];
@@ -27,10 +27,13 @@ type WireRequest = {
   javascript?: { code: string; grantProfile?: string };
   project?: { files?: Files; steps?: string[]; artifacts?: string[]; grantProfile?: string };
   cell?: { language: string; code: string; files?: Files };
+  files?: WireFilesRun;
 };
 type Golden = {
   requests: { name: string; request: WireRequest; sha256: string }[];
-  results: { name: string; response: WireRunResponse; sha256: string }[];
+  // recordVersion: the record version whose result domain hashed it; a vector without one is
+  // from a file written before version 6, whose results are all plimsoll.run-result.v1.
+  results: { name: string; response: WireRunResponse; sha256: string; recordVersion?: number }[];
   records: { name: string; record: WireRecord; sha256: string }[];
   sessionFingerprints: { name: string; sessionId: string; sha256: string }[];
   refused: { name: string; record: WireRecord; sha256: string; why: string }[];
@@ -45,6 +48,7 @@ const golden: Golden = JSON.parse(readFileSync(new URL("../../../record/testdata
 function payload(r: WireRequest): DigestPayload | undefined {
   if (r.javascript) return { kind: "javascript", code: r.javascript.code, grantProfile: r.javascript.grantProfile ?? "" };
   if (r.cell) return { kind: "cell", language: r.cell.language, code: r.cell.code, files: r.cell.files ?? [] };
+  if (r.files) return { kind: "files", files: r.files };
   if (r.project) {
     const p = r.project;
     return { kind: "project", grantProfile: p.grantProfile ?? "", files: p.files ?? [], steps: p.steps ?? [], artifacts: p.artifacts ?? [] };
@@ -70,7 +74,7 @@ test("result digests", () => {
   let n = 0;
   for (const v of golden.results) {
     if (v.response.module !== undefined) continue;
-    const got = resultDigest(v.response);
+    const got = resultDigest(v.response, v.recordVersion ?? 5);
     verdict(`golden/results/${v.name}`, "digest", got);
     assert.equal(got, v.sha256, v.name);
     n++;
@@ -99,7 +103,7 @@ test("every release's own vectors still hold", () => {
     }
     for (const v of g.results) {
       if (v.response.module !== undefined) continue;
-      const got = resultDigest(v.response);
+      const got = resultDigest(v.response, v.recordVersion ?? 5);
       verdict(`${prefix}results/${v.name}`, "digest", got);
       assert.equal(got, v.sha256, `${f}: ${v.name}`);
     }
@@ -183,7 +187,7 @@ test("software rule ids", () => {
 test("an answered record stating an unanswered code, an old version or another instance is refused", () => {
   const resp: WireRunResponse = { sandbox: "docker", isolation: "container", instance: "k8s-pod-uid:7f3e9c2a", javascript: { stdout: "" } };
   const record: WireRecord = {
-    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    version: RECORD_VERSION, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
     instance: "k8s-pod-uid:7f3e9c2a", startedUnixMs: 1, endedUnixMs: 2,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
@@ -195,7 +199,7 @@ test("an answered record stating an unanswered code, an old version or another i
     assert.ok("problem" in got && got.problem.includes(why), JSON.stringify(got));
   };
   refused({ ...record, unanswered: "unknown" }, "unanswered");
-  for (const version of [1, 2, 3, 4, 6]) refused({ ...record, version }, "version");
+  for (const version of [1, 2, 3, 4, 5, RECORD_VERSION + 1]) refused({ ...record, version }, "version");
   refused({ ...record, instance: "k8s-pod-uid:other" }, "instance");
   refused({ ...record, instance: "/var/run/pod" }, "instance");
   assert.equal(resultDigest({ ...resp, instance: "k8s-pod-uid:other" }), resultDigest(resp), "the instance moved the result digest");
@@ -207,7 +211,7 @@ test("an answered record stating an unanswered code, an old version or another i
 test("a result of another kind than the request's, or none, or a record ending before it starts, is refused", () => {
   const resp: WireRunResponse = { sandbox: "docker", isolation: "container", javascript: { stdout: "" } };
   const record: WireRecord = {
-    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    version: RECORD_VERSION, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
     startedUnixMs: 2, endedUnixMs: 3,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
@@ -235,7 +239,7 @@ test("a bytes field that is not base64 text is refused before anything is alloca
     { cell: { stdout: huge } as WireRunResponse["cell"] },
   ];
   for (const resp of answers) {
-    resp.record = { version: 5, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
+    resp.record = { version: RECORD_VERSION, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
     const kind = resp.javascript ? "javascript" : resp.project ? "project" : "cell";
     const t0 = performance.now();
     const got = checkRecord("r", kind, undefined, resp);
@@ -272,7 +276,7 @@ test("version 5 evidence is bound to the response", () => {
   };
   assert.equal(resultDigest(resp), resultDigest({ sandbox: "wslc", isolation: "vm", javascript: { stdout: "" } }));
   const record: WireRecord = {
-    version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "wslc", isolation: "vm",
+    version: RECORD_VERSION, requestSha256: "r", resultSha256: resultDigest(resp), provider: "wslc", isolation: "vm",
     isolationQualification: resp.isolationQualification, warm: true, daemonVersion: "v0.28.0", startedUnixMs: 1, endedUnixMs: 2,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
@@ -348,7 +352,7 @@ test("every published record version says which calls it records", () => {
 // (test/reattach.test.ts) drive the same checks through a whole attach.
 test("a lost call's answer checks only against its own record", () => {
   const resp: WireRunResponse = { sandbox: "docker", isolation: "container", cell: { stdout: Buffer.from("python 2: y = 2").toString("base64"), interpreterStarted: true } };
-  const record: WireRecord = { version: 5, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container", startedUnixMs: 1, endedUnixMs: 2 };
+  const record: WireRecord = { version: RECORD_VERSION, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container", startedUnixMs: 1, endedUnixMs: 2 };
   record.recordSha256 = recordDigest(recordFromWire(record));
   resp.record = record;
   const lost = recordFromWire(record);
@@ -373,4 +377,73 @@ test("a lost call's answer checks only against its own record", () => {
   }
   const ended = checkLostAnswer({ ...resp, record: unanswered }, recordFromWire(unanswered));
   assert.ok("problem" in ended && ended.problem.includes("ended unanswered"), JSON.stringify(ended));
+});
+
+// Record version 6 and protocol 9 (docs/run-records.md): the record's version fixes the
+// result domain, and the files kind is in both new domains.
+function goldenNamed<K extends "requests" | "results">(kind: K, name: string): Golden[K][number] {
+  const v = (golden[kind] as Golden[K][number][]).find((x) => x.name === name);
+  assert.ok(v, `no golden ${kind} vector named ${name}`);
+  return structuredClone(v);
+}
+
+function sealed(resp: WireRunResponse, reqDigest: string, resultSha256: string, version: number = RECORD_VERSION): WireRunResponse {
+  const r = recordFromWire({
+    version, requestSha256: reqDigest, resultSha256, provider: resp.sandbox ?? "", isolation: resp.isolation ?? "",
+    startedUnixMs: 1790000000000, endedUnixMs: 1790000000012,
+  });
+  return { ...resp, record: { ...r, startedUnixMs: String(r.startedUnixMs), endedUnixMs: String(r.endedUnixMs), sequence: String(r.sequence), recordSha256: recordDigest(r) } as unknown as WireRecord };
+}
+
+function digestOf(r: WireRequest): string {
+  const p = payload(r);
+  assert.ok(p);
+  return requestDigest({ protocol: r.protocol, minimumIsolation: r.minimumIsolation ?? "", timeoutMs: r.timeoutMs ?? 0, softwareRule: r.softwareRule, payload: p });
+}
+
+test("a version 6 record of a result hashed under plimsoll.run-result.v1 is refused", () => {
+  const req = goldenNamed("requests", "javascript request").request;
+  const resp = goldenNamed("results", "javascript result").response;
+  const v1 = resultDigest(resp, 5);
+  const v2 = resultDigest(resp, 6);
+  assert.notEqual(v1, v2);
+  assert.equal(resultDigest(resp), v2);
+  assert.ok("record" in checkRecord(digestOf(req), "javascript", undefined, sealed(resp, digestOf(req), v2)));
+  const forged = checkRecord(digestOf(req), "javascript", undefined, sealed(resp, digestOf(req), v1));
+  assert.ok("problem" in forged && forged.problem.startsWith("result digest"), JSON.stringify(forged));
+  // A live version 5 answer is refused as a version, never as a forgery.
+  const old = checkRecord(digestOf(req), "javascript", undefined, sealed(resp, digestOf(req), v1, 5));
+  assert.ok("problem" in old && old.problem.includes("requires version 6"), JSON.stringify(old));
+});
+
+test("every file call's answer checks against its record, and a lost one too", () => {
+  for (const op of ["stat", "read", "write", "list", "read_many", "make_dir", "remove", "rename"]) {
+    const req = goldenNamed("requests", `files ${op} request`).request;
+    const resp = goldenNamed("results", `files ${op} result`).response;
+    assert.equal(req.protocol, 9);
+    const answer = sealed(resp, digestOf(req), resultDigest(resp));
+    assert.equal(filesOp(req.files!), op);
+    const checked = checkRecord(digestOf(req), "files", undefined, answer, op);
+    assert.ok("record" in checked, `${op}: ${"problem" in checked ? checked.problem : ""}`);
+    const lost = checkLostAnswer(answer, checked.record);
+    assert.deepEqual(lost, { kind: "files" }, op);
+    assert.ok("problem" in checkRecord(digestOf(req), "project", undefined, answer), op);
+    // The answer of another operation than asked, or of one the caller did not name, is refused.
+    for (const other of ["", op === "remove" ? "stat" : "remove"]) {
+      const wrong = checkRecord(digestOf(req), "files", undefined, answer, other);
+      assert.ok("problem" in wrong && wrong.problem.includes("answered with"), `${op} as ${other}`);
+    }
+  }
+});
+
+test("a files payload is no kind before the domains that cover it", () => {
+  const req = goldenNamed("requests", "files request stating protocol 8").request;
+  const empty = requestDigest({ protocol: 8, minimumIsolation: req.minimumIsolation ?? "", timeoutMs: req.timeoutMs ?? 0, softwareRule: undefined,
+    payload: { kind: "files", files: {} } });
+  assert.equal(digestOf(req), empty);
+  assert.notEqual(digestOf({ ...req, protocol: 9 }), digestOf(req));
+  const resp = goldenNamed("results", "files stat result").response;
+  const none: WireRunResponse = { sandbox: resp.sandbox, isolation: resp.isolation };
+  assert.equal(resultDigest(resp, 5), resultDigest(none, 5));
+  assert.notEqual(resultDigest(resp, 6), resultDigest(none, 6));
 });

@@ -1,6 +1,5 @@
 // The piece both add-ons share: one sandbox per conversation, behind a key the
-// framework supplies (a Trigger.dev run id, a Mastra thread id). It is the
-// framework-neutral half of Trigger.dev's code-sandbox recipe: warm at the start
+// application supplies (a conversation id, a Mastra thread id): warm at the start
 // of a turn without blocking, reuse for every executeCode call, dispose when the
 // conversation goes to sleep.
 //
@@ -53,7 +52,7 @@ export const DEFAULT_LANGUAGES: ToolLanguages = ["python", "javascript"];
 /**
  * Which sandbox a call uses, from the application, never from a model's tool call. A
  * conversation names its owner, the user it belongs to, whom maxSessionsPerOwner
- * counts; a string (a Trigger.dev run id) names no owner and counts only against
+ * counts; a string names no owner and counts only against
  * maxSessions.
  */
 export type SandboxKey = string | { owner: string; conversation: string };
@@ -129,7 +128,7 @@ export type CodeSandboxesOptions = {
   /**
    * The daemon's client, or a function that builds it on first use: a
    * module-level tool can then be declared before its environment is read
-   * (Trigger.dev indexes task modules at deploy time, without runtime secrets).
+   * (a host that loads modules at deploy time has no runtime secrets then).
    */
   client: PlimsollClient | (() => PlimsollClient);
   /**
@@ -162,7 +161,7 @@ export type CodeSandboxesOptions = {
    * more than a few conversations at once, and the conversation whose sandbox is closed
    * loses its variables and files, never an answer (its next call says freshSandbox).
    * 0 = no cap. It counts this instance only; for an app running as many processes
-   * (serverless functions, Trigger.dev workers), set the daemon's
+   * (serverless functions, several workers), set the daemon's
    * SANDBOX_MAX_SESSIONS_PER_OWNER, which counts them all.
    */
   maxSessionsPerOwner?: number;

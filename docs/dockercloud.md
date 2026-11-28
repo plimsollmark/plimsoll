@@ -101,21 +101,22 @@ checks an image against a withheld set before it is pushed
    unique to this daemon instance, and the daemon records the sandbox as its own
    before making the create call.
 2. Reads back, through the published contract, Docker's own report of the network
-   policy on the sandbox, and refuses to run unless it is deny-all with exactly the
-   rules the run is entitled to. A run without a <dfn>*grant*</dfn> (permission to call
-   listed routes of one API) is entitled to none. A run with one is entitled to a single
-   rule, for the <dfn>*guard*</dfn>'s `host:443`: the guard is the HTTPS endpoint on
-   the plimsoll daemon that is the only address a grant run may reach. This is what
+   policy on the sandbox, and refuses to run unless it is deny-all with no rule allowing
+   anything. Every run is such a run: a run with a <dfn>*grant*</dfn> (permission to call
+   listed routes of one API) is refused before any sandbox is made
+   ([Host-API grants](#host-api-grants)). This is what
    Docker says is in force, not a test of it: a run tries no connection. The one check of
    behavior, a connection tried from inside a sandbox, is the startup smoke test's, made
-   once when the daemon starts ([Startup smoke test](#startup-smoke-test)), so a change
-   after startup in what Docker enforces is not caught by a run. A public report on
+   once when the daemon starts, on a sandbox with no rule ([Startup smoke test](#startup-smoke-test)),
+   so a change after startup in what Docker enforces is not caught by a run. A public report on
    Docker's tracker says a cloud sandbox reached the internet while the account's default
    and the sandbox's own policy listing both said deny-all
    ([EXTERNAL · issue thread ↗](https://github.com/docker/sbx-releases/issues/758), open
-   and unanswered on 2026-11-24); it has not been reproduced here: on 2026-11-24, on a sandbox
-   made with a test account's deny-all default, the read-back and the startup test agreed,
-   and every connection tried from inside failed.
+   and unanswered on 2026-11-24); it has not been reproduced here. On 2026-11-25, on three
+   sandboxes made with a test account's deny-all default and no rule, every TCP connection
+   the code opened completed its handshake, to any address and port, an address no host on
+   the internet answers included, and no data came back on any of them: what deny-all
+   blocks is the data, not the connection ([Startup smoke test](#startup-smoke-test)).
 3. Runs every command of the <dfn>*guest*</dfn>, the code in the sandbox, under a
    wrapper inside the sandbox (`timeout -s KILL`, and each output stream capped by
    `head -c`), because Docker's API for running a command has no timeout and no
@@ -148,24 +149,40 @@ since the service has no control for them.
 
 ## Host-API grants
 
-Grants are supported when `SANDBOX_DOCKERCLOUD_GUARD_URL` is configured and return
-`ErrUnsupported` otherwise. plimsolld serves the guard on a listener of its own,
-`PLIMSOLL_GUARD_ADDR` (required with a guard URL), which answers the guard path and
-nothing else; the guard URL must reach it. They use the same shared guard as <dfn>*E2B*</dfn>, the
-other hosted microVM service plimsoll supports. The guard hands each call to the
-shared <dfn>*broker*</dfn>, the part of plimsoll that makes the real API call and
-attaches the credential. There are two differences an operator must know:
+**Refused.** Docker Cloud runs no code with a grant: a granted run, snippet or project, on
+either API, is refused before any sandbox is made, with the mark that says nothing ran and
+the reason `unsupported` (another provider may take it). `Describe` states no grant support
+for either payload kind, plimsolld serves no <dfn>*guard*</dfn> (the HTTPS endpoint on the
+daemon that a granted run's code calls), and a set `SANDBOX_DOCKERCLOUD_GUARD_URL` fails
+startup, so a daemon configured for grants does not start without them unnoticed. A daemon
+with a <dfn>*grant profile*</dfn>, a named grant an operator defines for callers to select
+(`PLIMSOLL_GRANTS_FILE`), does not start on this provider either. Send
+granted runs to `docker`, `e2b` or `openshell`. Runs without a grant are unchanged.
 
-- **The network rule is applied outside the published contract.** A grant run's
-  single rule (the guard's `host:443`) goes through `PUT /sandboxes/{id}/network-policy`,
-  the REST call the `sbx` CLI makes (base URL `SANDBOX_DOCKERCLOUD_POLICY_URL`). The
-  read-back in step 2 still goes through the published contract.
-- **The guest holds its own run's guard credential.** Docker's proxy adds
+Why: Docker Cloud's allow rules cannot hold a sandbox to one server. plimsoll's design gave a
+granted run's sandbox a single rule, the guard's `host:443`, set through the call the `sbx` CLI
+makes for `--allow-network` and read back before any code ran. Docker's own page on network
+rules says a rule matches "the hostname attributed to the connection, such as its TLS Server
+Name Indication (SNI)"
+([EXTERNAL · official docs ↗](https://docs.docker.com/ai/governance/local/network-rules/)).
+The SNI is the server name the code itself puts in the greeting that opens a TLS connection
+(TLS is the encryption HTTPS runs on). A rule matched on a name the code chooses does not keep
+the code at the guard, so it is no boundary for a granted run.
+
+Two more facts would have applied to granted runs, and still apply if grants return:
+
+- **The network rule is applied outside the published contract.** The rule goes through
+  `PUT /sandboxes/{id}/network-policy`, the REST call the `sbx` CLI makes (base URL
+  `SANDBOX_DOCKERCLOUD_POLICY_URL`). The read-back in step 2 goes through the published
+  contract.
+- **The guest would hold its own run's guard credential.** Docker's proxy adds
   credentials to outgoing requests only for its own fixed list of services, so the
-  provider cannot keep the guard credential outside the VM the way E2B's proxy does.
-  That credential is per run, valid only at the guard, only for that run's grant
-  (which cannot change once the run starts), and dead when the run ends. The
-  credential for your own API never enters the VM.
+  provider cannot keep the guard credential outside the VM the way the proxy of
+  <dfn>*E2B*</dfn>, the other hosted microVM service plimsoll supports, does.
+
+Grants return only when Docker offers a rule it enforces on the server a connection actually
+reaches, and a startup check under that rule shows that a granted run's code reaches the guard
+and nothing else.
 
 ## Startup smoke test
 
@@ -188,8 +205,22 @@ example.com over UDP, over TCP and through node's resolver, and counts any reply
 refusal as egress. What Docker's side does with the names it refuses cannot be seen from
 inside the sandbox.
 
-plimsoll's startup check shows that code under the deny-all policy cannot make an
-ordinary network connection. It is the only time plimsoll tries the network from inside
+Under deny-all with no rule, Docker's side also completes the TCP handshake of every
+connection the guest opens, to any address and port, before deciding anything (measured
+2026-11-25 on three sandboxes): connections to GitHub, Cloudflare and Google addresses, to a
+port nothing listens on, and to 192.0.2.1, an address reserved for documentation that no
+host on the internet answers, all completed within 3 ms, where the first byte from a real
+server, once a rule allowed one, arrived 34 to 239 ms after the connection began. Then no
+data passed: a TLS greeting was answered with an
+`access_denied` alert and no certificate, a plain HTTP request was met by the connection
+closing with no byte sent, a DNS question got REFUSED, and an NTP time request (a UDP
+datagram) got no answer. So a completed connection there is not egress, and the startup test
+counts only data that comes back: a request that succeeds, or a DNS answer that is not a
+refusal.
+
+plimsoll's startup check shows that code under the deny-all policy, with no rule, gets no
+data through an ordinary network connection, which is every run's policy, since granted runs
+are refused. It is the only time plimsoll tries the network from inside
 a Docker Cloud sandbox: each run reads Docker's report of the policy and tries nothing
 (step 2 of [What each run does](#what-each-run-does)). One other connection route inside Docker's virtual
 machine has not been measured.
@@ -202,7 +233,7 @@ the unauthenticated `/readyz` path, which checks configuration only.
 `SANDBOX_DOCKERCLOUD_API` chooses the API once, at startup. The provider never falls
 back from one to the other: the startup smoke test proves only the API in use, and the
 two give different evidence. Connect is the default, because it is the only one with
-host-API grants, the booted image's identity, the daemon's strict production check and runs
+the booted image's identity, the daemon's strict production check and runs
 past 270 s; REST is
 kept as the backup until it covers those.
 
@@ -213,7 +244,7 @@ kept as the backup until it covers those.
 | `SANDBOX_DOCKERCLOUD_API_URL` | defaults to `https://connect.docker.com/sandboxes` | required |
 | Pinned image | the API reports no booted digest, so each run checks only that the service recorded the pinned reference; no identity is stated, so a caller's software rule refuses the run | each run checks the digest the sandbox booted, and `Describe` states it as the image's identity |
 | The daemon's strict production check, `PLIMSOLL_HARDENED=1` | refused | allowed, and must be named: `SANDBOX_DOCKERCLOUD_API=connect` |
-| Host-API grants | refused; a configured `SANDBOX_DOCKERCLOUD_GUARD_URL` fails startup | supported |
+| Host-API grants | refused; a configured `SANDBOX_DOCKERCLOUD_GUARD_URL` fails startup | refused, the same way ([Host-API grants](#host-api-grants)) |
 | Longest run | 270 s | the configured ceiling (default 120 s) |
 | One sandbox kept for many calls | not offered yet | not offered: no known call keeps a process's input open |
 
@@ -223,12 +254,13 @@ sandbox, and uses it for the run's calls while it outlives each call's deadline;
 service limits how often one may be created (on 2026-10-04 one per call was answered
 "Too Many Requests"). A credential lives at most 300 seconds, and a command still
 running when its credential expires is cut off, which is why a REST run is capped at
-270 seconds: 30 seconds of margin for the run's setup. Grants stay on Connect: the call
-that sets the guard's network rule (see [Host-API grants](#host-api-grants)) is
-accepted on a sandbox the REST API created, but the REST API then refuses to report
-that sandbox's policy ("installed network policy is unavailable", 2026-10-04), so a
-grant run could not prove its network before running anything. The live suite checks
-that refusal on every REST run, so a change on Docker's side shows up. Keep the account's deny-all default for either API: while it is in force the
+270 seconds: 30 seconds of margin for the run's setup. REST had a reason of its own to
+refuse grants before both APIs did: the call that sets a network rule (see
+[Host-API grants](#host-api-grants)) is accepted on a sandbox the REST API created, but the
+REST API then refuses to report that sandbox's policy ("installed network policy is
+unavailable", 2026-10-04), so a grant run could not prove its network before running
+anything. The live suite checks that refusal on every REST run, so a change on Docker's side
+shows up. Keep the account's deny-all default for either API: while it is in force the
 REST API refuses a sandbox that carries its own network policy, and the Connect API
 cannot send one. On REST a delete's answer proves nothing (it reports success for a
 sandbox that does not exist), so the provider reads the sandbox until it is gone.

@@ -505,7 +505,7 @@ test("a refusal that says the daemon may have changed reads its Describe again",
   assert.equal(describes, 4);
 });
 
-// The Trigger.dev recipe disposes when a chat suspends; the resumed turn's first
+// An application disposes when a conversation goes to sleep; the resumed turn's first
 // call runs in a new sandbox and must not claim the old one's state.
 test("the first call after a dispose says its sandbox and interpreter are new", { skip }, async () => {
   const s = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: sessionsUrl! }) });
@@ -748,8 +748,8 @@ test("with every one of a user's sandboxes busy, one more is refused before anyt
   await s.disposeAll();
 });
 
-// A warm is a guess (Trigger.dev warms in every new run's onTurnStart, a user's idle new
-// tab included), so it never evicts the conversation in use: at the cap it does nothing,
+// A warm is a guess (an application may warm at every new chat's first turn, a user's idle
+// new tab included), so it never evicts the conversation in use: at the cap it does nothing,
 // and the new conversation's first call makes room as any call does.
 test("a warm never closes another sandbox; at the cap it waits for the first call", { skip }, async () => {
   const { client, calls } = counting(sessionsUrl!);

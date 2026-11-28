@@ -83,8 +83,11 @@ func TestFloatBitVectors(t *testing.T) {
 	}
 	var pass, fail int
 	for _, v := range file.Vectors {
-		if v.Domain != resultDomain {
-			t.Errorf("%s: domain %q, want %q", v.ID, v.Domain, resultDomain)
+		// The float encoding is the same under both result domains; the vectors were
+		// written under the first, which records of versions 1 to 5 use.
+		enc, ok := map[string]resultEncoding{resultDomainV1: resultV1, resultDomainV2: resultV2}[v.Domain]
+		if !ok {
+			t.Errorf("%s: domain %q is not a result domain", v.ID, v.Domain)
 		}
 		pre, err := hex.DecodeString(v.PreImageHex)
 		if err != nil {
@@ -93,7 +96,7 @@ func TestFloatBitVectors(t *testing.T) {
 		if sum := sha256.Sum256(pre); hex.EncodeToString(sum[:]) != v.Digest {
 			t.Errorf("%s: the pre-image does not hash to the vector's digest", v.ID)
 		}
-		got := ResultDigest(v.response(t))
+		got := resultDigest(v.response(t), enc)
 		switch {
 		case v.MustFail && v.FailureReason == "":
 			t.Errorf("%s: a MUST-FAIL vector names no failure reason", v.ID)
@@ -114,18 +117,28 @@ func TestFloatBitVectors(t *testing.T) {
 }
 
 // A domain string names one encoding for good (docs/run-records.md), and nothing in a
-// result says which result domain hashed it. So a payload kind added to RunResponse
-// must come with a new result domain and a new record version, not join this one.
+// result says which result domain hashed it: the record's version does. So a payload kind
+// added to RunResponse must come with a new result domain and a new record version, not
+// join one: plimsoll.run-result.v1 covers the four kinds records of versions 1 to 5 state,
+// and plimsoll.run-result.v2, from version 6, exactly the kinds RunResponse carries.
 func TestResultDomainCoversItsKinds(t *testing.T) {
-	if resultDomain != "plimsoll.run-result.v1" {
-		t.Fatalf("the result domain is now %s: list the kinds it covers in this test", resultDomain)
+	if got := published[Version].result.domain(); got != resultDomainV2 {
+		t.Fatalf("the current record version's result domain is now %s: list the kinds it covers in this test", got)
 	}
 	fields := (&plimsollv1.RunResponse{}).ProtoReflect().Descriptor().Oneofs().ByName("result").Fields()
 	var kinds []string
 	for i := range fields.Len() {
 		kinds = append(kinds, string(fields.Get(i).Name()))
 	}
-	if want := []string{"javascript", "project", "module", "cell"}; !slices.Equal(kinds, want) {
-		t.Errorf("RunResponse carries result kinds %v; %s covers exactly %v, so a new kind needs a new result domain and record version", kinds, resultDomain, want)
+	if want := []string{"javascript", "project", "module", "cell", "files"}; !slices.Equal(kinds, want) || !slices.Equal(resultV2.kinds(), want) {
+		t.Errorf("RunResponse carries result kinds %v and %s covers %v; it covers exactly %v, so a new kind needs a new result domain and record version", kinds, resultDomainV2, resultV2.kinds(), want)
+	}
+	if want := []string{"javascript", "project", "module", "cell"}; !slices.Equal(resultV1.kinds(), want) {
+		t.Errorf("%s covers %v; it covers exactly %v for good", resultDomainV1, resultV1.kinds(), want)
+	}
+	for v, s := range published {
+		if want := map[bool]resultEncoding{true: resultV2, false: resultV1}[v >= 6]; s.result != want {
+			t.Errorf("record version %d hashes results under %s, want %s", v, s.result.domain(), want.domain())
+		}
 	}
 }

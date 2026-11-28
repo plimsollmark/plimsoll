@@ -32,6 +32,11 @@ type PayloadEnvironment struct {
 	// checks proved them: the languages a project's steps can invoke, and on a
 	// provider with sessions the languages a cell may use. Empty when none is proved.
 	Languages []Language
+	// FileScopes are the scopes in which a provider's sessions take file calls (FileRunner),
+	// carried out by plimsoll's native helper, in the wire's order (work, then sandbox): set in
+	// SessionEnvironments only, never in Environments, since a file call is a session call;
+	// empty when the sessions take none. sandbox/sessiontest holds it to what the sessions do.
+	FileScopes []FilesScope
 }
 
 // Environments is a provider's statement for each payload kind. A kind the

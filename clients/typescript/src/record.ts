@@ -10,6 +10,10 @@ import { PlimsollError } from "./errors.ts";
 // generated from the Go record and sandbox packages.
 import {
   DAEMON_VERSION_PATTERN,
+  FILES_ENTRY_TYPES,
+  FILES_ERRORS,
+  FILES_SCOPES,
+  FILES_WRITE_MODES,
   INSTANCE_PATTERN,
   LAST_WALL_CLOCK_END_VERSION,
   MAX_DAEMON_VERSION_BYTES,
@@ -18,12 +22,17 @@ import {
   QUALIFICATION_FORBIDDEN,
   RECORD_FIELDS,
   RECORD_VERSION,
+  REQUEST_DOMAINS,
+  RESULT_DOMAINS,
   RETIRED_END_BEFORE_START_TEXT,
   TIERS,
   UNANSWERED_CODES as UNANSWERED_CODE_LIST,
 } from "./tables.gen.ts";
 
-import { INT64, UINT32, UINT64, wholeInt, wireBytes, WireShapeError, type WireRecord, type WireRunResponse, type WireSoftwareRule } from "./wire.ts";
+import {
+  INT32, INT64, UINT32, UINT64, wholeInt, wireBytes, WireShapeError, type WireFilesResult, type WireFilesRun, type WireRecord, type WireRunResponse,
+  type WireSoftwareRule,
+} from "./wire.ts";
 
 const INSTANCE_FORM = new RegExp(INSTANCE_PATTERN);
 
@@ -132,7 +141,8 @@ export type DigestPayload =
       files: readonly { path: string; content: string }[];
       steps: readonly string[];
       artifacts: readonly string[];
-    };
+    }
+  | { kind: "files"; files: WireFilesRun };
 
 export type DigestRequest = {
   protocol: number;
@@ -142,11 +152,26 @@ export type DigestRequest = {
   payload: DigestPayload;
 };
 
+/**
+ * The request domain a request stating protocol is hashed under: that of the highest first
+ * protocol at or below it (REQUEST_DOMAINS: v1 below 2, v2 from 2 to 8, v3, which covers the
+ * files kind, from 9).
+ */
+export function requestDomain(protocol: number): string {
+  const firsts = Object.keys(REQUEST_DOMAINS).map(Number).sort((a, b) => a - b);
+  const first = firsts.filter((p) => p <= protocol).pop() ?? firsts[0]!;
+  return REQUEST_DOMAINS[first]!;
+}
+
+const FILES_REQUEST_DOMAIN = "plimsoll.run-request.v3";
+const FILES_RESULT_DOMAIN = "plimsoll.run-result.v2";
+
 /** The request digest of a Run request or a session call (the same fields). */
 export function requestDigest(r: DigestRequest): string {
+  const domain = requestDomain(r.protocol);
   // A protocol 1 request (the records of version 1) has the first encoding: no software rule.
-  const first = r.protocol < 2;
-  const e = new Encoder(first ? "plimsoll.run-request.v1" : "plimsoll.run-request.v2");
+  const first = domain === "plimsoll.run-request.v1";
+  const e = new Encoder(domain);
   e.int("protocol", r.protocol);
   e.str("minimum_isolation", r.minimumIsolation);
   e.int("timeout_ms", r.timeoutMs);
@@ -157,6 +182,17 @@ export function requestDigest(r: DigestRequest): string {
     for (const id of ids) e.str("software_identity", id);
   }
   const p = r.payload;
+  if (p.kind === "files") {
+    // Only plimsoll.run-request.v3 covers the files kind; under an earlier domain a files
+    // payload is no kind (record.requestDigest).
+    if (domain !== FILES_REQUEST_DOMAIN) {
+      e.str("kind", "");
+      return e.sum();
+    }
+    e.str("kind", "files");
+    filesRequest(e, p.files);
+    return e.sum();
+  }
   e.str("kind", p.kind);
   if (p.kind === "javascript") {
     e.str("code", p.code);
@@ -185,6 +221,235 @@ export function requestDigest(r: DigestRequest): string {
 }
 
 
+/** The enum's number from its wire name or number; an unknown name fails the digest. */
+function enumNumber(table: Readonly<Record<string, number>>, v: string | number | undefined, name: string): number {
+  if (v === undefined) return 0;
+  if (typeof v === "number") return v;
+  const n = table[v];
+  if (n === undefined) throw new WireShapeError(`${name} is not a known enum value`);
+  return n;
+}
+
+/** A 64-bit or 32-bit integer field of a file call, as a whole decimal. */
+function filesInt(v: unknown, name: string, range: readonly [bigint, bigint]): bigint {
+  if (v === undefined || v === null) return 0n;
+  const n = wholeInt(v, range);
+  if (n === undefined) throw new WireShapeError(`${name} is not an integer in one whole decimal`);
+  return n;
+}
+
+// A file call's request: the scope by its number, the operation by its word, then its
+// fields; paths and contents are bytes (record.filesRequest).
+function filesRequest(e: Encoder, f: WireFilesRun): void {
+  e.int("scope", enumNumber(FILES_SCOPES, f.scope, "scope"));
+  if (f.stat) {
+    e.str("op", "stat");
+    e.bytes("path", b64(f.stat.path));
+  } else if (f.read) {
+    e.str("op", "read");
+    e.bytes("path", b64(f.read.path));
+    e.int("offset", filesInt(f.read.offset, "offset", UINT64));
+    e.int("max_bytes", filesInt(f.read.maxBytes, "maxBytes", UINT32));
+  } else if (f.write) {
+    e.str("op", "write");
+    e.bytes("path", b64(f.write.path));
+    e.bytes("content", b64(f.write.content));
+    e.int("write_mode", enumNumber(FILES_WRITE_MODES, f.write.mode, "mode"));
+    e.bool("make_parents", f.write.makeParents ?? false);
+  } else if (f.list) {
+    e.str("op", "list");
+    e.bytes("path", b64(f.list.path));
+    e.bool("recursive", f.list.recursive ?? false);
+    e.bytes("match", b64(f.list.match));
+    e.bytes("after", b64(f.list.after));
+    e.int("budget_bytes", filesInt(f.list.budgetBytes, "budgetBytes", UINT32));
+  } else if (f.readMany) {
+    e.str("op", "read_many");
+    const paths = f.readMany.paths ?? [];
+    e.int("paths", paths.length);
+    for (const x of paths) e.bytes("path", b64(x));
+    e.int("max_bytes_each", filesInt(f.readMany.maxBytesEach, "maxBytesEach", UINT32));
+    e.int("budget_bytes", filesInt(f.readMany.budgetBytes, "budgetBytes", UINT32));
+  } else if (f.makeDir) {
+    e.str("op", "make_dir");
+    e.bytes("path", b64(f.makeDir.path));
+    e.bool("parents", f.makeDir.parents ?? false);
+  } else if (f.remove) {
+    e.str("op", "remove");
+    e.bytes("path", b64(f.remove.path));
+    e.bool("dir", f.remove.dir ?? false);
+  } else if (f.rename) {
+    e.str("op", "rename");
+    e.bytes("from_path", b64(f.rename.fromPath));
+    e.bytes("to_path", b64(f.rename.toPath));
+    e.bool("replace", f.rename.replace ?? false);
+  } else {
+    e.str("op", "");
+  }
+}
+
+/** A file call's answer as decodeFilesResult reads it: every field typed, enums by number. */
+export type FilesAnswerValues =
+  | { op: "stat"; type: number; size: bigint; mode: number }
+  | { op: "read"; content: Buffer; sizeAtOpen: bigint }
+  | { op: "write"; written: bigint }
+  | { op: "list"; entries: { path: Buffer; type: number; size: bigint }[]; more: boolean }
+  | { op: "read_many"; items: { error: number; errno: string; content: Buffer; sizeAtOpen: bigint }[]; more: boolean }
+  | { op: "make_dir" | "remove" | "rename" };
+
+/** A file call's result (FilesResult) as decodeFilesResult reads it. */
+export type FilesResultValues = { outcome: number; error: number; errno: string; answer: FilesAnswerValues | undefined };
+
+/** A boolean field: true, false or absent (false), nothing else (a string "false" is not false). */
+function wireBool(v: unknown, name: string): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v !== "boolean") throw new WireShapeError(`${name} is not a boolean`);
+  return v;
+}
+
+/** A string field: a string or absent (""). */
+function wireStr(v: unknown, name: string): string {
+  if (v === undefined || v === null) return "";
+  if (typeof v !== "string") throw new WireShapeError(`${name} is not a string`);
+  return v;
+}
+
+/** An enum field: a name the table knows, or a 32-bit integer (a newer daemon's value, kept by number). */
+function wireEnum(table: Readonly<Record<string, number>>, v: unknown, name: string): number {
+  if (typeof v === "string") return enumNumber(table, v, name);
+  const n = wholeInt(typeof v === "number" ? v : v === undefined || v === null ? 0 : Number.NaN, INT32);
+  if (n === undefined) throw new WireShapeError(`${name} is not an enum name or a 32-bit integer`);
+  return Number(n);
+}
+
+/** A message field: a JSON object (not null, not a list). */
+function isMessage(v: unknown): boolean {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** A list field: an array or absent (empty), each element an object. */
+function wireObjects<T>(v: T[] | undefined | null, name: string): T[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || !v.every(isMessage)) throw new WireShapeError(`${name} is not a list of messages`);
+  return v;
+}
+
+/**
+ * A file call's result decoded once into typed values: the values its digest covers and the
+ * values the client returns are these same ones (finding session-files-20: `more: "false"`
+ * hashed as true by its truthiness while the caller got the string, and `mode: "420"` hashed as
+ * 420 while the caller got "420"). A field of the wrong JSON type (a flag that is not a boolean,
+ * a number that is not an integer in its range, a string field that is not a string, an unknown
+ * enum name, bytes that are not base64, a list that is not one), and a result holding two
+ * answers of the one oneof (finding session-files-1), throw WireShapeError: the answer is
+ * malformed. An integer may come as a JSON number or a decimal string, as proto3 JSON allows;
+ * either decodes to the same value.
+ */
+export function decodeFilesResult(f: WireFilesResult): FilesResultValues {
+  if (!isMessage(f)) throw new WireShapeError("the file call's result is not a message");
+  const answers = filesAnswers(f);
+  if (answers.length > 1) throw new WireShapeError(`the file call's result holds ${answers.length} answers (${answers.join(", ")}); it has one at most`);
+  // An answer is a message: a present field of another type (stat: 0) would count as an answer
+  // here and decode as none below.
+  for (const [name] of FILES_OPS) {
+    const v = f[name];
+    if (v !== undefined && v !== null && !isMessage(v)) throw new WireShapeError(`the file call's ${name} answer is not a message`);
+  }
+  let answer: FilesAnswerValues | undefined;
+  if (f.stat) {
+    answer = {
+      op: "stat",
+      type: wireEnum(FILES_ENTRY_TYPES, f.stat.type, "type"),
+      size: filesInt(f.stat.size, "size", UINT64),
+      mode: Number(filesInt(f.stat.mode, "mode", UINT32)),
+    };
+  } else if (f.read) {
+    answer = { op: "read", content: b64(f.read.content), sizeAtOpen: filesInt(f.read.sizeAtOpen, "sizeAtOpen", UINT64) };
+  } else if (f.write) {
+    answer = { op: "write", written: filesInt(f.write.written, "written", UINT64) };
+  } else if (f.list) {
+    answer = {
+      op: "list",
+      entries: wireObjects(f.list.entries, "entries").map((en) => ({
+        path: b64(en.path),
+        type: wireEnum(FILES_ENTRY_TYPES, en.type, "type"),
+        size: filesInt(en.size, "size", UINT64),
+      })),
+      more: wireBool(f.list.more, "more"),
+    };
+  } else if (f.readMany) {
+    answer = {
+      op: "read_many",
+      items: wireObjects(f.readMany.items, "items").map((it) => ({
+        error: wireEnum(FILES_ERRORS, it.error, "error"),
+        errno: wireStr(it.errno, "errno"),
+        content: b64(it.content),
+        sizeAtOpen: filesInt(it.sizeAtOpen, "sizeAtOpen", UINT64),
+      })),
+      more: wireBool(f.readMany.more, "more"),
+    };
+  } else if (f.makeDir) answer = { op: "make_dir" };
+  else if (f.remove) answer = { op: "remove" };
+  else if (f.rename) answer = { op: "rename" };
+  return { outcome: wireEnum(OUTCOMES, f.outcome, "outcome"), error: wireEnum(FILES_ERRORS, f.error, "error"), errno: wireStr(f.errno, "errno"), answer };
+}
+
+// A file call's result: the outcome and error by their numbers, the errno name, then the
+// operation the answer names by its word ("" for none) and its fields (record.filesResult),
+// each the value decodeFilesResult read.
+function filesResult(e: Encoder, f: WireFilesResult): void {
+  const d = decodeFilesResult(f);
+  e.int("outcome", d.outcome);
+  e.int("error", d.error);
+  e.str("errno", d.errno);
+  const a = d.answer;
+  switch (a?.op) {
+    case "stat":
+      e.str("op", "stat");
+      e.int("type", a.type);
+      e.int("size", a.size);
+      e.int("mode", a.mode);
+      break;
+    case "read":
+      e.str("op", "read");
+      e.bytes("content", a.content);
+      e.int("size_at_open", a.sizeAtOpen);
+      break;
+    case "write":
+      e.str("op", "write");
+      e.int("written", a.written);
+      break;
+    case "list":
+      e.str("op", "list");
+      e.int("entries", a.entries.length);
+      for (const en of a.entries) {
+        e.bytes("entry_path", en.path);
+        e.int("entry_type", en.type);
+        e.int("entry_size", en.size);
+      }
+      e.bool("more", a.more);
+      break;
+    case "read_many":
+      e.str("op", "read_many");
+      e.int("items", a.items.length);
+      for (const it of a.items) {
+        e.int("item_error", it.error);
+        e.str("item_errno", it.errno);
+        e.bytes("item_content", it.content);
+        e.int("item_size_at_open", it.sizeAtOpen);
+      }
+      e.bool("more", a.more);
+      break;
+    case "make_dir":
+    case "remove":
+    case "rename":
+      e.str("op", a.op);
+      break;
+    default:
+      e.str("op", "");
+  }
+}
+
 /**
  * Why a live answer's record version is refused: a newer daemon (upgrade the client) or an
  * older one. A live answer must carry the current version; it is never called forged.
@@ -204,9 +469,15 @@ export function outcomeNumber(name: string | number | undefined): number | undef
 
 const b64 = wireBytes;
 
-/** The result digest of a Run response as it arrived on the wire. */
-export function resultDigest(resp: WireRunResponse): string {
-  const e = new Encoder("plimsoll.run-result.v1");
+/**
+ * The result digest of a Run response as it arrived on the wire, as a record of the given
+ * version states it (record.ResultDigestFor): the version fixes the result domain
+ * (RESULT_DOMAINS: plimsoll.run-result.v1 to version 5, plimsoll.run-result.v2, which adds
+ * the files kind, from 6).
+ */
+export function resultDigest(resp: WireRunResponse, version: number = RECORD_VERSION): string {
+  const domain = RESULT_DOMAINS[version] ?? RESULT_DOMAINS[RECORD_VERSION]!;
+  const e = new Encoder(domain);
   if (resp.javascript) {
     const j = resp.javascript;
     e.str("kind", "javascript");
@@ -250,6 +521,10 @@ export function resultDigest(resp: WireRunResponse): string {
     e.bool("stderr_truncated", c.stderrTruncated ?? false);
     e.bool("interpreter_started", c.interpreterStarted ?? false);
     e.bool("interpreter_ended", c.interpreterEnded ?? false);
+  } else if (resp.files && domain === FILES_RESULT_DOMAIN) {
+    // plimsoll.run-result.v1 covers four kinds; a files result is none of them there.
+    e.str("kind", "files");
+    filesResult(e, resp.files);
   } else {
     // A module result, or none: this client sends neither, so the record check
     // refuses the response as not of the request's kind, after this digest is
@@ -352,7 +627,7 @@ export function recordDigest(r: RunRecord): string {
 /**
  * Which calls each published record version records (record.published's answered and
  * unanswered flags): versions 1 and 2 answered calls only, version 3 unanswered session
- * calls only, versions 4 and 5 both. Published versions are frozen, so this is too; a
+ * calls only, versions 4 to 6 both. Published versions are frozen, so this is too; a
  * version missing here records nothing, so a new one is refused until it is added, and a
  * test holds the keys to RECORD_FIELDS' (finding release-85).
  */
@@ -362,6 +637,7 @@ export const RECORD_KINDS: Readonly<Record<number, { answered: boolean; unanswer
   3: { answered: false, unanswered: true },
   4: { answered: true, unanswered: true },
   5: { answered: true, unanswered: true },
+  6: { answered: true, unanswered: true },
 };
 
 /**
@@ -488,31 +764,40 @@ export function checkUnanswered(
 /**
  * Checks everything a record states that the caller can recompute: the version,
  * both digests, the evidence the response repeats, the software rule and the
- * record's own digest. Returns the reason it does not check, or undefined.
+ * record's own digest. Returns the reason it does not check, or undefined. For a file call,
+ * op is the word of the operation the request asked (filesOp): its answer must be of that
+ * operation, and its outcome, error and answer must agree.
  */
 export function checkRecord(
   reqDigest: string,
-  kind: "javascript" | "project" | "cell",
+  kind: "javascript" | "project" | "cell" | "files",
   rule: WireSoftwareRule | undefined,
   resp: WireRunResponse,
+  op = "",
 ): { record: RunRecord } | { problem: string } {
   if (!resp.record) return { problem: "the response carries no run record" };
   const r = recordFromWire(resp.record);
+  if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
   let result: string;
   try {
-    result = resultDigest(resp);
+    result = resultDigest(resp, r.version);
   } catch (e) {
     if (e instanceof WireShapeError) return { problem: `the answer is malformed: ${e.message}` };
     throw e;
   }
-  if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
   if (r.unanswered !== "") return { problem: "an answered call's record states an unanswered code" };
   // The kind, inside the check as in Go's record.check since 2026-10-26: a result of
   // another kind fails here, before a session's chain moves on, so a daemon caught
   // answering the wrong kind is not used further (review, 2026-10-26).
-  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  const kinds = RESULT_KINDS.filter((k) => resp[k] !== undefined && resp[k] !== null);
   if (kinds.length > 1) return { problem: `the answer holds ${kinds.length} results; a run has one` };
   if (kinds.length !== 1 || kinds[0] !== kind) return { problem: `the daemon answered a ${kind} request with ${kinds.length === 1 ? kinds[0] : "no"} result` };
+  if (kind === "files" && resp.files) {
+    // The answer must be of the operation the request asked (op), and its outcome, error
+    // and answer must agree.
+    const files = filesAnswerProblem(resp.files, op);
+    if (files !== undefined) return { problem: files };
+  }
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the result received digests to ${result}` };
   if (r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "")) return { problem: "the record's provider or tier differs from the response's" };
@@ -534,6 +819,60 @@ export function checkRecord(
   return { record: r };
 }
 
+/** A FilesRun's operations and a FilesResult's answers, by their JSON names and their words. */
+const FILES_OPS = [
+  ["stat", "stat"], ["read", "read"], ["write", "write"], ["list", "list"], ["readMany", "read_many"],
+  ["makeDir", "make_dir"], ["remove", "remove"], ["rename", "rename"],
+] as const;
+
+/** The word of the operation a file call's request (FilesRun) asks, "" for none. */
+export function filesOp(f: WireFilesRun): string {
+  return FILES_OPS.find(([name]) => f[name] !== undefined && f[name] !== null)?.[1] ?? "";
+}
+
+/** The words of the answers a file call's result (FilesResult) holds. */
+function filesAnswers(f: WireFilesResult): string[] {
+  return FILES_OPS.filter(([name]) => f[name] !== undefined && f[name] !== null).map(([, word]) => word);
+}
+
+const COMPLETED = OUTCOMES.PROJECT_OUTCOME_COMPLETED;
+const ENDED_WITHOUT_ANSWER = new Set(["TIMED_OUT", "PROTOCOL_ERROR", "RUNNER_FAILED"].map((n) => OUTCOMES[`PROJECT_OUTCOME_${n}`]));
+
+/**
+ * What breaks the rule a file call's outcome, error and answer follow (docs/run-records.md,
+ * "A file call's answer"; record.filesAnswer), or undefined: completed with no error carries
+ * exactly one answer, of the operation asked (asked, undefined when the request is not at
+ * hand) and no errno name; completed with an error carries none; timed_out, protocol_error
+ * and runner_failed carry no answer, error or errno name; no other outcome is a file call's.
+ * A read_many item carries its bytes or its error, and no errno name without an error. Two
+ * answers are refused by the digest (filesResult). Throws WireShapeError for an unknown enum.
+ */
+function filesAnswerProblem(f: WireFilesResult, asked: string | undefined): string | undefined {
+  const { outcome, error, errno, answer: decoded } = decodeFilesResult(f);
+  const answer = decoded?.op ?? "";
+  if (outcome === COMPLETED) {
+    if (error !== 0) return answer ? `the file call's result states the error ${error} and carries a ${answer} answer` : undefined;
+    if (errno) return "the file call's result states no error and an errno name";
+    if (!answer) return "the completed file call's result states no error and carries no answer";
+    if (asked !== undefined && answer !== asked) return `a ${asked || "no operation"} call answered with a ${answer} answer`;
+    const items = decoded?.op === "read_many" ? decoded.items : [];
+    for (const [i, it] of items.entries()) {
+      if (it.error !== 0 && (it.content.length !== 0 || it.sizeAtOpen !== 0n)) {
+        return `read_many item ${i} states the error ${it.error} and carries bytes`;
+      }
+      if (it.error === 0 && it.errno !== "") return `read_many item ${i} states no error and an errno name`;
+    }
+    return undefined;
+  }
+  if (ENDED_WITHOUT_ANSWER.has(outcome)) {
+    return answer || error !== 0 || errno ? `the file call that ended with the outcome ${outcome} states an error, an errno name or an answer` : undefined;
+  }
+  return `the outcome ${outcome} is not one a file call has`;
+}
+
+/** Every result kind a RunResponse can carry, in its oneof's order. */
+const RESULT_KINDS = ["javascript", "project", "module", "cell", "files"] as const;
+
 /**
  * Checks the answer an attach returned for a lost call (AttachSessionResponse.lostAnswer)
  * against that call's record, which the caller has already checked against its
@@ -543,7 +882,7 @@ export function checkRecord(
  * request itself is not at hand, only its digest, so the record's request digest and
  * software rule stand for it. Returns the result's kind, or the reason it does not check.
  */
-export function checkLostAnswer(resp: WireRunResponse, lost: RunRecord): { kind: "javascript" | "project" | "cell" } | { problem: string } {
+export function checkLostAnswer(resp: WireRunResponse, lost: RunRecord): { kind: "javascript" | "project" | "cell" | "files" } | { problem: string } {
   if (resp === null || typeof resp !== "object" || Array.isArray(resp)) return { problem: "the lost call's answer is not an object" };
   if (!resp.record) return { problem: "the lost call's answer carries no run record" };
   const r = recordFromWire(resp.record);
@@ -553,17 +892,23 @@ export function checkLostAnswer(resp: WireRunResponse, lost: RunRecord): { kind:
   const bounds = statesOnlyProblem(r);
   if (bounds !== undefined) return { problem: bounds };
   if (r.sha256 !== recordDigest(r)) return { problem: `record digest ${r.sha256}, its fields digest to ${recordDigest(r)}` };
-  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  const kinds = RESULT_KINDS.filter((k) => resp[k] !== undefined && resp[k] !== null);
   const kind = kinds[0];
   if (kinds.length !== 1 || kind === "module" || kind === undefined) return { problem: "the lost call's answer holds no one result of a session call's kind" };
   let result: string;
   try {
-    result = resultDigest(resp);
+    result = resultDigest(resp, r.version);
   } catch (e) {
     if (e instanceof WireShapeError) return { problem: `the lost call's answer is malformed: ${e.message}` };
     throw e;
   }
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the lost call's answer digests to ${result}` };
+  if (kind === "files" && resp.files) {
+    // The request is not at hand, so neither is its operation: every other part of the
+    // rule is checked. resultDigest above has read every enum this reads.
+    const files = filesAnswerProblem(resp.files, undefined);
+    if (files !== undefined) return { problem: `the lost call's answer: ${files}` };
+  }
   if (
     r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "") || r.environment !== (resp.environment ?? "") ||
     r.instance !== (resp.instance ?? "") || r.isolationQualification !== (resp.isolationQualification ?? "") || r.warm !== (resp.warm ?? false) ||

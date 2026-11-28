@@ -1,0 +1,1520 @@
+{
+  "about": [
+    "The run-record golden vectors: fixed inputs, in the proto3 JSON form a client sends and",
+    "receives, with the digest each must produce under docs/run-records.md. record/record_test.go,",
+    "clients/python/tests/test_record.py and clients/typescript/test/record.test.ts all read this",
+    "one file, so the three implementations cannot drift apart. Changing a digest here changes the",
+    "encoding for every verifier: change docs/run-records.md first.",
+    "Record version 4 and protocol 4 (2026-10-23): every vector was computed from",
+    "docs/run-records.md alone by an independent Python implementation, which also reproduced",
+    "each vector that did not change (the four results, the session fingerprint and the four",
+    "protocol 2 requests) before the new ones were written.",
+    "Record version 5 and protocol 6 (2026-11-17): the version 5 records and the refused records",
+    "were computed by record/testdata/record_v5.py, a second implementation in Python written from",
+    "docs/run-records.md, which first reproduced every record vector v0.27.1 and v0.22.0 published.",
+    "Each refused record's digest matches its fields; every reader must refuse it anyway, for the",
+    "reason it gives. The version 1 record is one v0.11.1 signed in its bundle",
+    "(attest/testdata/published/v0.11.1-sessions), with the digest that release computed.",
+    "qualifications: sentences every reader's qualification check must accept or refuse (both ends",
+    "of each forbidden range, their neighbors, the byte bound). meets: whether a tier meets a floor,",
+    "for every pair of the five tiers, the empty string and an unknown name."
+  ],
+  "requests": [
+    {
+      "name": "javascript request",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "minimumIsolation": "container",
+        "traceId": "t-1",
+        "timeoutMs": 5000,
+        "javascript": {
+          "code": "console.log(1+1)"
+        }
+      },
+      "sha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f"
+    },
+    {
+      "name": "project request",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "timeoutMs": 30000,
+        "project": {
+          "files": [
+            {
+              "path": "main.js",
+              "content": "console.log(require('./lib.js'))"
+            },
+            {
+              "path": "lib.js",
+              "content": "module.exports = 42"
+            }
+          ],
+          "steps": [
+            "node main.js > out.txt",
+            "cat out.txt"
+          ],
+          "artifacts": [
+            "out.txt"
+          ]
+        }
+      },
+      "sha256": "4539acba5789dc54fdcdd06e1c49788067f933fcab9bd7b29e9141676ca4bb14"
+    },
+    {
+      "name": "module request",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "module": {
+          "model": "VanDerPol",
+          "rows": [
+            {
+              "values": [
+                1,
+                2
+              ]
+            },
+            {
+              "values": [
+                0.5,
+                -3
+              ]
+            }
+          ],
+          "endTime": 1,
+          "step": 0.1
+        }
+      },
+      "sha256": "8f915f4b63f37bd348404c8c0db88f91cf174399c7f49ccdc2b917911ce69b34"
+    },
+    {
+      "name": "javascript request with an approved rule",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "minimumIsolation": "container",
+        "traceId": "t-1",
+        "timeoutMs": 5000,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "javascript": {
+          "code": "console.log(1+1)"
+        }
+      },
+      "sha256": "d60ffa1a2c600acaa6cfcaed620d87d8a6e8657e2778027d4df6725878e111c3"
+    },
+    {
+      "name": "project request with an approved rule",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "timeoutMs": 30000,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "project": {
+          "files": [
+            {
+              "path": "main.js",
+              "content": "console.log(require('./lib.js'))"
+            },
+            {
+              "path": "lib.js",
+              "content": "module.exports = 42"
+            }
+          ],
+          "steps": [
+            "node main.js > out.txt",
+            "cat out.txt"
+          ],
+          "artifacts": [
+            "out.txt"
+          ]
+        }
+      },
+      "sha256": "db7f9020738d2072d58b8691aed987fde11644bf130828fda52d79f225198b22"
+    },
+    {
+      "name": "module request with an approved rule",
+      "kind": "run",
+      "request": {
+        "protocol": 4,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "module": {
+          "model": "VanDerPol",
+          "rows": [
+            {
+              "values": [
+                1,
+                2
+              ]
+            },
+            {
+              "values": [
+                0.5,
+                -3
+              ]
+            }
+          ],
+          "endTime": 1,
+          "step": 0.1
+        }
+      },
+      "sha256": "757ec60b561d9093ff2231431c8fe14213aa647d481df955656fe3fa0aa19b00"
+    },
+    {
+      "name": "cell request",
+      "kind": "session",
+      "request": {
+        "protocol": 4,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "cell": {
+          "language": "python",
+          "code": "import json\njson.loads(open('in.json').read())['n'] + 1",
+          "files": [
+            {
+              "path": "in.json",
+              "content": "{\"n\": 41}"
+            }
+          ]
+        }
+      },
+      "sha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
+    }
+  ],
+  "results": [
+    {
+      "name": "javascript result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "container",
+        "durationMs": "812",
+        "javascript": {
+          "stdout": "Mgo=",
+          "stderr": "/3g="
+        }
+      },
+      "sha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d"
+    },
+    {
+      "name": "project result",
+      "response": {
+        "sandbox": "openshell",
+        "isolation": "container",
+        "durationMs": "4210",
+        "project": {
+          "steps": [
+            {
+              "command": "node main.js > out.txt",
+              "durationMs": "90"
+            },
+            {
+              "command": "cat out.txt",
+              "stdout": "NDIK",
+              "durationMs": "3"
+            }
+          ],
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "artifacts": [
+            {
+              "path": "out.txt",
+              "content": "NDIK"
+            }
+          ]
+        }
+      },
+      "sha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f"
+    },
+    {
+      "name": "module result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "module": {
+          "runs": [
+            {
+              "status": 2,
+              "outputs": [
+                1,
+                1.5
+              ]
+            },
+            {
+              "status": -3
+            }
+          ],
+          "width": 1,
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "stdout": "cm93cz0yCg=="
+        }
+      },
+      "sha256": "7bf330fc9945ab802a68a0da5a53ec0a40344c5212106e159ce77479e687c2ec"
+    },
+    {
+      "name": "cell result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "95",
+        "cell": {
+          "stdout": "NDIK",
+          "interpreterStarted": true
+        }
+      },
+      "sha256": "0ac5e3bdf4e3bc7f4bd2b5b11b44a57c2ac22bf5869825c6d8dc6f56909d1b61"
+    }
+  ],
+  "records": [
+    {
+      "name": "record",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "instance": "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37",
+        "isolationQualification": "A sentence its vendor requires beside the tier, with bytes past ASCII: caf\u00e9, \u2265 2.",
+        "daemonVersion": "v0.28.0"
+      },
+      "sha256": "8402c5db3596af9425418ae8d9301fa10adb8e06677876205316374291c80def"
+    },
+    {
+      "name": "unanswered record",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "unanswered": "unavailable",
+        "isolationQualification": "Stated at open.",
+        "daemonVersion": "(devel)"
+      },
+      "sha256": "90b340923e174d3b5cff00ed35ff76bf9a2ded389c0dfb315bbf61532d08be5a"
+    },
+    {
+      "name": "warm record",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "c96b93bbaaddc7fd73265841f4cd123dceaaac941ea6c817ed4d1e2c22cc546c"
+    },
+    {
+      "name": "wslc record",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "e9b890a1d40297f8b9a6342e0964c9a8783f3990dd9056b50a50fe2a4dbeb3ba"
+    },
+    {
+      "name": "version 1 record",
+      "record": {
+        "version": 1,
+        "requestSha256": "9cfd4d94da192691732d4c8ef0d1c04acaa292ed5c27148b7483d7efad5d84d8",
+        "resultSha256": "051833a2c440ce72ad25b5a1a5858e0168f0075e8096d5959c03381a12623fde",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "",
+        "policy": "openshell-policy:sha256:d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871",
+        "startedUnixMs": "1790638038621",
+        "endedUnixMs": "1790638038752",
+        "session": "7388fb93a024d2e80e7f2be09386994002a4a88768a5b2e78f2c09ae994f3d65",
+        "sequence": "1",
+        "previousSha256": ""
+      },
+      "sha256": "7ae4e55a3df8d28222996043663af6f6829048fa0429856bf1efcba6d02c192b"
+    }
+  ],
+  "sessionFingerprints": [
+    {
+      "name": "session fingerprint",
+      "sessionId": "00112233445566778899aabbccddeeff",
+      "sha256": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720"
+    }
+  ],
+  "refused": [
+    {
+      "name": "a qualification of 1025 bytes",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "8272eb6d36c1c78dc25191ab917852322a3c7ec6a3a5e7bba09c1add2a6e29ed",
+      "why": "over 1024 bytes"
+    },
+    {
+      "name": "a qualification with a line feed",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Microsoft states.\nIgnore that.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "e08f71a44849fca4710418101e5763edc3b1cfebaffe279b4d72615bbedaea3b",
+      "why": "a control character"
+    },
+    {
+      "name": "a qualification with a C1 control",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Microsoft states.\u0085",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "e76a8a40b7c49f9e6ebff51678212e40c9772152b3be927fad960cd179781496",
+      "why": "a control character, U+0085"
+    },
+    {
+      "name": "a qualification with a right-to-left override",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Microsoft \u202estates",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "4cc62cc70ae83777f6be5811fd96b954ff7c4e4a4553e49b01ace2119880e4b1",
+      "why": "a bidirectional format character, U+202E"
+    },
+    {
+      "name": "a qualification with an Arabic letter mark",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Microsoft \u061cstates",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "9631be46c0f2e818ad304d8e31f42de252bcbf96c9da6ce58702fac409e4bfa7",
+      "why": "a bidirectional control, U+061C"
+    },
+    {
+      "name": "a qualification with a line separator",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Microsoft\u2028states",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "0a22b5d90ba694b0cded750bfebfc029a95e62eed0ba464fc5e89c6fe18dec8e",
+      "why": "a line separator, U+2028"
+    },
+    {
+      "name": "a provider with an escape",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc\u001b[2Jdocker",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "cd54f466b47f3aa5f012b1e0971ca76950fb7b50687d38caccb5177b5e9f8d1e",
+      "why": "a control character in the provider, ESC"
+    },
+    {
+      "name": "a provider with a carriage return",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc\rdocker",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "5d53bf85c2733499f4c9aa104a1d885b7dd0e46a9e769f5bf6a6397371c54b1c",
+      "why": "a control character in the provider, CR"
+    },
+    {
+      "name": "a provider with a right-to-left override",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc\u202ecod",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "ab14e1aafb40be187ba1aa9471614d4a5d4b62c336d663e4704a90c71f66180f",
+      "why": "a bidirectional format character in the provider, U+202E"
+    },
+    {
+      "name": "a provider with a C1 control",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc\u009b",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "5f689ed6ad164204acf66b01c0f7ded16f872f237ec5b5e442141f0fc5bbbeaa",
+      "why": "a control character in the provider, U+009B"
+    },
+    {
+      "name": "an unanswered record whose provider holds a line feed",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "docker\nisolation vm",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "unanswered": "unavailable",
+        "isolationQualification": "Stated at open.",
+        "daemonVersion": "(devel)"
+      },
+      "sha256": "1c796c37fa7f708f7c5a3adb5f7c66a19640e21e4aea09dd0f2bdce739d1752b",
+      "why": "a control character in the provider, LF"
+    },
+    {
+      "name": "a version 4 record whose provider holds an escape",
+      "record": {
+        "version": 4,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc\u001b]0;x\u0007",
+        "isolation": "vm",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "6484985c73c84951a8387d573cb14a08aecd8caad00f2c0f0944b7618c0bb0ba",
+      "why": "a control character in the provider, in a version that may still be read"
+    },
+    {
+      "name": "a daemon version without its v",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "482a5347f8be2d93f6015b6e86520daa17ce4572b834695ad00ef2331f991901",
+      "why": "not a module version"
+    },
+    {
+      "name": "a daemon version of two numbers",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "04aab01a1cf9f29b47feaf0de005cc541b92952fb71b18aeb4e4c3ee22bb3e72",
+      "why": "not a module version"
+    },
+    {
+      "name": "a daemon version with a space",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0 (patched)",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "e954b1b2d201b2645e01bb790304f65a856636fa0dd13b1c4b5d070e88671fdc",
+      "why": "not a module version"
+    },
+    {
+      "name": "a version 4 record stating warm",
+      "record": {
+        "version": 4,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "a9f8efd3b0418460547964e48e69d9088f107b988acc165c2efb84c1409c273e",
+      "why": "version 4 does not cover warm"
+    },
+    {
+      "name": "a version 4 record stating a qualification",
+      "record": {
+        "version": 4,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "4079f6580fc0a049244079da47060d80df5bd9b695b59be40de58bd59a96c1b4",
+      "why": "version 4 does not cover isolation_qualification"
+    },
+    {
+      "name": "a tier in capitals",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "VM",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "802d2fdcc2926d97d09c7e5155d1471999d660343d2e5a646bc1bed663b20002",
+      "why": "not a tier"
+    },
+    {
+      "name": "a tier with words after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm (trust me)",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "0943fd4a8e6a443907b518b6439d146e5362fadb2bd7f5944bd495bf9320debe",
+      "why": "not a tier"
+    },
+    {
+      "name": "the tier unknown",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "unknown",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "77890384ef254c4d550a9d59dd6464734302a13aa5f958dba5d78315111d094c",
+      "why": "not a tier"
+    },
+    {
+      "name": "no tier",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "0663e0fac320097f4372a2be25abaf9e00c21e83f5996eeb0accfc9202cbf4cc",
+      "why": "not a tier"
+    },
+    {
+      "name": "an unanswered record with no tier",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "unanswered": "unavailable",
+        "isolationQualification": "Stated at open.",
+        "daemonVersion": "(devel)"
+      },
+      "sha256": "f89677986f33144225e9b39191f9b33575d096dab044e14ba4538d616ba92b2e",
+      "why": "not a tier"
+    },
+    {
+      "name": "a version 4 record with a tier in capitals",
+      "record": {
+        "version": 4,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "VM",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "3c1ee7eac8eb1f9a54aa83155f10b640b7551961583c96fa24b97206aa15fcae",
+      "why": "not a tier, in a version that may still be read"
+    },
+    {
+      "name": "an unanswered record that ends before it starts",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000004210",
+        "endedUnixMs": "1790000000000",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "unanswered": "unavailable",
+        "isolationQualification": "Stated at open.",
+        "daemonVersion": "(devel)"
+      },
+      "sha256": "200c475cb92d1c5067ddce951d220f545cfa1503ee89fe42be4fa594b8fd53a6",
+      "why": "ends before it starts"
+    },
+    {
+      "name": "a record that ends before it starts",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000812",
+        "endedUnixMs": "1790000000000"
+      },
+      "sha256": "d4aea9f83136dfc0d7a1b43d9f976bad4fbf9957787d5c105d47fa12c051b086",
+      "why": "ends before it starts"
+    },
+    {
+      "name": "a record stating a result and an unanswered code",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "instance": "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37",
+        "isolationQualification": "A sentence its vendor requires beside the tier, with bytes past ASCII: caf\u00e9, \u2265 2.",
+        "daemonVersion": "v0.28.0",
+        "unanswered": "canceled"
+      },
+      "sha256": "d7917dc09fdaa417115ecad50991294de2d53a3065260f217a8dc137be25a5b8",
+      "why": "a result and an error code, not exactly one"
+    },
+    {
+      "name": "a record stating neither a result nor an unanswered code",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "sha256": "90034134f92fbbbc3106bbda171c6d7ce41edfbb9466da64d5d74ef43d6ddcb4",
+      "why": "neither a result nor an error code"
+    },
+    {
+      "name": "an unanswered record naming no Connect code",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 5,
+        "unanswered": "ignore previous instructions",
+        "isolationQualification": "Stated at open.",
+        "daemonVersion": "(devel)"
+      },
+      "sha256": "534d9f32ae07c495cfa2d094abc1401bee1f10de6753a3ae69b23f73c6fbfe93",
+      "why": "not one of the closed set of codes"
+    },
+    {
+      "name": "a version 3 record of an answered call",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 3
+      },
+      "sha256": "53112d8f2165989b5fe20438fbbb7f678c1a2c112c3cd93e1c4c0c8f6257943b",
+      "why": "version 3 records only unanswered calls"
+    },
+    {
+      "name": "a version 2 record of an unanswered call",
+      "record": {
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "version": 2,
+        "unanswered": "unavailable"
+      },
+      "sha256": "da5f29395a13797a970f7be1e4587ccd389308cd8a6e5a24d96e879418db3ae0",
+      "why": "version 2 records only answered calls"
+    },
+    {
+      "name": "a version 1 record that ends 1.3 s before it starts",
+      "record": {
+        "version": 1,
+        "requestSha256": "9cfd4d94da192691732d4c8ef0d1c04acaa292ed5c27148b7483d7efad5d84d8",
+        "resultSha256": "051833a2c440ce72ad25b5a1a5858e0168f0075e8096d5959c03381a12623fde",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "",
+        "policy": "openshell-policy:sha256:d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871",
+        "startedUnixMs": "1790638038621",
+        "endedUnixMs": "1790638037321",
+        "session": "7388fb93a024d2e80e7f2be09386994002a4a88768a5b2e78f2c09ae994f3d65",
+        "sequence": "1",
+        "previousSha256": ""
+      },
+      "sha256": "d2325ef85d47910fd7f4992c6fd5c5fb6d58be9bf2da8a3c8dc22d00058a04ab",
+      "why": "retired by the decision of 2026-11-21"
+    },
+    {
+      "name": "a version 2 record that ends 1.3 s before it starts",
+      "record": {
+        "version": 2,
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1789999998700",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001"
+      },
+      "sha256": "13187d57ee05d4d522166834a662747b7b9fcc9a74dcebb6406e67d5df092eda",
+      "why": "retired by the decision of 2026-11-21"
+    }
+  ],
+  "malformed": [
+    {
+      "name": "warm as the string true",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": "true",
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "warm is a JSON boolean"
+    },
+    {
+      "name": "warm as the number 1",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": 1,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "warm is a JSON boolean"
+    },
+    {
+      "name": "a qualification that is a number",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": 5,
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": "v0.28.0",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "the sentence is a JSON string"
+    },
+    {
+      "name": "a daemon version that is a list",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "wslc",
+        "isolation": "vm",
+        "isolationQualification": "Hyper-V VM per run (one WSLC session per run). Microsoft states that WSL is not a security sandbox for running untrusted code; the VM wall is Hyper-V's, and the Windows components around it (network relay, shares, interop) run with the user's rights. The operator of this daemon set SANDBOX_WSLC_ACCEPT_VM_TIER=1.",
+        "environment": "wslc-image:sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "daemonVersion": [
+          "v0.28.0"
+        ],
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "the daemon version is a JSON string"
+    },
+    {
+      "name": "a start time with a second number after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000 1",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a comma after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000,",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a zero byte after it",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000\u0000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a version with a second number after it",
+      "record": {
+        "version": "5 6",
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with a decimal point",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "1790000000000.0",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    },
+    {
+      "name": "a start time with an exponent",
+      "record": {
+        "version": 5,
+        "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
+        "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
+        "provider": "docker",
+        "isolation": "kernel",
+        "warm": true,
+        "daemonVersion": "v0.28.1-0.20261117210242-4ca8fb4d330e+dirty",
+        "startedUnixMs": "179e10",
+        "endedUnixMs": "1790000000812"
+      },
+      "why": "an integer in a string is one whole decimal"
+    }
+  ],
+  "qualifications": [
+    {
+      "name": "U+0000 (refused)",
+      "text": "Microsoft \u0000states.",
+      "valid": false
+    },
+    {
+      "name": "U+001F (refused)",
+      "text": "Microsoft \u001fstates.",
+      "valid": false
+    },
+    {
+      "name": "U+0020",
+      "text": "Microsoft  states.",
+      "valid": true
+    },
+    {
+      "name": "U+007E",
+      "text": "Microsoft ~states.",
+      "valid": true
+    },
+    {
+      "name": "U+007F (refused)",
+      "text": "Microsoft \u007fstates.",
+      "valid": false
+    },
+    {
+      "name": "U+009F (refused)",
+      "text": "Microsoft \u009fstates.",
+      "valid": false
+    },
+    {
+      "name": "U+00A0",
+      "text": "Microsoft \u00a0states.",
+      "valid": true
+    },
+    {
+      "name": "U+00E9",
+      "text": "Microsoft \u00e9states.",
+      "valid": true
+    },
+    {
+      "name": "U+061B",
+      "text": "Microsoft \u061bstates.",
+      "valid": true
+    },
+    {
+      "name": "U+061C (refused)",
+      "text": "Microsoft \u061cstates.",
+      "valid": false
+    },
+    {
+      "name": "U+061D",
+      "text": "Microsoft \u061dstates.",
+      "valid": true
+    },
+    {
+      "name": "U+200B",
+      "text": "Microsoft \u200bstates.",
+      "valid": true
+    },
+    {
+      "name": "U+200D",
+      "text": "Microsoft \u200dstates.",
+      "valid": true
+    },
+    {
+      "name": "U+200E (refused)",
+      "text": "Microsoft \u200estates.",
+      "valid": false
+    },
+    {
+      "name": "U+200F (refused)",
+      "text": "Microsoft \u200fstates.",
+      "valid": false
+    },
+    {
+      "name": "U+2010",
+      "text": "Microsoft \u2010states.",
+      "valid": true
+    },
+    {
+      "name": "U+2027",
+      "text": "Microsoft \u2027states.",
+      "valid": true
+    },
+    {
+      "name": "U+2028 (refused)",
+      "text": "Microsoft \u2028states.",
+      "valid": false
+    },
+    {
+      "name": "U+2029 (refused)",
+      "text": "Microsoft \u2029states.",
+      "valid": false
+    },
+    {
+      "name": "U+202A (refused)",
+      "text": "Microsoft \u202astates.",
+      "valid": false
+    },
+    {
+      "name": "U+202E (refused)",
+      "text": "Microsoft \u202estates.",
+      "valid": false
+    },
+    {
+      "name": "U+202F",
+      "text": "Microsoft \u202fstates.",
+      "valid": true
+    },
+    {
+      "name": "U+2065",
+      "text": "Microsoft \u2065states.",
+      "valid": true
+    },
+    {
+      "name": "U+2066 (refused)",
+      "text": "Microsoft \u2066states.",
+      "valid": false
+    },
+    {
+      "name": "U+2069 (refused)",
+      "text": "Microsoft \u2069states.",
+      "valid": false
+    },
+    {
+      "name": "U+206A",
+      "text": "Microsoft \u206astates.",
+      "valid": true
+    },
+    {
+      "name": "empty",
+      "text": "",
+      "valid": true
+    },
+    {
+      "name": "1024 bytes",
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "valid": true
+    },
+    {
+      "name": "1025 bytes",
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "valid": false
+    },
+    {
+      "name": "512 two-byte characters",
+      "text": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "valid": true
+    },
+    {
+      "name": "512 two-byte characters and one more byte",
+      "text": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9x",
+      "valid": false
+    }
+  ],
+  "meets": [
+    {
+      "tier": "none",
+      "floor": "none",
+      "meets": true
+    },
+    {
+      "tier": "none",
+      "floor": "process",
+      "meets": false
+    },
+    {
+      "tier": "none",
+      "floor": "container",
+      "meets": false
+    },
+    {
+      "tier": "none",
+      "floor": "kernel",
+      "meets": false
+    },
+    {
+      "tier": "none",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "none",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "none",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "process",
+      "floor": "none",
+      "meets": true
+    },
+    {
+      "tier": "process",
+      "floor": "process",
+      "meets": true
+    },
+    {
+      "tier": "process",
+      "floor": "container",
+      "meets": false
+    },
+    {
+      "tier": "process",
+      "floor": "kernel",
+      "meets": false
+    },
+    {
+      "tier": "process",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "process",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "process",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "container",
+      "floor": "none",
+      "meets": true
+    },
+    {
+      "tier": "container",
+      "floor": "process",
+      "meets": true
+    },
+    {
+      "tier": "container",
+      "floor": "container",
+      "meets": true
+    },
+    {
+      "tier": "container",
+      "floor": "kernel",
+      "meets": false
+    },
+    {
+      "tier": "container",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "container",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "container",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "kernel",
+      "floor": "none",
+      "meets": true
+    },
+    {
+      "tier": "kernel",
+      "floor": "process",
+      "meets": true
+    },
+    {
+      "tier": "kernel",
+      "floor": "container",
+      "meets": true
+    },
+    {
+      "tier": "kernel",
+      "floor": "kernel",
+      "meets": true
+    },
+    {
+      "tier": "kernel",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "kernel",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "kernel",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "vm",
+      "floor": "none",
+      "meets": true
+    },
+    {
+      "tier": "vm",
+      "floor": "process",
+      "meets": true
+    },
+    {
+      "tier": "vm",
+      "floor": "container",
+      "meets": true
+    },
+    {
+      "tier": "vm",
+      "floor": "kernel",
+      "meets": true
+    },
+    {
+      "tier": "vm",
+      "floor": "vm",
+      "meets": true
+    },
+    {
+      "tier": "vm",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "vm",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "none",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "process",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "container",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "kernel",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "",
+      "floor": "unknown",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "none",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "process",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "container",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "kernel",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "vm",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "",
+      "meets": false
+    },
+    {
+      "tier": "unknown",
+      "floor": "unknown",
+      "meets": false
+    }
+  ]
+}

@@ -375,7 +375,23 @@ class _RecordingSession:
             self._keep(result.record, result=result)
         return result
 
-    def _keep(self, record: RunRecord, *, result: Optional[ProjectResult]) -> None:
+    def run_files(self, op: Any, **kw: Any) -> Any:
+        """A file call of the workspace's, its record kept as run_project's are."""
+        try:
+            result = self._session.run_files(op, **kw)
+        except PlimsollError as e:
+            if e.record is not None:
+                self._keep(e.record, result=None)
+            raise
+        if result.record is not None:
+            self._keep(result.record, result=result)
+        return result
+
+    @property
+    def work_dir(self) -> str:
+        return self._session.work_dir
+
+    def _keep(self, record: RunRecord, *, result: Optional[Any]) -> None:
         try:
             self._sink(record)
         except Exception as e:

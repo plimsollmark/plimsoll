@@ -43,6 +43,69 @@ export const REFUSALS: Readonly<Record<string, number>> = {
 };
 export const REFUSAL_NAMES = ["unknown", "request", "permission", "protocol", "unsupported", "isolation", "capacity", "environment"] as const;
 
+/** plimsoll.v1.FilesScope, by number. */
+export const FILES_SCOPES: Readonly<Record<string, number>> = {
+  FILES_SCOPE_UNSPECIFIED: 0,
+  FILES_SCOPE_WORK: 1,
+  FILES_SCOPE_SANDBOX: 2,
+};
+export const FILES_SCOPE_NAMES = ["unspecified", "work", "sandbox"] as const;
+
+/** plimsoll.v1.FilesWriteMode, by number. */
+export const FILES_WRITE_MODES: Readonly<Record<string, number>> = {
+  FILES_WRITE_MODE_UNSPECIFIED: 0,
+  FILES_WRITE_MODE_REPLACE: 1,
+  FILES_WRITE_MODE_CREATE_ONLY: 2,
+  FILES_WRITE_MODE_APPEND: 3,
+};
+export const FILES_WRITE_MODE_NAMES = ["unspecified", "replace", "create_only", "append"] as const;
+
+/** plimsoll.v1.FilesError, by number. */
+export const FILES_ERRORS: Readonly<Record<string, number>> = {
+  FILES_ERROR_UNSPECIFIED: 0,
+  FILES_ERROR_NOT_FOUND: 1,
+  FILES_ERROR_IS_DIR: 2,
+  FILES_ERROR_NOT_DIR: 3,
+  FILES_ERROR_EXISTS: 4,
+  FILES_ERROR_SYMLINK: 5,
+  FILES_ERROR_NOT_REGULAR: 6,
+  FILES_ERROR_PERMISSION_DENIED: 7,
+  FILES_ERROR_TOO_LARGE: 8,
+  FILES_ERROR_NO_SPACE: 9,
+  FILES_ERROR_READ_ONLY: 10,
+  FILES_ERROR_NOT_EMPTY: 11,
+  FILES_ERROR_SCAN_LIMIT: 12,
+  FILES_ERROR_OTHER: 13,
+};
+export const FILES_ERROR_NAMES = ["none", "not_found", "is_dir", "not_dir", "exists", "symlink", "not_regular", "permission_denied", "too_large", "no_space", "read_only", "not_empty", "scan_limit", "other"] as const;
+
+/** plimsoll.v1.FilesEntryType, by number. */
+export const FILES_ENTRY_TYPES: Readonly<Record<string, number>> = {
+  FILES_ENTRY_TYPE_UNSPECIFIED: 0,
+  FILES_ENTRY_TYPE_FILE: 1,
+  FILES_ENTRY_TYPE_DIR: 2,
+  FILES_ENTRY_TYPE_LINK: 3,
+  FILES_ENTRY_TYPE_OTHER: 4,
+  FILES_ENTRY_TYPE_UNREADABLE: 5,
+};
+export const FILES_ENTRY_TYPE_NAMES = ["unspecified", "file", "dir", "link", "other", "unreadable"] as const;
+
+/** plimsoll.v1.CapacityLimit, by number. */
+export const CAPACITY_LIMITS: Readonly<Record<string, number>> = {
+  CAPACITY_LIMIT_UNSPECIFIED: 0,
+  CAPACITY_LIMIT_SESSIONS: 1,
+  CAPACITY_LIMIT_CALLER_SESSIONS: 2,
+  CAPACITY_LIMIT_OWNER_SESSIONS: 3,
+  CAPACITY_LIMIT_RUNS: 4,
+  CAPACITY_LIMIT_CALLER_RUNS: 5,
+  CAPACITY_LIMIT_RATE: 6,
+  CAPACITY_LIMIT_PAID_SECONDS: 7,
+  CAPACITY_LIMIT_QUEUE: 8,
+  CAPACITY_LIMIT_PROVIDER: 9,
+  CAPACITY_LIMIT_DEADLINE: 10,
+};
+export const CAPACITY_LIMIT_NAMES = ["unknown", "sessions", "caller_sessions", "owner_sessions", "runs", "caller_runs", "rate", "paid_seconds", "queue", "provider", "deadline"] as const;
+
 /** Isolation tiers, weakest first (sandbox.IsolationClass). */
 export const TIERS = ["none", "process", "container", "kernel", "vm"] as const;
 
@@ -50,7 +113,7 @@ export const TIERS = ["none", "process", "container", "kernel", "vm"] as const;
 export const LANGUAGES = ["javascript", "python"] as const;
 
 /** The wire protocol number a client states on every request (protocol.Number). */
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 
 /** The header carrying a client's ID for one request, which the daemon echoes (protocol.RequestIDHeader). */
 export const REQUEST_ID_HEADER = "Plimsoll-Request-Id";
@@ -71,7 +134,7 @@ export const CHECKPOINT_MISMATCH_TEXT = "session checkpoint does not match";
 export const FLOORS = ["process", "container", "kernel", "vm"] as const;
 
 /** The record version a live answer carries (record.Version). */
-export const RECORD_VERSION = 5;
+export const RECORD_VERSION = 6;
 
 /** Each published record version's digest fields, in order (record.PublishedLayouts). */
 export const RECORD_FIELDS: Readonly<Record<number, readonly string[]>> = {
@@ -80,6 +143,24 @@ export const RECORD_FIELDS: Readonly<Record<number, readonly string[]>> = {
   3: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
   4: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
   5: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm", "daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
+  6: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm", "daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
+};
+
+/** Each published record version's result domain, the one its result digests are computed under (record.ResultDomains). */
+export const RESULT_DOMAINS: Readonly<Record<number, string>> = {
+  1: "plimsoll.run-result.v1",
+  2: "plimsoll.run-result.v1",
+  3: "plimsoll.run-result.v1",
+  4: "plimsoll.run-result.v1",
+  5: "plimsoll.run-result.v1",
+  6: "plimsoll.run-result.v2",
+};
+
+/** Each request domain by the first protocol hashed under it; a request takes the domain of the highest first protocol at or below its own (record.RequestDomains). */
+export const REQUEST_DOMAINS: Readonly<Record<number, string>> = {
+  1: "plimsoll.run-request.v1",
+  2: "plimsoll.run-request.v2",
+  9: "plimsoll.run-request.v3",
 };
 
 /** The last record version whose daemons stamped both times from the wall clock; reading such a record that ends before it starts is retired (record.LastWallClockEndVersion). */

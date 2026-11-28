@@ -51,9 +51,24 @@ func TestExchangeFieldsAreTheFormatsOrLater(t *testing.T) {
 	for i, p := range laterFields {
 		later[i] = strings.Join(p.path, ".")
 	}
+	// A field under a later oneof member is later with it.
+	underOneof := func(f string) bool {
+		for _, o := range laterOneofs {
+			p := strings.Join(o, ".")
+			if f == p || strings.HasPrefix(f, p+".") {
+				return true
+			}
+		}
+		return false
+	}
 	have := exchangeFields()
+	for _, o := range laterOneofs {
+		if !slices.Contains(have, strings.Join(o, ".")) {
+			t.Errorf("%s is listed as a later oneof member but no exchange can hold it: delete it", strings.Join(o, "."))
+		}
+	}
 	for _, f := range have {
-		if !slices.Contains(format, f) && !slices.Contains(later, f) {
+		if !slices.Contains(format, f) && !slices.Contains(later, f) && !underOneof(f) {
 			t.Errorf("%s is in neither the published exchange format nor laterFields: add it to laterFields, or make every published bill again", f)
 		}
 	}

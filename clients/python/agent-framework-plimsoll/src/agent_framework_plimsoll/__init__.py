@@ -1,4 +1,4 @@
-"""Run a Microsoft Agent Framework agent's shell commands and code in plimsoll.
+"""Run a Microsoft Agent Framework agent's shell commands, files and code in plimsoll.
 
     from agent_framework import create_harness_agent
     from agent_framework_plimsoll import Client, PlimsollShellTool
@@ -7,6 +7,11 @@
                                  minimum_isolation="kernel") as shell:
         agent = create_harness_agent(chat_client, shell_executor=shell)
 
+    from agent_framework_plimsoll import harness_options
+
+    async with PlimsollShellTool(Client(...), minimum_isolation="kernel") as shell:
+        agent = create_harness_agent(chat_client, **harness_options(shell), disable_file_memory=True)
+
     from agent_framework_plimsoll import CodeExecutor, plimsoll_code_tool
 
     tools = [plimsoll_code_tool(CodeExecutor(Client("https://plimsoll.internal:8746", token=TOKEN)))]
@@ -14,7 +19,9 @@
 The names are plimsoll-client's own, gathered here so an agent imports from one place:
 PlimsollShellTool is plimsoll_client.agent_framework.PlimsollShellTool (one plimsoll session as
 the agent's shell), plimsoll_code_tool is plimsoll_client.agent_framework.plimsoll_code_tool (a
-fresh sandbox per call), Client is plimsoll_client.Client and CodeExecutor is
+fresh sandbox per call), PlimsollFileStore is plimsoll_client.agent_framework.PlimsollFileStore (the
+harness's file store over the shell tool's session, so the file tools and the shell see one tree),
+harness_options gives create_harness_agent both on one session, Client is plimsoll_client.Client and CodeExecutor is
 plimsoll_client.execution.CodeExecutor. PlimsollShellResult is what the shell tool's run returns
 (the framework's ShellResult with the tier, the provider's sentence, the outcome and the checked
 run record), and call_labels gives plimsoll's closed-set labels for a result or a raised refusal,
@@ -25,8 +32,16 @@ less.
 """
 
 from plimsoll_client import Client
-from plimsoll_client.agent_framework import PlimsollShellResult, PlimsollShellTool, call_labels, plimsoll_code_tool
+from plimsoll_client.agent_framework import (
+    PlimsollFileStore,
+    PlimsollShellResult,
+    PlimsollShellTool,
+    call_labels,
+    harness_options,
+    plimsoll_code_tool,
+)
 from plimsoll_client.execution import CodeExecutor
 
-__all__ = ["Client", "CodeExecutor", "PlimsollShellResult", "PlimsollShellTool", "call_labels", "plimsoll_code_tool"]
-__version__ = "0.29.0"
+__all__ = ["Client", "CodeExecutor", "PlimsollFileStore", "PlimsollShellResult", "PlimsollShellTool", "call_labels", "harness_options",
+           "plimsoll_code_tool"]
+__version__ = "0.30.0"

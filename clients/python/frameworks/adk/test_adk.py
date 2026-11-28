@@ -164,10 +164,15 @@ class ADKTests(unittest.TestCase):
         result = replace(result, steps=(replace(result.steps[0], exit_code=3, stderr=b""),),
                          artifacts=(Artifact(path="a.bin", content=b"\x00\xff"),))
         with patch.object(CodeExecutor, "execute_code", return_value=result):
-            out = self.executor().execute_code(None, CodeExecutionInput(code="exit(3)"))
+            out = self.executor(artifact_paths=("a.bin",)).execute_code(None, CodeExecutionInput(code="exit(3)"))
+            unasked = self.executor().execute_code(None, CodeExecutionInput(code="exit(3)"))
         self.assertIn("status 3", out.stderr)  # ADK's event builder ignores exit_code.
         self.assertEqual(out.output_files[0].content, b"\x00\xff")
         self.assertIs(out.execution, result)
+        # A file the executor never named does not reach ADK (which, with no artifact
+        # service, would raise after the block ran); the checked result still holds it.
+        self.assertEqual(unasked.output_files, [])
+        self.assertEqual(unasked.execution.artifacts, result.artifacts)
 
     def test_actual_adk_runner_reads_the_execution_result(self) -> None:
         async def run():
@@ -382,32 +387,49 @@ class ADKTests(unittest.TestCase):
         failing = self.executor().execute_code(None, CodeExecutionInput(code="ECHO:EXIT"))
         self.assertEqual((failing.exit_code, failing.stderr), (3, "boom"), "a failing run keeps its stderr")
 
-    def test_a_runner_without_an_artifact_service_is_refused_before_anything_runs(self) -> None:
-        # ADK needs the artifact service for every execution, not only when
-        # files come back. Without the guard, the block runs and then ADK raises.
-        async def run(plugins: list[Any]) -> tuple[ScriptedModel, Any, Exception]:
+    def test_a_runner_without_an_artifact_service_is_refused_when_files_can_come_back(self) -> None:
+        # ADK 2.15 saves through the artifact service every file a block returns, and raises
+        # after the block has run when there is none; a block that returns no file needs none.
+        async def run(plugins: list[Any], executor: PlimsollCodeExecutor, with_file: bool,
+                      tree: bool = False) -> tuple[ScriptedModel, Any, Any]:
             model = ScriptedModel(codes=("print(1)",))
-            child = Agent(name="offline_child", model=model, code_executor=self.executor())
+            child = Agent(name="offline_child", model=model, code_executor=executor)
             root = Agent(name="offline_root", model=model, sub_agents=[child])
             sessions = InMemorySessionService()
             session = await sessions.create_session(app_name="adk-artifacts", user_id="user")
-            runner = Runner(agent=child if not plugins else root, app_name="adk-artifacts",
+            # The tree: the guard looks through the root to the sub-agent that executes.
+            runner = Runner(agent=root if tree else child, app_name="adk-artifacts",
                             session_service=sessions, plugins=plugins)
             original = CodeExecutor.execute_code
-            with patch.object(CodeExecutor, "execute_code", autospec=True, side_effect=original) as dispatch:
-                with self.assertRaises(Exception) as caught:
+
+            def dispatched(self_: Any, *args: Any, **kwargs: Any) -> Any:
+                r = original(self_, *args, **kwargs)
+                return replace(r, artifacts=(Artifact(path="answer.json", content=b"{}"),)) if with_file else r
+
+            with patch.object(CodeExecutor, "execute_code", autospec=True, side_effect=dispatched) as dispatch:
+                try:
                     async for _ in runner.run_async(user_id="user", session_id=session.id,
                             new_message=types.Content(role="user", parts=[types.Part(text="Use Python.")])):
                         pass
-                return model, dispatch, caught.exception
-        model, dispatch, error = asyncio.run(run([PlimsollCodeExecutorGuard()]))
+                except Exception as e:  # noqa: BLE001 - the cases below say which
+                    return model, dispatch, e
+                return model, dispatch, None
+        files = self.executor(artifact_paths=("answer.json",))
+        model, dispatch, error = asyncio.run(run([PlimsollCodeExecutorGuard()], files, True, tree=True))
+        self.assertIsNotNone(error)
         self.assertIsInstance(error.__cause__, UnsupportedError, error)
         self.assertIn("artifact service", str(error.__cause__))
         self.assertEqual(error.__cause__.not_dispatched, "unsupported")
         self.assertEqual((model.requests, dispatch.call_count), ([], 0), "refused before the model or the daemon")
-        model, dispatch, error = asyncio.run(run([]))
+        model, dispatch, error = asyncio.run(run([], self.executor(artifact_paths=("answer.json",)), True))
         self.assertIn("Artifact service is not initialized", str(error))
         self.assertEqual(dispatch.call_count, 1, "unguarded, the block ran before ADK raised")
+        # No artifact_paths: nothing can come back, so the guard lets the Runner through and
+        # ADK needs no artifact service; a file the daemon returns unasked is not passed on.
+        for with_file in (False, True):
+            model, dispatch, error = asyncio.run(run([PlimsollCodeExecutorGuard()], self.executor(), with_file))
+            self.assertIsNone(error, error)
+            self.assertEqual((len(model.requests), dispatch.call_count), (2, 1))
 
     def test_the_guard_gives_the_model_the_fenced_code_instruction(self) -> None:
         # ADK gives its fence instruction only under optimize_data_file, which
@@ -485,12 +507,13 @@ class ADKTests(unittest.TestCase):
         self.assertEqual(after["run_requests"], before["run_requests"], "a Run reached the daemon after the cancel")
 
     def test_an_agent_wrapped_as_a_tool_is_covered_by_the_artifact_check(self) -> None:
-        # An inner agent behind AgentTool runs in a nested Runner
-        # whose artifact service forwards to the outer one, so the outer Runner's check
+        # An inner agent behind AgentTool, whose executor can return a file, runs in a nested
+        # Runner whose artifact service forwards to the outer one, so the outer Runner's check
         # must see it; and the live flow, which skips before_run_callback, is checked too.
         async def run(live: bool) -> tuple[ScriptedModel, Any, Exception]:
             model = ScriptedModel(model="gemini-2.5-pro", codes=("print(1)",))
-            inner = Agent(name="inner_coder", model=model, code_executor=self.executor(), description="Runs Python.")
+            inner = Agent(name="inner_coder", model=model, code_executor=self.executor(artifact_paths=("answer.json",)),
+                          description="Runs Python.")
             root = Agent(name="root_no_code", model=model, tools=[AgentTool(agent=inner)])
             sessions = InMemorySessionService()
             session = await sessions.create_session(app_name="adk-agenttool", user_id="user")

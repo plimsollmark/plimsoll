@@ -289,12 +289,12 @@ const (
 
 // Suspend counts itself and reports the provider's SuspendHoldsMemory, or fails
 // without ending the session while it has had no more than FailedSuspends calls.
-func (s *FakeSession) Suspend(context.Context) (bool, error) {
+func (s *FakeSession) Suspend(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.suspended++
 	if s.suspended <= s.failSuspends {
-		return false, sandbox.NotDispatched(sandbox.RefusalCapacity, errors.New("sandboxtest: gave up waiting for the session's turn"))
+		return false, sandbox.RefuseDeadline(ctx, errors.New("sandboxtest: gave up waiting for the session's turn"))
 	}
 	return s.holdsMemory, nil
 }

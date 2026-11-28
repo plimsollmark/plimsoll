@@ -186,6 +186,16 @@ process.stdout.write(JSON.stringify(out))`
 // lands on a kept PID in the same clock tick is kept only if its command line matches
 // too). Its exit status is the verdict (the Sweep* constants); its stdout is a summary
 // for the log only.
+//
+// The walk reads a folder the session's user may not read (a mode the guest set, 000
+// say) by opening it to 0700, and puts back the exact mode lstat read before once the
+// walk is over, so its entries are counted and the folders beneath it walked, and the
+// next call meets the folder as the guest left it (the helper's listing, a snippet's
+// readdir). Every folder it opened is put back in a finally, the last opened first (a
+// folder inside another is opened after it, so it is put back while its parent is
+// still open), whatever ended the walk (over the budget, past the entry bound, a folder
+// it could not read); a mode it cannot put back, or one that reads back other than it
+// was, is SweepUnmeasurable, so a session whose files changed behind it ends.
 const SweepScript = clearFn + `const fs=require("node:fs");const [budget,maxEntries,measure,dirList,...keepList]=process.argv.slice(1);
 const cleared=clear(new Set(keepList),ancestors());
 if(cleared===null)process.exit(1);
@@ -193,12 +203,17 @@ const {rounds,killed}=cleared;
 let bytes=0,entries=0;const dirs=dirList.split(",").filter(Boolean);
 if(+budget>0&&measure==="statfs"){for(const d of dirs){let s;try{s=fs.statfsSync(d)}catch{process.exit(11)}
 bytes+=(s.blocks-s.bfree)*s.bsize}if(bytes>+budget)process.exit(10)}
-else if(+budget>0)while(dirs.length>0){const dir=dirs.pop();let names;
-try{names=fs.readdirSync(dir)}catch{let st;try{st=fs.lstatSync(dir)}catch{process.exit(11)}if(!st.isDirectory())continue;
-try{fs.chmodSync(dir,0o700);names=fs.readdirSync(dir)}catch{process.exit(11)}}
+else if(+budget>0){const opened=[];let code=0;
+const restore=o=>{try{fs.chmodSync(o.dir,o.mode);return (fs.lstatSync(o.dir).mode&0o7777)===o.mode}catch{return false}};
+try{walk:while(dirs.length>0){const dir=dirs.pop();let names;
+try{names=fs.readdirSync(dir)}catch{let st;try{st=fs.lstatSync(dir)}catch{code=11;break}if(!st.isDirectory())continue;
+opened.push({dir,mode:st.mode&0o7777});
+try{fs.chmodSync(dir,0o700);names=fs.readdirSync(dir)}catch{code=11;break}}
 for(const n of names){const p=dir+"/"+n;let st;try{st=fs.lstatSync(p)}catch{continue}
-if(++entries>+maxEntries)process.exit(10);bytes+=st.blocks*512;if(bytes>+budget)process.exit(10);
-if(st.isDirectory())dirs.push(p)}}
+if(++entries>+maxEntries){code=10;break walk}bytes+=st.blocks*512;if(bytes>+budget){code=10;break walk}
+if(st.isDirectory())dirs.push(p)}}}
+finally{while(opened.length>0)if(!restore(opened.pop()))code=11}
+if(code!==0)process.exit(code)}
 process.stdout.write(JSON.stringify({rounds,killed,bytes,entries}))`
 
 // CheckScript checks identities a launcher or a relay reported, each given as

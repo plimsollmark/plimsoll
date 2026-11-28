@@ -123,7 +123,7 @@ func (g *scanGate) enter(caller string, b waitBound) (*scanTurn, error) {
 	defer g.mu.Unlock()
 	c := g.callers[caller]
 	if g.users >= cap(g.all)+b.all || c != nil && c.users >= g.perCaller+b.perCaller {
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, errScanWaitFull)
+		return nil, refuseCapacity(sandbox.CapacityQueue, errScanWaitFull)
 	}
 	if c == nil {
 		c = &callerScans{slots: make(chan struct{}, g.perCaller)}

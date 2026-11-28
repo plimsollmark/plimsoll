@@ -2,11 +2,21 @@
   "about": [
     "Shared record cases every client runs on each path it has (internal/clientcases). Each case",
     "breaks one rule and carries its correct own digest (sealed again), beside an accepted twin",
-    "that breaks none, so the rule it names is the only check that can refuse it. These three",
-    "are written by hand (finding release-76: a lost call's record stating a result digest",
+    "that breaks none, so the rule it names is the only check that can refuse it. The three",
+    "unanswered cases are written by hand (finding release-76: a lost call's record stating a result digest",
     "beside its code, or a code outside the closed set, passed two clients' attach checks);",
-    "their record digests were computed by record/testdata/record_v5.py's digest, the",
+    "their record digests were computed by record/testdata/record_v6.py's digest, the",
     "independent implementation written from docs/run-records.md, and Go's runner checks them.",
+    "The files-answer cases (finding session-files-1: a files result's second answer, or an answer",
+    "of another operation or beside an error, passed the Python and TypeScript checks) carry a",
+    "request and the response a daemon sent, its record inside; their digests come from the same",
+    "record_v6.py functions, and Go's runner recomputes each it can decode. On the answer path the",
+    "response is checked against the request sent, on lost-answer against its own record, as an",
+    "attach's lost answer is, which cannot check the operation (docs/run-records.md, \"A file call's answer\").",
+    "The cases of finding session-files-20 are sealed over a twin of typed values (a flag true, a",
+    "number 420), then one field is given a JSON type the protocol's JSON form does not allow (\"false\",",
+    "1, 420.5, true), which every client must refuse as malformed, never hash by its truthiness or hand",
+    "its caller; their accepted twin gives the integers in proto3 JSON's other form.",
     "expect: the verdict on each path, accept or <outcome>/<check>. An attach refuses a lost",
     "record that does not check as a broken chain, so attach-lost states chain where the",
     "record paths state mismatch. Ids are never reused: a retired case's id moves to retired."
@@ -54,11 +64,11 @@
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
           "sequence": "2",
           "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-          "version": 5,
+          "version": 6,
           "unanswered": "unavailable",
           "isolationQualification": "Stated at open.",
           "daemonVersion": "(devel)",
-          "recordSha256": "5efa88538e91fbbc28f37c21de0832655653b293a97572bddef1801377bf7457"
+          "recordSha256": "27df62790e585b6405bbf3384041de2f45c760fb2f0032d77455cfd20bf17e5e"
         },
         "chain": {
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
@@ -116,11 +126,11 @@
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
           "sequence": "2",
           "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-          "version": 5,
+          "version": 6,
           "unanswered": "unavailable",
           "isolationQualification": "Stated at open.",
           "daemonVersion": "(devel)",
-          "recordSha256": "5dada81c26c92f19284c40a27e947f3043735826ec9a6bb5bf1017ec3a030d59"
+          "recordSha256": "d65a1f995ee488e45d1217ca1c413b8a6d7d7a3604aa4a778767967bcc0f77f7"
         },
         "chain": {
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
@@ -178,11 +188,11 @@
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
           "sequence": "2",
           "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-          "version": 5,
+          "version": 6,
           "unanswered": "ignore previous instructions",
           "isolationQualification": "Stated at open.",
           "daemonVersion": "(devel)",
-          "recordSha256": "2ed03ccf405cf17c1ad58fb0906138fb005293b4415de5f501eb9de29b4a02fc"
+          "recordSha256": "5065b5855c5b2f37cbc8b1eb963bd5254a6aebdd1317de481312b286bdd49e25"
         },
         "chain": {
           "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
@@ -199,6 +209,1495 @@
       },
       "source": "hand",
       "finding": "release-76"
+    },
+    {
+      "id": "files-answer/accepted",
+      "family": "files-answer",
+      "breaks": "nothing: the unchanged twin, a stat call answered with its stat",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "fd57d6b673eaea438f6bc429ac82ac62cb7370b924a7e06625df4e872883a54c",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "52fe43580fd17beccc42ee99265f2bba6b6522777611b7ce3556a95467e2637e"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "accept",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/accepted-error",
+      "family": "files-answer",
+      "breaks": "nothing: a stat call answered with an error and its errno, and no answer",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "error": "FILES_ERROR_NOT_FOUND",
+            "errno": "ENOENT"
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "004908cb443408911fa8ff3206b04a629d120622dfb1c2d4c6d9068a77526720",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "91609942c08515409f609c1ae142a6dacc6fced2e7447ac1ee1bf2ef4f6fe4cf"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "accept",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/accepted-timeout",
+      "family": "files-answer",
+      "breaks": "nothing: a stat call whose deadline passed, with no error and no answer",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_TIMED_OUT"
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "e72ee9a63b0297dd3bbb5abe401945b822ef09ef92dbf620603733d1fb39800b",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "c29463fdd0d0ebe2b42283706d3a9f265495cc3eabc43596ff11cc7cd5a5a143"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "accept",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/accepted-read-many",
+      "family": "files-answer",
+      "breaks": "nothing: a read_many answer, one item read and one item's error with no bytes",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "readMany": {
+              "paths": [
+                "YS50eHQ=",
+                "Yi50eHQ="
+              ],
+              "maxBytesEach": 1024,
+              "budgetBytes": 4096
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "readMany": {
+              "items": [
+                {
+                  "content": "Zmlyc3QK",
+                  "sizeAtOpen": "6"
+                },
+                {
+                  "error": "FILES_ERROR_NOT_FOUND",
+                  "errno": "ENOENT"
+                }
+              ]
+            }
+          },
+          "record": {
+            "requestSha256": "222c2141faa7a2ca9c87f23d9ff2d627e3a0fcaf423d0abc21ddcf30fa0b2f0e",
+            "resultSha256": "7ec72413f524c4ea028bcd67398c0c0dfc6e12dbf3cbe3c341450bac4e89d16b",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "70c944bf69071622a7187e9b4cdd17df989a38d4653a82cd70f9a04899a2c24a"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "accept",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/two-answers",
+      "family": "files-answer",
+      "breaks": "the result holds a stat answer and a read answer of other bytes, and the record's result digest covers the stat alone (finding session-files-1)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            },
+            "read": {
+              "content": "Ynl0ZXMgbm8gZGlnZXN0IGNvdmVycwo=",
+              "sizeAtOpen": "23"
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "fd57d6b673eaea438f6bc429ac82ac62cb7370b924a7e06625df4e872883a54c",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "52fe43580fd17beccc42ee99265f2bba6b6522777611b7ce3556a95467e2637e"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/other-operation",
+      "family": "files-answer",
+      "breaks": "a stat call answered with a read answer, sealed over that answer; an attach has the record's request digest and not the request, so it cannot tell",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "read": {
+              "content": "Ynl0ZXMgbm8gZGlnZXN0IGNvdmVycwo=",
+              "sizeAtOpen": "23"
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "5390c6f3ea3bda4e5bfa671a0a13f57c45cc5fa285d50b7701ccf79e44618ad2",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "21ea937bd9266512c80629a95cafbed977a5fc376e8673cfb93eef4b816ced70"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/answer-beside-error",
+      "family": "files-answer",
+      "breaks": "a completed call states an error and still carries an answer",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "error": "FILES_ERROR_NOT_FOUND",
+            "errno": "ENOENT",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "3fee1580eac0f230cda6f29950a4bc269ef162e1a78ec319fa89176e3a48e220",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "5ca309c1bdf2ab3d9ecb91468a9ae6f0acccbde213191ccb8dcd521095276599"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/no-answer",
+      "family": "files-answer",
+      "breaks": "a completed call states no error and carries no answer",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED"
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "d603982575e2638faeb8bc48548515421e56b540d5ddbd8994daedd05449eb3b",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "2e9db72699ab297ea6393fc8bdb7ff652af1275633eed749c59b81b43d1f399e"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/errno-without-error",
+      "family": "files-answer",
+      "breaks": "a completed call states no error, its answer, and an errno name",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "errno": "ENOENT",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "cd530ce6857e5462f88739071ac02cb7f816a90b00b5f4c10ac8bb57a1631b5d",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "5232e345f8f526cfa2297a9bf953c6febe6b7f60bd86a6a9acf25076046a7beb"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/answer-after-timeout",
+      "family": "files-answer",
+      "breaks": "a call whose deadline passed carries an answer",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_TIMED_OUT",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "9be66b2e9af2420f9c7ef6feeee5a827cdde9fd227ba1653fdc1f7e0133edcf8",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "871b786c05310d11744d8354bcfd10be5cb6563b2c358742cf5077fb582942bc"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/error-after-runner-failed",
+      "family": "files-answer",
+      "breaks": "a call whose helper ended without an answer states an error",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_RUNNER_FAILED",
+            "error": "FILES_ERROR_OTHER",
+            "errno": "EIO"
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "67f7f5c1b5ad67e8a150fb1f2b67def64549639f4f4dc5485d31972cdbe6fef1",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "d0b273e99d9c49a6a2778fe4d3556228c34f65e344cc2f19ed746a7215e09faa"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/setup-failed",
+      "family": "files-answer",
+      "breaks": "the outcome is setup_failed, which no file call has",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_SETUP_FAILED"
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "5be14782e064f905429b4969f29f6fe93ca9db373830062b324dcf5dd6a0c450",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "5ccddd07823eecdab40a60912c1ad658ffe5ec6788560e6041bc66e09b7ccbbe"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/no-outcome",
+      "family": "files-answer",
+      "breaks": "the outcome is unspecified",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "942cbe90e736b3bf058bc9f435bf7a05a34b9928f9fc7ecd7fa59a1e332ab8b0",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "ac130488c5305560b35475ea58dca5647060ea0633ac691bcccdcf4ba366a6fa"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/item-bytes-beside-error",
+      "family": "files-answer",
+      "breaks": "a read_many item states an error and still carries bytes",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "readMany": {
+              "paths": [
+                "YS50eHQ=",
+                "Yi50eHQ="
+              ],
+              "maxBytesEach": 1024,
+              "budgetBytes": 4096
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "readMany": {
+              "items": [
+                {
+                  "error": "FILES_ERROR_NOT_FOUND",
+                  "errno": "ENOENT",
+                  "content": "Ynl0ZXMgbm8gZGlnZXN0IGNvdmVycwo="
+                }
+              ]
+            }
+          },
+          "record": {
+            "requestSha256": "222c2141faa7a2ca9c87f23d9ff2d627e3a0fcaf423d0abc21ddcf30fa0b2f0e",
+            "resultSha256": "0d19edb5aff5ae0ce751907becd9d855ed2631ba7978b49f0273ed17ce85efcc",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "20a723da8b9f8b57e40a56e184e6feda602f42521807b81f29340e6331bd35b5"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/item-errno-without-error",
+      "family": "files-answer",
+      "breaks": "a read_many item states no error and an errno name",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "readMany": {
+              "paths": [
+                "YS50eHQ=",
+                "Yi50eHQ="
+              ],
+              "maxBytesEach": 1024,
+              "budgetBytes": 4096
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "readMany": {
+              "items": [
+                {
+                  "errno": "ENOENT",
+                  "content": "Zmlyc3QK",
+                  "sizeAtOpen": "6"
+                }
+              ]
+            }
+          },
+          "record": {
+            "requestSha256": "222c2141faa7a2ca9c87f23d9ff2d627e3a0fcaf423d0abc21ddcf30fa0b2f0e",
+            "resultSha256": "4adcb4ed9bd1757722ffaddaea9178697dcef898c4c97b3f7f08b5baacf4d38e",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "4d0ee748d2f7a5e1804dec363a1e4a8185aac16cf6b62ca82a80846b997934dc"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/mismatch",
+        "lost-answer": "may_have_run/mismatch"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-1"
+    },
+    {
+      "id": "files-answer/list-more-a-string",
+      "family": "files-answer",
+      "breaks": "a listing page's more is the string \"false\", where the record covers more true: a client that hashes the flag by its truthiness verifies it and hands its caller the string, which a reader of more === true takes for the last page (finding session-files-20)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "list": {
+              "path": "Lg==",
+              "budgetBytes": 8192
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "list": {
+              "entries": [
+                {
+                  "path": "YS50eHQ=",
+                  "type": "FILES_ENTRY_TYPE_FILE",
+                  "size": "3"
+                }
+              ],
+              "more": "false"
+            }
+          },
+          "record": {
+            "requestSha256": "3f6d32d174be7d0742c18e3fb8f885c0f756d23552e79ec59bfb0b597f3ff339",
+            "resultSha256": "0cee1af3bb3db5d62cd7182bc52e1ac2bfda9bbb8dcc1dc30153c269e00374c2",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "207b7257530a854e794285a37f3ac5147813d5178be93fe21e5e0d1596299858"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-20"
+    },
+    {
+      "id": "files-answer/read-many-more-a-number",
+      "family": "files-answer",
+      "breaks": "a read_many answer's more is the number 1, where the record covers more true: a flag is a JSON boolean (finding session-files-20)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "readMany": {
+              "paths": [
+                "YS50eHQ="
+              ],
+              "maxBytesEach": 64,
+              "budgetBytes": 8192
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "readMany": {
+              "items": [
+                {
+                  "content": "YWJj",
+                  "sizeAtOpen": "3"
+                }
+              ],
+              "more": 1
+            }
+          },
+          "record": {
+            "requestSha256": "9c037e3892854bd2cfaecf43a55082c3536b684e7fcc864a2a4b87847aec7ee8",
+            "resultSha256": "2eb10ae0a97952b10cf81929541682b43723602f57a765149f19bc144ad413fc",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "24ade5c01cb01098c53928545a5087e790294bc87f043a8cfa716363c6fb6b00"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-20"
+    },
+    {
+      "id": "files-answer/mode-a-fraction",
+      "family": "files-answer",
+      "breaks": "a stat answer's mode is 420.5, where the record covers 420: an integer field is a whole number (finding session-files-20)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": "1234",
+              "mode": 420.5
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "fd57d6b673eaea438f6bc429ac82ac62cb7370b924a7e06625df4e872883a54c",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "52fe43580fd17beccc42ee99265f2bba6b6522777611b7ce3556a95467e2637e"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-20"
+    },
+    {
+      "id": "files-answer/size-a-boolean",
+      "family": "files-answer",
+      "breaks": "a stat answer's size is true, where the record covers 1: an integer field is a number or a decimal string (finding session-files-20)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": true,
+              "mode": 420
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "f5122f94bfb8f774448137a484d4769ea27c4d58580814f24f4c5a4d32ff9da8",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "495eabc0da96fc8d5731e8fe086f001752c43c35b4a924b6287c416eed74d21b"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-20"
+    },
+    {
+      "id": "files-answer/accepted-integers-as-strings",
+      "family": "files-answer",
+      "breaks": "nothing: the twin with its integers in the other form proto3 JSON allows (mode as the decimal string \"420\", a size as a JSON number), which every client reads as the same values the record covers (finding session-files-20: a client must decode them, not only hash them)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": {
+              "type": "FILES_ENTRY_TYPE_FILE",
+              "size": 1234,
+              "mode": "420"
+            }
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "fd57d6b673eaea438f6bc429ac82ac62cb7370b924a7e06625df4e872883a54c",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "52fe43580fd17beccc42ee99265f2bba6b6522777611b7ce3556a95467e2637e"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "accept",
+        "lost-answer": "accept"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "session-files-20"
+    },
+    {
+      "id": "files-answer/stat-not-a-message",
+      "family": "files-answer",
+      "breaks": "a stat answer is the number 0, where the record covers an empty stat answer: an answer of the oneof is a JSON object (Go's protojson refuses it; the TypeScript client read it as an answer and decoded none)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "stat": 0
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "a5eda76967b5293128c4091ad153080efdc4006d542540409744fef22e85e540",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "a4b7181d1896da4a1478600c7258ad3e87ec00b1f70849ba3822f8c4cf88aba8"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "release-125"
+    },
+    {
+      "id": "files-answer/make-dir-not-a-message",
+      "family": "files-answer",
+      "breaks": "a make_dir answer is the number 0, where the record covers an empty make_dir answer: an answer of the oneof is a JSON object, an empty one included (the Python client took any value but null as the answer)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "makeDir": {
+              "path": "b3V0"
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "makeDir": 0
+          },
+          "record": {
+            "requestSha256": "bb672adf48e13ba5e2e5428e1cb9b89f697e861b6f78b057ffb1841d5613ad07",
+            "resultSha256": "80b0a67870691cd828548b2110139b9381a73e15ae13a6447e68e6562a5c688b",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "dd6f93c316aa7008f80bf66d0fd47d921b091b86f3aa3f8bab070b3225eb1db9"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "release-125"
+    },
+    {
+      "id": "files-answer/remove-not-a-message",
+      "family": "files-answer",
+      "breaks": "a remove answer is the string \"x\", where the record covers an empty remove answer: an answer of the oneof is a JSON object (the Python client took any value but null as the answer)",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "remove": {
+              "path": "b2xk"
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "remove": "x"
+          },
+          "record": {
+            "requestSha256": "c1c1dedb4db3cd9e92483feebc9f42e6ab77f922ac161c2956f69b940d25da83",
+            "resultSha256": "bf3d2477c097f753578754d7dc366ff5469d090219ff6b92c4109d2b3979048b",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "c7aba9404f5dbfcfc2e254914c0c24fbde8722b115a98a0fc35dce7f4e785299"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "release-125"
+    },
+    {
+      "id": "files-answer/errno-a-number",
+      "family": "files-answer",
+      "breaks": "an answered error's errno name is the number 5, where the record covers the string \"5\": a string field is a JSON string",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "stat": {
+              "path": "c3JjL21haW4ucHk="
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "error": "FILES_ERROR_OTHER",
+            "errno": 5
+          },
+          "record": {
+            "requestSha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb",
+            "resultSha256": "b4c3756af0e47a03359ca853019b806626816664cb246b43d43bcc4604808f95",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "200dddfb50507385db7d3a8a61a3c70e2a7477f5b78708c6607f16b34561e728"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "release-125"
+    },
+    {
+      "id": "files-answer/entry-not-a-message",
+      "family": "files-answer",
+      "breaks": "a listing's entry is the number 1, where the record covers one empty entry: each entry is a JSON object",
+      "paths": [
+        "answer",
+        "lost-answer"
+      ],
+      "input": {
+        "request": {
+          "protocol": 9,
+          "minimumIsolation": "container",
+          "timeoutMs": 30000,
+          "sessionId": "00112233445566778899aabbccddeeff",
+          "files": {
+            "scope": "FILES_SCOPE_WORK",
+            "list": {
+              "path": "Lg==",
+              "budgetBytes": 8192
+            }
+          }
+        },
+        "response": {
+          "sandbox": "docker",
+          "isolation": "kernel",
+          "durationMs": "12",
+          "files": {
+            "outcome": "PROJECT_OUTCOME_COMPLETED",
+            "list": {
+              "entries": [
+                1
+              ]
+            }
+          },
+          "record": {
+            "requestSha256": "3f6d32d174be7d0742c18e3fb8f885c0f756d23552e79ec59bfb0b597f3ff339",
+            "resultSha256": "74c21458c9c755764e776340dd49bc1130b47d7e0f8a0cfd20430df2a77f5902",
+            "provider": "docker",
+            "isolation": "kernel",
+            "startedUnixMs": "1790000000000",
+            "endedUnixMs": "1790000000012",
+            "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+            "sequence": "1",
+            "version": 6,
+            "recordSha256": "8525e5714d17c315361cb499a798df21319329d699c86c307b0d8042c8efd1eb"
+          }
+        },
+        "chain": {
+          "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+          "calls": "0",
+          "last": ""
+        }
+      },
+      "expect": {
+        "answer": "may_have_run/malformed",
+        "lost-answer": "may_have_run/malformed"
+      },
+      "source": "record/testdata/record_v6.py's digests",
+      "finding": "release-125"
     }
   ]
 }

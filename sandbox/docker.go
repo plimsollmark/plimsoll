@@ -171,6 +171,11 @@ type DockerSandbox struct {
 
 	// projectLanguages are the interpreters the project image ran in SmokeTest.
 	projectLanguages []Language
+	// workScope is whether the last SmokeTest saw the helper's work scope answer under the
+	// configured runtime (smokeRunner): false until one has, and where the kernel lacks what
+	// the scope needs (statx's mount id, openat2: before Linux 5.8), so sessions then state
+	// the sandbox scope alone (sessionFileScopes).
+	workScope bool
 	// sessions are the open sessions, the opens in flight and the container removals
 	// still running (docker_session.go).
 	sessions sessionkit.Registry

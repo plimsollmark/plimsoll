@@ -129,6 +129,11 @@ which every implementation runs. The suite checks that:
 | `wasm` | No. The engine runs in the daemon's own process, and keeping hostile code's state there between calls is the wrong direction. |
 | `wslc` | No. The WSL containers provider runs each snippet or project in a fresh container, in its per-run mode inside a fresh virtual machine as well, and keeps none open between calls ([wslc.md](wslc.md#what-it-does-not-do)). |
 
+**File calls** (one operation on a session's files, such as a read, a write or a
+listing, carried out inside the sandbox by plimsoll's native helper) are stated per scope:
+`docker` and `e2b` sessions take them in both scopes (on a docker host before Linux 5.8, the
+sandbox scope alone), `openshell` sessions in the sandbox scope alone. What they are, what each provider states and why: [Files](#files) below.
+
 ## Turning them on
 
 Sessions are off unless the operator enables them, because a session holds a sandbox
@@ -526,7 +531,9 @@ interpreter per language, a Python or Node.js process that stays alive between c
   project environment (`languages`). JavaScript is always there; Python needs `python3` in
   the image, as `plimsoll/sandbox-python` has (with NumPy and SciPy). A cell in a language
   `Describe` does not state is refused before anything starts, `Unimplemented`, marked not
-  dispatched with reason `unsupported`. An interpreter that could not start in a session
+  dispatched with reason `unsupported`, in words that name what the image runs and the
+  program it lacks: `the session's image is stated to run javascript, not python: a python
+  cell needs python3 in the image, which plimsoll's startup check did not show there`. An interpreter that could not start in a session
   whose image has the language (one docker command or the identity check failed) is refused
   with reason `environment`, never as unsupported, since the next cell starts it again.
 - **Records.** A cell's record has its own kind ([run-records.md](run-records.md)). A
@@ -598,6 +605,168 @@ kept, and modules in the work directory not running as Python starts.
 
 A single run with no session can run Python too, when the project image has it: a project
 whose step is `python3 main.py`.
+
+## Files
+
+A **file call** is one operation on a session's files (a read, a write, a
+listing), carried out inside the sandbox by plimsoll's own helper program, started as the
+[guest (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guest)'s
+own user. It is a session call like a snippet, a project or a cell (`SessionRun` with a
+`files` payload), so it gets what every session call gets: the head, the floor, the software
+rule and the request ID's echo are checked, it is one call in the session's chain, and it has
+a run record. What differs is the answer: typed fields (a kind, a size, the bytes read, an
+error code), never text written inside the sandbox, so a client never parses a shell's words to
+learn that a file is missing. The helper's side of it (its commands, how it opens each path, its
+exit codes) is [session-files.md](session-files.md).
+
+### The eight operations
+
+| Operation | What it does | What it answers |
+|---|---|---|
+| `stat` | looks at one path; a link at the path is reported as a link, not followed | the kind (`file`, `dir`, `link`, `other`), the size, the permission bits |
+| `read` | reads up to `max_bytes` (1 byte to 8 MiB) from `offset` | the bytes, and the file's size as its open saw it, so a reader of many pieces checks each piece against it with no extra call |
+| `write` | writes `content` (at most 4 MiB): `replace` (the file at the name is then all of the new content, or as it was), `create_only` (refuses a name already there) or `append`; `make_parents` makes the folders on the way | the bytes written |
+| `list` | a folder's entries, or with `recursive` every entry below it, only those matching the glob `match` when one is given; one page per call | per entry its path from the folder, its kind and its size (a folder a recursive listing could not enter is listed with the kind `unreadable`, and the walk goes on); `more` when the page ended at its budget |
+| `read_many` | up to 16,384 files in order, each up to `max_bytes_each` | per path its bytes and size at open, or its own error code (one file's error does not fail the call); `more` when the next did not fit |
+| `make_dir` | makes a folder; with `parents`, the folders on the way too | nothing |
+| `remove` | removes a file or a link (never its target), or with `dir` an empty folder | nothing |
+| `rename` | moves `from` to `to` in one step; without `replace`, a name already at `to` is refused by the rename itself | nothing |
+
+There is no recursive remove, copy, change of owner or mode, watch, or search of contents: a
+session's shell has `rm -r`, `cp` and `grep` for those. A listing's next page is asked for with
+`after`, the last path of the page before; entries come sorted by their bytes, folders depth
+first. `match` is matched by the helper, part by part: `*`, `?` and `[...]` within one part,
+`**` as a whole part for any number of parts, and a leading dot is not special, so `*` matches
+`.env` ([the rule and its shared test vectors](session-files.md#glob)).
+
+Every answer carries an `outcome`: `completed` when the helper answered, else `timed_out`,
+`protocol_error` (an answer the daemon could not read) or `runner_failed` (the helper ended
+without one). A completed call that failed carries an `error` from a closed set (`NOT_FOUND`,
+`IS_DIR`, `NOT_DIR`, `EXISTS`, `SYMLINK`, `NOT_REGULAR`, `PERMISSION_DENIED`, `TOO_LARGE`,
+`NO_SPACE`, `READ_ONLY`, `NOT_EMPTY`, `SCAN_LIMIT`, `OTHER`) and the name of the system error it
+came from (`ENOENT` and so on). A file that is not there is such an answer, as a nonzero exit
+code is for a command, not a transport error. Paths are bytes on the wire, not text: a file's name
+may hold any byte but `/` and the zero byte, which is not always UTF-8, so a name a listing
+returns is named back by the same bytes.
+
+### Scopes, and which providers state them
+
+A file call names its paths in one of two scopes:
+
+- **The work scope**: a path relative to the session's work folder (`/work` on docker and E2B),
+  at most 4,096 bytes, its parts separated by `/`, none empty, `.` or `..`. The kernel resolves it
+  beneath the work folder in one step, and a symbolic link is followed only while it stays inside
+  (a virtual environment's `bin/python`); one that leads out is refused, `SYMLINK`. This promise
+  needs a work folder that is a mount of its own, since otherwise a process of the session could
+  move a folder out of the work folder while a call holds it open
+  ([why](session-files.md#scopes)). For the same reason the work scope never crosses a mount
+  below the work folder (an image or template that mounts another folder at `/work/shared`): a
+  path across one is refused, `PERMISSION_DENIED`, and a recursive listing lists its folder as
+  `UNREADABLE`; the sandbox scope reaches it.
+- **The sandbox scope**: an absolute path, resolved as the guest's own shell resolves it, links
+  followed. The sandbox's walls, not the work folder, are the boundary.
+
+| Provider | Scopes its sessions state |
+|---|---|
+| `docker` | both: `/work` is a size-capped in-memory filesystem of its own. The work scope needs Linux 5.8 or later, or gVisor ([why](session-files.md#scopes)); the startup check starts it once, and where the kernel is older the sessions state the sandbox scope alone |
+| `e2b` | both: the open bind-mounts the machine's `/work` on itself, as root, before any of the session's code, and puts the helper in the machine, since E2B's templates do not carry it ([E2B](#e2b) below). No startup check reads E2B's kernel: on one before Linux 5.8 every work-scope call would answer a file error whose errno is `ENOSYS` |
+| `openshell` | the sandbox scope alone (below) |
+| the rest | none: they keep no sessions, and Docker Cloud's sessions are not offered |
+
+A session states its scopes in `Describe` and in the open's answer (`file_scopes`, beside
+`work_dir`, the work folder's absolute path), and the daemon refuses a call in a scope the
+session does not state before anything runs (marked
+[not dispatched (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#dispatch),
+reason `unsupported`), whatever the client believed. The scope is part of the request's
+[digest (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#digest),
+the hash a run record carries of it, so each call's record states the scope it used and no
+record claims the work scope's confinement for a call made in the other. Each provider passes
+the conformance suite's file cases for the scopes it states.
+
+**Why the `openshell` provider states the sandbox scope alone.** An
+[OpenShell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#openshell)
+session's work folder,
+`/tmp/work`, is not a mount of its own, and nothing stops a move out of it. Two measurements on
+OpenShell v0.1.2 with its docker driver (2026-11-27): `/tmp/work` is a plain folder on the
+container's own writable layer, whose only mounts are `/proc`, `/dev`, `/sys` and a few files and
+folders of docker's and OpenShell's own, and the code in the sandbox runs as an ordinary user that
+cannot make one; and the sandbox's Landlock policy (a Linux facility that limits which files a
+process may reach) grants `/tmp` every right, the right to move a folder to another parent
+included, so a process of the session moved a folder out of `/tmp/work`, and `/tmp/work` itself,
+with no refusal. The one mount the provider could ask for there, a size-capped in-memory
+filesystem through the sandbox's driver settings, is discarded when the sandbox stops, which a
+suspend does. So the provider states the sandbox scope alone, and a confined `Workspace` there
+checks its paths by name: a path whose `..` or absolute form leads out of the work folder is
+refused before any call, but a link inside the work folder that points out of it is followed,
+bounded by the sandbox's walls ([openshell.md](openshell.md#sessions)).
+
+### What a call proves, and what one that failed may have left
+
+A completed call proves what the helper did at that call, and its record states the request the
+daemon sent and the answer it got: a read's bytes are what the file held when it was read, and a
+successful write's bytes were written, synced and published at the name. It does not prove that
+the file still holds them later: code in the session owns its files and may change them between
+calls or during one, so a sequence of reads is no snapshot of a file at one moment. A call
+answered with an error, and one that got no answer (its deadline passed, the helper was killed,
+the connection went), may each have left a change behind, which differs by operation; the helper's
+contract has the table ([what a success proves, what a failure leaves](session-files.md#writes-how-they-publish-what-a-success-proves-what-a-failure-leaves)).
+A call with no answer gets a record with no result, and the session goes on
+([run-records.md](run-records.md#a-session-call-that-may-have-run-but-got-no-result)). No
+official client repeats a `write`, `make_dir`, `remove` or `rename` after it got no answer: a
+request ID makes an answer trustworthy, not a call repeatable.
+
+### Limits
+
+| Limit | Value | Why |
+|---|---|---|
+| One write's content | 4 MiB | the files a project call may carry, and well inside the daemon's 8 MiB request cap once base64 makes it a third larger on the wire. `Workspace.write` of more writes the first 4 MiB in place of the file, then appends the rest, so it is not atomic: a failure partway leaves the first pieces |
+| One read, and one `read_many` file | 8 MiB | the most one answer takes; a longer file is read in pieces, each checked against the size its open stated |
+| Paths in one `read_many` | 16,384 | the helper's own bound. The 8 MiB request cap bounds the paths' bytes too, since they travel in base64, so `Workspace.read_many` and the Agent Framework file store send at most 4 MiB of path bytes a call |
+| A `list` or `read_many` page (`budget_bytes`) | 8 KiB to 8 MiB | the least page (8,192 bytes) holds the largest entry a listing can answer, a path of 4,096 bytes with its kind and size, so a page that ends with `more` always holds at least one entry and asking again always makes progress |
+| One path | 4,096 bytes | Linux's own bound on a path |
+
+A recursive listing also stops at bounds of its own (entries read, names held, depth), past which
+the call answers `SCAN_LIMIT` rather than a cut list ([paging](session-files.md#paging)); list a
+folder further down.
+
+A file call carries no [capability grant (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#grant),
+so it reaches no network. Every path it names, a write's content, a listing's glob and cursor,
+and a rename's target pass the [ship scan](ship-scan.md#what-it-reads-and-when) as a project's
+files do. Its audit line names the operation, the scope, the bytes sent in and returned, the
+entry count, the error and the outcome, never a path, a name from a listing, a glob or content,
+and `/metrics` counts file calls by operation, outcome and error. On every provider the cleanup
+between calls is skipped after a call the helper answered that cannot add to the disk (it started
+only the helper, which has exited), and runs after any other call: after an answered `write` or
+`make_dir` too, since that cleanup is where the session's disk is measured.
+
+### From the clients
+
+- **Python**: `Session.run_files(op)`, `op` one of the classes of `plimsoll_client.files`
+  (`FilesStat`, `FilesRead`, `FilesWrite`, `FilesList`, `FilesReadMany`, `FilesMakeDir`,
+  `FilesRemove`, `FilesRename`, each with a `scope` of `"work"` or `"sandbox"`), answering a
+  `FilesResult` (`outcome`, `error`, `answer`); `AsyncSession.run_files` for the async client;
+  `Session.file_scopes` and `Session.work_dir` as the open stated them. `Workspace`
+  (`plimsoll_client.workspace`) builds an agent's file tools on them and raises Python's own
+  errors (`FileNotFoundError`, `IsADirectoryError`, `PermissionError` and so on): `stat`, `read`,
+  `read_pieces`, `read_whole`, `read_head`, `write`, `edit`, `list`, `glob`, `read_many`,
+  `make_dir`, `remove` and `rename`, each a file call or a few, never shell text.
+
+  ```python
+  from plimsoll_client import files as fs
+
+  session.run_files(fs.FilesWrite("notes.txt", b"hello\n"))
+  r = session.run_files(fs.FilesRead("notes.txt"))
+  print(r.error, r.answer.content)   # none b'hello\n'
+  ```
+- **Go**: `(*client.Session).RunFiles(ctx, sandbox.FilesRequest{FilesCall: sandbox.FilesCall{Op: sandbox.FilesRead, Scope: sandbox.FilesScopeWork, Path: []byte("notes.txt"), MaxBytes: 1 << 20}})`,
+  answering a `sandbox.FilesResult`; `Session.FileScopes()` and `Session.WorkDir()`.
+- **TypeScript**: `session.runFiles(op)`, and one method per operation: `stat`, `readFile`,
+  `writeFile`, `list`, `readMany`, `makeDir`, `removeFile` and `rename`; `session.fileScopes` and
+  `session.workDir`.
+
+Each client recomputes a file call's record like any other call's, follows the chain, checks the
+request ID's echo and refuses an answer whose outcome, error and answer disagree
+([a file call's answer](run-records.md#a-file-calls-answer)).
 
 ## What the daemon guarantees
 

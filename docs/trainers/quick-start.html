@@ -49,7 +49,7 @@ go run ./cmd/plimsolld</code></pre>
   http://127.0.0.1:8746/plimsoll.v1.SandboxService/Run \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary '{"protocol":8,"timeoutMs":1000,"minimumIsolation":"process","javascript":{"code":"console.log(6 * 7)"}}'</code></pre>
+  --data-binary '{"protocol":9,"timeoutMs":1000,"minimumIsolation":"process","javascript":{"code":"console.log(6 * 7)"}}'</code></pre>
         <h2>4. Read the receipt</h2>
         <p>The response says what happened: the provider, the isolation tier the run actually got, how long it took, a <dfn>run record</dfn> (the daemon's statement of what was sent, what came back and where it ran, shortened here to <code>{…}</code>), the engine it ran on, named by a hash of its content, and the output, inside a result of the same kind as the payload.</p>
         <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"292", "record":{…}, "environment":"quickjs-wasm:sha256:…", "javascript":{"stdout":"NDIK"}}</code></pre>
@@ -58,7 +58,7 @@ go run ./cmd/plimsolld</code></pre>
         <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"283", "record":{…}, "environment":"quickjs-wasm:sha256:…", "javascript":{"stdout":"cGFydGlhbAo=", "stderr":"RXJyb3I6IGJvb20K...", "exitCode":1}}
 {"code":"failed_precondition","message":"sandbox isolation requirement not met: provider isolation process is below requested minimum kernel"}
 {"code":"unauthenticated","message":"invalid or expired token"}
-{"code":"unimplemented","message":"this daemon serves protocol 8 and the request states 9; nothing ran"}</code></pre>
+{"code":"unimplemented","message":"this daemon serves protocol 9 and the request states 8; nothing ran"}</code></pre>
         <p>The first is HTTP 200 with a non-zero <code>exitCode</code>: the program ran and failed, which is a normal result, and both output streams are there to read. The second is what <code>"minimumIsolation":"kernel"</code> gets from this daemon: a typed refusal before anything started, so <strong>no code ran</strong>. The third is a wrong or missing token, refused before the request body was read. The fourth is a request whose <code>protocol</code> is not the daemon's. Requests are encoded with <dfn>protobuf</dfn>, a message format whose readers silently drop fields they do not know, so without the number a daemon older than a new safety field would run the code without it. With the number, that daemon refuses before it reads the payload. A request with no number at all gets <code>invalid_argument</code>.</p>
         <div class="customer-callout">This test runs WebAssembly inside the plimsolld process. It is useful for learning the API, but it is no operating-system or virtual machine wall.</div>
       </section>

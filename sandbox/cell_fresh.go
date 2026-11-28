@@ -128,7 +128,7 @@ func CheckRunCell(sb Sandbox, req CellRequest) error {
 	case projects && (len(env.Languages) == 0 || env.SupportsLanguage(req.Language)):
 		return nil
 	case projects:
-		return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: the project image runs no %s interpreter (it runs %s)", ErrUnsupported, req.Language, languageList(env.Languages)))
+		return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: %s", ErrUnsupported, sessionkit.NoInterpreter("the project image", string(req.Language), languageList(env.Languages))))
 	case req.Language != LanguageJavaScript:
 		return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: provider %s runs JavaScript snippets only, not %s", ErrUnsupported, sb.Name(), req.Language))
 	case len(req.Files) > 0:

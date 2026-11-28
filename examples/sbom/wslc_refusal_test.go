@@ -39,7 +39,7 @@ func version4WSLBundle(t *testing.T, key ed25519.PrivateKey) []byte {
 	req, resp := wslcRun("")
 	req.Protocol = 5
 	started := time.UnixMilli(1790000000000)
-	r := sandbox.RunRecord{Version: 4, RequestSHA256: record.RunRequestDigest(req), ResultSHA256: record.ResultDigest(resp),
+	r := sandbox.RunRecord{Version: 4, RequestSHA256: record.RunRequestDigest(req), ResultSHA256: record.ResultDigestFor(resp, 4),
 		Provider: "wslc", Isolation: "vm", Environment: resp.Environment, Started: started, Ended: started.Add(time.Second)}
 	r.SHA256 = record.Digest(r)
 	resp.Record = record.ToWire(r)
@@ -106,8 +106,8 @@ func TestCheckJSRefusesAWSLBOMWithoutItsQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var v5 bytes.Buffer
-	h := attest.NewHarness(attest.NewSigner(key), &v5)
+	var current bytes.Buffer
+	h := attest.NewHarness(attest.NewSigner(key), &current)
 	req, resp := wslcRun("")
 	started := time.UnixMilli(1790000000000)
 	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Started: started, Ended: started.Add(time.Second)}, resp)
@@ -117,7 +117,7 @@ func TestCheckJSRefusesAWSLBOMWithoutItsQualification(t *testing.T) {
 	if err := h.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
-	bundles := map[string][]byte{"version 5": v5.Bytes(), "version 4": version4WSLBundle(t, key)}
+	bundles := map[string][]byte{"the current version": current.Bytes(), "version 4": version4WSLBundle(t, key)}
 	// Another emitter's view: the BOM is written though the record states no sentence.
 	checkQualification = func(sandbox.RunRecord) error { return nil }
 	t.Cleanup(func() { checkQualification = cdxutil.CheckQualification })
@@ -128,7 +128,7 @@ func TestCheckJSRefusesAWSLBOMWithoutItsQualification(t *testing.T) {
 		if err != nil || len(s) != 1 {
 			t.Fatalf("%s: sources: %d, %v", name, len(s), err)
 		}
-		if s[0].Record.Version != map[string]int{"version 5": 5, "version 4": 4}[name] || s[0].Record.IsolationQualification != "" {
+		if s[0].Record.Version != map[string]int{"the current version": record.Version, "version 4": 4}[name] || s[0].Record.IsolationQualification != "" {
 			t.Fatalf("%s: the record is version %d with sentence %q", name, s[0].Record.Version, s[0].Record.IsolationQualification)
 		}
 		if boms[name], err = buildBOM(s[0], defaults()); err != nil {

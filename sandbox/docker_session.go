@@ -179,10 +179,27 @@ func (d *DockerSandbox) SupportsSessions() bool { return d.ProjectImage != "" }
 func (d *DockerSandbox) SessionEnvironments() Environments {
 	env := d.Environments()
 	project := env.Project
+	project.FileScopes = d.sessionFileScopes()
 	return Environments{
-		JavaScript: PayloadEnvironment{Identity: project.Identity, SoftwareIdentity: project.SoftwareIdentity, MaxTimeout: d.snippetCeiling(), Languages: project.Languages},
+		JavaScript: PayloadEnvironment{Identity: project.Identity, SoftwareIdentity: project.SoftwareIdentity, MaxTimeout: d.snippetCeiling(), Languages: project.Languages, FileScopes: d.sessionFileScopes()},
 		Project:    project,
 	}
+}
+
+// sessionFileScopes are the scopes a session takes file calls in. The project image's helper,
+// which carries them out, is the build this plimsolld carries, checked at startup (RunFiles),
+// and the work folder is a tmpfs of its own, so the work scope holds wherever the kernel has
+// what it needs, which the last SmokeTest saw (smokeRunner); where it does not (before Linux
+// 5.8), or before a SmokeTest has seen it, the sandbox scope alone, so no session states a
+// scope whose every call the helper refuses.
+func (d *DockerSandbox) sessionFileScopes() []FilesScope {
+	d.stateMu.RLock()
+	work := d.workScope
+	d.stateMu.RUnlock()
+	if work {
+		return FilesScopesBoth()
+	}
+	return FilesScopesSandboxOnly()
 }
 
 // errDraining is an open refused because Drain has begun.
@@ -233,7 +250,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	}
 	leave, ok := d.sessions.Enter()
 	if !ok {
-		return nil, NotDispatched(RefusalCapacity, errDraining)
+		return nil, AtCapacity(CapacityProvider, errDraining)
 	}
 	defer leave()
 	d.stateMu.RLock()
@@ -566,7 +583,7 @@ func expiresLabelArgs(t time.Time) []string {
 // refuses, and the caller removes s.
 func (d *DockerSandbox) activate(s *dockerSession, expires time.Time, disk int64) error {
 	if !s.life.Activate(&d.sessions, expires, disk) {
-		return NotDispatched(RefusalCapacity, errDraining)
+		return AtCapacity(CapacityProvider, errDraining)
 	}
 	s.held.Store(true)
 	return nil
@@ -1082,9 +1099,10 @@ func (s *dockerSession) Environments() Environments {
 	langs := slices.Clone(s.d.projectLanguages)
 	s.d.stateMu.RUnlock()
 	project := PayloadEnvironment{Identity: dockerImageIdentity(s.imageID), SoftwareIdentity: s.manifest,
-		MaxTimeout: s.d.projectCeiling(), Languages: langs}
+		MaxTimeout: s.d.projectCeiling(), Languages: langs, FileScopes: s.FileScopes()}
 	js := project
 	js.Languages = slices.Clone(langs)
+	js.FileScopes = s.FileScopes()
 	js.MaxTimeout = s.d.snippetCeiling()
 	return Environments{JavaScript: js, Project: project, Policy: s.policy}
 }
@@ -1461,11 +1479,16 @@ func (s *dockerSession) execFunc(ctx context.Context, argv []string, env map[str
 		return sessionkit.ExecResult{}, err
 	}
 	out, err := s.exec(ctx, argv, nil, stdin, outCap, errCap)
+	return out.kit(), err
+}
+
+// kit is the exec's outcome in the form the shared session drivers read.
+func (out dockerExecResult) kit() sessionkit.ExecResult {
 	return sessionkit.ExecResult{
 		Stdout: out.stdout, Stderr: out.stderr,
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
 		ExitCode: out.exitCode, Exited: out.exited,
-	}, err
+	}
 }
 
 // dockerAttached is a docker exec kept open for the session: an interpreter's relay.

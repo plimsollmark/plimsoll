@@ -18,7 +18,11 @@
         "published/v0.22.0/results/module result",
         "published/v0.27.1/requests/module request",
         "published/v0.27.1/requests/module request with an approved rule",
-        "published/v0.27.1/results/module result"
+        "published/v0.27.1/results/module result",
+        "golden/results/module result, version 6",
+        "published/v0.29.0/requests/module request",
+        "published/v0.29.0/requests/module request with an approved rule",
+        "published/v0.29.0/results/module result"
       ],
       "says": "not_checked",
       "basis": "design",

@@ -20,21 +20,23 @@ import (
 )
 
 // The messages of a run's audit line. A snippet and a session cell are both "code run";
-// Op tells them apart.
+// Op tells them apart. A session's file call (op "files") is "file call": it runs no code
+// of the caller's, only plimsoll's helper.
 const (
 	Code    = "code run"
 	Project = "project run"
 	Module  = "module run"
+	Files   = "file call"
 )
 
 // IsRun reports whether msg marks one dispatched run's audit line.
-func IsRun(msg string) bool { return msg == Code || msg == Project || msg == Module }
+func IsRun(msg string) bool { return msg == Code || msg == Project || msg == Module || msg == Files }
 
 // Run is a run's audit line.
 type Run struct {
 	Msg       string    `json:"msg"`
 	Time      time.Time `json:"time"`
-	Op        string    `json:"op"` // javascript, project, module or cell
+	Op        string    `json:"op"` // javascript, project, module, cell or files
 	Caller    string    `json:"caller"`
 	TraceID   string    `json:"trace_id"`
 	Profile   string    `json:"grant_profile"`
@@ -73,6 +75,19 @@ type Run struct {
 	WithheldSet        string   `json:"withheld_set"`
 	WithheldFound      []string `json:"withheld_found"`
 	WithheldIncomplete []string `json:"withheld_incomplete"`
+	// A file call's, and nothing of its paths or content: the operation (stat, read, write,
+	// list, read_many, make_dir, remove, rename), the scope (work, sandbox), how many paths it
+	// named, the bytes of content it carried in (a write's) and returned (a read's, or
+	// read_many's), the entries it answered (a listing's, or read_many's items), whether the
+	// budget ended the page, and its error (none, not_found, ...; Outcome is its outcome).
+	FilesOp    string `json:"files_op"`
+	FilesScope string `json:"files_scope"`
+	FilesError string `json:"files_error"`
+	Paths      int    `json:"paths"`
+	BytesIn    int    `json:"bytes_in"`
+	BytesOut   int    `json:"bytes_out"`
+	Entries    int    `json:"entries"`
+	More       bool   `json:"more"`
 }
 
 // Finding is one efficiency finding on a run's line (advice_finding_details).

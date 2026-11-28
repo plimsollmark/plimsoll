@@ -20,6 +20,7 @@ import (
 	"github.com/plimsollmark/plimsoll/clients/mcp/internal/fakedaemon"
 	"github.com/plimsollmark/plimsoll/clients/mcp/server"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -477,7 +478,7 @@ func TestEveryResultThatNamesTheTierNamesTheQualification(t *testing.T) {
 	}
 	rec := c.ok("get_record", map[string]any{"recordSha256": fresh["recordSha256"]})
 	r := rec["record"].(map[string]any)
-	if r["version"] != float64(5) || r["isolationQualification"] != sentence || r["daemonVersion"] != "(devel)" || r["warm"] != false ||
+	if r["version"] != float64(record.Version) || r["isolationQualification"] != sentence || r["daemonVersion"] != "(devel)" || r["warm"] != false ||
 		!strings.Contains(rec["summary"].(string), beside) || !strings.Contains(rec["summary"].(string), "by plimsoll (devel)") {
 		t.Errorf("get_record: %v", rec)
 	}

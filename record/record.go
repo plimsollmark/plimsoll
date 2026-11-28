@@ -36,7 +36,7 @@ import (
 // every time. An unanswered session call's record is the same encoding with the result
 // digest empty and unanswered set. A live answer must carry it; stored evidence may carry
 // any published version.
-const Version = 5
+const Version = 6
 
 // LastWallClockEndVersion is the last record version whose daemons stamped both times from
 // the wall clock: daemons v0.10.0 to v0.12.0, so a clock step between the two readings
@@ -98,7 +98,15 @@ var published = map[int]spec{
 	5: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation",
 		"isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm",
 		"daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"},
-		answered: true, unanswered: true, evidence: true},
+		answered: true, unanswered: true, evidence: true, result: resultV1},
+	// From protocol 9: version 5's fields, written out again so version 5 stays frozen,
+	// with results hashed under the second result domain, which adds the files kind.
+	// Nothing in a result names its domain, so the domain is the record version's
+	// (docs/run-records.md).
+	6: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation",
+		"isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm",
+		"daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"},
+		answered: true, unanswered: true, evidence: true, result: resultV2},
 }
 
 // spec is one published record version.
@@ -110,6 +118,9 @@ type spec struct {
 	// against the response and the request. Version 1 records named an environment but
 	// were never checked against the response's.
 	evidence bool
+	// result is the result domain this version's result digests are computed under;
+	// resultV1 (the zero value) for every version before 6.
+	result resultEncoding
 }
 
 func (s spec) covers(field string) bool { return slices.Contains(s.fields, field) }
@@ -159,10 +170,72 @@ var recordFields = map[string]recordField{
 // (v0.10.0 to v0.11.1, read for their records) has the first request encoding: no
 // software rule.
 const (
-	requestDomain   = "plimsoll.run-request.v2"
 	requestDomainV1 = "plimsoll.run-request.v1"
-	resultDomain    = "plimsoll.run-result.v1"
+	requestDomainV2 = "plimsoll.run-request.v2"
+	requestDomainV3 = "plimsoll.run-request.v3"
+	resultDomainV1  = "plimsoll.run-result.v1"
+	resultDomainV2  = "plimsoll.run-result.v2"
 )
+
+// FirstFilesProtocol is the first protocol whose requests are hashed under
+// plimsoll.run-request.v3, the request domain that covers the files kind: a request's
+// protocol number picks its domain (v1 below 2, v2 from 2 to 8, v3 from 9).
+const FirstFilesProtocol = 9
+
+// requestDomainFor is the request domain a request stating protocol is hashed under.
+func requestDomainFor(protocol uint32) string {
+	switch {
+	case protocol < 2:
+		return requestDomainV1
+	case protocol < FirstFilesProtocol:
+		return requestDomainV2
+	}
+	return requestDomainV3
+}
+
+// resultEncoding is one result domain: plimsoll.run-result.v1 (the javascript, project,
+// module and cell kinds, records of versions 1 to 5) or plimsoll.run-result.v2 (those and
+// files, from record version 6).
+type resultEncoding int
+
+const (
+	resultV1 resultEncoding = iota
+	resultV2
+)
+
+func (r resultEncoding) domain() string {
+	if r == resultV2 {
+		return resultDomainV2
+	}
+	return resultDomainV1
+}
+
+// kinds are the result kinds the domain covers, in RunResponse's order.
+func (r resultEncoding) kinds() []string {
+	if r == resultV2 {
+		return []string{"javascript", "project", "module", "cell", "files"}
+	}
+	return []string{"javascript", "project", "module", "cell"}
+}
+
+// ResultDomains returns, for every published record version, the result domain its result
+// digests are computed under: the table internal/wiretables writes into the Python and
+// TypeScript clients.
+func ResultDomains() map[int]string {
+	out := make(map[int]string, len(published))
+	for v, s := range published {
+		out[v] = s.result.domain()
+	}
+	return out
+}
+
+// RequestDomains returns each request domain by the first protocol hashed under it: the
+// table internal/wiretables writes into the Python and TypeScript clients. A request is
+// hashed under the domain of the highest first protocol at or below its own (a protocol 0
+// request, which no daemon runs, under the first).
+func RequestDomains() map[int]string {
+	return map[int]string{1: requestDomainV1, 2: requestDomainV2, FirstFilesProtocol: requestDomainV3}
+}
 
 // encoder streams an encoding into SHA-256. Every value, the domain included, is
 // its length as an unsigned 64-bit big-endian integer followed by its bytes, and a
@@ -214,7 +287,7 @@ func (e *encoder) sum() string { return hex.EncodeToString(e.h.Sum(nil)) }
 // is the caller's correlation key and changes nothing that runs.
 func RunRequestDigest(m *plimsollv1.RunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), m.GetModule(), m.GetCell())
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), m.GetModule(), m.GetCell(), m.GetFiles())
 }
 
 // SessionRunRequestDigest is the request digest of a session call: the same
@@ -223,12 +296,13 @@ func RunRequestDigest(m *plimsollv1.RunRequest) string {
 // the session's fingerprint instead.
 func SessionRunRequestDigest(m *plimsollv1.SessionRunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), nil, m.GetCell())
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), nil, m.GetCell(), m.GetFiles())
 }
 
 // AsRunRequest is a session call's request as the Run request with the same
 // digest, without the session ID: the form a harness stores and replays. A cell's
-// stored form is a Run request with a cell payload, which Run itself refuses.
+// stored form is a Run request with a cell payload, and a file call's one with a files
+// payload, both of which Run itself refuses.
 func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 	out := &plimsollv1.RunRequest{
 		Protocol: m.GetProtocol(), MinimumIsolation: m.GetMinimumIsolation(),
@@ -241,17 +315,17 @@ func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 		out.Payload = &plimsollv1.RunRequest_Project{Project: p.Project}
 	case *plimsollv1.SessionRunRequest_Cell:
 		out.Payload = &plimsollv1.RunRequest_Cell{Cell: p.Cell}
+	case *plimsollv1.SessionRunRequest_Files:
+		out.Payload = &plimsollv1.RunRequest_Files{Files: p.Files}
 	}
 	return out
 }
 
 func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsollv1.SoftwareRule,
-	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun, cell *plimsollv1.CellRun) string {
-	first := protocol < 2
-	domain := requestDomain
-	if first {
-		domain = requestDomainV1
-	}
+	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun, cell *plimsollv1.CellRun,
+	files *plimsollv1.FilesRun) string {
+	domain := requestDomainFor(protocol)
+	first := domain == requestDomainV1
 	e := newEncoder(domain)
 	e.uint("protocol", uint64(protocol))
 	e.str("minimum_isolation", floor)
@@ -302,10 +376,67 @@ func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsol
 		for _, r := range mod.GetRows() {
 			e.floats("row_values", r.GetValues()...)
 		}
+	case files != nil && domain == requestDomainV3:
+		// Only plimsoll.run-request.v3 covers the files kind: under an earlier domain a
+		// files payload is no kind at all, and no record of it is accepted (check).
+		e.str("kind", "files")
+		filesRequest(e, files)
 	default:
 		e.str("kind", "")
 	}
 	return e.sum()
+}
+
+// filesRequest encodes a file call's request: the scope by its number, then the operation
+// by its word, then the operation's fields. Paths and content are their raw bytes.
+func filesRequest(e *encoder, f *plimsollv1.FilesRun) {
+	e.int("scope", int64(f.GetScope()))
+	switch op := f.GetOp().(type) {
+	case *plimsollv1.FilesRun_Stat:
+		e.str("op", "stat")
+		e.bytes("path", op.Stat.GetPath())
+	case *plimsollv1.FilesRun_Read:
+		e.str("op", "read")
+		e.bytes("path", op.Read.GetPath())
+		e.uint("offset", op.Read.GetOffset())
+		e.uint("max_bytes", uint64(op.Read.GetMaxBytes()))
+	case *plimsollv1.FilesRun_Write:
+		e.str("op", "write")
+		e.bytes("path", op.Write.GetPath())
+		e.bytes("content", op.Write.GetContent())
+		e.int("write_mode", int64(op.Write.GetMode()))
+		e.bool("make_parents", op.Write.GetMakeParents())
+	case *plimsollv1.FilesRun_List:
+		e.str("op", "list")
+		e.bytes("path", op.List.GetPath())
+		e.bool("recursive", op.List.GetRecursive())
+		e.bytes("match", op.List.GetMatch())
+		e.bytes("after", op.List.GetAfter())
+		e.uint("budget_bytes", uint64(op.List.GetBudgetBytes()))
+	case *plimsollv1.FilesRun_ReadMany:
+		e.str("op", "read_many")
+		e.int("paths", int64(len(op.ReadMany.GetPaths())))
+		for _, p := range op.ReadMany.GetPaths() {
+			e.bytes("path", p)
+		}
+		e.uint("max_bytes_each", uint64(op.ReadMany.GetMaxBytesEach()))
+		e.uint("budget_bytes", uint64(op.ReadMany.GetBudgetBytes()))
+	case *plimsollv1.FilesRun_MakeDir:
+		e.str("op", "make_dir")
+		e.bytes("path", op.MakeDir.GetPath())
+		e.bool("parents", op.MakeDir.GetParents())
+	case *plimsollv1.FilesRun_Remove:
+		e.str("op", "remove")
+		e.bytes("path", op.Remove.GetPath())
+		e.bool("dir", op.Remove.GetDir())
+	case *plimsollv1.FilesRun_Rename:
+		e.str("op", "rename")
+		e.bytes("from_path", op.Rename.GetFromPath())
+		e.bytes("to_path", op.Rename.GetToPath())
+		e.bool("replace", op.Rename.GetReplace())
+	default:
+		e.str("op", "")
+	}
 }
 
 // requestKind is the payload kind a request carries (javascript, project, cell or
@@ -323,6 +454,8 @@ func requestKind(m *plimsollv1.RunRequest) string {
 		return "cell"
 	case *plimsollv1.RunRequest_Module:
 		return "module"
+	case *plimsollv1.RunRequest_Files:
+		return "files"
 	}
 	return ""
 }
@@ -335,6 +468,8 @@ func sessionRequestKind(m *plimsollv1.SessionRunRequest) string {
 		return "project"
 	case *plimsollv1.SessionRunRequest_Cell:
 		return "cell"
+	case *plimsollv1.SessionRunRequest_Files:
+		return "files"
 	}
 	return ""
 }
@@ -349,16 +484,35 @@ func resultKind(m *plimsollv1.RunResponse) string {
 		return "cell"
 	case *plimsollv1.RunResponse_Module:
 		return "module"
+	case *plimsollv1.RunResponse_Files:
+		return "files"
 	}
 	return ""
 }
 
-// ResultDigest is the result digest of a Run response: the result as sent, which
-// is what a replay of a deterministic workload reproduces. Durations are left out
-// (they differ on every run), and so is advice, which is analysis of the run
-// rather than its output. Provider and tier are the record's evidence fields.
+// ResultDigest is the result digest of a Run response as a record of the current version
+// states it: the result as sent, which is what a replay of a deterministic workload
+// reproduces. Durations are left out (they differ on every run), and so is advice, which
+// is analysis of the run rather than its output. Provider and tier are the record's
+// evidence fields. A verifier of a stored record uses ResultDigestFor with the record's
+// version.
 func ResultDigest(m *plimsollv1.RunResponse) string {
-	e := newEncoder(resultDomain)
+	return resultDigest(m, published[Version].result)
+}
+
+// ResultDigestFor is the result digest a record of the given version states for m: the
+// version fixes the result domain (plimsoll.run-result.v1 to version 5,
+// plimsoll.run-result.v2 from 6). An unknown version gets the current version's domain.
+func ResultDigestFor(m *plimsollv1.RunResponse, version int) string {
+	s, ok := published[version]
+	if !ok {
+		s = published[Version]
+	}
+	return resultDigest(m, s.result)
+}
+
+func resultDigest(m *plimsollv1.RunResponse, enc resultEncoding) string {
+	e := newEncoder(enc.domain())
 	switch r := m.GetResult().(type) {
 	case *plimsollv1.RunResponse_Javascript:
 		j := r.Javascript
@@ -414,10 +568,69 @@ func ResultDigest(m *plimsollv1.RunResponse) string {
 			e.int("run_status", int64(run.GetStatus()))
 			e.floats("run_outputs", run.GetOutputs()...)
 		}
+	case *plimsollv1.RunResponse_Files:
+		if enc != resultV2 {
+			// plimsoll.run-result.v1 covers four kinds; a files result is none of them,
+			// and no record of a version before 6 is accepted for one (check).
+			e.str("kind", "")
+			break
+		}
+		e.str("kind", "files")
+		filesResult(e, r.Files)
 	default:
 		e.str("kind", "")
 	}
 	return e.sum()
+}
+
+// filesResult encodes a file call's result: the outcome and error by their numbers, the
+// errno name, then the operation the answer names by its word ("" for none) and the
+// answer's fields.
+func filesResult(e *encoder, f *plimsollv1.FilesResult) {
+	e.int("outcome", int64(f.GetOutcome()))
+	e.int("error", int64(f.GetError()))
+	e.str("errno", f.GetErrno())
+	switch a := f.GetAnswer().(type) {
+	case *plimsollv1.FilesResult_Stat:
+		e.str("op", "stat")
+		e.int("type", int64(a.Stat.GetType()))
+		e.uint("size", a.Stat.GetSize())
+		e.uint("mode", uint64(a.Stat.GetMode()))
+	case *plimsollv1.FilesResult_Read:
+		e.str("op", "read")
+		e.bytes("content", a.Read.GetContent())
+		e.uint("size_at_open", a.Read.GetSizeAtOpen())
+	case *plimsollv1.FilesResult_Write:
+		e.str("op", "write")
+		e.uint("written", a.Write.GetWritten())
+	case *plimsollv1.FilesResult_List:
+		e.str("op", "list")
+		e.int("entries", int64(len(a.List.GetEntries())))
+		for _, en := range a.List.GetEntries() {
+			e.bytes("entry_path", en.GetPath())
+			e.int("entry_type", int64(en.GetType()))
+			e.uint("entry_size", en.GetSize())
+		}
+		e.bool("more", a.List.GetMore())
+	case *plimsollv1.FilesResult_ReadMany:
+		e.str("op", "read_many")
+		e.int("items", int64(len(a.ReadMany.GetItems())))
+		for _, it := range a.ReadMany.GetItems() {
+			e.int("item_error", int64(it.GetError()))
+			e.str("item_errno", it.GetErrno())
+			e.bytes("item_content", it.GetContent())
+			e.uint("item_size_at_open", it.GetSizeAtOpen())
+		}
+		e.bool("more", a.ReadMany.GetMore())
+	case *plimsollv1.FilesResult_MakeDir:
+		e.str("op", "make_dir")
+	case *plimsollv1.FilesResult_Remove:
+		e.str("op", "remove")
+	case *plimsollv1.FilesResult_Rename:
+		e.str("op", "rename")
+	default:
+		e.str("op", "")
+	}
 }
 
 // Digest is a record's own digest, over the fields its version covers (published),
@@ -673,7 +886,7 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 		return nil, ErrNoRecord
 	}
 	r := FromWire(m)
-	if err := checkUnanswered(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, true); err != nil {
+	if err := checkUnanswered(SessionRunRequestDigest(req), sessionRequestKind(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, true); err != nil {
 		return nil, err
 	}
 	switch {
@@ -690,20 +903,23 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 // CheckExchange does for an answered call: everything but its place in the chain, under
 // any published version.
 func CheckUnansweredExchange(req *plimsollv1.RunRequest, r sandbox.RunRecord) error {
-	return checkUnanswered(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, false)
+	return checkUnanswered(RunRequestDigest(req), requestKind(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, false)
 }
 
 // checkUnanswered is what an unanswered record states that a caller can recompute
 // from the request it sent, and that its evidence meets the request's floor and
 // software rule, as check requires of an answered record. Live, the record must be the
 // current version; stored, any published version that records an unanswered call.
-func checkUnanswered(requestDigest, floor string, rule sandbox.SoftwareRule, r sandbox.RunRecord, live bool) error {
+func checkUnanswered(requestDigest, kind string, protocol uint32, floor string, rule sandbox.SoftwareRule, r sandbox.RunRecord, live bool) error {
 	minimum, err := floorOf(floor)
 	if err != nil {
 		return err
 	}
 	s, err := readable(r.Version, live)
 	if err != nil {
+		return err
+	}
+	if err := s.recordsKind(kind, protocol, r.Version); err != nil {
 		return err
 	}
 	if r.Unanswered == "" {
@@ -735,7 +951,7 @@ var ErrNoRecord = errors.New("record: the response carries no run record")
 // caller sent and the response it received, and returns it. A response with no
 // record is ErrNoRecord.
 func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	r, err := check(RunRequestDigest(req), requestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
+	r, err := check(RunRequestDigest(req), requestKind(req), req.GetFiles(), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -750,7 +966,7 @@ func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.R
 // own digest. A session call's place in its chain needs the chain around it, which
 // CheckSessionCall (live) and attest.VerifyBundle (stored) check.
 func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	return check(RunRequestDigest(req), requestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, false)
+	return check(RunRequestDigest(req), requestKind(req), req.GetFiles(), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, false)
 }
 
 // CheckSessionCall verifies a session call's record against the request sent and
@@ -760,7 +976,7 @@ func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*s
 // daemon executed a call this caller did not make: someone else holds the
 // session ID.
 func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunResponse, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
-	r, err := check(SessionRunRequestDigest(req), sessionRequestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
+	r, err := check(SessionRunRequestDigest(req), sessionRequestKind(req), req.GetFiles(), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -783,8 +999,9 @@ var ErrChain = errors.New("record: the session's chain of records is broken")
 // request's isolation floor and software rule. A record below the floor is refused
 // here, before anything signs or keeps it, as sandbox.ErrIsolationEvidenceMismatch.
 // Live, the record must be the current version; stored, any published version that
-// records an answered call, checked by that version's rules.
-func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse, live bool) (*sandbox.RunRecord, error) {
+// records an answered call, checked by that version's rules. files is a file call's
+// request, whose operation its answer must be.
+func check(requestDigest, kind string, files *plimsollv1.FilesRun, protocol uint32, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse, live bool) (*sandbox.RunRecord, error) {
 	if err := rule.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: invalid software rule: %v", ErrMismatch, err)
 	}
@@ -806,6 +1023,9 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 	if err := s.statesOnly(r); err != nil {
 		return nil, err
 	}
+	if err := s.recordsKind(kind, protocol, r.Version); err != nil {
+		return nil, err
+	}
 	if got := resultKind(resp); got == "" || got != kind {
 		what := "no result"
 		if got != "" {
@@ -813,11 +1033,16 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 		}
 		return nil, fmt.Errorf("%w: a %s request answered with %s", ErrMismatch, kind, what)
 	}
+	if kind == "files" {
+		if err := filesAnswer(resp.GetFiles(), filesRunOp(files), true); err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
-	case r.ResultSHA256 != ResultDigest(resp):
-		return nil, fmt.Errorf("%w: result digest %s, the result received digests to %s", ErrMismatch, r.ResultSHA256, ResultDigest(resp))
+	case r.ResultSHA256 != resultDigest(resp, s.result):
+		return nil, fmt.Errorf("%w: result digest %s, the result received digests to %s under %s, the result domain of a version %d record", ErrMismatch, r.ResultSHA256, resultDigest(resp, s.result), s.result.domain(), r.Version)
 	}
 	if err := s.answerStates(r, resp); err != nil {
 		return nil, err
@@ -829,6 +1054,22 @@ func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *p
 		return nil, err
 	}
 	return &r, nil
+}
+
+// recordsKind is ErrMismatch for a call of a kind a record of this version cannot record:
+// a files call, sent under protocol 9 or later, is recorded only by a version whose result
+// domain covers the files kind (6 and later). No release wrote another.
+func (s spec) recordsKind(kind string, protocol uint32, version int) error {
+	if kind != "files" {
+		return nil
+	}
+	if !slices.Contains(s.result.kinds(), kind) {
+		return fmt.Errorf("%w: a version %d record cannot record a files call; its result domain %s does not cover the kind", ErrMismatch, version, s.result.domain())
+	}
+	if protocol < FirstFilesProtocol {
+		return fmt.Errorf("%w: a files call states protocol %d; file calls start at protocol %d", ErrMismatch, protocol, FirstFilesProtocol)
+	}
+	return nil
 }
 
 // answerStates checks that a response states the evidence its record states, field by
@@ -853,6 +1094,99 @@ func (s spec) answerStates(r sandbox.RunRecord, resp *plimsollv1.RunResponse) er
 		return fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
 	}
 	return nil
+}
+
+// filesAnswer is ErrMismatch for a file call's result whose outcome, error and answer do
+// not agree (docs/run-records.md, "A file call's answer"): completed with no error carries
+// exactly one answer, of the operation the request asked (when known) and with no errno
+// name; completed with an error carries none; timed_out, protocol_error and runner_failed
+// carry no answer, no error and no errno name; no other outcome is a file call's. A
+// read_many item carries its bytes or its error, never both, and no errno name without an
+// error. A result with two answers cannot be held here (a oneof); the JSON clients refuse
+// it while computing the digest, and protojson refuses to decode it.
+func filesAnswer(f *plimsollv1.FilesResult, asked string, known bool) error {
+	answer := filesAnswerOp(f)
+	switch f.GetOutcome() {
+	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED:
+		switch {
+		case f.GetError() != plimsollv1.FilesError_FILES_ERROR_UNSPECIFIED:
+			if answer != "" {
+				return fmt.Errorf("%w: a file call's result states the error %d and carries a %s answer", ErrMismatch, f.GetError(), answer)
+			}
+			return nil
+		case f.GetErrno() != "":
+			return fmt.Errorf("%w: a file call's result states no error and an errno name", ErrMismatch)
+		case answer == "":
+			return fmt.Errorf("%w: a completed file call's result states no error and carries no answer", ErrMismatch)
+		case known && answer != asked:
+			what := asked
+			if what == "" {
+				what = "no operation's"
+			}
+			return fmt.Errorf("%w: a %s call answered with a %s answer", ErrMismatch, what, answer)
+		}
+		for i, it := range f.GetReadMany().GetItems() {
+			if it.GetError() != plimsollv1.FilesError_FILES_ERROR_UNSPECIFIED && (len(it.GetContent()) != 0 || it.GetSizeAtOpen() != 0) {
+				return fmt.Errorf("%w: read_many item %d states the error %d and carries bytes", ErrMismatch, i, it.GetError())
+			}
+			if it.GetError() == plimsollv1.FilesError_FILES_ERROR_UNSPECIFIED && it.GetErrno() != "" {
+				return fmt.Errorf("%w: read_many item %d states no error and an errno name", ErrMismatch, i)
+			}
+		}
+		return nil
+	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT, plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR, plimsollv1.ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED:
+		if answer != "" || f.GetError() != plimsollv1.FilesError_FILES_ERROR_UNSPECIFIED || f.GetErrno() != "" {
+			return fmt.Errorf("%w: a file call that ended with the outcome %d states an error, an errno name or an answer", ErrMismatch, f.GetOutcome())
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: the outcome %d is not one a file call has", ErrMismatch, f.GetOutcome())
+}
+
+// filesRunOp is the word of the operation a file call's request asks, "" for none;
+// filesAnswerOp is that of the answer a file call's result carries.
+func filesRunOp(f *plimsollv1.FilesRun) string {
+	switch f.GetOp().(type) {
+	case *plimsollv1.FilesRun_Stat:
+		return "stat"
+	case *plimsollv1.FilesRun_Read:
+		return "read"
+	case *plimsollv1.FilesRun_Write:
+		return "write"
+	case *plimsollv1.FilesRun_List:
+		return "list"
+	case *plimsollv1.FilesRun_ReadMany:
+		return "read_many"
+	case *plimsollv1.FilesRun_MakeDir:
+		return "make_dir"
+	case *plimsollv1.FilesRun_Remove:
+		return "remove"
+	case *plimsollv1.FilesRun_Rename:
+		return "rename"
+	}
+	return ""
+}
+
+func filesAnswerOp(f *plimsollv1.FilesResult) string {
+	switch f.GetAnswer().(type) {
+	case *plimsollv1.FilesResult_Stat:
+		return "stat"
+	case *plimsollv1.FilesResult_Read:
+		return "read"
+	case *plimsollv1.FilesResult_Write:
+		return "write"
+	case *plimsollv1.FilesResult_List:
+		return "list"
+	case *plimsollv1.FilesResult_ReadMany:
+		return "read_many"
+	case *plimsollv1.FilesResult_MakeDir:
+		return "make_dir"
+	case *plimsollv1.FilesResult_Remove:
+		return "remove"
+	case *plimsollv1.FilesResult_Rename:
+		return "rename"
+	}
+	return ""
 }
 
 // CheckLostAnswer verifies the answer an attach returned for a lost call
@@ -883,10 +1217,16 @@ func CheckLostAnswer(resp *plimsollv1.RunResponse, lost *plimsollv1.RunRecord) e
 	}
 	switch kind := resultKind(resp); kind {
 	case "javascript", "project", "cell":
+	case "files":
+		// The request is not at hand, so the operation it asked is not either: the answer
+		// is checked against every other part of the rule.
+		if err := filesAnswer(resp.GetFiles(), "", false); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("%w: the lost call's answer holds no result of a session call's kind", ErrMismatch)
 	}
-	if got := ResultDigest(resp); r.ResultSHA256 != got {
+	if got := resultDigest(resp, s.result); r.ResultSHA256 != got {
 		return fmt.Errorf("%w: result digest %s, the lost call's answer digests to %s", ErrMismatch, r.ResultSHA256, got)
 	}
 	return s.answerStates(r, resp)

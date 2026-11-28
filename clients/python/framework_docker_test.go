@@ -194,15 +194,19 @@ var unittestNotRun = regexp.MustCompile(`(?m)\.\.\. (skipped|expected failure|un
 // TestAgentFrameworkDocker runs frameworks/agent_framework/docker_agent_framework_check.py
 // on each of plimsoll's two project images: the Agent Framework harness's
 // ShellEnvironmentProvider probes BusyBox sh through PlimsollShellTool and builds its snapshot
-// (the probes' output is in this test's log, and the CLIs it finds differ by image), and a
-// scripted harness agent's two commands share a file.
+// (the probes' output is in this test's log, and the CLIs it finds differ by image), a
+// scripted harness agent's two commands share a file, the agent's file tools over
+// PlimsollFileStore and its shell see one tree, each of the store's refusals holds against
+// links, a sparse file and the workspace's state made in BusyBox, a folder swapped for a link
+// out by the session's kept interpreter is never read through, and a recursive search of 5,000
+// files and a listing and search of 60,000 names end inside the framework's 10-second bound.
 func TestAgentFrameworkDocker(t *testing.T) {
 	t.Parallel()
 	for _, image := range []string{"plimsoll/sandbox:latest", "plimsoll/sandbox-python:latest"} {
 		t.Run(image, func(t *testing.T) {
 			t.Parallel()
 			python, url, floor := frameworkDocker(t, "agent_framework", image)
-			frameworkDockerCheck(t, python, url, floor, "frameworks.agent_framework.docker_agent_framework_check", 2)
+			frameworkDockerCheck(t, python, url, floor, "frameworks.agent_framework.docker_agent_framework_check", 7)
 		})
 	}
 }

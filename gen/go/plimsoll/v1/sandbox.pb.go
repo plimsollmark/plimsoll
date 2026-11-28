@@ -99,6 +99,261 @@ func (ProjectOutcome) EnumDescriptor() ([]byte, []int) {
 	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{0}
 }
 
+// FilesScope says how a file call's paths resolve.
+type FilesScope int32
+
+const (
+	FilesScope_FILES_SCOPE_UNSPECIFIED FilesScope = 0 // refused, InvalidArgument
+	// A relative path from the session's work folder, parts separated by "/", none empty,
+	// "." or "..", at most 4096 bytes; "." alone is the work folder. A link that stays
+	// inside the work folder is followed and one that would leave it is refused with
+	// FILES_ERROR_SYMLINK, by the kernel's own resolution (docs/session-files.md has the
+	// table per operation).
+	FilesScope_FILES_SCOPE_WORK FilesScope = 1
+	// An absolute path resolved as the guest's own user would resolve it, links followed.
+	// The sandbox's walls are the boundary.
+	FilesScope_FILES_SCOPE_SANDBOX FilesScope = 2
+)
+
+// Enum value maps for FilesScope.
+var (
+	FilesScope_name = map[int32]string{
+		0: "FILES_SCOPE_UNSPECIFIED",
+		1: "FILES_SCOPE_WORK",
+		2: "FILES_SCOPE_SANDBOX",
+	}
+	FilesScope_value = map[string]int32{
+		"FILES_SCOPE_UNSPECIFIED": 0,
+		"FILES_SCOPE_WORK":        1,
+		"FILES_SCOPE_SANDBOX":     2,
+	}
+)
+
+func (x FilesScope) Enum() *FilesScope {
+	p := new(FilesScope)
+	*p = x
+	return p
+}
+
+func (x FilesScope) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FilesScope) Descriptor() protoreflect.EnumDescriptor {
+	return file_plimsoll_v1_sandbox_proto_enumTypes[1].Descriptor()
+}
+
+func (FilesScope) Type() protoreflect.EnumType {
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[1]
+}
+
+func (x FilesScope) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FilesScope.Descriptor instead.
+func (FilesScope) EnumDescriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{1}
+}
+
+type FilesWriteMode int32
+
+const (
+	FilesWriteMode_FILES_WRITE_MODE_UNSPECIFIED FilesWriteMode = 0 // refused, InvalidArgument
+	FilesWriteMode_FILES_WRITE_MODE_REPLACE     FilesWriteMode = 1 // the file's whole content becomes content
+	FilesWriteMode_FILES_WRITE_MODE_CREATE_ONLY FilesWriteMode = 2 // refused with FILES_ERROR_EXISTS if path is there
+	FilesWriteMode_FILES_WRITE_MODE_APPEND      FilesWriteMode = 3 // content goes after the file's end
+)
+
+// Enum value maps for FilesWriteMode.
+var (
+	FilesWriteMode_name = map[int32]string{
+		0: "FILES_WRITE_MODE_UNSPECIFIED",
+		1: "FILES_WRITE_MODE_REPLACE",
+		2: "FILES_WRITE_MODE_CREATE_ONLY",
+		3: "FILES_WRITE_MODE_APPEND",
+	}
+	FilesWriteMode_value = map[string]int32{
+		"FILES_WRITE_MODE_UNSPECIFIED": 0,
+		"FILES_WRITE_MODE_REPLACE":     1,
+		"FILES_WRITE_MODE_CREATE_ONLY": 2,
+		"FILES_WRITE_MODE_APPEND":      3,
+	}
+)
+
+func (x FilesWriteMode) Enum() *FilesWriteMode {
+	p := new(FilesWriteMode)
+	*p = x
+	return p
+}
+
+func (x FilesWriteMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FilesWriteMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_plimsoll_v1_sandbox_proto_enumTypes[2].Descriptor()
+}
+
+func (FilesWriteMode) Type() protoreflect.EnumType {
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[2]
+}
+
+func (x FilesWriteMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FilesWriteMode.Descriptor instead.
+func (FilesWriteMode) EnumDescriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{2}
+}
+
+// FilesError is the closed set of a file call's errors.
+type FilesError int32
+
+const (
+	FilesError_FILES_ERROR_UNSPECIFIED       FilesError = 0 // no error
+	FilesError_FILES_ERROR_NOT_FOUND         FilesError = 1
+	FilesError_FILES_ERROR_IS_DIR            FilesError = 2
+	FilesError_FILES_ERROR_NOT_DIR           FilesError = 3
+	FilesError_FILES_ERROR_EXISTS            FilesError = 4
+	FilesError_FILES_ERROR_SYMLINK           FilesError = 5 // a link where the WORK scope follows none
+	FilesError_FILES_ERROR_NOT_REGULAR       FilesError = 6 // a pipe, a device or a socket where a file was asked for
+	FilesError_FILES_ERROR_PERMISSION_DENIED FilesError = 7
+	FilesError_FILES_ERROR_TOO_LARGE         FilesError = 8
+	FilesError_FILES_ERROR_NO_SPACE          FilesError = 9
+	FilesError_FILES_ERROR_READ_ONLY         FilesError = 10
+	FilesError_FILES_ERROR_NOT_EMPTY         FilesError = 11
+	// A listing passed one of its bounds before it filled its page: the entries one call may
+	// read, the names it may hold, the depth below the folder, or a path's 4096 bytes.
+	FilesError_FILES_ERROR_SCAN_LIMIT FilesError = 12
+	FilesError_FILES_ERROR_OTHER      FilesError = 13
+)
+
+// Enum value maps for FilesError.
+var (
+	FilesError_name = map[int32]string{
+		0:  "FILES_ERROR_UNSPECIFIED",
+		1:  "FILES_ERROR_NOT_FOUND",
+		2:  "FILES_ERROR_IS_DIR",
+		3:  "FILES_ERROR_NOT_DIR",
+		4:  "FILES_ERROR_EXISTS",
+		5:  "FILES_ERROR_SYMLINK",
+		6:  "FILES_ERROR_NOT_REGULAR",
+		7:  "FILES_ERROR_PERMISSION_DENIED",
+		8:  "FILES_ERROR_TOO_LARGE",
+		9:  "FILES_ERROR_NO_SPACE",
+		10: "FILES_ERROR_READ_ONLY",
+		11: "FILES_ERROR_NOT_EMPTY",
+		12: "FILES_ERROR_SCAN_LIMIT",
+		13: "FILES_ERROR_OTHER",
+	}
+	FilesError_value = map[string]int32{
+		"FILES_ERROR_UNSPECIFIED":       0,
+		"FILES_ERROR_NOT_FOUND":         1,
+		"FILES_ERROR_IS_DIR":            2,
+		"FILES_ERROR_NOT_DIR":           3,
+		"FILES_ERROR_EXISTS":            4,
+		"FILES_ERROR_SYMLINK":           5,
+		"FILES_ERROR_NOT_REGULAR":       6,
+		"FILES_ERROR_PERMISSION_DENIED": 7,
+		"FILES_ERROR_TOO_LARGE":         8,
+		"FILES_ERROR_NO_SPACE":          9,
+		"FILES_ERROR_READ_ONLY":         10,
+		"FILES_ERROR_NOT_EMPTY":         11,
+		"FILES_ERROR_SCAN_LIMIT":        12,
+		"FILES_ERROR_OTHER":             13,
+	}
+)
+
+func (x FilesError) Enum() *FilesError {
+	p := new(FilesError)
+	*p = x
+	return p
+}
+
+func (x FilesError) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FilesError) Descriptor() protoreflect.EnumDescriptor {
+	return file_plimsoll_v1_sandbox_proto_enumTypes[3].Descriptor()
+}
+
+func (FilesError) Type() protoreflect.EnumType {
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[3]
+}
+
+func (x FilesError) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FilesError.Descriptor instead.
+func (FilesError) EnumDescriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{3}
+}
+
+type FilesEntryType int32
+
+const (
+	FilesEntryType_FILES_ENTRY_TYPE_UNSPECIFIED FilesEntryType = 0
+	FilesEntryType_FILES_ENTRY_TYPE_FILE        FilesEntryType = 1
+	FilesEntryType_FILES_ENTRY_TYPE_DIR         FilesEntryType = 2
+	FilesEntryType_FILES_ENTRY_TYPE_LINK        FilesEntryType = 3 // a symbolic link, named as a link and never followed
+	FilesEntryType_FILES_ENTRY_TYPE_OTHER       FilesEntryType = 4
+	// A folder a recursive listing could not enter: the guest may not read or search it. Its
+	// entries are not listed, and the listing goes on after it. Only a recursive listing's
+	// entry has this type, never a stat's answer.
+	FilesEntryType_FILES_ENTRY_TYPE_UNREADABLE FilesEntryType = 5
+)
+
+// Enum value maps for FilesEntryType.
+var (
+	FilesEntryType_name = map[int32]string{
+		0: "FILES_ENTRY_TYPE_UNSPECIFIED",
+		1: "FILES_ENTRY_TYPE_FILE",
+		2: "FILES_ENTRY_TYPE_DIR",
+		3: "FILES_ENTRY_TYPE_LINK",
+		4: "FILES_ENTRY_TYPE_OTHER",
+		5: "FILES_ENTRY_TYPE_UNREADABLE",
+	}
+	FilesEntryType_value = map[string]int32{
+		"FILES_ENTRY_TYPE_UNSPECIFIED": 0,
+		"FILES_ENTRY_TYPE_FILE":        1,
+		"FILES_ENTRY_TYPE_DIR":         2,
+		"FILES_ENTRY_TYPE_LINK":        3,
+		"FILES_ENTRY_TYPE_OTHER":       4,
+		"FILES_ENTRY_TYPE_UNREADABLE":  5,
+	}
+)
+
+func (x FilesEntryType) Enum() *FilesEntryType {
+	p := new(FilesEntryType)
+	*p = x
+	return p
+}
+
+func (x FilesEntryType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FilesEntryType) Descriptor() protoreflect.EnumDescriptor {
+	return file_plimsoll_v1_sandbox_proto_enumTypes[4].Descriptor()
+}
+
+func (FilesEntryType) Type() protoreflect.EnumType {
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[4]
+}
+
+func (x FilesEntryType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FilesEntryType.Descriptor instead.
+func (FilesEntryType) EnumDescriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{4}
+}
+
 // SessionEnd says why a session ended.
 type SessionEnd int32
 
@@ -166,11 +421,11 @@ func (x SessionEnd) String() string {
 }
 
 func (SessionEnd) Descriptor() protoreflect.EnumDescriptor {
-	return file_plimsoll_v1_sandbox_proto_enumTypes[1].Descriptor()
+	return file_plimsoll_v1_sandbox_proto_enumTypes[5].Descriptor()
 }
 
 func (SessionEnd) Type() protoreflect.EnumType {
-	return &file_plimsoll_v1_sandbox_proto_enumTypes[1]
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[5]
 }
 
 func (x SessionEnd) Number() protoreflect.EnumNumber {
@@ -179,7 +434,108 @@ func (x SessionEnd) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SessionEnd.Descriptor instead.
 func (SessionEnd) EnumDescriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{1}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{5}
+}
+
+// CapacityLimit names the limit a capacity refusal met. A caller acts on it; the
+// refusal's text is for people.
+type CapacityLimit int32
+
+const (
+	// Not stated: not a capacity refusal, or a daemon that does not state the limit.
+	CapacityLimit_CAPACITY_LIMIT_UNSPECIFIED CapacityLimit = 0
+	// The daemon's session places are all taken (SANDBOX_MAX_SESSIONS). Closing one
+	// of the caller's sessions frees one.
+	CapacityLimit_CAPACITY_LIMIT_SESSIONS CapacityLimit = 1
+	// The caller holds as many sessions as one caller may
+	// (SANDBOX_MAX_SESSIONS_PER_CALLER). Closing one of them frees one.
+	CapacityLimit_CAPACITY_LIMIT_CALLER_SESSIONS CapacityLimit = 2
+	// The open's owner is at its cap (SANDBOX_MAX_SESSIONS_PER_OWNER) and the daemon
+	// could close none of that owner's sessions for it: each is running a call, or the
+	// open was warm-only. The daemon already closes an owner's idle session to make
+	// room, so a close by the caller frees nothing more.
+	CapacityLimit_CAPACITY_LIMIT_OWNER_SESSIONS CapacityLimit = 3
+	// The daemon's runs in flight are at their cap (SANDBOX_MAX_CONCURRENT). A running
+	// session holds one, so closing one may free one.
+	CapacityLimit_CAPACITY_LIMIT_RUNS CapacityLimit = 4
+	// The caller's runs in flight are at their cap (SANDBOX_PER_KEY_CONCURRENT). A
+	// running session holds one, so closing one may free one.
+	CapacityLimit_CAPACITY_LIMIT_CALLER_RUNS CapacityLimit = 5
+	// The caller's runs per minute are spent (SANDBOX_RATE_PER_MIN). Only time gives
+	// them back; no close does.
+	CapacityLimit_CAPACITY_LIMIT_RATE CapacityLimit = 6
+	// The paid seconds for today are spent, the caller's or the daemon's
+	// (SANDBOX_PAID_SECONDS_PER_DAY), until 00:00 UTC.
+	CapacityLimit_CAPACITY_LIMIT_PAID_SECONDS CapacityLimit = 7
+	// A short line is full: the requests the daemon decodes at once, the calls waiting
+	// for the ship scan, or a call already waiting for its session's turn. Retry shortly.
+	CapacityLimit_CAPACITY_LIMIT_QUEUE CapacityLimit = 8
+	// The provider shed it by its own capacity: a quota, a warm pool with no sandbox
+	// waiting, a provider shutting down.
+	CapacityLimit_CAPACITY_LIMIT_PROVIDER CapacityLimit = 9
+	// The call's own time ran out before any of it was sent: its deadline passed, or its
+	// caller canceled it, while it waited for its session's turn or a place, or while the
+	// sandbox, its grant or the provider's checks were made ready for it. No limit of the
+	// daemon's or the provider's was met, and no close frees anything; a retry with more
+	// time may succeed. The refusal's code is the context's: deadline_exceeded or canceled.
+	CapacityLimit_CAPACITY_LIMIT_DEADLINE CapacityLimit = 10
+)
+
+// Enum value maps for CapacityLimit.
+var (
+	CapacityLimit_name = map[int32]string{
+		0:  "CAPACITY_LIMIT_UNSPECIFIED",
+		1:  "CAPACITY_LIMIT_SESSIONS",
+		2:  "CAPACITY_LIMIT_CALLER_SESSIONS",
+		3:  "CAPACITY_LIMIT_OWNER_SESSIONS",
+		4:  "CAPACITY_LIMIT_RUNS",
+		5:  "CAPACITY_LIMIT_CALLER_RUNS",
+		6:  "CAPACITY_LIMIT_RATE",
+		7:  "CAPACITY_LIMIT_PAID_SECONDS",
+		8:  "CAPACITY_LIMIT_QUEUE",
+		9:  "CAPACITY_LIMIT_PROVIDER",
+		10: "CAPACITY_LIMIT_DEADLINE",
+	}
+	CapacityLimit_value = map[string]int32{
+		"CAPACITY_LIMIT_UNSPECIFIED":     0,
+		"CAPACITY_LIMIT_SESSIONS":        1,
+		"CAPACITY_LIMIT_CALLER_SESSIONS": 2,
+		"CAPACITY_LIMIT_OWNER_SESSIONS":  3,
+		"CAPACITY_LIMIT_RUNS":            4,
+		"CAPACITY_LIMIT_CALLER_RUNS":     5,
+		"CAPACITY_LIMIT_RATE":            6,
+		"CAPACITY_LIMIT_PAID_SECONDS":    7,
+		"CAPACITY_LIMIT_QUEUE":           8,
+		"CAPACITY_LIMIT_PROVIDER":        9,
+		"CAPACITY_LIMIT_DEADLINE":        10,
+	}
+)
+
+func (x CapacityLimit) Enum() *CapacityLimit {
+	p := new(CapacityLimit)
+	*p = x
+	return p
+}
+
+func (x CapacityLimit) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CapacityLimit) Descriptor() protoreflect.EnumDescriptor {
+	return file_plimsoll_v1_sandbox_proto_enumTypes[6].Descriptor()
+}
+
+func (CapacityLimit) Type() protoreflect.EnumType {
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[6]
+}
+
+func (x CapacityLimit) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CapacityLimit.Descriptor instead.
+func (CapacityLimit) EnumDescriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{6}
 }
 
 // NotDispatchedReason says why, in the terms a caller acts on: whether another
@@ -242,11 +598,11 @@ func (x NotDispatchedReason) String() string {
 }
 
 func (NotDispatchedReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_plimsoll_v1_sandbox_proto_enumTypes[2].Descriptor()
+	return file_plimsoll_v1_sandbox_proto_enumTypes[7].Descriptor()
 }
 
 func (NotDispatchedReason) Type() protoreflect.EnumType {
-	return &file_plimsoll_v1_sandbox_proto_enumTypes[2]
+	return &file_plimsoll_v1_sandbox_proto_enumTypes[7]
 }
 
 func (x NotDispatchedReason) Number() protoreflect.EnumNumber {
@@ -255,7 +611,7 @@ func (x NotDispatchedReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NotDispatchedReason.Descriptor instead.
 func (NotDispatchedReason) EnumDescriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{2}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{7}
 }
 
 type DescribeRequest struct {
@@ -548,7 +904,15 @@ type PayloadEnvironment struct {
 	// checks proved them ("javascript", "python"): the languages a project's steps can
 	// invoke, and on a provider with sessions the languages a cell may use. Empty when
 	// the provider has proved none.
-	Languages     []string `protobuf:"bytes,4,rep,name=languages,proto3" json:"languages,omitempty"`
+	Languages []string `protobuf:"bytes,4,rep,name=languages,proto3" json:"languages,omitempty"`
+	// file_scopes: on session_environment, the scopes in which the provider's sessions
+	// take file calls (SessionRunRequest.files), carried out by plimsoll's own helper, in
+	// this enum's order; empty on every other environment, since a file call is a session
+	// call, and where the sessions take none. A provider whose work folder is not a mount
+	// of its own states FILES_SCOPE_SANDBOX alone (OpenShell, docs/openshell.md).
+	// Informational: a file call in a scope a session does not take is refused, not
+	// dispatched, reason unsupported.
+	FileScopes    []FilesScope `protobuf:"varint,6,rep,packed,name=file_scopes,json=fileScopes,proto3,enum=plimsoll.v1.FilesScope" json:"file_scopes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -607,6 +971,13 @@ func (x *PayloadEnvironment) GetSoftwareIdentity() string {
 func (x *PayloadEnvironment) GetLanguages() []string {
 	if x != nil {
 		return x.Languages
+	}
+	return nil
+}
+
+func (x *PayloadEnvironment) GetFileScopes() []FilesScope {
+	if x != nil {
+		return x.FileScopes
 	}
 	return nil
 }
@@ -927,6 +1298,7 @@ type RunRequest struct {
 	//	*RunRequest_Project
 	//	*RunRequest_Module
 	//	*RunRequest_Cell
+	//	*RunRequest_Files
 	Payload       isRunRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1047,6 +1419,15 @@ func (x *RunRequest) GetCell() *CellRun {
 	return nil
 }
 
+func (x *RunRequest) GetFiles() *FilesRun {
+	if x != nil {
+		if x, ok := x.Payload.(*RunRequest_Files); ok {
+			return x.Files
+		}
+	}
+	return nil
+}
+
 type isRunRequest_Payload interface {
 	isRunRequest_Payload()
 }
@@ -1076,6 +1457,13 @@ type RunRequest_Cell struct {
 	Cell *CellRun `protobuf:"bytes,13,opt,name=cell,proto3,oneof"`
 }
 
+type RunRequest_Files struct {
+	// The stored form of a session's file call (the call without its session ID, with
+	// the same request digest), which a harness replays into a fresh session in order.
+	// Run itself refuses it: a file call is a session call.
+	Files *FilesRun `protobuf:"bytes,14,opt,name=files,proto3,oneof"`
+}
+
 func (*RunRequest_Javascript) isRunRequest_Payload() {}
 
 func (*RunRequest_Project) isRunRequest_Payload() {}
@@ -1083,6 +1471,8 @@ func (*RunRequest_Project) isRunRequest_Payload() {}
 func (*RunRequest_Module) isRunRequest_Payload() {}
 
 func (*RunRequest_Cell) isRunRequest_Payload() {}
+
+func (*RunRequest_Files) isRunRequest_Payload() {}
 
 // JavaScriptRun is a snippet. The engine is provider-dependent (Node on docker
 // and e2b, QuickJS on wasm).
@@ -1200,6 +1590,7 @@ type RunResponse struct {
 	//	*RunResponse_Project
 	//	*RunResponse_Module
 	//	*RunResponse_Cell
+	//	*RunResponse_Files
 	Result        isRunResponse_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1348,6 +1739,15 @@ func (x *RunResponse) GetCell() *CellResult {
 	return nil
 }
 
+func (x *RunResponse) GetFiles() *FilesResult {
+	if x != nil {
+		if x, ok := x.Result.(*RunResponse_Files); ok {
+			return x.Files
+		}
+	}
+	return nil
+}
+
 type isRunResponse_Result interface {
 	isRunResponse_Result()
 }
@@ -1368,6 +1768,10 @@ type RunResponse_Cell struct {
 	Cell *CellResult `protobuf:"bytes,13,opt,name=cell,proto3,oneof"`
 }
 
+type RunResponse_Files struct {
+	Files *FilesResult `protobuf:"bytes,15,opt,name=files,proto3,oneof"`
+}
+
 func (*RunResponse_Javascript) isRunResponse_Result() {}
 
 func (*RunResponse_Project) isRunResponse_Result() {}
@@ -1375,6 +1779,8 @@ func (*RunResponse_Project) isRunResponse_Result() {}
 func (*RunResponse_Module) isRunResponse_Result() {}
 
 func (*RunResponse_Cell) isRunResponse_Result() {}
+
+func (*RunResponse_Files) isRunResponse_Result() {}
 
 // RunRecord states what one run was asked, what it answered, the evidence it
 // ran under, and when, as digests a harness outside the daemon can recompute
@@ -2524,8 +2930,19 @@ type OpenSessionResponse struct {
 	Generation             uint64        `protobuf:"varint,9,opt,name=generation,proto3" json:"generation,omitempty"`                                     // positive ownership number; every run and close must carry it
 	MinimumIsolation       string        `protobuf:"bytes,10,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"` // floor requested at open; empty means no requested floor
 	SoftwareRule           *SoftwareRule `protobuf:"bytes,11,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`             // immutable rule established at open
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// file_scopes: the scopes in which this session takes file calls
+	// (SessionRunRequest.files), carried out by plimsoll's own helper inside its sandbox,
+	// in the enum's order; empty when it takes none. Informational, like
+	// PayloadEnvironment.file_scopes: the daemon refuses a file call in a scope it does
+	// not take, not dispatched, reason unsupported, whatever the client believed. Each
+	// call's record names the scope that call used (FilesRun.scope).
+	FileScopes []FilesScope `protobuf:"varint,14,rep,packed,name=file_scopes,json=fileScopes,proto3,enum=plimsoll.v1.FilesScope" json:"file_scopes,omitempty"`
+	// work_dir is the absolute path of the session's work folder inside its sandbox, the
+	// folder a file call's WORK scope resolves from and the working directory of every
+	// call; empty when the provider states none.
+	WorkDir       string `protobuf:"bytes,13,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OpenSessionResponse) Reset() {
@@ -2633,6 +3050,20 @@ func (x *OpenSessionResponse) GetSoftwareRule() *SoftwareRule {
 		return x.SoftwareRule
 	}
 	return nil
+}
+
+func (x *OpenSessionResponse) GetFileScopes() []FilesScope {
+	if x != nil {
+		return x.FileScopes
+	}
+	return nil
+}
+
+func (x *OpenSessionResponse) GetWorkDir() string {
+	if x != nil {
+		return x.WorkDir
+	}
+	return ""
 }
 
 // SessionCheckpoint is public chain state, never a credential: the ownership
@@ -2943,6 +3374,7 @@ type SessionRunRequest struct {
 	//	*SessionRunRequest_Javascript
 	//	*SessionRunRequest_Project
 	//	*SessionRunRequest_Cell
+	//	*SessionRunRequest_Files
 	Payload       isSessionRunRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3061,6 +3493,15 @@ func (x *SessionRunRequest) GetCell() *CellRun {
 	return nil
 }
 
+func (x *SessionRunRequest) GetFiles() *FilesRun {
+	if x != nil {
+		if x, ok := x.Payload.(*SessionRunRequest_Files); ok {
+			return x.Files
+		}
+	}
+	return nil
+}
+
 type isSessionRunRequest_Payload interface {
 	isSessionRunRequest_Payload()
 }
@@ -3077,11 +3518,20 @@ type SessionRunRequest_Cell struct {
 	Cell *CellRun `protobuf:"bytes,12,opt,name=cell,proto3,oneof"`
 }
 
+type SessionRunRequest_Files struct {
+	// One operation on the session's files, carried out inside the sandbox by
+	// plimsoll's own helper (from protocol 9). A daemon whose session carries no file
+	// calls refuses it, marked not dispatched, reason unsupported.
+	Files *FilesRun `protobuf:"bytes,13,opt,name=files,proto3,oneof"`
+}
+
 func (*SessionRunRequest_Javascript) isSessionRunRequest_Payload() {}
 
 func (*SessionRunRequest_Project) isSessionRunRequest_Payload() {}
 
 func (*SessionRunRequest_Cell) isSessionRunRequest_Payload() {}
+
+func (*SessionRunRequest_Files) isSessionRunRequest_Payload() {}
 
 // CellRun is one call to the session's interpreter for its language. The session
 // keeps one interpreter per language alive between calls, so what a cell defines is
@@ -3255,6 +3705,1333 @@ func (x *CellResult) GetInterpreterEnded() bool {
 	return false
 }
 
+// FilesRun is one operation on a session's files (a session call kind, from protocol 9),
+// carried out inside the sandbox by plimsoll's own helper as the guest's own user. Every
+// path is bytes: a name may hold any byte but "/" and NUL, which is not always UTF-8, so a
+// name a listing returns can be named back by the same bytes. docs/run-records.md gives
+// the request digest's fields.
+type FilesRun struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Scope FilesScope             `protobuf:"varint,1,opt,name=scope,proto3,enum=plimsoll.v1.FilesScope" json:"scope,omitempty"`
+	// Exactly one operation. An empty oneof is InvalidArgument.
+	//
+	// Types that are valid to be assigned to Op:
+	//
+	//	*FilesRun_Stat
+	//	*FilesRun_Read
+	//	*FilesRun_Write
+	//	*FilesRun_List
+	//	*FilesRun_ReadMany
+	//	*FilesRun_MakeDir
+	//	*FilesRun_Remove
+	//	*FilesRun_Rename
+	Op            isFilesRun_Op `protobuf_oneof:"op"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesRun) Reset() {
+	*x = FilesRun{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesRun) ProtoMessage() {}
+
+func (x *FilesRun) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesRun.ProtoReflect.Descriptor instead.
+func (*FilesRun) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *FilesRun) GetScope() FilesScope {
+	if x != nil {
+		return x.Scope
+	}
+	return FilesScope_FILES_SCOPE_UNSPECIFIED
+}
+
+func (x *FilesRun) GetOp() isFilesRun_Op {
+	if x != nil {
+		return x.Op
+	}
+	return nil
+}
+
+func (x *FilesRun) GetStat() *FilesStat {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_Stat); ok {
+			return x.Stat
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetRead() *FilesRead {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_Read); ok {
+			return x.Read
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetWrite() *FilesWrite {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_Write); ok {
+			return x.Write
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetList() *FilesList {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_List); ok {
+			return x.List
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetReadMany() *FilesReadMany {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_ReadMany); ok {
+			return x.ReadMany
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetMakeDir() *FilesMakeDir {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_MakeDir); ok {
+			return x.MakeDir
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetRemove() *FilesRemove {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_Remove); ok {
+			return x.Remove
+		}
+	}
+	return nil
+}
+
+func (x *FilesRun) GetRename() *FilesRename {
+	if x != nil {
+		if x, ok := x.Op.(*FilesRun_Rename); ok {
+			return x.Rename
+		}
+	}
+	return nil
+}
+
+type isFilesRun_Op interface {
+	isFilesRun_Op()
+}
+
+type FilesRun_Stat struct {
+	Stat *FilesStat `protobuf:"bytes,10,opt,name=stat,proto3,oneof"`
+}
+
+type FilesRun_Read struct {
+	Read *FilesRead `protobuf:"bytes,11,opt,name=read,proto3,oneof"`
+}
+
+type FilesRun_Write struct {
+	Write *FilesWrite `protobuf:"bytes,12,opt,name=write,proto3,oneof"`
+}
+
+type FilesRun_List struct {
+	List *FilesList `protobuf:"bytes,13,opt,name=list,proto3,oneof"`
+}
+
+type FilesRun_ReadMany struct {
+	ReadMany *FilesReadMany `protobuf:"bytes,14,opt,name=read_many,json=readMany,proto3,oneof"`
+}
+
+type FilesRun_MakeDir struct {
+	MakeDir *FilesMakeDir `protobuf:"bytes,15,opt,name=make_dir,json=makeDir,proto3,oneof"`
+}
+
+type FilesRun_Remove struct {
+	Remove *FilesRemove `protobuf:"bytes,16,opt,name=remove,proto3,oneof"`
+}
+
+type FilesRun_Rename struct {
+	Rename *FilesRename `protobuf:"bytes,17,opt,name=rename,proto3,oneof"`
+}
+
+func (*FilesRun_Stat) isFilesRun_Op() {}
+
+func (*FilesRun_Read) isFilesRun_Op() {}
+
+func (*FilesRun_Write) isFilesRun_Op() {}
+
+func (*FilesRun_List) isFilesRun_Op() {}
+
+func (*FilesRun_ReadMany) isFilesRun_Op() {}
+
+func (*FilesRun_MakeDir) isFilesRun_Op() {}
+
+func (*FilesRun_Remove) isFilesRun_Op() {}
+
+func (*FilesRun_Rename) isFilesRun_Op() {}
+
+// FilesStat states one path's type, size and permission bits.
+type FilesStat struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesStat) Reset() {
+	*x = FilesStat{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesStat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesStat) ProtoMessage() {}
+
+func (x *FilesStat) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesStat.ProtoReflect.Descriptor instead.
+func (*FilesStat) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *FilesStat) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+// FilesRead reads at most max_bytes (1 to 8 MiB) of one file, from offset.
+type FilesRead struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Offset        uint64                 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	MaxBytes      uint32                 `protobuf:"varint,3,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesRead) Reset() {
+	*x = FilesRead{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesRead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesRead) ProtoMessage() {}
+
+func (x *FilesRead) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesRead.ProtoReflect.Descriptor instead.
+func (*FilesRead) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *FilesRead) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesRead) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *FilesRead) GetMaxBytes() uint32 {
+	if x != nil {
+		return x.MaxBytes
+	}
+	return 0
+}
+
+// FilesWrite writes one file of at most 4 MiB. replace and create_only write a file of
+// the helper's own, sync it and publish it whole at the target, so a reader never sees
+// part of it; append is not atomic: after a call that may have run, the file may have
+// grown. A call that gave no answer is never retried by a client (docs/session-files.md
+// says per operation what one may have left).
+type FilesWrite struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Content       []byte                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	Mode          FilesWriteMode         `protobuf:"varint,3,opt,name=mode,proto3,enum=plimsoll.v1.FilesWriteMode" json:"mode,omitempty"`
+	MakeParents   bool                   `protobuf:"varint,4,opt,name=make_parents,json=makeParents,proto3" json:"make_parents,omitempty"` // make the folders above path that are missing
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesWrite) Reset() {
+	*x = FilesWrite{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesWrite) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesWrite) ProtoMessage() {}
+
+func (x *FilesWrite) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesWrite.ProtoReflect.Descriptor instead.
+func (*FilesWrite) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *FilesWrite) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesWrite) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *FilesWrite) GetMode() FilesWriteMode {
+	if x != nil {
+		return x.Mode
+	}
+	return FilesWriteMode_FILES_WRITE_MODE_UNSPECIFIED
+}
+
+func (x *FilesWrite) GetMakeParents() bool {
+	if x != nil {
+		return x.MakeParents
+	}
+	return false
+}
+
+// FilesList lists a folder, one page at a time: entries sorted by their bytes, folders
+// depth first, until budget_bytes (8 KiB to 8 MiB) ends the page (FilesListAnswer.more), a
+// page that ends with more always holding an entry.
+// A listing is not isolated from changes made while it pages.
+type FilesList struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Path      []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // the folder
+	Recursive bool                   `protobuf:"varint,2,opt,name=recursive,proto3" json:"recursive,omitempty"`
+	// A glob matched part by part: "*", "?" and "[...]" within one part, "**" as a whole
+	// part for zero or more parts, a leading dot not special. Empty lists every entry.
+	Match         []byte `protobuf:"bytes,3,opt,name=match,proto3" json:"match,omitempty"`
+	After         []byte `protobuf:"bytes,4,opt,name=after,proto3" json:"after,omitempty"` // the last path of the page before; empty for the first page
+	BudgetBytes   uint32 `protobuf:"varint,5,opt,name=budget_bytes,json=budgetBytes,proto3" json:"budget_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesList) Reset() {
+	*x = FilesList{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesList) ProtoMessage() {}
+
+func (x *FilesList) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesList.ProtoReflect.Descriptor instead.
+func (*FilesList) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *FilesList) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesList) GetRecursive() bool {
+	if x != nil {
+		return x.Recursive
+	}
+	return false
+}
+
+func (x *FilesList) GetMatch() []byte {
+	if x != nil {
+		return x.Match
+	}
+	return nil
+}
+
+func (x *FilesList) GetAfter() []byte {
+	if x != nil {
+		return x.After
+	}
+	return nil
+}
+
+func (x *FilesList) GetBudgetBytes() uint32 {
+	if x != nil {
+		return x.BudgetBytes
+	}
+	return 0
+}
+
+// FilesReadMany reads at most 16,384 files in order, each up to max_bytes_each, until
+// budget_bytes ends the answer (FilesReadManyAnswer.more). One file's error does not
+// fail the call.
+type FilesReadMany struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Paths         [][]byte               `protobuf:"bytes,1,rep,name=paths,proto3" json:"paths,omitempty"`
+	MaxBytesEach  uint32                 `protobuf:"varint,2,opt,name=max_bytes_each,json=maxBytesEach,proto3" json:"max_bytes_each,omitempty"`
+	BudgetBytes   uint32                 `protobuf:"varint,3,opt,name=budget_bytes,json=budgetBytes,proto3" json:"budget_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesReadMany) Reset() {
+	*x = FilesReadMany{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesReadMany) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesReadMany) ProtoMessage() {}
+
+func (x *FilesReadMany) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesReadMany.ProtoReflect.Descriptor instead.
+func (*FilesReadMany) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *FilesReadMany) GetPaths() [][]byte {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
+func (x *FilesReadMany) GetMaxBytesEach() uint32 {
+	if x != nil {
+		return x.MaxBytesEach
+	}
+	return 0
+}
+
+func (x *FilesReadMany) GetBudgetBytes() uint32 {
+	if x != nil {
+		return x.BudgetBytes
+	}
+	return 0
+}
+
+type FilesMakeDir struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Parents       bool                   `protobuf:"varint,2,opt,name=parents,proto3" json:"parents,omitempty"` // make the folders above it that are missing, and accept one already there
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesMakeDir) Reset() {
+	*x = FilesMakeDir{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesMakeDir) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesMakeDir) ProtoMessage() {}
+
+func (x *FilesMakeDir) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesMakeDir.ProtoReflect.Descriptor instead.
+func (*FilesMakeDir) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *FilesMakeDir) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesMakeDir) GetParents() bool {
+	if x != nil {
+		return x.Parents
+	}
+	return false
+}
+
+// FilesRemove removes one file, or with dir one empty folder. There is no recursive
+// remove: an agent's shell has one.
+type FilesRemove struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Dir           bool                   `protobuf:"varint,2,opt,name=dir,proto3" json:"dir,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesRemove) Reset() {
+	*x = FilesRemove{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesRemove) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesRemove) ProtoMessage() {}
+
+func (x *FilesRemove) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesRemove.ProtoReflect.Descriptor instead.
+func (*FilesRemove) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *FilesRemove) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesRemove) GetDir() bool {
+	if x != nil {
+		return x.Dir
+	}
+	return false
+}
+
+// FilesRename renames from_path to to_path, replacing a file already at to_path only
+// with replace.
+type FilesRename struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FromPath      []byte                 `protobuf:"bytes,1,opt,name=from_path,json=fromPath,proto3" json:"from_path,omitempty"`
+	ToPath        []byte                 `protobuf:"bytes,2,opt,name=to_path,json=toPath,proto3" json:"to_path,omitempty"`
+	Replace       bool                   `protobuf:"varint,3,opt,name=replace,proto3" json:"replace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesRename) Reset() {
+	*x = FilesRename{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesRename) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesRename) ProtoMessage() {}
+
+func (x *FilesRename) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesRename.ProtoReflect.Descriptor instead.
+func (*FilesRename) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *FilesRename) GetFromPath() []byte {
+	if x != nil {
+		return x.FromPath
+	}
+	return nil
+}
+
+func (x *FilesRename) GetToPath() []byte {
+	if x != nil {
+		return x.ToPath
+	}
+	return nil
+}
+
+func (x *FilesRename) GetReplace() bool {
+	if x != nil {
+		return x.Replace
+	}
+	return false
+}
+
+// FilesResult is a file call's answer. A file that is not there is an answered result
+// with FILES_ERROR_NOT_FOUND, as a nonzero exit is, not a transport error. No answer
+// carries free text from inside the sandbox. docs/run-records.md gives the result
+// digest's fields.
+type FilesResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// completed: the helper answered (error then says whether the operation succeeded);
+	// timed_out: the call's deadline passed; protocol_error: the helper's answer could not
+	// be parsed; runner_failed: the helper ended without one.
+	Outcome ProjectOutcome `protobuf:"varint,1,opt,name=outcome,proto3,enum=plimsoll.v1.ProjectOutcome" json:"outcome,omitempty"`
+	Error   FilesError     `protobuf:"varint,2,opt,name=error,proto3,enum=plimsoll.v1.FilesError" json:"error,omitempty"` // FILES_ERROR_UNSPECIFIED when the operation succeeded
+	Errno   string         `protobuf:"bytes,3,opt,name=errno,proto3" json:"errno,omitempty"`                              // the errno name the error came from, such as ENOENT; empty with none
+	// The operation's answer, which names the operation it answers; none with an error or
+	// an outcome other than completed.
+	//
+	// Types that are valid to be assigned to Answer:
+	//
+	//	*FilesResult_Stat
+	//	*FilesResult_Read
+	//	*FilesResult_Write
+	//	*FilesResult_List
+	//	*FilesResult_ReadMany
+	//	*FilesResult_MakeDir
+	//	*FilesResult_Remove
+	//	*FilesResult_Rename
+	Answer        isFilesResult_Answer `protobuf_oneof:"answer"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesResult) Reset() {
+	*x = FilesResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesResult) ProtoMessage() {}
+
+func (x *FilesResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesResult.ProtoReflect.Descriptor instead.
+func (*FilesResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *FilesResult) GetOutcome() ProjectOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return ProjectOutcome_PROJECT_OUTCOME_UNSPECIFIED
+}
+
+func (x *FilesResult) GetError() FilesError {
+	if x != nil {
+		return x.Error
+	}
+	return FilesError_FILES_ERROR_UNSPECIFIED
+}
+
+func (x *FilesResult) GetErrno() string {
+	if x != nil {
+		return x.Errno
+	}
+	return ""
+}
+
+func (x *FilesResult) GetAnswer() isFilesResult_Answer {
+	if x != nil {
+		return x.Answer
+	}
+	return nil
+}
+
+func (x *FilesResult) GetStat() *FilesStatAnswer {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_Stat); ok {
+			return x.Stat
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetRead() *FilesReadAnswer {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_Read); ok {
+			return x.Read
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetWrite() *FilesWriteAnswer {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_Write); ok {
+			return x.Write
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetList() *FilesListAnswer {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_List); ok {
+			return x.List
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetReadMany() *FilesReadManyAnswer {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_ReadMany); ok {
+			return x.ReadMany
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetMakeDir() *FilesDone {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_MakeDir); ok {
+			return x.MakeDir
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetRemove() *FilesDone {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_Remove); ok {
+			return x.Remove
+		}
+	}
+	return nil
+}
+
+func (x *FilesResult) GetRename() *FilesDone {
+	if x != nil {
+		if x, ok := x.Answer.(*FilesResult_Rename); ok {
+			return x.Rename
+		}
+	}
+	return nil
+}
+
+type isFilesResult_Answer interface {
+	isFilesResult_Answer()
+}
+
+type FilesResult_Stat struct {
+	Stat *FilesStatAnswer `protobuf:"bytes,10,opt,name=stat,proto3,oneof"`
+}
+
+type FilesResult_Read struct {
+	Read *FilesReadAnswer `protobuf:"bytes,11,opt,name=read,proto3,oneof"`
+}
+
+type FilesResult_Write struct {
+	Write *FilesWriteAnswer `protobuf:"bytes,12,opt,name=write,proto3,oneof"`
+}
+
+type FilesResult_List struct {
+	List *FilesListAnswer `protobuf:"bytes,13,opt,name=list,proto3,oneof"`
+}
+
+type FilesResult_ReadMany struct {
+	ReadMany *FilesReadManyAnswer `protobuf:"bytes,14,opt,name=read_many,json=readMany,proto3,oneof"`
+}
+
+type FilesResult_MakeDir struct {
+	MakeDir *FilesDone `protobuf:"bytes,15,opt,name=make_dir,json=makeDir,proto3,oneof"`
+}
+
+type FilesResult_Remove struct {
+	Remove *FilesDone `protobuf:"bytes,16,opt,name=remove,proto3,oneof"`
+}
+
+type FilesResult_Rename struct {
+	Rename *FilesDone `protobuf:"bytes,17,opt,name=rename,proto3,oneof"`
+}
+
+func (*FilesResult_Stat) isFilesResult_Answer() {}
+
+func (*FilesResult_Read) isFilesResult_Answer() {}
+
+func (*FilesResult_Write) isFilesResult_Answer() {}
+
+func (*FilesResult_List) isFilesResult_Answer() {}
+
+func (*FilesResult_ReadMany) isFilesResult_Answer() {}
+
+func (*FilesResult_MakeDir) isFilesResult_Answer() {}
+
+func (*FilesResult_Remove) isFilesResult_Answer() {}
+
+func (*FilesResult_Rename) isFilesResult_Answer() {}
+
+type FilesStatAnswer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          FilesEntryType         `protobuf:"varint,1,opt,name=type,proto3,enum=plimsoll.v1.FilesEntryType" json:"type,omitempty"`
+	Size          uint64                 `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	Mode          uint32                 `protobuf:"varint,3,opt,name=mode,proto3" json:"mode,omitempty"` // the permission bits
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesStatAnswer) Reset() {
+	*x = FilesStatAnswer{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesStatAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesStatAnswer) ProtoMessage() {}
+
+func (x *FilesStatAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesStatAnswer.ProtoReflect.Descriptor instead.
+func (*FilesStatAnswer) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *FilesStatAnswer) GetType() FilesEntryType {
+	if x != nil {
+		return x.Type
+	}
+	return FilesEntryType_FILES_ENTRY_TYPE_UNSPECIFIED
+}
+
+func (x *FilesStatAnswer) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *FilesStatAnswer) GetMode() uint32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+type FilesReadAnswer struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Content []byte                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	// The file's size as the read's open saw it: no promise of its length at any later
+	// moment. A reader of many pieces checks each piece against its own answer; stat gives
+	// the current length.
+	SizeAtOpen    uint64 `protobuf:"varint,2,opt,name=size_at_open,json=sizeAtOpen,proto3" json:"size_at_open,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesReadAnswer) Reset() {
+	*x = FilesReadAnswer{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesReadAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesReadAnswer) ProtoMessage() {}
+
+func (x *FilesReadAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesReadAnswer.ProtoReflect.Descriptor instead.
+func (*FilesReadAnswer) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *FilesReadAnswer) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *FilesReadAnswer) GetSizeAtOpen() uint64 {
+	if x != nil {
+		return x.SizeAtOpen
+	}
+	return 0
+}
+
+type FilesWriteAnswer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Written       uint64                 `protobuf:"varint,1,opt,name=written,proto3" json:"written,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesWriteAnswer) Reset() {
+	*x = FilesWriteAnswer{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesWriteAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesWriteAnswer) ProtoMessage() {}
+
+func (x *FilesWriteAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesWriteAnswer.ProtoReflect.Descriptor instead.
+func (*FilesWriteAnswer) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *FilesWriteAnswer) GetWritten() uint64 {
+	if x != nil {
+		return x.Written
+	}
+	return 0
+}
+
+type FilesEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          []byte                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // from the listed folder
+	Type          FilesEntryType         `protobuf:"varint,2,opt,name=type,proto3,enum=plimsoll.v1.FilesEntryType" json:"type,omitempty"`
+	Size          uint64                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesEntry) Reset() {
+	*x = FilesEntry{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesEntry) ProtoMessage() {}
+
+func (x *FilesEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesEntry.ProtoReflect.Descriptor instead.
+func (*FilesEntry) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *FilesEntry) GetPath() []byte {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *FilesEntry) GetType() FilesEntryType {
+	if x != nil {
+		return x.Type
+	}
+	return FilesEntryType_FILES_ENTRY_TYPE_UNSPECIFIED
+}
+
+func (x *FilesEntry) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type FilesListAnswer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*FilesEntry          `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	More          bool                   `protobuf:"varint,2,opt,name=more,proto3" json:"more,omitempty"` // the budget ended the page: ask again with after set to the last path
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesListAnswer) Reset() {
+	*x = FilesListAnswer{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesListAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesListAnswer) ProtoMessage() {}
+
+func (x *FilesListAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesListAnswer.ProtoReflect.Descriptor instead.
+func (*FilesListAnswer) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *FilesListAnswer) GetEntries() []*FilesEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *FilesListAnswer) GetMore() bool {
+	if x != nil {
+		return x.More
+	}
+	return false
+}
+
+// FilesReadManyItem is one path's answer, in the order the paths were asked: its bytes,
+// or its error.
+type FilesReadManyItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Error         FilesError             `protobuf:"varint,1,opt,name=error,proto3,enum=plimsoll.v1.FilesError" json:"error,omitempty"`
+	Errno         string                 `protobuf:"bytes,2,opt,name=errno,proto3" json:"errno,omitempty"`
+	Content       []byte                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	SizeAtOpen    uint64                 `protobuf:"varint,4,opt,name=size_at_open,json=sizeAtOpen,proto3" json:"size_at_open,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesReadManyItem) Reset() {
+	*x = FilesReadManyItem{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesReadManyItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesReadManyItem) ProtoMessage() {}
+
+func (x *FilesReadManyItem) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesReadManyItem.ProtoReflect.Descriptor instead.
+func (*FilesReadManyItem) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *FilesReadManyItem) GetError() FilesError {
+	if x != nil {
+		return x.Error
+	}
+	return FilesError_FILES_ERROR_UNSPECIFIED
+}
+
+func (x *FilesReadManyItem) GetErrno() string {
+	if x != nil {
+		return x.Errno
+	}
+	return ""
+}
+
+func (x *FilesReadManyItem) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *FilesReadManyItem) GetSizeAtOpen() uint64 {
+	if x != nil {
+		return x.SizeAtOpen
+	}
+	return 0
+}
+
+type FilesReadManyAnswer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []*FilesReadManyItem   `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	More          bool                   `protobuf:"varint,2,opt,name=more,proto3" json:"more,omitempty"` // the next path's answer did not fit the budget
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesReadManyAnswer) Reset() {
+	*x = FilesReadManyAnswer{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesReadManyAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesReadManyAnswer) ProtoMessage() {}
+
+func (x *FilesReadManyAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesReadManyAnswer.ProtoReflect.Descriptor instead.
+func (*FilesReadManyAnswer) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *FilesReadManyAnswer) GetItems() []*FilesReadManyItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *FilesReadManyAnswer) GetMore() bool {
+	if x != nil {
+		return x.More
+	}
+	return false
+}
+
+// FilesDone answers an operation that returns nothing: make_dir, remove, rename.
+type FilesDone struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilesDone) Reset() {
+	*x = FilesDone{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilesDone) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilesDone) ProtoMessage() {}
+
+func (x *FilesDone) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilesDone.ProtoReflect.Descriptor instead.
+func (*FilesDone) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{46}
+}
+
 type SessionRunResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Run   *RunResponse           `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"` // its record carries the session's chain fields
@@ -3269,7 +5046,7 @@ type SessionRunResponse struct {
 
 func (x *SessionRunResponse) Reset() {
 	*x = SessionRunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3281,7 +5058,7 @@ func (x *SessionRunResponse) String() string {
 func (*SessionRunResponse) ProtoMessage() {}
 
 func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3294,7 +5071,7 @@ func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunResponse.ProtoReflect.Descriptor instead.
 func (*SessionRunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *SessionRunResponse) GetRun() *RunResponse {
@@ -3331,7 +5108,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3343,7 +5120,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3356,7 +5133,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *CloseSessionRequest) GetProtocol() uint32 {
@@ -3395,7 +5172,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3407,7 +5184,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[31]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3420,7 +5197,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{31}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *CloseSessionResponse) GetSession() string {
@@ -3463,7 +5240,7 @@ type SessionEnded struct {
 
 func (x *SessionEnded) Reset() {
 	*x = SessionEnded{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3475,7 +5252,7 @@ func (x *SessionEnded) String() string {
 func (*SessionEnded) ProtoMessage() {}
 
 func (x *SessionEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[32]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3488,7 +5265,7 @@ func (x *SessionEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEnded.ProtoReflect.Descriptor instead.
 func (*SessionEnded) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{32}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *SessionEnded) GetReason() SessionEnd {
@@ -3511,15 +5288,22 @@ func (x *SessionEnded) GetDetail() string {
 // provably ran nothing carry it. An error WITHOUT this detail may have followed
 // execution, whatever its status code, and is never a safe automatic-retry signal.
 type NotDispatched struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Reason        NotDispatchedReason    `protobuf:"varint,1,opt,name=reason,proto3,enum=plimsoll.v1.NotDispatchedReason" json:"reason,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Reason NotDispatchedReason    `protobuf:"varint,1,opt,name=reason,proto3,enum=plimsoll.v1.NotDispatchedReason" json:"reason,omitempty"`
+	// On a capacity refusal, which limit shed it, so a caller can tell a limit that
+	// closing one of its own sessions frees from one that no close cures. Unspecified
+	// on every other reason, and on a capacity refusal from a daemon that does not
+	// state it. Field 3, not 2: the Python client before it read a NotDispatched as
+	// SessionEnded's shape, an enum then a string, and drops the whole mark when field 2
+	// is a number, so a limit there would read as "may have run" to it.
+	Limit         CapacityLimit `protobuf:"varint,3,opt,name=limit,proto3,enum=plimsoll.v1.CapacityLimit" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NotDispatched) Reset() {
 	*x = NotDispatched{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3531,7 +5315,7 @@ func (x *NotDispatched) String() string {
 func (*NotDispatched) ProtoMessage() {}
 
 func (x *NotDispatched) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[33]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3544,7 +5328,7 @@ func (x *NotDispatched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotDispatched.ProtoReflect.Descriptor instead.
 func (*NotDispatched) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{33}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *NotDispatched) GetReason() NotDispatchedReason {
@@ -3552,6 +5336,13 @@ func (x *NotDispatched) GetReason() NotDispatchedReason {
 		return x.Reason
 	}
 	return NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED
+}
+
+func (x *NotDispatched) GetLimit() CapacityLimit {
+	if x != nil {
+		return x.Limit
+	}
+	return CapacityLimit_CAPACITY_LIMIT_UNSPECIFIED
 }
 
 // UnansweredCall is the error detail of a session call that may have run but ended
@@ -3566,7 +5357,7 @@ type UnansweredCall struct {
 
 func (x *UnansweredCall) Reset() {
 	*x = UnansweredCall{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3578,7 +5369,7 @@ func (x *UnansweredCall) String() string {
 func (*UnansweredCall) ProtoMessage() {}
 
 func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[34]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3591,7 +5382,7 @@ func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnansweredCall.ProtoReflect.Descriptor instead.
 func (*UnansweredCall) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{34}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *UnansweredCall) GetRecord() *RunRecord {
@@ -3628,12 +5419,14 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x17max_sessions_per_caller\x18\x13 \x01(\rR\x14maxSessionsPerCaller\x123\n" +
 	"\x16max_sessions_per_owner\x18\x14 \x01(\rR\x13maxSessionsPerOwner\x12!\n" +
 	"\fsession_pool\x18\x15 \x01(\rR\vsessionPool\x127\n" +
-	"\x17isolation_qualification\x18\x16 \x01(\tR\x16isolationQualificationJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
+	"\x17isolation_qualification\x18\x16 \x01(\tR\x16isolationQualificationJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xe8\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
 	"\x11software_identity\x18\x03 \x01(\tR\x10softwareIdentity\x12\x1c\n" +
-	"\tlanguages\x18\x04 \x03(\tR\tlanguages\"B\n" +
+	"\tlanguages\x18\x04 \x03(\tR\tlanguages\x128\n" +
+	"\vfile_scopes\x18\x06 \x03(\x0e2\x17.plimsoll.v1.FilesScopeR\n" +
+	"fileScopesJ\x04\b\x05\x10\x06R\x05files\"B\n" +
 	"\fSoftwareRule\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x1e\n" +
 	"\n" +
@@ -3658,7 +5451,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10added_latency_ms\x18\n" +
 	" \x01(\x03R\x0eaddedLatencyMs\x12\x1f\n" +
 	"\vbytes_moved\x18\v \x01(\x03R\n" +
-	"bytesMoved\"\xcc\x03\n" +
+	"bytesMoved\"\xfb\x03\n" +
 	"\n" +
 	"RunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
@@ -3675,11 +5468,12 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"javascript\x123\n" +
 	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x120\n" +
 	"\x06module\x18\f \x01(\v2\x16.plimsoll.v1.ModuleRunH\x00R\x06module\x12*\n" +
-	"\x04cell\x18\r \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cellB\t\n" +
+	"\x04cell\x18\r \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cell\x12-\n" +
+	"\x05files\x18\x0e \x01(\v2\x15.plimsoll.v1.FilesRunH\x00R\x05filesB\t\n" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xdc\x04\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\x8e\x05\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
@@ -3698,7 +5492,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"javascript\x126\n" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
 	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06module\x12-\n" +
-	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cellB\b\n" +
+	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cell\x120\n" +
+	"\x05files\x18\x0f \x01(\v2\x18.plimsoll.v1.FilesResultH\x00R\x05filesB\b\n" +
 	"\x06result\"\xbc\x05\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
@@ -3792,7 +5587,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12\x1b\n" +
 	"\twarm_only\x18\t \x01(\bR\bwarmOnly\x12$\n" +
 	"\x0ekeep_no_answer\x18\n" +
-	" \x01(\bR\fkeepNoAnswer\"\xc9\x03\n" +
+	" \x01(\bR\fkeepNoAnswer\"\xab\x04\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -3808,7 +5603,10 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"generation\x12+\n" +
 	"\x11minimum_isolation\x18\n" +
 	" \x01(\tR\x10minimumIsolation\x12>\n" +
-	"\rsoftware_rule\x18\v \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\"w\n" +
+	"\rsoftware_rule\x18\v \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x128\n" +
+	"\vfile_scopes\x18\x0e \x03(\x0e2\x17.plimsoll.v1.FilesScopeR\n" +
+	"fileScopes\x12\x19\n" +
+	"\bwork_dir\x18\r \x01(\tR\aworkDirJ\x04\b\f\x10\rR\x05files\"w\n" +
 	"\x11SessionCheckpoint\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x04R\n" +
@@ -3833,7 +5631,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\vlost_answer\x18\x04 \x01(\v2\x18.plimsoll.v1.RunResponseR\n" +
 	"lostAnswer\"I\n" +
 	"\x13SessionHeadMismatch\x122\n" +
-	"\x04head\x18\x01 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\x04head\"\xd9\x03\n" +
+	"\x04head\x18\x01 \x01(\v2\x1e.plimsoll.v1.SessionCheckpointR\x04head\"\x88\x04\n" +
 	"\x11SessionRunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3849,7 +5647,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
 	"javascript\x123\n" +
 	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x12*\n" +
-	"\x04cell\x18\f \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cellB\t\n" +
+	"\x04cell\x18\f \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cell\x12-\n" +
+	"\x05files\x18\r \x01(\v2\x15.plimsoll.v1.FilesRunH\x00R\x05filesB\t\n" +
 	"\apayloadJ\x04\b\a\x10\b\"i\n" +
 	"\aCellRun\x12\x1a\n" +
 	"\blanguage\x18\x01 \x01(\tR\blanguage\x12\x12\n" +
@@ -3864,7 +5663,93 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10stdout_truncated\x18\x05 \x01(\bR\x0fstdoutTruncated\x12)\n" +
 	"\x10stderr_truncated\x18\x06 \x01(\bR\x0fstderrTruncated\x12/\n" +
 	"\x13interpreter_started\x18\a \x01(\bR\x12interpreterStarted\x12+\n" +
-	"\x11interpreter_ended\x18\b \x01(\bR\x10interpreterEnded\"\x8e\x01\n" +
+	"\x11interpreter_ended\x18\b \x01(\bR\x10interpreterEnded\"\xd5\x03\n" +
+	"\bFilesRun\x12-\n" +
+	"\x05scope\x18\x01 \x01(\x0e2\x17.plimsoll.v1.FilesScopeR\x05scope\x12,\n" +
+	"\x04stat\x18\n" +
+	" \x01(\v2\x16.plimsoll.v1.FilesStatH\x00R\x04stat\x12,\n" +
+	"\x04read\x18\v \x01(\v2\x16.plimsoll.v1.FilesReadH\x00R\x04read\x12/\n" +
+	"\x05write\x18\f \x01(\v2\x17.plimsoll.v1.FilesWriteH\x00R\x05write\x12,\n" +
+	"\x04list\x18\r \x01(\v2\x16.plimsoll.v1.FilesListH\x00R\x04list\x129\n" +
+	"\tread_many\x18\x0e \x01(\v2\x1a.plimsoll.v1.FilesReadManyH\x00R\breadMany\x126\n" +
+	"\bmake_dir\x18\x0f \x01(\v2\x19.plimsoll.v1.FilesMakeDirH\x00R\amakeDir\x122\n" +
+	"\x06remove\x18\x10 \x01(\v2\x18.plimsoll.v1.FilesRemoveH\x00R\x06remove\x122\n" +
+	"\x06rename\x18\x11 \x01(\v2\x18.plimsoll.v1.FilesRenameH\x00R\x06renameB\x04\n" +
+	"\x02op\"\x1f\n" +
+	"\tFilesStat\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\"T\n" +
+	"\tFilesRead\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x1b\n" +
+	"\tmax_bytes\x18\x03 \x01(\rR\bmaxBytes\"\x8e\x01\n" +
+	"\n" +
+	"FilesWrite\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\fR\acontent\x12/\n" +
+	"\x04mode\x18\x03 \x01(\x0e2\x1b.plimsoll.v1.FilesWriteModeR\x04mode\x12!\n" +
+	"\fmake_parents\x18\x04 \x01(\bR\vmakeParents\"\x8c\x01\n" +
+	"\tFilesList\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12\x1c\n" +
+	"\trecursive\x18\x02 \x01(\bR\trecursive\x12\x14\n" +
+	"\x05match\x18\x03 \x01(\fR\x05match\x12\x14\n" +
+	"\x05after\x18\x04 \x01(\fR\x05after\x12!\n" +
+	"\fbudget_bytes\x18\x05 \x01(\rR\vbudgetBytes\"n\n" +
+	"\rFilesReadMany\x12\x14\n" +
+	"\x05paths\x18\x01 \x03(\fR\x05paths\x12$\n" +
+	"\x0emax_bytes_each\x18\x02 \x01(\rR\fmaxBytesEach\x12!\n" +
+	"\fbudget_bytes\x18\x03 \x01(\rR\vbudgetBytes\"<\n" +
+	"\fFilesMakeDir\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12\x18\n" +
+	"\aparents\x18\x02 \x01(\bR\aparents\"3\n" +
+	"\vFilesRemove\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12\x10\n" +
+	"\x03dir\x18\x02 \x01(\bR\x03dir\"]\n" +
+	"\vFilesRename\x12\x1b\n" +
+	"\tfrom_path\x18\x01 \x01(\fR\bfromPath\x12\x17\n" +
+	"\ato_path\x18\x02 \x01(\fR\x06toPath\x12\x18\n" +
+	"\areplace\x18\x03 \x01(\bR\areplace\"\xc0\x04\n" +
+	"\vFilesResult\x125\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12-\n" +
+	"\x05error\x18\x02 \x01(\x0e2\x17.plimsoll.v1.FilesErrorR\x05error\x12\x14\n" +
+	"\x05errno\x18\x03 \x01(\tR\x05errno\x122\n" +
+	"\x04stat\x18\n" +
+	" \x01(\v2\x1c.plimsoll.v1.FilesStatAnswerH\x00R\x04stat\x122\n" +
+	"\x04read\x18\v \x01(\v2\x1c.plimsoll.v1.FilesReadAnswerH\x00R\x04read\x125\n" +
+	"\x05write\x18\f \x01(\v2\x1d.plimsoll.v1.FilesWriteAnswerH\x00R\x05write\x122\n" +
+	"\x04list\x18\r \x01(\v2\x1c.plimsoll.v1.FilesListAnswerH\x00R\x04list\x12?\n" +
+	"\tread_many\x18\x0e \x01(\v2 .plimsoll.v1.FilesReadManyAnswerH\x00R\breadMany\x123\n" +
+	"\bmake_dir\x18\x0f \x01(\v2\x16.plimsoll.v1.FilesDoneH\x00R\amakeDir\x120\n" +
+	"\x06remove\x18\x10 \x01(\v2\x16.plimsoll.v1.FilesDoneH\x00R\x06remove\x120\n" +
+	"\x06rename\x18\x11 \x01(\v2\x16.plimsoll.v1.FilesDoneH\x00R\x06renameB\b\n" +
+	"\x06answer\"j\n" +
+	"\x0fFilesStatAnswer\x12/\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x1b.plimsoll.v1.FilesEntryTypeR\x04type\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\rR\x04mode\"M\n" +
+	"\x0fFilesReadAnswer\x12\x18\n" +
+	"\acontent\x18\x01 \x01(\fR\acontent\x12 \n" +
+	"\fsize_at_open\x18\x02 \x01(\x04R\n" +
+	"sizeAtOpen\",\n" +
+	"\x10FilesWriteAnswer\x12\x18\n" +
+	"\awritten\x18\x01 \x01(\x04R\awritten\"e\n" +
+	"\n" +
+	"FilesEntry\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\fR\x04path\x12/\n" +
+	"\x04type\x18\x02 \x01(\x0e2\x1b.plimsoll.v1.FilesEntryTypeR\x04type\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x04R\x04size\"X\n" +
+	"\x0fFilesListAnswer\x121\n" +
+	"\aentries\x18\x01 \x03(\v2\x17.plimsoll.v1.FilesEntryR\aentries\x12\x12\n" +
+	"\x04more\x18\x02 \x01(\bR\x04more\"\x94\x01\n" +
+	"\x11FilesReadManyItem\x12-\n" +
+	"\x05error\x18\x01 \x01(\x0e2\x17.plimsoll.v1.FilesErrorR\x05error\x12\x14\n" +
+	"\x05errno\x18\x02 \x01(\tR\x05errno\x12\x18\n" +
+	"\acontent\x18\x03 \x01(\fR\acontent\x12 \n" +
+	"\fsize_at_open\x18\x04 \x01(\x04R\n" +
+	"sizeAtOpen\"_\n" +
+	"\x13FilesReadManyAnswer\x124\n" +
+	"\x05items\x18\x01 \x03(\v2\x1e.plimsoll.v1.FilesReadManyItemR\x05items\x12\x12\n" +
+	"\x04more\x18\x02 \x01(\bR\x04more\"\v\n" +
+	"\tFilesDone\"\x8e\x01\n" +
 	"\x12SessionRunResponse\x12*\n" +
 	"\x03run\x18\x01 \x01(\v2\x18.plimsoll.v1.RunResponseR\x03run\x12-\n" +
 	"\x05ended\x18\x02 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x05ended\x12\x1d\n" +
@@ -3884,9 +5769,10 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x05ended\x18\x04 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x05ended\"W\n" +
 	"\fSessionEnded\x12/\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x06reason\x12\x16\n" +
-	"\x06detail\x18\x02 \x01(\tR\x06detail\"I\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\"\x81\x01\n" +
 	"\rNotDispatched\x128\n" +
-	"\x06reason\x18\x01 \x01(\x0e2 .plimsoll.v1.NotDispatchedReasonR\x06reason\"@\n" +
+	"\x06reason\x18\x01 \x01(\x0e2 .plimsoll.v1.NotDispatchedReasonR\x06reason\x120\n" +
+	"\x05limit\x18\x03 \x01(\x0e2\x1a.plimsoll.v1.CapacityLimitR\x05limitJ\x04\b\x02\x10\x03\"@\n" +
 	"\x0eUnansweredCall\x12.\n" +
 	"\x06record\x18\x01 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record*\xd8\x01\n" +
 	"\x0eProjectOutcome\x12\x1f\n" +
@@ -3895,7 +5781,41 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x1cPROJECT_OUTCOME_SETUP_FAILED\x10\x02\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_TIMED_OUT\x10\x03\x12\"\n" +
 	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04\x12!\n" +
-	"\x1dPROJECT_OUTCOME_RUNNER_FAILED\x10\x05*\xc9\x02\n" +
+	"\x1dPROJECT_OUTCOME_RUNNER_FAILED\x10\x05*X\n" +
+	"\n" +
+	"FilesScope\x12\x1b\n" +
+	"\x17FILES_SCOPE_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10FILES_SCOPE_WORK\x10\x01\x12\x17\n" +
+	"\x13FILES_SCOPE_SANDBOX\x10\x02*\x8f\x01\n" +
+	"\x0eFilesWriteMode\x12 \n" +
+	"\x1cFILES_WRITE_MODE_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18FILES_WRITE_MODE_REPLACE\x10\x01\x12 \n" +
+	"\x1cFILES_WRITE_MODE_CREATE_ONLY\x10\x02\x12\x1b\n" +
+	"\x17FILES_WRITE_MODE_APPEND\x10\x03*\x84\x03\n" +
+	"\n" +
+	"FilesError\x12\x1b\n" +
+	"\x17FILES_ERROR_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15FILES_ERROR_NOT_FOUND\x10\x01\x12\x16\n" +
+	"\x12FILES_ERROR_IS_DIR\x10\x02\x12\x17\n" +
+	"\x13FILES_ERROR_NOT_DIR\x10\x03\x12\x16\n" +
+	"\x12FILES_ERROR_EXISTS\x10\x04\x12\x17\n" +
+	"\x13FILES_ERROR_SYMLINK\x10\x05\x12\x1b\n" +
+	"\x17FILES_ERROR_NOT_REGULAR\x10\x06\x12!\n" +
+	"\x1dFILES_ERROR_PERMISSION_DENIED\x10\a\x12\x19\n" +
+	"\x15FILES_ERROR_TOO_LARGE\x10\b\x12\x18\n" +
+	"\x14FILES_ERROR_NO_SPACE\x10\t\x12\x19\n" +
+	"\x15FILES_ERROR_READ_ONLY\x10\n" +
+	"\x12\x19\n" +
+	"\x15FILES_ERROR_NOT_EMPTY\x10\v\x12\x1a\n" +
+	"\x16FILES_ERROR_SCAN_LIMIT\x10\f\x12\x15\n" +
+	"\x11FILES_ERROR_OTHER\x10\r*\xbf\x01\n" +
+	"\x0eFilesEntryType\x12 \n" +
+	"\x1cFILES_ENTRY_TYPE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15FILES_ENTRY_TYPE_FILE\x10\x01\x12\x18\n" +
+	"\x14FILES_ENTRY_TYPE_DIR\x10\x02\x12\x19\n" +
+	"\x15FILES_ENTRY_TYPE_LINK\x10\x03\x12\x1a\n" +
+	"\x16FILES_ENTRY_TYPE_OTHER\x10\x04\x12\x1f\n" +
+	"\x1bFILES_ENTRY_TYPE_UNREADABLE\x10\x05*\xc9\x02\n" +
 	"\n" +
 	"SessionEnd\x12\x1b\n" +
 	"\x17SESSION_END_UNSPECIFIED\x10\x00\x12\x16\n" +
@@ -3909,6 +5829,19 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x14SESSION_END_REPLACED\x10\b\x12\x19\n" +
 	"\x15SESSION_END_NOT_FOUND\x10\t\x12\x19\n" +
 	"\x15SESSION_END_UNCLAIMED\x10\n" +
+	"*\xda\x02\n" +
+	"\rCapacityLimit\x12\x1e\n" +
+	"\x1aCAPACITY_LIMIT_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17CAPACITY_LIMIT_SESSIONS\x10\x01\x12\"\n" +
+	"\x1eCAPACITY_LIMIT_CALLER_SESSIONS\x10\x02\x12!\n" +
+	"\x1dCAPACITY_LIMIT_OWNER_SESSIONS\x10\x03\x12\x17\n" +
+	"\x13CAPACITY_LIMIT_RUNS\x10\x04\x12\x1e\n" +
+	"\x1aCAPACITY_LIMIT_CALLER_RUNS\x10\x05\x12\x17\n" +
+	"\x13CAPACITY_LIMIT_RATE\x10\x06\x12\x1f\n" +
+	"\x1bCAPACITY_LIMIT_PAID_SECONDS\x10\a\x12\x18\n" +
+	"\x14CAPACITY_LIMIT_QUEUE\x10\b\x12\x1b\n" +
+	"\x17CAPACITY_LIMIT_PROVIDER\x10\t\x12\x1b\n" +
+	"\x17CAPACITY_LIMIT_DEADLINE\x10\n" +
 	"*\xc0\x02\n" +
 	"\x13NotDispatchedReason\x12%\n" +
 	"!NOT_DISPATCHED_REASON_UNSPECIFIED\x10\x00\x12!\n" +
@@ -3940,110 +5873,164 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_plimsoll_v1_sandbox_proto_rawDescData
 }
 
-var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(ProjectOutcome)(0),           // 0: plimsoll.v1.ProjectOutcome
-	(SessionEnd)(0),               // 1: plimsoll.v1.SessionEnd
-	(NotDispatchedReason)(0),      // 2: plimsoll.v1.NotDispatchedReason
-	(*DescribeRequest)(nil),       // 3: plimsoll.v1.DescribeRequest
-	(*DescribeResponse)(nil),      // 4: plimsoll.v1.DescribeResponse
-	(*PayloadEnvironment)(nil),    // 5: plimsoll.v1.PayloadEnvironment
-	(*SoftwareRule)(nil),          // 6: plimsoll.v1.SoftwareRule
-	(*RunResources)(nil),          // 7: plimsoll.v1.RunResources
-	(*AdviceFinding)(nil),         // 8: plimsoll.v1.AdviceFinding
-	(*RunRequest)(nil),            // 9: plimsoll.v1.RunRequest
-	(*JavaScriptRun)(nil),         // 10: plimsoll.v1.JavaScriptRun
-	(*RunResponse)(nil),           // 11: plimsoll.v1.RunResponse
-	(*RunRecord)(nil),             // 12: plimsoll.v1.RunRecord
-	(*JavaScriptResult)(nil),      // 13: plimsoll.v1.JavaScriptResult
-	(*ProjectFile)(nil),           // 14: plimsoll.v1.ProjectFile
-	(*StepResult)(nil),            // 15: plimsoll.v1.StepResult
-	(*Artifact)(nil),              // 16: plimsoll.v1.Artifact
-	(*ProjectRun)(nil),            // 17: plimsoll.v1.ProjectRun
-	(*ProjectResult)(nil),         // 18: plimsoll.v1.ProjectResult
-	(*ModuleRow)(nil),             // 19: plimsoll.v1.ModuleRow
-	(*ModuleRun)(nil),             // 20: plimsoll.v1.ModuleRun
-	(*ModuleRowResult)(nil),       // 21: plimsoll.v1.ModuleRowResult
-	(*ModuleResult)(nil),          // 22: plimsoll.v1.ModuleResult
-	(*OpenSessionRequest)(nil),    // 23: plimsoll.v1.OpenSessionRequest
-	(*OpenSessionResponse)(nil),   // 24: plimsoll.v1.OpenSessionResponse
-	(*SessionCheckpoint)(nil),     // 25: plimsoll.v1.SessionCheckpoint
-	(*AttachSessionRequest)(nil),  // 26: plimsoll.v1.AttachSessionRequest
-	(*AttachSessionResponse)(nil), // 27: plimsoll.v1.AttachSessionResponse
-	(*SessionHeadMismatch)(nil),   // 28: plimsoll.v1.SessionHeadMismatch
-	(*SessionRunRequest)(nil),     // 29: plimsoll.v1.SessionRunRequest
-	(*CellRun)(nil),               // 30: plimsoll.v1.CellRun
-	(*CellResult)(nil),            // 31: plimsoll.v1.CellResult
-	(*SessionRunResponse)(nil),    // 32: plimsoll.v1.SessionRunResponse
-	(*CloseSessionRequest)(nil),   // 33: plimsoll.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),  // 34: plimsoll.v1.CloseSessionResponse
-	(*SessionEnded)(nil),          // 35: plimsoll.v1.SessionEnded
-	(*NotDispatched)(nil),         // 36: plimsoll.v1.NotDispatched
-	(*UnansweredCall)(nil),        // 37: plimsoll.v1.UnansweredCall
+	(FilesScope)(0),               // 1: plimsoll.v1.FilesScope
+	(FilesWriteMode)(0),           // 2: plimsoll.v1.FilesWriteMode
+	(FilesError)(0),               // 3: plimsoll.v1.FilesError
+	(FilesEntryType)(0),           // 4: plimsoll.v1.FilesEntryType
+	(SessionEnd)(0),               // 5: plimsoll.v1.SessionEnd
+	(CapacityLimit)(0),            // 6: plimsoll.v1.CapacityLimit
+	(NotDispatchedReason)(0),      // 7: plimsoll.v1.NotDispatchedReason
+	(*DescribeRequest)(nil),       // 8: plimsoll.v1.DescribeRequest
+	(*DescribeResponse)(nil),      // 9: plimsoll.v1.DescribeResponse
+	(*PayloadEnvironment)(nil),    // 10: plimsoll.v1.PayloadEnvironment
+	(*SoftwareRule)(nil),          // 11: plimsoll.v1.SoftwareRule
+	(*RunResources)(nil),          // 12: plimsoll.v1.RunResources
+	(*AdviceFinding)(nil),         // 13: plimsoll.v1.AdviceFinding
+	(*RunRequest)(nil),            // 14: plimsoll.v1.RunRequest
+	(*JavaScriptRun)(nil),         // 15: plimsoll.v1.JavaScriptRun
+	(*RunResponse)(nil),           // 16: plimsoll.v1.RunResponse
+	(*RunRecord)(nil),             // 17: plimsoll.v1.RunRecord
+	(*JavaScriptResult)(nil),      // 18: plimsoll.v1.JavaScriptResult
+	(*ProjectFile)(nil),           // 19: plimsoll.v1.ProjectFile
+	(*StepResult)(nil),            // 20: plimsoll.v1.StepResult
+	(*Artifact)(nil),              // 21: plimsoll.v1.Artifact
+	(*ProjectRun)(nil),            // 22: plimsoll.v1.ProjectRun
+	(*ProjectResult)(nil),         // 23: plimsoll.v1.ProjectResult
+	(*ModuleRow)(nil),             // 24: plimsoll.v1.ModuleRow
+	(*ModuleRun)(nil),             // 25: plimsoll.v1.ModuleRun
+	(*ModuleRowResult)(nil),       // 26: plimsoll.v1.ModuleRowResult
+	(*ModuleResult)(nil),          // 27: plimsoll.v1.ModuleResult
+	(*OpenSessionRequest)(nil),    // 28: plimsoll.v1.OpenSessionRequest
+	(*OpenSessionResponse)(nil),   // 29: plimsoll.v1.OpenSessionResponse
+	(*SessionCheckpoint)(nil),     // 30: plimsoll.v1.SessionCheckpoint
+	(*AttachSessionRequest)(nil),  // 31: plimsoll.v1.AttachSessionRequest
+	(*AttachSessionResponse)(nil), // 32: plimsoll.v1.AttachSessionResponse
+	(*SessionHeadMismatch)(nil),   // 33: plimsoll.v1.SessionHeadMismatch
+	(*SessionRunRequest)(nil),     // 34: plimsoll.v1.SessionRunRequest
+	(*CellRun)(nil),               // 35: plimsoll.v1.CellRun
+	(*CellResult)(nil),            // 36: plimsoll.v1.CellResult
+	(*FilesRun)(nil),              // 37: plimsoll.v1.FilesRun
+	(*FilesStat)(nil),             // 38: plimsoll.v1.FilesStat
+	(*FilesRead)(nil),             // 39: plimsoll.v1.FilesRead
+	(*FilesWrite)(nil),            // 40: plimsoll.v1.FilesWrite
+	(*FilesList)(nil),             // 41: plimsoll.v1.FilesList
+	(*FilesReadMany)(nil),         // 42: plimsoll.v1.FilesReadMany
+	(*FilesMakeDir)(nil),          // 43: plimsoll.v1.FilesMakeDir
+	(*FilesRemove)(nil),           // 44: plimsoll.v1.FilesRemove
+	(*FilesRename)(nil),           // 45: plimsoll.v1.FilesRename
+	(*FilesResult)(nil),           // 46: plimsoll.v1.FilesResult
+	(*FilesStatAnswer)(nil),       // 47: plimsoll.v1.FilesStatAnswer
+	(*FilesReadAnswer)(nil),       // 48: plimsoll.v1.FilesReadAnswer
+	(*FilesWriteAnswer)(nil),      // 49: plimsoll.v1.FilesWriteAnswer
+	(*FilesEntry)(nil),            // 50: plimsoll.v1.FilesEntry
+	(*FilesListAnswer)(nil),       // 51: plimsoll.v1.FilesListAnswer
+	(*FilesReadManyItem)(nil),     // 52: plimsoll.v1.FilesReadManyItem
+	(*FilesReadManyAnswer)(nil),   // 53: plimsoll.v1.FilesReadManyAnswer
+	(*FilesDone)(nil),             // 54: plimsoll.v1.FilesDone
+	(*SessionRunResponse)(nil),    // 55: plimsoll.v1.SessionRunResponse
+	(*CloseSessionRequest)(nil),   // 56: plimsoll.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),  // 57: plimsoll.v1.CloseSessionResponse
+	(*SessionEnded)(nil),          // 58: plimsoll.v1.SessionEnded
+	(*NotDispatched)(nil),         // 59: plimsoll.v1.NotDispatched
+	(*UnansweredCall)(nil),        // 60: plimsoll.v1.UnansweredCall
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
-	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
-	5,  // 1: plimsoll.v1.DescribeResponse.project_environment:type_name -> plimsoll.v1.PayloadEnvironment
-	5,  // 2: plimsoll.v1.DescribeResponse.module_environment:type_name -> plimsoll.v1.PayloadEnvironment
-	7,  // 3: plimsoll.v1.DescribeResponse.resources:type_name -> plimsoll.v1.RunResources
-	5,  // 4: plimsoll.v1.DescribeResponse.session_environment:type_name -> plimsoll.v1.PayloadEnvironment
-	6,  // 5: plimsoll.v1.RunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 6: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 7: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	20, // 8: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	30, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
-	12, // 10: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
-	13, // 11: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
-	18, // 12: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
-	22, // 13: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	31, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
-	8,  // 15: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	14, // 16: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
-	15, // 17: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
-	0,  // 18: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	16, // 19: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
-	8,  // 20: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	19, // 21: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
-	21, // 22: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
-	0,  // 23: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	6,  // 24: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	6,  // 25: plimsoll.v1.OpenSessionResponse.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	25, // 26: plimsoll.v1.AttachSessionRequest.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
-	24, // 27: plimsoll.v1.AttachSessionResponse.session_info:type_name -> plimsoll.v1.OpenSessionResponse
-	25, // 28: plimsoll.v1.AttachSessionResponse.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
-	12, // 29: plimsoll.v1.AttachSessionResponse.lost_record:type_name -> plimsoll.v1.RunRecord
-	11, // 30: plimsoll.v1.AttachSessionResponse.lost_answer:type_name -> plimsoll.v1.RunResponse
-	25, // 31: plimsoll.v1.SessionHeadMismatch.head:type_name -> plimsoll.v1.SessionCheckpoint
-	6,  // 32: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	25, // 33: plimsoll.v1.SessionRunRequest.head:type_name -> plimsoll.v1.SessionCheckpoint
-	10, // 34: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 35: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	30, // 36: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
-	14, // 37: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
-	11, // 38: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 39: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 40: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 41: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 42: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	12, // 43: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
-	9,  // 44: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 45: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 46: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	26, // 47: plimsoll.v1.SandboxService.AttachSession:input_type -> plimsoll.v1.AttachSessionRequest
-	29, // 48: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	33, // 49: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 50: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 51: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 52: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	27, // 53: plimsoll.v1.SandboxService.AttachSession:output_type -> plimsoll.v1.AttachSessionResponse
-	32, // 54: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	34, // 55: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	50, // [50:56] is the sub-list for method output_type
-	44, // [44:50] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	10, // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
+	10, // 1: plimsoll.v1.DescribeResponse.project_environment:type_name -> plimsoll.v1.PayloadEnvironment
+	10, // 2: plimsoll.v1.DescribeResponse.module_environment:type_name -> plimsoll.v1.PayloadEnvironment
+	12, // 3: plimsoll.v1.DescribeResponse.resources:type_name -> plimsoll.v1.RunResources
+	10, // 4: plimsoll.v1.DescribeResponse.session_environment:type_name -> plimsoll.v1.PayloadEnvironment
+	1,  // 5: plimsoll.v1.PayloadEnvironment.file_scopes:type_name -> plimsoll.v1.FilesScope
+	11, // 6: plimsoll.v1.RunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	15, // 7: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	22, // 8: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	25, // 9: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
+	35, // 10: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
+	37, // 11: plimsoll.v1.RunRequest.files:type_name -> plimsoll.v1.FilesRun
+	17, // 12: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
+	18, // 13: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
+	23, // 14: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
+	27, // 15: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
+	36, // 16: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
+	46, // 17: plimsoll.v1.RunResponse.files:type_name -> plimsoll.v1.FilesResult
+	13, // 18: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	19, // 19: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
+	20, // 20: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
+	0,  // 21: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	21, // 22: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
+	13, // 23: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	24, // 24: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
+	26, // 25: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
+	0,  // 26: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	11, // 27: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	11, // 28: plimsoll.v1.OpenSessionResponse.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	1,  // 29: plimsoll.v1.OpenSessionResponse.file_scopes:type_name -> plimsoll.v1.FilesScope
+	30, // 30: plimsoll.v1.AttachSessionRequest.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
+	29, // 31: plimsoll.v1.AttachSessionResponse.session_info:type_name -> plimsoll.v1.OpenSessionResponse
+	30, // 32: plimsoll.v1.AttachSessionResponse.checkpoint:type_name -> plimsoll.v1.SessionCheckpoint
+	17, // 33: plimsoll.v1.AttachSessionResponse.lost_record:type_name -> plimsoll.v1.RunRecord
+	16, // 34: plimsoll.v1.AttachSessionResponse.lost_answer:type_name -> plimsoll.v1.RunResponse
+	30, // 35: plimsoll.v1.SessionHeadMismatch.head:type_name -> plimsoll.v1.SessionCheckpoint
+	11, // 36: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	30, // 37: plimsoll.v1.SessionRunRequest.head:type_name -> plimsoll.v1.SessionCheckpoint
+	15, // 38: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	22, // 39: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	35, // 40: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
+	37, // 41: plimsoll.v1.SessionRunRequest.files:type_name -> plimsoll.v1.FilesRun
+	19, // 42: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
+	1,  // 43: plimsoll.v1.FilesRun.scope:type_name -> plimsoll.v1.FilesScope
+	38, // 44: plimsoll.v1.FilesRun.stat:type_name -> plimsoll.v1.FilesStat
+	39, // 45: plimsoll.v1.FilesRun.read:type_name -> plimsoll.v1.FilesRead
+	40, // 46: plimsoll.v1.FilesRun.write:type_name -> plimsoll.v1.FilesWrite
+	41, // 47: plimsoll.v1.FilesRun.list:type_name -> plimsoll.v1.FilesList
+	42, // 48: plimsoll.v1.FilesRun.read_many:type_name -> plimsoll.v1.FilesReadMany
+	43, // 49: plimsoll.v1.FilesRun.make_dir:type_name -> plimsoll.v1.FilesMakeDir
+	44, // 50: plimsoll.v1.FilesRun.remove:type_name -> plimsoll.v1.FilesRemove
+	45, // 51: plimsoll.v1.FilesRun.rename:type_name -> plimsoll.v1.FilesRename
+	2,  // 52: plimsoll.v1.FilesWrite.mode:type_name -> plimsoll.v1.FilesWriteMode
+	0,  // 53: plimsoll.v1.FilesResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	3,  // 54: plimsoll.v1.FilesResult.error:type_name -> plimsoll.v1.FilesError
+	47, // 55: plimsoll.v1.FilesResult.stat:type_name -> plimsoll.v1.FilesStatAnswer
+	48, // 56: plimsoll.v1.FilesResult.read:type_name -> plimsoll.v1.FilesReadAnswer
+	49, // 57: plimsoll.v1.FilesResult.write:type_name -> plimsoll.v1.FilesWriteAnswer
+	51, // 58: plimsoll.v1.FilesResult.list:type_name -> plimsoll.v1.FilesListAnswer
+	53, // 59: plimsoll.v1.FilesResult.read_many:type_name -> plimsoll.v1.FilesReadManyAnswer
+	54, // 60: plimsoll.v1.FilesResult.make_dir:type_name -> plimsoll.v1.FilesDone
+	54, // 61: plimsoll.v1.FilesResult.remove:type_name -> plimsoll.v1.FilesDone
+	54, // 62: plimsoll.v1.FilesResult.rename:type_name -> plimsoll.v1.FilesDone
+	4,  // 63: plimsoll.v1.FilesStatAnswer.type:type_name -> plimsoll.v1.FilesEntryType
+	4,  // 64: plimsoll.v1.FilesEntry.type:type_name -> plimsoll.v1.FilesEntryType
+	50, // 65: plimsoll.v1.FilesListAnswer.entries:type_name -> plimsoll.v1.FilesEntry
+	3,  // 66: plimsoll.v1.FilesReadManyItem.error:type_name -> plimsoll.v1.FilesError
+	52, // 67: plimsoll.v1.FilesReadManyAnswer.items:type_name -> plimsoll.v1.FilesReadManyItem
+	16, // 68: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	5,  // 69: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	5,  // 70: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	5,  // 71: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	7,  // 72: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	6,  // 73: plimsoll.v1.NotDispatched.limit:type_name -> plimsoll.v1.CapacityLimit
+	17, // 74: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
+	14, // 75: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	8,  // 76: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	28, // 77: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	31, // 78: plimsoll.v1.SandboxService.AttachSession:input_type -> plimsoll.v1.AttachSessionRequest
+	34, // 79: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	56, // 80: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	16, // 81: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	9,  // 82: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	29, // 83: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	32, // 84: plimsoll.v1.SandboxService.AttachSession:output_type -> plimsoll.v1.AttachSessionResponse
+	55, // 85: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	57, // 86: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	81, // [81:87] is the sub-list for method output_type
+	75, // [75:81] is the sub-list for method input_type
+	75, // [75:75] is the sub-list for extension type_name
+	75, // [75:75] is the sub-list for extension extendee
+	0,  // [0:75] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -4056,25 +6043,48 @@ func file_plimsoll_v1_sandbox_proto_init() {
 		(*RunRequest_Project)(nil),
 		(*RunRequest_Module)(nil),
 		(*RunRequest_Cell)(nil),
+		(*RunRequest_Files)(nil),
 	}
 	file_plimsoll_v1_sandbox_proto_msgTypes[8].OneofWrappers = []any{
 		(*RunResponse_Javascript)(nil),
 		(*RunResponse_Project)(nil),
 		(*RunResponse_Module)(nil),
 		(*RunResponse_Cell)(nil),
+		(*RunResponse_Files)(nil),
 	}
 	file_plimsoll_v1_sandbox_proto_msgTypes[26].OneofWrappers = []any{
 		(*SessionRunRequest_Javascript)(nil),
 		(*SessionRunRequest_Project)(nil),
 		(*SessionRunRequest_Cell)(nil),
+		(*SessionRunRequest_Files)(nil),
+	}
+	file_plimsoll_v1_sandbox_proto_msgTypes[29].OneofWrappers = []any{
+		(*FilesRun_Stat)(nil),
+		(*FilesRun_Read)(nil),
+		(*FilesRun_Write)(nil),
+		(*FilesRun_List)(nil),
+		(*FilesRun_ReadMany)(nil),
+		(*FilesRun_MakeDir)(nil),
+		(*FilesRun_Remove)(nil),
+		(*FilesRun_Rename)(nil),
+	}
+	file_plimsoll_v1_sandbox_proto_msgTypes[38].OneofWrappers = []any{
+		(*FilesResult_Stat)(nil),
+		(*FilesResult_Read)(nil),
+		(*FilesResult_Write)(nil),
+		(*FilesResult_List)(nil),
+		(*FilesResult_ReadMany)(nil),
+		(*FilesResult_MakeDir)(nil),
+		(*FilesResult_Remove)(nil),
+		(*FilesResult_Rename)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   35,
+			NumEnums:      8,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

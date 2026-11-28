@@ -293,6 +293,7 @@ var frameworksDeclined = map[string]string{
 	"PLIMSOLL_REATTACH_URL":       declinedAttach,
 	"PLIMSOLL_REATTACH_TOKEN":     declinedAttach,
 	"PLIMSOLL_ATTACH_LIAR_URL":    declinedAttach,
+	"PLIMSOLL_FILES_URL":          "the shared file-call cases run through the client's Session.run_files (tests/), the one call every adapter's file operations end in",
 }
 
 // declinedAttach: the one adapter that attaches, the Deep Agents backend, is checked over a

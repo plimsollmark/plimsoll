@@ -32,6 +32,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/internal/outsidefacts"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -44,6 +45,9 @@ type Setup struct {
 	Moby        string          `json:"moby"`
 	ProbeStep   string          `json:"probeStep"`   // the smoke test's step
 	ProbeStdout string          `json:"probeStdout"` // that step's stdout
+	// RootHelper is what the smoke test's root check of the project runner prints (a
+	// `container run` with nativehelper.CheckStdinJS on its input, not a run of the runner).
+	RootHelper string `json:"rootHelper"`
 	// Mode is how `container run` behaves: "" runs the plan and reports, "silent" exits 0
 	// with no report, "fail" exits 3 with no report, "hang" never exits.
 	Mode        string `json:"mode"`
@@ -208,6 +212,7 @@ func run() int {
 		slices.Sort(names)
 		call.Stdin = "tar: " + strings.Join(names, ",")
 	}
+	isHelperCheck := isRun && call.Stdin == nativehelper.CheckStdinJS
 	if !isEnter {
 		record(call)
 	}
@@ -216,7 +221,7 @@ func run() int {
 		withState(func(st *State) {
 			s, ok := st.Sessions[call.Session]
 			known = ok
-			if ok && isRun {
+			if ok && isRun && !isHelperCheck {
 				s.Runs++
 				if st.RunRuntimes == nil {
 					st.RunRuntimes = map[string][]string{}
@@ -315,6 +320,12 @@ func run() int {
 			fmt.Fprintln(os.Stderr, "no such container")
 			return 1
 		}
+	case isHelperCheck:
+		if setup.RootHelper == "" {
+			fmt.Fprintln(os.Stderr, "fake wslc: no root helper reading in the setup")
+			return 3
+		}
+		fmt.Print(setup.RootHelper)
 	case isRun:
 		boot := "" // the default session: the probe reports what the setup says
 		if call.Session != "" && call.Session != setup.DefaultSession {

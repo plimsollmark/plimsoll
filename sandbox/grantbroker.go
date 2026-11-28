@@ -140,6 +140,7 @@ func newBrokerServerFor(current func() *brokerSession) *http.Server {
 		body := readDeadlineReader{r: r.Body, rc: http.NewResponseController(w), idle: hostRequestIdleTimeout}
 		resp := current().Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Headers: r.Header, Body: body, ContentLength: r.ContentLength, Stream: httpSink{w}})
 		if !resp.Streamed {
+			drainSmallBody(w, r)
 			writeBrokerResponse(w, resp)
 		}
 	})
@@ -151,6 +152,53 @@ func newBrokerServerFor(current func() *brokerSession) *http.Server {
 		IdleTimeout:       15 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
+}
+
+// brokerDrainBytes is the most of a request body the broker's server reads and discards
+// before answering a call that did not read it (a refusal raised before the body: a type
+// the route does not take, a budget spent, the broker at capacity). It is net/http's own
+// tolerance for an unread body (maxPostHandlerReadBytes, 256 KiB).
+const brokerDrainBytes = 256 << 10
+
+// brokerDrainTimeout bounds the whole of that read: a guest that stalls in a small body
+// is answered no later than this, and its connection closed
+// (TestBrokerDrainGivesUpOnAStalledSmallBody). Its size, from the two ways it can be wrong:
+// too short only costs what the drain exists to avoid, a refusal seen as a closed
+// connection as for a body past brokerDrainBytes, never a wrong answer, since nothing read
+// here goes upstream; too long holds a refusal back from a guest that stalls its own small
+// body. It must stay well below hostRequestIdleTimeout (10 s), the stall this socket
+// allows between pieces anywhere else; with no deadline of its own the drain waits out the
+// one the server set when the request began (ReadTimeout, 10 s; the test measured 10.0 s
+// with this deadline removed). 2 s asks a body of brokerDrainBytes to arrive at 128 KiB/s
+// (about 1 Mbit/s): the docker broker's comes from the in-sandbox forwarder over a local
+// Unix socket, and the egress guard's raw route's from an E2B sandbox over the provider's
+// network; neither rate is measured, but 600 loaded runs under gVisor of the 16 KiB body
+// of TestDockerProjectGrantCarriesTheCheckersUploads were never cut by it (2026-11-27).
+var brokerDrainTimeout = 2 * time.Second
+
+// drainSmallBody reads what is left of a request body of at most brokerDrainBytes
+// (declared, or undeclared and ending within it) and discards it, before the answer is
+// written. The answer of a refusal raised before the body was read then reaches the
+// client: net/http does not drain an unread body itself when the request says
+// Connection: close (Python's urllib always does), and a Unix socket closed with unread
+// data resets its peer, so the forwarder in the sandbox could cut the guest's connection
+// before the answer, and the guest saw a closed connection instead of the 415 and its
+// no-retry mark (under gVisor, 32 of 600 loaded runs of
+// TestDockerProjectGrantCarriesTheCheckersUploads on two image sets, none of 600 runs
+// after this drain under gVisor and runc, 2026-11-27). A declared body over the
+// bound is not read: its refusal may still reach the client as a closed connection. The
+// bytes read here go nowhere: not upstream, not to the trace. A body the call already
+// read to its end costs one read that returns EOF. A writer that takes no read deadline
+// (a wrapper that hides the connection) gets no drain at all: the read would then be bounded
+// only by the server's own read timeout, not by brokerDrainTimeout (session-files-24).
+func drainSmallBody(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil || r.ContentLength == 0 || r.ContentLength > brokerDrainBytes {
+		return
+	}
+	if http.NewResponseController(w).SetReadDeadline(time.Now().Add(brokerDrainTimeout)) != nil {
+		return
+	}
+	_, _ = io.CopyN(io.Discard, r.Body, brokerDrainBytes+1)
 }
 
 // hostRequestIdleTimeout bounds the gap between two pieces of a request body on the

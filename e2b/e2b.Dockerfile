@@ -8,8 +8,9 @@
 #   (v23.7.0 in the 23 line, every release from 24); E2B's own `base` template carried
 #   node v20.9.0 when plimsoll last read it (2026-11-20), so a session there is refused.
 #   A session also needs util-linux's setpriv (it runs the session's code as a user no
-#   account has) and, for Python cells, python3: sandbox/e2b_session.go's
-#   e2bRequiredBins and e2b_session.js's pin list name what the open looks for.
+#   account has), mount (the open bind-mounts the work folder on itself, for file calls)
+#   and, for Python cells, python3: sandbox/e2b_session.go's e2bRequiredBins and
+#   e2b_session.js's pin list name what the open looks for.
 # - Project runs with the network off. The TypeScript toolchain is baked in, as in
 #   docker/Dockerfile, so a step needs no `npm install` at run time.
 #
@@ -28,7 +29,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && node --disable-sigusr1 -e 'process.stdout.write(process.version + "\n")' \
- && setpriv --version && python3 --version && test -x /usr/bin/env && test -x /bin/sh
+ && setpriv --version && mount --version && python3 --version && test -x /usr/bin/env && test -x /bin/sh
 
 # Use Debian's current CA bundle for outbound HTTPS. Node's bundled CA set can
 # lag OS trust updates; the E2B guard endpoint must validate public chains

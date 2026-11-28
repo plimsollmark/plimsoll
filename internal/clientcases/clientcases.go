@@ -53,6 +53,9 @@ const (
 	PathSessionUnanswered = "session-unanswered" // the record an unanswered session call's error carries
 	PathAttachLost        = "attach-lost"        // the lost call's record an attach answer returns
 	PathSessionHead       = "session-head"       // a session call the daemon refuses for its head, and the call after it
+	PathAnswer            = "answer"             // an answered session call's response checked against the request sent
+	PathLostAnswer        = "lost-answer"        // the answer an attach returns for a lost call checked against that call's record
+	PathFilesCall         = "files-call"         // a session's file calls through the client's own checked call, against clientsuite's files daemon
 )
 
 // Client is one client's paths, each with the test file that runs it.
@@ -76,11 +79,14 @@ var Clients = map[string]Client{
 		PathQualification:     "record/shared_cases_test.go",
 		PathMeets:             "record/shared_cases_test.go",
 		PathSessionUnanswered: "record/shared_cases_test.go",
+		PathAnswer:            "record/shared_cases_test.go",
+		PathLostAnswer:        "record/shared_cases_test.go",
 		PathCheckpoint:        "client/shared_cases_test.go",
 		PathErrorAnswer:       "client/shared_cases_test.go",
 		PathAttachLive:        "client/shared_cases_test.go",
 		PathAttachLost:        "client/shared_cases_test.go",
 		PathSessionHead:       "client/shared_cases_test.go",
+		PathFilesCall:         "client/shared_cases_test.go",
 	}},
 	"python": {Name: "python", Checks: true, Paths: map[string]string{
 		PathDigest:            "clients/python/tests/test_record.py",
@@ -93,7 +99,10 @@ var Clients = map[string]Client{
 		PathAttachLive:        "clients/python/tests/test_reattach.py",
 		PathSessionUnanswered: "clients/python/tests/test_shared_cases.py",
 		PathAttachLost:        "clients/python/tests/test_shared_cases.py",
+		PathAnswer:            "clients/python/tests/test_shared_cases.py",
+		PathLostAnswer:        "clients/python/tests/test_shared_cases.py",
 		PathSessionHead:       "clients/python/tests/test_reattach.py",
+		PathFilesCall:         "clients/python/tests/test_shared_cases.py",
 	}},
 	// The TypeScript client's errors carry no kind of rule yet (PlimsollError has a code
 	// and flags; the rule is only in the message), so its verdicts state the outcome alone.
@@ -108,7 +117,10 @@ var Clients = map[string]Client{
 		PathAttachLive:        "clients/typescript/test/reattach.test.ts",
 		PathSessionUnanswered: "clients/typescript/test/shared-cases.test.ts",
 		PathAttachLost:        "clients/typescript/test/shared-cases.test.ts",
+		PathAnswer:            "clients/typescript/test/shared-cases.test.ts",
+		PathLostAnswer:        "clients/typescript/test/shared-cases.test.ts",
 		PathSessionHead:       "clients/typescript/test/reattach.test.ts",
+		PathFilesCall:         "clients/typescript/test/shared-cases.test.ts",
 	}},
 }
 
@@ -201,7 +213,7 @@ func SaysOf(err error) string {
 // Load reads every shared file under root, the repository's root.
 func Load(root string) (*Account, error) {
 	a := &Account{byID: map[string]*Case{}, Retired: map[string]bool{}}
-	for _, step := range []func(string) error{a.loadGolden, a.loadPublished, a.loadCheckpoints, a.loadAnswers, a.loadRecords, a.loadDifferences} {
+	for _, step := range []func(string) error{a.loadGolden, a.loadPublished, a.loadCheckpoints, a.loadAnswers, a.loadRecords, a.loadFilesCalls, a.loadDifferences} {
 		if err := step(root); err != nil {
 			return nil, err
 		}
@@ -458,6 +470,34 @@ func (a *Account) loadRecords(root string) error {
 	return nil
 }
 
+// FilesCallsFile is the shared file-call cases: each a session's calls, run through every
+// client's own checked file call against clientsuite's files daemon.
+const FilesCallsFile = "internal/clientcases/testdata/files-calls.json"
+
+func (a *Account) loadFilesCalls(root string) error {
+	var v struct {
+		Retired []string `json:"retired"`
+		Cases   []struct {
+			ID     string                     `json:"id"`
+			Family string                     `json:"family"`
+			Paths  []string                   `json:"paths"`
+			Expect map[string]json.RawMessage `json:"expect"`
+		} `json:"cases"`
+	}
+	if err := readJSON(root, FilesCallsFile, &v); err != nil {
+		return err
+	}
+	for _, id := range v.Retired {
+		a.Retired[id] = true
+	}
+	for _, c := range v.Cases {
+		if err := a.add(&Case{ID: c.ID, Family: c.Family, File: FilesCallsFile, Paths: c.Paths, Expect: c.Expect, Outcome: true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 const differencesFile = "internal/clientcases/testdata/differences.json"
 
 func (a *Account) loadDifferences(root string) error {
@@ -518,15 +558,43 @@ func canonical(b json.RawMessage) string {
 	return string(out)
 }
 
-// outcomeOnly is an outcome verdict without its kind of rule.
+// outcomeOnly is an outcome verdict without its kind of rule: a string's part before "/",
+// or, in a verdict that is an object (a file-call case's), the value with every "check" key
+// left out.
 func outcomeOnly(b json.RawMessage) string {
 	var s string
 	if json.Unmarshal(b, &s) != nil {
-		return canonical(b)
+		var v any
+		if err := json.Unmarshal(b, &v); err != nil {
+			return canonical(b)
+		}
+		out, _ := json.Marshal(withoutChecks(v))
+		return string(out)
 	}
 	head, _, _ := strings.Cut(s, "/")
 	out, _ := json.Marshal(head)
 	return string(out)
+}
+
+// withoutChecks is v with every object's "check" key removed, at any depth.
+func withoutChecks(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, e := range x {
+			if k != "check" {
+				out[k] = withoutChecks(e)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = withoutChecks(e)
+		}
+		return out
+	}
+	return v
 }
 
 // same reports whether a verdict says what want says, for this client.

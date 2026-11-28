@@ -99,6 +99,7 @@ func TestSharedCases(t *testing.T) {
 		}
 		say("answers/"+a.Name, clientcases.PathErrorAnswer, map[string]any{
 			"code": connect.CodeOf(err).String(), "notDispatched": nd, "sessionEnded": end, "answerNotBound": errors.Is(err, ErrAnswerNotBound),
+			"capacityLimit": capacityLimitName(err),
 		})
 	}
 
@@ -182,6 +183,10 @@ func TestSharedCases(t *testing.T) {
 			}
 		}
 	}
+
+	// The shared file-call cases, each a session's calls through RunFiles against the
+	// files daemon.
+	vs = append(vs, filesCallVerdicts(t)...)
 
 	a, err := clientcases.Load("..")
 	if err != nil {

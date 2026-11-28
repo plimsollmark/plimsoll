@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -42,7 +43,7 @@ type e2bStart struct {
 func (s e2bStart) argv() []string { return append([]string{s.Cmd}, s.Args...) }
 
 // e2bRecBins are the paths the stand-in's open reports, as a Debian template's would be.
-var e2bRecBins = map[string]string{"node": "/usr/bin/node", "sh": "/bin/sh", "setpriv": "/usr/bin/setpriv", "python3": "/usr/bin/python3"}
+var e2bRecBins = map[string]string{"node": "/usr/bin/node", "sh": "/bin/sh", "setpriv": "/usr/bin/setpriv", "mount": "/bin/mount", "python3": "/usr/bin/python3"}
 
 // e2bRecEnv is envd's environment for root as /usr/bin/env -0 prints it on the stand-in:
 // envd's PATH, HOME, USER, LOGNAME, a template variable, and the reader's own PWD.
@@ -127,6 +128,10 @@ func (r *e2bRecorder) serve(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		_, _ = io.WriteString(w, `[]`)
+	case req.Method == http.MethodGet && req.URL.Path == "/files" && req.URL.Query().Get("path") == e2bHelperPath:
+		// The install's read-back: the helper as the open put it there.
+		b, _ := nativehelper.Program("amd64")
+		_, _ = w.Write(b)
 	case req.Method == http.MethodPost && req.URL.Path == "/process.Process/SendInput":
 		_, _ = io.WriteString(w, `{}`)
 	case req.Method == http.MethodPost && req.URL.Path == "/process.Process/Start":
@@ -167,7 +172,7 @@ func (r *e2bRecorder) start(w http.ResponseWriter, req *http.Request) {
 	stdout, stderr, exit := "", "", 0
 	switch e2bProgram(s) {
 	case "open":
-		b, _ := json.Marshal(map[string]any{"envd": 7, "bins": r.bins})
+		b, _ := json.Marshal(map[string]any{"envd": 7, "bins": r.bins, "helper": "absent", "arch": "x64"})
 		stdout = string(b)
 		r.mu.Lock()
 		if r.openExit != 0 {
@@ -223,6 +228,8 @@ func e2bProgram(s e2bStart) string {
 			return "stager"
 		case "artifacts":
 			return "artifact reader"
+		case "install":
+			return "install"
 		}
 	case has(sessionkit.ListScript) >= 0:
 		return "lister"
@@ -234,6 +241,8 @@ func e2bProgram(s e2bStart) string {
 		return "relay"
 	case has(e2bRecLaunch) >= 0:
 		return "launcher"
+	case has(e2bFileStdin) >= 0:
+		return "file call"
 	case has(e2bGuestStart) >= 0:
 		return "guest command"
 	}
@@ -293,7 +302,28 @@ func checkE2BStart(s e2bStart, bins map[string]string) error {
 			return fmt.Errorf("the open runs %q; want node, found by name before any of the session's code", prog)
 		}
 		return e2bNodeFlag(name, rest)
-	case "lister", "sweep", "identity check", "stager", "relay":
+	case "file call":
+		// The pinned sh takes the call's input from the staging folder as root, then the
+		// pinned setpriv drops to the guest, the pinned sh changes into the work folder,
+		// and the helper starts under ControlArgvClosed.
+		head := []string{bins["sh"], "-c", e2bFileStdin, "sh"}
+		if len(rest) < len(head)+1 || !slices.Equal(rest[:len(head)], head) || !strings.HasPrefix(rest[len(head)], e2bSessionStage+"/") {
+			return fmt.Errorf("a file call starts %q, not %q and an input in the staging folder", rest[:min(len(rest), len(head)+1)], head)
+		}
+		_, guest, err := controlTail(rest[len(head)+1:])
+		if err != nil {
+			return fmt.Errorf("a file call's drop %w", err)
+		}
+		drop := []string{bins["setpriv"], "--reuid=61000", "--regid=61000", "--clear-groups", "--no-new-privs", "--", bins["sh"], "-c", e2bGuestStart, "sh", e2bSessionWork}
+		if len(guest) < len(drop) || !slices.Equal(guest[:len(drop)], drop) {
+			return fmt.Errorf("a file call drops to the guest as %q, not %q", guest[:min(len(guest), len(drop))], drop)
+		}
+		vars, helper, err := controlTail(guest[len(drop):])
+		if err != nil || len(vars) != 0 || len(helper) != 4 || helper[0] != e2bHelperPath || helper[1] != "files" || helper[3] != "-" {
+			return fmt.Errorf("a file call's helper starts %q (%v); want %s files SCOPE - under ControlArgvClosed", guest[len(drop):], err, e2bHelperPath)
+		}
+		return nil
+	case "lister", "sweep", "identity check", "stager", "relay", "install":
 		if prog != bins["node"] {
 			return fmt.Errorf("%s runs %q, not the pinned node %s", name, prog, bins["node"])
 		}
@@ -383,6 +413,11 @@ func TestE2BSessionStartsEveryProgramInRootClosed(t *testing.T) {
 	if err != nil || res.Outcome != ProjectOutcomeCompleted {
 		t.Fatalf("project: %+v, %v", res, err)
 	}
+	// The recorder answers nothing a helper would, so the call is a protocol error; what is
+	// checked is how its helper starts.
+	if fres, err := s.RunFiles(ctx, FilesRequest{FilesCall: FilesCall{Scope: FilesScopeWork, Op: FilesStat, Path: []byte("a.txt")}}); err != nil || fres.Outcome != ProjectOutcomeProtocolError {
+		t.Fatalf("file call: %+v, %v", fres, err)
+	}
 	// The interpreter's programs: what sessionkit hands the launcher, the identity
 	// check and the relay, as a cell would.
 	in := &s.life.Interps
@@ -422,7 +457,7 @@ func TestE2BSessionStartsEveryProgramInRootClosed(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	for _, name := range []string{"open", "environment read", "lister", "stager", "guest command", "artifact reader", "sweep", "identity check", "launcher", "relay"} {
+	for _, name := range []string{"open", "install", "environment read", "lister", "stager", "guest command", "file call", "artifact reader", "sweep", "identity check", "launcher", "relay"} {
 		if seen[name] == 0 {
 			t.Errorf("no %s was started (starts: %v)", name, seen)
 		}
@@ -817,5 +852,62 @@ func TestE2BSessionStagingIsMarkedOnlyBeforeTheStager(t *testing.T) {
 		if slices.Contains(st.argv(), "/snippet.cjs") {
 			t.Fatalf("a snippet ran from /snippet.cjs: %q", st.argv())
 		}
+	}
+}
+
+// The open's check that the work folder's files cannot be reached through a second mount
+// (e2b_session.js workAlias, review finding session-files-15), on mount tables written as
+// /proc/self/mountinfo writes them: the stand-in's (the root overlay and the work folder's
+// bind of itself) has none; a second mount of the root device at its root, or of the work
+// folder itself, is one; a mount of a folder below the work folder's root, or of another
+// device, is not; and a work folder that is a device of its own is judged by that device.
+func TestE2BSessionWorkAliasMounts(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	harness := `if (mode === "plimsoll-test-work-alias") { process.stdout.write(workAlias(args[0], args[1])); process.exit(0); }
+`
+	src := strings.Replace(e2bSessionJS, "switch (mode) {", harness+"switch (mode) {", 1)
+	if src == e2bSessionJS {
+		t.Fatal("e2b_session.js has no switch (mode) to put the harness before")
+	}
+	const (
+		root    = "500 400 0:86 / / rw,relatime master:1 - overlay overlay rw\n"
+		proc    = "501 500 0:90 / /proc rw,nosuid - proc proc rw\n"
+		hosts   = "502 500 8:48 /var/lib/docker/containers/x/hosts /etc/hosts rw - ext4 /dev/sdd rw\n"
+		bound   = "600 500 0:86 /work /work rw,relatime master:1 - overlay overlay rw\n"
+		spaced  = "600 500 0:86 /my\\040work /my\\040work rw - overlay overlay rw\n"
+		ownDisk = "600 500 254:2 / /work rw - ext4 /dev/vdb rw\n"
+	)
+	for _, c := range []struct {
+		name, mountinfo, work, want string
+	}{
+		{"the stand-in's table", root + proc + hosts + bound, "/work", ""},
+		{"the root device again at its root", root + proc + bound + "700 500 0:86 / /mnt/disk rw - overlay overlay rw\n", "/work", "/mnt/disk"},
+		{"the work folder bound a second time", root + bound + "701 500 0:86 /work /srv/w rw - overlay overlay rw\n", "/work", "/srv/w"},
+		{"a folder above the work folder", "500 400 0:86 / / rw - ext4 /dev/vda rw\n600 500 0:86 /home/user/work /home/user/work rw - ext4 /dev/vda rw\n" +
+			"702 500 0:86 /home /h rw - ext4 /dev/vda rw\n", "/home/user/work", "/h"},
+		{"a folder whose name only starts as the work folder's", root + bound + "703 500 0:86 /wor /x rw - overlay overlay rw\n", "/work", ""},
+		{"a folder below the work folder", root + bound + "704 500 0:86 /work/sub /srv/sub rw - overlay overlay rw\n", "/work", ""},
+		{"another device", root + bound + "705 500 254:1 / /data rw - ext4 /dev/vdc rw\n", "/work", ""},
+		{"a work folder with a space in its name", root + spaced + "706 500 0:86 / /mnt rw - overlay overlay rw\n", "/my work", "/mnt"},
+		{"a work folder that is a device of its own", root + ownDisk + "707 500 254:2 / /mnt/w rw - ext4 /dev/vdb rw\n", "/work", "/mnt/w"},
+		{"a work folder that is a device of its own, a part of it elsewhere", root + ownDisk + "708 500 254:2 /sub /mnt/s rw - ext4 /dev/vdb rw\n", "/work", ""},
+		{"the bind stacked on the folder's own earlier bind", root + bound + "709 600 0:86 /work /work rw - overlay overlay rw\n", "/work", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := exec.Command(node, "-e", src, "plimsoll-test-work-alias", c.mountinfo, c.work)
+			cmd.Env = []string{"PATH=/usr/bin:/bin"}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("%v: %s", err, stderr.String())
+			}
+			if string(out) != c.want {
+				t.Errorf("workAlias = %q, want %q", out, c.want)
+			}
+		})
 	}
 }

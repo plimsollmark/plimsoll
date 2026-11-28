@@ -402,6 +402,11 @@ type fakeSandboxd struct {
 	mountAnswer string
 	mountReport func() string
 	tierChecks  int
+	// rootHelper is the answer to the root check of the project runner (nativehelper.CheckJS,
+	// started as root), counted in helperChecks, not starts: goodRootHelper unless a test sets
+	// another.
+	rootHelper   *nativehelper.FileReport
+	helperChecks int
 	// cancelled is closed when a hanging Start sees its stream end.
 	cancelled chan struct{}
 	// reached counts requests that completed the TLS handshake and reached the handler.
@@ -555,9 +560,13 @@ func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1
 	f.dialed = append(f.dialed, f.via[req.Peer().Addr])
 	f.served = append(f.served, f.viaIdentity[req.Peer().Addr])
 	checking := slices.Equal(req.Msg.GetConfig().GetCommand(), tierCheck)
-	if checking {
+	helperCheck := slices.Contains(req.Msg.GetConfig().GetCommand(), nativehelper.CheckJS)
+	switch {
+	case checking:
 		f.tierChecks++
-	} else {
+	case helperCheck:
+		f.helperChecks++
+	default:
 		f.starts = append(f.starts, req.Msg.GetConfig().GetCommand())
 	}
 	f.auth = append(f.auth, req.Header().Get("Authorization"))
@@ -583,7 +592,16 @@ func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1
 	}
 	var out, errOut string
 	var exit int32
-	if checking {
+	if helperCheck {
+		f.mu.Lock()
+		h := goodRootHelper()
+		if f.rootHelper != nil {
+			h = *f.rootHelper
+		}
+		f.mu.Unlock()
+		b, _ := json.Marshal(h)
+		out = string(b)
+	} else if checking {
 		f.mu.Lock()
 		mounts := f.mountAnswer
 		if f.mountReport != nil {
@@ -603,7 +621,7 @@ func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1
 			return err
 		}
 	}
-	if !checking && f.holdAfterExit.Load() {
+	if !checking && !helperCheck && f.holdAfterExit.Load() {
 		<-ctx.Done()
 	}
 	return nil
@@ -1223,28 +1241,101 @@ func TestPoliciesCannotChangeWhileTheSmokeTestProvesThem(t *testing.T) {
 
 // goodHelper is the boundary test's reading of the image's project runner that passes: the
 // native helper this test binary carries for x86-64 (the one machine it is built for),
-// root's, mode 0755, on an x86-64 node, whatever machine this test runs on.
+// root's, mode 0711, as the guest reads it (its size, its read refused, the line its identity
+// command prints), on an x86-64 node, whatever machine this test runs on.
 func goodHelper() nativehelper.FileReport {
-	sum, err := nativehelper.SHA256(nativehelper.BuiltMachine)
+	prog, err := nativehelper.Program(nativehelper.BuiltMachine)
 	if err != nil {
 		panic(err)
 	}
-	zero, mode := 0, 0o755
-	return nativehelper.FileReport{Type: "file", UID: &zero, Mode: &mode, Size: 516768, SHA256: sum, Arch: "x64"}
+	id, err := nativehelper.Identity()
+	if err != nil {
+		panic(err)
+	}
+	zero, mode := 0, 0o711
+	return nativehelper.FileReport{Type: "file", UID: &zero, Mode: &mode, Size: int64(len(prog)), Read: "EACCES", Arch: "x64", Identity: id}
 }
 
-// The smoke test refuses an image whose project runner is missing, is other bytes or is not
-// root's, before any project runs through it.
+// goodRootHelper is the root check's reading of the same file: its bytes read, so its SHA-256.
+func goodRootHelper() nativehelper.FileReport {
+	h := goodHelper()
+	want, err := nativehelper.Pinned(nativehelper.BuiltMachine)
+	if err != nil {
+		panic(err)
+	}
+	h.Read, h.SHA256 = "", want.SHA256
+	return h
+}
+
+// The smoke test refuses, from the root check that reads the bytes, an image whose project
+// runner is the build pinned 1b403142 (file contract 5): the same size as this build, which
+// the guest's reading alone cannot tell apart from it but for the identity line that build
+// lacks; and another build of the same size, by its SHA-256. The root check runs on the pod
+// claimed for the boundary test's peer, as root.
+func TestSmokeRefusesTheEarlierHelperBuildByItsBytes(t *testing.T) {
+	for name, c := range map[string]struct {
+		root  func(*nativehelper.FileReport)
+		guest func(*nativehelper.FileReport)
+		want  string
+	}{
+		"the earlier build 1b403142, as root": {func(h *nativehelper.FileReport) {
+			h.SHA256, h.Identity, h.IdentityError = "1b403142dc274dd62c6c6eeba429e26833bb7c792ccf79687fb469b48e2d137a", "", "exit 2"
+		}, func(*nativehelper.FileReport) {}, "has sha256 1b403142dc274dd62c6c6eeba429e26833bb7c792ccf79687fb469b48e2d137a"},
+		"the earlier build 1b403142, as the guest": {func(*nativehelper.FileReport) {}, func(h *nativehelper.FileReport) {
+			h.Identity, h.IdentityError = "", "exit 2"
+		}, "did not report which build it is"},
+		"the root check read nothing": {func(h *nativehelper.FileReport) { h.SHA256, h.Read = "", "EACCES" }, func(*nativehelper.FileReport) {},
+			"it is readable by root alone, so the check must read it as root"},
+		"an arm64 node, as root": {func(h *nativehelper.FileReport) { h.Arch = "arm64" }, func(*nativehelper.FileReport) {},
+			"the sandbox's machine is arm64"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, _, sd := testProvider(t)
+			root := goodRootHelper()
+			c.root(&root)
+			sd.mu.Lock()
+			sd.rootHelper = &root
+			sd.mu.Unlock()
+			fakeSmoke(t, p, sd, func(r *boundaryReport) { c.guest(&r.Helper) })
+			err := p.SmokeTest(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.want) || !errors.Is(err, nativehelper.ErrNotTheHelper) {
+				t.Fatalf("got %v; want a refusal naming %q", err, c.want)
+			}
+			drained(t, p)
+		})
+	}
+	// The check that passes ran once, as root: no setpriv before the program.
+	p, _, sd := testProvider(t)
+	fakeSmoke(t, p, sd, func(*boundaryReport) {})
+	if err := p.SmokeTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sd.mu.Lock()
+	n := sd.helperChecks
+	sd.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("the root check of the project runner ran %d times; want once", n)
+	}
+	drained(t, p)
+}
+
+// The smoke test refuses an image whose project runner is missing, is another build (another
+// size), is readable by the guest or is not root's, before any project runs through it.
 func TestSmokeRefusesAnImageWithoutTheRunner(t *testing.T) {
 	for name, c := range map[string]struct {
 		edit func(*nativehelper.FileReport)
 		want string
 	}{
-		"missing":     {func(h *nativehelper.FileReport) { *h = nativehelper.FileReport{Error: "ENOENT"} }, "there is no file at " + nativehelper.InContainer},
-		"other":       {func(h *nativehelper.FileReport) { h.SHA256 = strings.Repeat("0", 64) }, "has sha256 " + strings.Repeat("0", 64)},
+		"missing": {func(h *nativehelper.FileReport) { *h = nativehelper.FileReport{Error: "ENOENT"} }, "there is no file at " + nativehelper.InContainer},
+		"other":   {func(h *nativehelper.FileReport) { h.Size = 7 }, "is 7 bytes; this plimsolld's helper is"},
+		"readable": {func(h *nativehelper.FileReport) {
+			mode := 0o755
+			h.Mode, h.Read, h.SHA256 = &mode, "", strings.Repeat("0", 64)
+		},
+			"must be readable by root alone"},
 		"the guest's": {func(h *nativehelper.FileReport) { uid := guestUID; h.UID = &uid }, "it must be root's"},
-		"setgid":      {func(h *nativehelper.FileReport) { mode := 0o2755; h.Mode = &mode }, "no setuid, setgid or sticky bit"},
-		"an arm64 node": {func(h *nativehelper.FileReport) { h.Arch, h.SHA256 = "arm64", strings.Repeat("0", 64) },
+		"setgid":      {func(h *nativehelper.FileReport) { mode := 0o2711; h.Mode = &mode }, "no setuid, setgid or sticky bit"},
+		"an arm64 node": {func(h *nativehelper.FileReport) { h.Arch = "arm64" },
 			"the sandbox's machine is arm64 (node's process.arch); the native helper is built for x86-64 (x64) only"},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -31,7 +31,7 @@ ARG TARGETARCH
 COPY --from=nativehelper plimsoll-helper_${TARGETARCH} plimsoll-helper.sha256 /h/
 RUN cd /h && pin="$(grep -x "[0-9a-f]\{64\}  plimsoll-helper_${TARGETARCH}" plimsoll-helper.sha256)" \
  && echo "$pin" | sha256sum -c - \
- && install -m 0755 plimsoll-helper_${TARGETARCH} /plimsoll-helper
+ && install -m 0711 plimsoll-helper_${TARGETARCH} /plimsoll-helper
 
 FROM ${BASE_NODE}
 
@@ -45,8 +45,9 @@ RUN npm install -g --no-fund --no-audit \
       eslint@9.13.0 \
   && npm cache clean --force
 
-# The project runner (the native helper's run-project mode), root's and read-only to the
-# guest. The guard library stays: plimsoll loads it into every node program of its own
+# The project runner (the native helper's run-project mode), root's, mode 0711: the guest may
+# run it and not read it, so the kernel makes it non-dumpable from its exec, before its first
+# instruction (nativehelper.InstalledMode). The guard library stays: plimsoll loads it into every node program of its own
 # beside guest code (a session's sweep, quiesce and relays, the granted-run forwarder).
 COPY --from=native-helper /plimsoll-helper /usr/local/libexec/plimsoll-helper
 COPY --from=runner-guard-build /runner-guard.so /usr/local/lib/plimsoll-runner-guard.so

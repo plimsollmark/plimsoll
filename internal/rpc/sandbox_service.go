@@ -17,6 +17,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/fileswire"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
@@ -125,6 +126,10 @@ type SandboxService struct {
 	// refusals writes one rate-limited line per caller for calls refused before they
 	// ran (refusals.go). The zero value is ready to use.
 	refusals refusalLog
+
+	// fileCalls counts file calls by operation, outcome and error, for /metrics
+	// (files.go). The zero value is ready to use.
+	fileCalls fileCallStats
 }
 
 // RunCounts returns cumulative run totals for metrics: total dispatched to the
@@ -304,7 +309,7 @@ func payloadEnvironment(e sandbox.PayloadEnvironment) *plimsollv1.PayloadEnviron
 	for _, l := range e.Languages {
 		langs = append(langs, string(l))
 	}
-	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, SoftwareIdentity: e.SoftwareIdentity, MaxTimeoutMs: uint32(ceiling / time.Millisecond), Languages: langs}
+	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, SoftwareIdentity: e.SoftwareIdentity, MaxTimeoutMs: uint32(ceiling / time.Millisecond), Languages: langs, FileScopes: fileswire.Scopes(e.FileScopes)}
 }
 
 func nonNegative(n int) uint32 {
@@ -333,6 +338,7 @@ type target struct {
 	project  func(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error)
 	module   func(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) // runs only
 	cell     func(context.Context, sandbox.CellRequest) (sandbox.CellResult, error)
+	files    func(context.Context, sandbox.FilesRequest) (sandbox.FilesResult, error) // a session's, when it carries file calls
 	// teardown is the provider's BillingTeardown: positive when it bills by the second
 	// (sandbox.Metered), so a run draws on the daily allowances (SpendCap). Runs only:
 	// a session's paid time is charged by its sessionMeter, from its open to its
@@ -448,6 +454,11 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 			return nil, mapSandboxErr(err)
 		}
 		k, t.cell = ck, s.cellRun(req.Msg.GetPreferWarm())
+	case *plimsollv1.RunRequest_Files:
+		// The stored form of a session's file call: a file call reads or changes a kept
+		// sandbox's files, so it runs in a session only.
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
+			fmt.Errorf("%w: a files payload is a session call; open a session and send it there", sandbox.ErrInvalidRequest))
 	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			errors.New("payload must be exactly one of javascript, project, module or cell"))
@@ -614,7 +625,18 @@ func mapSandboxErr(err error) error {
 		}
 	}
 	if reason, ok := sandbox.NotDispatchedReason(err); ok {
-		return withNotDispatched(ce, reason)
+		// Every capacity refusal in this module states its limit
+		// (TestEveryCapacityRefusalStatesItsLimit); one from a provider outside it that
+		// names none is the caller's deadline when it carries the call's own context error
+		// (finding release-122), and the provider's otherwise.
+		limit := sandbox.CapacityLimitOf(err)
+		if reason == sandbox.RefusalCapacity && limit == sandbox.CapacityUnstated {
+			limit = sandbox.CapacityProvider
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				limit = sandbox.CapacityDeadline
+			}
+		}
+		return withNotDispatched(ce, reason, limit)
 	}
 	return ce
 }

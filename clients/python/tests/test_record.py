@@ -26,10 +26,12 @@ from plimsoll_client import (
     PlimsollError,
 )
 from plimsoll_client._record import (
+    VERSION,
     _states_only,
     check,
     check_lost_answer,
     check_single,
+    files_op,
     valid_daemon_version,
     valid_qualification,
     record_digest,
@@ -139,7 +141,7 @@ def stamped(req: dict, resp: dict, rule: "SoftwareRule | None" = None) -> dict:
     out = copy.deepcopy(resp)
     m = Msg(out, "r")
     r = RunRecord(
-        version=5,
+        version=VERSION,
         request_sha256=request_digest(req),
         result_sha256=result_digest(m),
         provider=m.get_str("sandbox"),
@@ -186,7 +188,7 @@ class GoldenVectors(unittest.TestCase):
             n += 1
         for v in GOLDEN["results"]:
             with self.subTest(v["name"]):
-                got = result_digest(Msg(v["response"], "r"))
+                got = result_digest(Msg(v["response"], "r"), v.get("recordVersion", 5))
                 verdict("golden/results/" + v["name"], "digest", got)
                 self.assertEqual(got, v["sha256"])
             n += 1
@@ -307,7 +309,7 @@ class GoldenVectors(unittest.TestCase):
                     self.assertEqual(got, v["sha256"])
             for v in g["results"]:
                 with self.subTest(path.name, vector=v["name"]):
-                    got = result_digest(Msg(v["response"], "r"))
+                    got = result_digest(Msg(v["response"], "r"), v.get("recordVersion", 5))
                     verdict(prefix + "results/" + v["name"], "digest", got)
                     self.assertEqual(got, v["sha256"])
             for v in g["records"]:
@@ -466,13 +468,13 @@ class Check(unittest.TestCase):
         with self.assertRaises(NoRecordError):
             check_single(request_digest(req), "javascript", None, Msg(js_response(), "r"))
         future = stamped(req, js_response())
-        future["record"]["version"] = 6
+        future["record"]["version"] = VERSION + 1
         with self.assertRaises(RecordVersionError):
             check_single(request_digest(req), "javascript", None, Msg(future, "r"))
 
     def test_earlier_versions_are_refused(self) -> None:
         req = js_request()
-        for v in (1, 2, 3, 4):
+        for v in (1, 2, 3, 4, 5):
             with self.subTest(v):
                 resp = stamped(req, js_response())
                 r = record_from_wire(Msg(resp["record"], "r"))
@@ -617,3 +619,71 @@ class LostAnswer(unittest.TestCase):
         module = stamped(js_request(), module_response())
         with self.assertRaisesRegex(RecordMismatchError, "session call's kind"):
             check_lost_answer(Msg(module, "lostAnswer"), record_from_wire(Msg(module["record"], "record")))
+
+
+def golden_named(name: str) -> dict:
+    for kind in ("requests", "results"):
+        for v in GOLDEN[kind]:
+            if v["name"] == name:
+                return copy.deepcopy(v["request"] if kind == "requests" else v["response"])
+    raise KeyError(name)
+
+
+class RecordVersion6(unittest.TestCase):
+    # Record version 6 and protocol 9 (docs/run-records.md): the record's version fixes the
+    # result domain, and the files kind is in both new domains.
+
+    def test_a_version_6_record_of_a_result_hashed_under_v1_is_refused(self) -> None:
+        req, resp = js_request(), js_response()
+        v1, v2 = result_digest(Msg(resp, "r"), 5), result_digest(Msg(resp, "r"), 6)
+        self.assertNotEqual(v1, v2)
+        self.assertEqual(result_digest(Msg(resp, "r")), v2)
+        good = stamped(req, resp)
+        check_single(request_digest(req), "javascript", None, Msg(good, "r"))
+        forged = copy.deepcopy(good)
+        r = record_from_wire(Msg(forged["record"], "record"))
+        r = RunRecord(**{**r.__dict__, "result_sha256": v1})
+        r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
+        forged["record"] = wire_record(r)
+        with self.assertRaises(RecordMismatchError):
+            check_single(request_digest(req), "javascript", None, Msg(forged, "r"))
+
+    def test_a_live_version_5_record_is_refused_as_a_version(self) -> None:
+        req, resp = js_request(), js_response()
+        good = stamped(req, resp)
+        r = record_from_wire(Msg(good["record"], "record"))
+        r = RunRecord(**{**r.__dict__, "version": 5, "result_sha256": result_digest(Msg(resp, "r"), 5)})
+        r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
+        old = dict(good, record=wire_record(r))
+        with self.assertRaises(RecordVersionError):
+            check_single(request_digest(req), "javascript", None, Msg(old, "r"))
+
+    def test_every_file_call_checks_as_a_session_call(self) -> None:
+        for op in ("stat", "read", "write", "list", "read_many", "make_dir", "remove", "rename"):
+            with self.subTest(op):
+                req = golden_named("files " + op + " request")
+                resp = golden_named("files " + op + " result")
+                self.assertEqual(req["protocol"], 9)
+                answer = stamped(req, resp)
+                self.assertEqual(files_op(Msg(req["files"], "files")), op)
+                r = check(request_digest(req), "files", None, Msg(answer, "r"), op)
+                self.assertEqual(r.result_sha256, result_digest(Msg(resp, "r"), 6))
+                check_lost_answer(Msg(answer, "r"), r)
+                # The answer of another kind than the request's is refused, and so is the
+                # answer of another operation, or of one the caller did not name.
+                with self.assertRaises(PlimsollError):
+                    check(request_digest(req), "project", None, Msg(answer, "r"))
+                for other in ("", "remove" if op != "remove" else "stat"):
+                    with self.assertRaises(RecordMismatchError):
+                        check(request_digest(req), "files", None, Msg(answer, "r"), other)
+
+    def test_a_files_payload_is_no_kind_before_its_domains(self) -> None:
+        req = golden_named("files request stating protocol 8")
+        empty = {k: v for k, v in req.items() if k != "files"}
+        self.assertEqual(request_digest(req), request_digest(empty))
+        at9 = dict(req, protocol=9)
+        self.assertNotEqual(request_digest(at9), request_digest(dict(empty, protocol=9)))
+        resp = golden_named("files stat result")
+        none = {k: v for k, v in resp.items() if k != "files"}
+        self.assertEqual(result_digest(Msg(resp, "r"), 5), result_digest(Msg(none, "r"), 5))
+        self.assertNotEqual(result_digest(Msg(resp, "r"), 6), result_digest(Msg(none, "r"), 6))

@@ -140,7 +140,7 @@ type scanner struct {
 // file checks content, a whole file, against the file entries and the source entries.
 func (sc *scanner) file(content []byte) {
 	if len(sc.set.files) > 0 {
-		if i, ok := sc.set.files[FileDigest(content)]; ok {
+		if i, ok, _ := sc.set.fileEntry(content); ok {
 			sc.found(i)
 		}
 	}

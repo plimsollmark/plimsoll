@@ -317,6 +317,9 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := p.smokeHelperAsRoot(ctx, "", id, proof); err != nil {
+		return fmt.Errorf("wslc smoke test: %w", err)
+	}
 	if err := proof.Done(); err != nil {
 		return err
 	}
@@ -540,6 +543,11 @@ func (p *Provider) smokeSession(ctx context.Context, cand *verified, env []strin
 	if checkErr == nil && gv != nil {
 		ev.GVisor = p.gvisorEvidence(store, *gv)
 	}
+	if checkErr == nil {
+		if err := p.smokeHelperAsRoot(ctx, h.name, cand.imageID, proof); err != nil {
+			checkErr = fmt.Errorf("wslc smoke test: %w", err)
+		}
+	}
 	tStart := time.Now()
 	if err := p.endSession(h, out.ended == nil && !h.dead(), false); err != nil {
 		return Evidence{}, rs, errors.Join(checkErr, fmt.Errorf("the session's teardown: %w", err))
@@ -599,6 +607,73 @@ func (p *Provider) resolveRoot(ctx context.Context) error {
 	p.pr.root = root
 	p.pr.mu.Unlock()
 	return nil
+}
+
+// helperCheckTimeout bounds the root check of the project runner: one container that starts
+// node once (a cold session VM boots before the smoke test gets this far).
+const helperCheckTimeout = 60 * time.Second
+
+// smokeHelperAsRoot holds the image's project runner to the bytes this plimsolld carries, read
+// as root: nativehelper.FileReport.Check, its SHA-256 and its identity line. The probe's step
+// runs as the guest, which cannot read the file (it is readable by root alone,
+// nativehelper.InstalledMode), so its reading proves the read is refused and the size, which
+// two builds can share. This is a container of its own in session ("" is the default one),
+// started as uid 0 with no capability, no network and no image command (plimsoll's /usr/bin/env
+// as the entrypoint, then node under sessionkit.ControlArgv), in which nothing else runs; the
+// program (nativehelper.CheckStdinJS) goes in on standard input, so every argument is
+// safeArg's, as on the run path. Measured on WSL containers 3.0.5 (2026-11-27): such a
+// container reads a 0711 file of root's, its effective capabilities all clear.
+func (p *Provider) smokeHelperAsRoot(ctx context.Context, session, imageID string, proof *boundary.Proof) error {
+	name := containerName()
+	argv, err := sessionkit.ControlArgv(nil, sessionkit.StartupNodeArgv("-")...)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"container", "run", "--rm", "--interactive", "--name", name, "--pull", "never", "--network", "none",
+		"--cap-drop", "ALL", "--user", "0:0", "--memory", strconv.Itoa(p.cfg.MemoryMB * 1024 * 1024),
+		"--no-healthcheck", "--entrypoint", argv[0], imageID}, argv[1:]...)
+	if session != "" {
+		args = append([]string{"--session", session}, args...)
+	}
+	cctx, cancel := context.WithTimeout(ctx, helperCheckTimeout)
+	defer cancel()
+	cmd := hostCommand(cctx, p.cfg.Path, args...)
+	cmd.Stdin = strings.NewReader(nativehelper.CheckStdinJS)
+	var stdout, stderr providerkit.Capture
+	stdout.Limit, stderr.Limit = 4096, errorCap
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Run(); err != nil {
+		if session == "" {
+			p.forceRemove(name)
+		}
+		return fmt.Errorf("the project runner check as root: %w: %s", err, clip(stderr.String(), 200))
+	}
+	if stdout.Truncated() {
+		return errors.New("the project runner check as root printed more than 4096 bytes")
+	}
+	var r nativehelper.FileReport
+	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
+		return fmt.Errorf("the project runner check as root printed %q: %w", clip(stdout.String(), 200), err)
+	}
+	want, err := nativehelper.Pinned(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	if err := r.Check(want); err != nil {
+		return fmt.Errorf("%w; plimsoll starts that file as the project runner of every run, so the image must be plimsoll's sandbox image built from this plimsolld's source (make docker-images) or one built FROM it", err)
+	}
+	proof.Proved(boundary.ControlChannel, "smokeHelperAsRoot")
+	return nil
+}
+
+// clip keeps the first n bytes of s, trimmed, for an error.
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		s = s[:n]
+	}
+	return s
 }
 
 // boundaryReport is what probe.js prints.
@@ -743,11 +818,10 @@ func (p *Provider) checkBoundary(r boundaryReport, imageEnv []string, kernel, bo
 		}
 	}
 	proof.Proved(boundary.ClosedEnvironment, "checkBoundary")
-	helperSum, err := nativehelper.SHA256(runtime.GOARCH)
-	if err != nil {
-		return ev, err
-	}
-	if err := r.Helper.Check(helperSum); err != nil {
+	// The step runs as the guest, which cannot read the helper's bytes (it is readable by
+	// root alone, nativehelper.InstalledMode), so the check is of its type, owner, mode, size
+	// and identity line; the smoke test's root check (smokeHelperAsRoot) holds the bytes.
+	if err := r.Helper.CheckUnread(runtime.GOARCH); err != nil {
 		return ev, fmt.Errorf("%w; plimsoll starts that file as the project runner of every run, so the image must be plimsoll's sandbox image built from this plimsolld's source (make docker-images) or one built FROM it", err)
 	}
 	if r.RunnerMem != "EACCES" && r.RunnerMem != "EPERM" {

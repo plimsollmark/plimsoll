@@ -87,7 +87,9 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 	d.stateMu.Lock()
 	d.runtimeBannerLine, d.runtimeBannerRead = "", false
 	d.provenGuard = ""
+	d.workScope = false
 	d.stateMu.Unlock()
+	workScope := false
 	// The grant path is a host Unix socket mounted into the container. Whether the
 	// configured runtime lets a guest connect to one is a runtime property (runsc
 	// refuses unless registered with --host-uds=open), so the first probe container
@@ -124,8 +126,12 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 			if err := d.smokeGuard(ctx, state, p.id, proof); err != nil {
 				return fmt.Errorf("guard smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
 			}
-			if err := d.smokeRunner(ctx, state, p.id, proof); err != nil {
+			work, err := d.smokeRunner(ctx, state, p.id, proof)
+			if err != nil {
 				return fmt.Errorf("runner smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
+			}
+			if p.id == state.projectImageID {
+				workScope = work
 			}
 		}
 	}
@@ -140,6 +146,7 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 	}
 	d.stateMu.Lock()
 	d.projectLanguages = langs
+	d.workScope = workScope
 	d.stateMu.Unlock()
 	// The process limit is a property of the runtime, not of an image, so under runsc
 	// it is proven once, on the host, where gVisor enforces it (smokeProbe skips the
@@ -815,6 +822,14 @@ func (d *DockerSandbox) smokeNativeHelper(ctx context.Context, state dockerExecu
 	defer cancel()
 	name := "crsbx-smoke-helper-" + providerkit.RandHex(8)
 	runArgs := d.lockdownArgs(name, d.containerExpiry(ctx), true, state.runtime, state.seccomp.defaultPath)
+	// As root, the file's owner, with no capability: the helper is readable by root alone
+	// (nativehelper.InstalledMode), so the guest could not read its bytes. Nothing but this
+	// check, plimsoll's own node program, runs in the container.
+	user := slices.Index(runArgs, "--user")
+	if user < 0 || user+1 >= len(runArgs) {
+		return errors.New("project runner check: the lockdown names no --user to replace with root's")
+	}
+	runArgs[user+1] = "0:0"
 	if state.platform != "" {
 		runArgs = append(runArgs, "--platform", state.platform)
 	}
@@ -855,7 +870,7 @@ const nativeHelperFix = "plimsoll starts that file as the project runner of ever
 // smokeRunner starts the runner exactly as runs do (runPlan), then tries the same-uid
 // access a project step could make. The standalone storage probe above is not the
 // runner and cannot establish the runner's report-channel protection.
-func (d *DockerSandbox) smokeRunner(ctx context.Context, state dockerExecutionState, imageID string, proof *boundary.Proof) error {
+func (d *DockerSandbox) smokeRunner(ctx context.Context, state dockerExecutionState, imageID string, proof *boundary.Proof) (workScope bool, err error) {
 	const probe = `const fs=require("node:fs");
 const checks=[["/proc/1/fd/0",fs.constants.O_RDONLY],
  ["/proc/1/fd/1",fs.constants.O_RDONLY],["/proc/1/fd/1",fs.constants.O_WRONLY],
@@ -866,19 +881,47 @@ for(const [path,flags] of checks){
 }
 `
 	res, err := d.runPlan(ctx, state, imageID, ProjectRequest{
-		Files:   []File{{Path: "runner-probe.js", Content: probe}},
-		Steps:   []string{sessionkit.GuestNode + " runner-probe.js"},
+		Files: []File{{Path: "runner-probe.js", Content: probe}},
+		// The second step is the helper's work scope, as a session's file call starts it (the
+		// guest, in the run's work folder, a tmpfs of its own like a session's): it answers
+		// only where the kernel states mount ids and has openat2 (docs/session-files.md), and
+		// the run's kernel is every session's, so this one start says whether sessions may
+		// state the scope. Here rather than in a container of its own: no other start.
+		Steps:   []string{sessionkit.GuestNode + " runner-probe.js", workScopeProbe},
 		Timeout: 20 * time.Second,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
-		return fmt.Errorf("the runner or its descriptor probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 2 || res.Steps[0].ExitCode != 0 {
+		return false, fmt.Errorf("the runner or its descriptor probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
+	}
+	work, err := workScopeAnswer(res.Steps[1])
+	if err != nil {
+		return false, err
 	}
 	proof.Proved(boundary.RunPath, "smokeRunner")
 	proof.Proved(boundary.ControlChannel, "smokeRunner")
-	return nil
+	return work, nil
+}
+
+// workScopeProbe is smokeRunner's step that starts the helper's work scope on the work folder.
+var workScopeProbe = nativehelper.InContainer + " files work stat ."
+
+// workScopeAnswer reads workScopeProbe's step: exit 0 is a kernel the work scope holds on;
+// exit 1 with ENOSYS first on stderr is the helper's refusal of a kernel that lacks what the
+// scope needs (statx's mount id or openat2, before Linux 5.8; review finding
+// session-files-23), so sessions state the sandbox scope alone. Anything else is an image or
+// a runtime this plimsolld does not know, and refuses startup with the step's exit.
+func workScopeAnswer(step StepResult) (bool, error) {
+	switch {
+	case step.ExitCode == 0:
+		return true, nil
+	case step.ExitCode == 1 && strings.HasPrefix(step.Stderr, "ENOSYS: "):
+		return false, nil
+	default:
+		return false, fmt.Errorf("the helper's work scope probe (%s) exited %d: %s", workScopeProbe, step.ExitCode, truncateForError(strings.TrimSpace(step.Stderr)))
+	}
 }
 
 // guardHolderJS is the program smokeGuard starts as a session starts its control

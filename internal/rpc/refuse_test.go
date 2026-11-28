@@ -16,6 +16,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -124,7 +125,7 @@ func TestAuthRefusalsCarryNotDispatched(t *testing.T) {
 // unmarked is the safe reading). A new refusal site elsewhere must go through
 // refuse or be added here with its reason for staying unmarked.
 func TestConnectErrorsAreBuiltOnlyWhereTheMarkIsDecided(t *testing.T) {
-	allowed := map[string]bool{"refuse": true, "mapSandboxErr": true, "authenticatePrincipal": true}
+	allowed := map[string]bool{"refuse": true, "refuseCapacity": true, "mapSandboxErr": true, "authenticatePrincipal": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +166,141 @@ func TestConnectErrorsAreBuiltOnlyWhereTheMarkIsDecided(t *testing.T) {
 	}
 }
 
+// Every capacity refusal plimsoll builds states its limit, in this package and in every
+// other of the module (finding release-115, widened by release-122): here through
+// refuseCapacity, never refuse with sandbox.RefusalCapacity; elsewhere through
+// sandbox.AtCapacity with a limit, or sandbox.RefuseDeadline when the call's own context
+// ended first. RefusalCapacity is otherwise only compared, never handed to NotDispatched
+// or kept in a variable that is, so a new path that refuses for capacity, its caller's
+// deadline included, cannot leave its limit unstated for mapSandboxErr to guess.
+func TestEveryCapacityRefusalStatesItsLimit(t *testing.T) {
+	root := filepath.Join("..", "..")
+	fset := token.NewFileSet()
+	files := 0
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".claude", "gen", "node_modules", "testdata", "third_party", "tmp", "private": // private is its own module
+				return filepath.SkipDir
+			}
+			if path != root {
+				if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+					return filepath.SkipDir // another module (clients/mcp, an example's)
+				}
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		files++
+		for _, bad := range capacityRefusalsWithoutALimit(f) {
+			t.Errorf("%s: %s", fset.Position(bad.pos), bad.why)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files < 100 {
+		t.Fatalf("read %d files: the walk missed the module", files)
+	}
+}
+
+type unstatedLimit struct {
+	pos token.Pos
+	why string
+}
+
+// capacityRefusalsWithoutALimit is every place in f that builds a capacity refusal
+// without stating its limit through the one function for it.
+func capacityRefusalsWithoutALimit(f *ast.File) []unstatedLimit {
+	var out []unstatedLimit
+	name := func(e ast.Expr) string {
+		switch e := e.(type) {
+		case *ast.Ident:
+			return e.Name
+		case *ast.SelectorExpr:
+			return e.Sel.Name
+		}
+		return ""
+	}
+	for _, decl := range f.Decls {
+		inside := ""
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			inside = fn.Name.Name
+		}
+		var stack []ast.Node
+		ast.Inspect(decl, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			var parent ast.Node
+			if len(stack) > 0 {
+				parent = stack[len(stack)-1]
+			}
+			stack = append(stack, n)
+			if call, ok := n.(*ast.CallExpr); ok && len(call.Args) >= 2 {
+				switch name(call.Fun) {
+				case "refuse":
+					if name(call.Args[1]) == "RefusalCapacity" {
+						out = append(out, unstatedLimit{call.Pos(), "a capacity refusal built by refuse states no limit; use refuseCapacity"})
+					}
+				case "AtCapacity", "refuseCapacity":
+					switch name(call.Args[0]) {
+					case "CapacityUnstated":
+						out = append(out, unstatedLimit{call.Pos(), "a capacity refusal with its limit unstated"})
+					case "CapacityDeadline":
+						if inside != "RefuseDeadline" {
+							out = append(out, unstatedLimit{call.Pos(), "the deadline limit is set only by sandbox.RefuseDeadline"})
+						}
+					}
+				}
+			}
+			var id *ast.Ident
+			switch e := n.(type) {
+			case *ast.SelectorExpr:
+				id = e.Sel
+			case *ast.Ident:
+				if _, sel := parent.(*ast.SelectorExpr); !sel {
+					id = e
+				}
+			}
+			if id == nil || id.Name != "RefusalCapacity" {
+				return true
+			}
+			switch p := parent.(type) {
+			case *ast.BinaryExpr:
+				if p.Op == token.EQL || p.Op == token.NEQ {
+					return true
+				}
+			case *ast.CaseClause, *ast.ValueSpec:
+				return true
+			case *ast.KeyValueExpr:
+				if p.Key == n {
+					return true // a table indexed by refusal
+				}
+			case *ast.CompositeLit:
+				return true // a table's positional entry
+			}
+			if inside == "AtCapacity" || inside == "refuseCapacity" {
+				return true
+			}
+			out = append(out, unstatedLimit{n.Pos(), "a capacity refusal built without its limit; use sandbox.AtCapacity with the limit, or sandbox.RefuseDeadline when the call's own context ended first"})
+			return true
+		})
+	}
+	return out
+}
+
 // An internal error reaches the caller as a generic message with an ID; its text,
 // which can carry a vendor's response body or docker's stderr, stays in the log
 // (v0.15.0 review, L10).
@@ -180,5 +316,22 @@ func TestInternalErrorTextStaysInTheLog(t *testing.T) {
 	// Errors with their own code keep their text: it is the caller's own request.
 	if err := mapSandboxErr(fmt.Errorf("%w: bad path", sandbox.ErrInvalidRequest)); !strings.Contains(err.Error(), "bad path") {
 		t.Fatalf("an invalid request lost its reason: %v", err)
+	}
+}
+
+// A capacity refusal whose provider stated no limit but which carries the call's own
+// context error is the caller's deadline, never the provider's capacity (finding
+// release-122): an out-of-tree provider marking a refusal capacity when its caller gave up
+// is not told the provider was full.
+func TestAnUnstatedCapacityRefusalForTheCallersDeadlineIsNotTheProviders(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		err := mapSandboxErr(sandbox.NotDispatched(sandbox.RefusalCapacity, fmt.Errorf("provider check: %w", cause)))
+		if got := wireenum.CapacityLimitFromWire(wireLimit(err)); got != sandbox.CapacityDeadline {
+			t.Errorf("%v: states limit %v, want deadline", cause, got)
+		}
+	}
+	err := mapSandboxErr(sandbox.NotDispatched(sandbox.RefusalCapacity, errors.New("the provider's quota is spent")))
+	if got := wireenum.CapacityLimitFromWire(wireLimit(err)); got != sandbox.CapacityProvider {
+		t.Errorf("a provider's own refusal states %v, want provider", got)
 	}
 }

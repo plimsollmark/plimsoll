@@ -13,11 +13,10 @@ gate is the project's full check, `make audit`. In CI:
   matches its source, and <dfn>*govulncheck*</dfn>, Go's vulnerability scanner.
 - Its other jobs start at the same time as `audit`, each on its own runner.
 - Its `clients` job runs `make clients-suite`: `npm ci` in
-  `clients/typescript` and `examples/trigger-chat`, then the Python and TypeScript
-  Go test packages in required mode. A green check means the Python client, the
-  TypeScript client, its add-ons and the <dfn>*Trigger.dev*</dfn> example (a chat
-  agent on a hosted TypeScript job runner) ran, and none of the selected Go
-  tests skipped; a missing runtime or dependency fails the job.
+  `clients/typescript`, then the Python and TypeScript Go test packages in
+  required mode. A green check means the Python client, the TypeScript client
+  and its add-ons ran, and none of the selected Go tests skipped; a missing
+  runtime or dependency fails the job.
 - Its `capsule` job runs `make capsule-suite`: the capsule example
   (`examples/capsule`, its own Go module, outside the root build) is vetted and
   race-tested with the capsule project's Python reference verifier installed from the
@@ -96,8 +95,8 @@ That runs build, vet, race tests, golangci-lint, `buf lint` plus a check that th
 generated code still matches its source, and `govulncheck`. Run it before you open a
 pull request and paste the result into the description.
 
-Run `make clients-suite` to install both npm dependency sets and require the Python,
-TypeScript client, add-on and Trigger.dev suites locally, as CI does.
+Run `make clients-suite` to install the TypeScript client's npm dependencies and require
+the Python, TypeScript client and add-on suites locally, as CI does.
 
 It refuses to start unless buf, golangci-lint and govulncheck are the exact versions
 in [gate-tools.versions](gate-tools.versions), because those three are not Go

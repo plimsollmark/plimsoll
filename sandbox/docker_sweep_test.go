@@ -38,6 +38,23 @@ node -e "$SWEEP" 1073741824 200000 walk /tmp >/dev/null; echo "budget=$?"`)
 	}
 }
 
+// The walk opens a folder the guest closed (mode 000) to count what is in it, and puts its
+// mode back: the next call meets it closed, as the guest left it (OpenShell's conformance case
+// FileListingNamesAFolderItCannotEnter failed when the walk left it 0700, 2026-11-27).
+// sessionkit's TestSweepWalkMeasuresAClosedFolderAndLeavesItClosed is the same case on the
+// machine's own kernel, where a namespace of this user's can be made.
+func TestDockerSweepWalkKeepsAFolderModeTheGuestSet(t *testing.T) {
+	t.Parallel()
+	got := sweepIn(t, `mkdir -p /tmp/w/shut/inner && echo b > /tmp/w/shut/b && echo c > /tmp/w/shut/inner/c && chmod 000 /tmp/w/shut/inner /tmp/w/shut
+node -e "$SWEEP" 1073741824 200000 walk /tmp/w; echo " exit=$?"
+stat -c %a /tmp/w/shut; ls /tmp/w/shut >/dev/null 2>&1 && echo ls=read || echo ls=refused
+chmod 700 /tmp/w/shut; stat -c %a /tmp/w/shut/inner`)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 4 || !strings.Contains(lines[0], `"entries":4`) || !strings.HasSuffix(lines[0], " exit=0") || lines[1] != "0" || lines[2] != "ls=refused" || lines[3] != "0" {
+		t.Fatalf("got %q; want a clean sweep counting the 4 entries (shut, b, inner, c), then shut and inner still mode 0 and shut unreadable", got)
+	}
+}
+
 // Measured by statfs, a session's tmpfs counts a file deleted while a process still
 // holds it open, which a walk of the directory cannot see.
 func TestDockerSweepStatfsCountsAnOpenDeletedFile(t *testing.T) {

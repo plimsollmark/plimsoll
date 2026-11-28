@@ -72,7 +72,14 @@ func init() {
 		panic(fmt.Sprintf("PLIMSOLL_TEST_NATIVE_HELPER_FILE: %v", err))
 	}
 	sum := sha256.Sum256(b)
-	dockerNativeHelperFile, dockerNativeHelperSum = abs, hex.EncodeToString(sum[:])
+	// The build's own identity line, which the startup check requires in place of the pin's:
+	// the helper is a static x86-64 program, so it runs here as it runs in a container.
+	id, err := exec.Command(abs, "identity").Output()
+	if err != nil {
+		panic(fmt.Sprintf("PLIMSOLL_TEST_NATIVE_HELPER_FILE: its identity command: %v (a build from before the command cannot be handed in)", err))
+	}
+	dockerNativeHelperFile = abs
+	dockerNativeHelperWant = nativehelper.Want{SHA256: hex.EncodeToString(sum[:]), Identity: strings.TrimSuffix(string(id), "\n")}
 }
 
 // eqDocker is the docker provider the suite runs, with its runner's command wrapped in

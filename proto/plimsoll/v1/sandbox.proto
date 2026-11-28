@@ -148,6 +148,16 @@ message PayloadEnvironment {
   // invoke, and on a provider with sessions the languages a cell may use. Empty when
   // the provider has proved none.
   repeated string languages = 4;
+  // file_scopes: on session_environment, the scopes in which the provider's sessions
+  // take file calls (SessionRunRequest.files), carried out by plimsoll's own helper, in
+  // this enum's order; empty on every other environment, since a file call is a session
+  // call, and where the sessions take none. A provider whose work folder is not a mount
+  // of its own states FILES_SCOPE_SANDBOX alone (OpenShell, docs/openshell.md).
+  // Informational: a file call in a scope a session does not take is refused, not
+  // dispatched, reason unsupported.
+  repeated FilesScope file_scopes = 6;
+  reserved 5;
+  reserved "files";
 }
 
 // An explicit caller rule for the selected software. Empty mode and identities
@@ -254,6 +264,10 @@ message RunRequest {
     // session's cell call (the call without its session ID, with the same request
     // digest), which a harness replays into a fresh session in order.
     CellRun cell = 13;
+    // The stored form of a session's file call (the call without its session ID, with
+    // the same request digest), which a harness replays into a fresh session in order.
+    // Run itself refuses it: a file call is a session call.
+    FilesRun files = 14;
   }
 }
 
@@ -323,6 +337,7 @@ message RunResponse {
     ProjectResult project = 11;
     ModuleResult module = 12;
     CellResult cell = 13;
+    FilesResult files = 15;
   }
 }
 
@@ -597,6 +612,19 @@ message OpenSessionResponse {
   uint64 generation = 9; // positive ownership number; every run and close must carry it
   string minimum_isolation = 10; // floor requested at open; empty means no requested floor
   SoftwareRule software_rule = 11; // immutable rule established at open
+  // file_scopes: the scopes in which this session takes file calls
+  // (SessionRunRequest.files), carried out by plimsoll's own helper inside its sandbox,
+  // in the enum's order; empty when it takes none. Informational, like
+  // PayloadEnvironment.file_scopes: the daemon refuses a file call in a scope it does
+  // not take, not dispatched, reason unsupported, whatever the client believed. Each
+  // call's record names the scope that call used (FilesRun.scope).
+  repeated FilesScope file_scopes = 14;
+  reserved 12;
+  reserved "files";
+  // work_dir is the absolute path of the session's work folder inside its sandbox, the
+  // folder a file call's WORK scope resolves from and the working directory of every
+  // call; empty when the provider states none.
+  string work_dir = 13;
 }
 
 // SessionCheckpoint is public chain state, never a credential: the ownership
@@ -685,6 +713,10 @@ message SessionRunRequest {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
     CellRun cell = 12;
+    // One operation on the session's files, carried out inside the sandbox by
+    // plimsoll's own helper (from protocol 9). A daemon whose session carries no file
+    // calls refuses it, marked not dispatched, reason unsupported.
+    FilesRun files = 13;
   }
 }
 
@@ -716,6 +748,217 @@ message CellResult {
   // deadline passed); the next cell starts a fresh one.
   bool interpreter_ended = 8;
 }
+
+// FilesRun is one operation on a session's files (a session call kind, from protocol 9),
+// carried out inside the sandbox by plimsoll's own helper as the guest's own user. Every
+// path is bytes: a name may hold any byte but "/" and NUL, which is not always UTF-8, so a
+// name a listing returns can be named back by the same bytes. docs/run-records.md gives
+// the request digest's fields.
+message FilesRun {
+  FilesScope scope = 1;
+  // Exactly one operation. An empty oneof is InvalidArgument.
+  oneof op {
+    FilesStat stat = 10;
+    FilesRead read = 11;
+    FilesWrite write = 12;
+    FilesList list = 13;
+    FilesReadMany read_many = 14;
+    FilesMakeDir make_dir = 15;
+    FilesRemove remove = 16;
+    FilesRename rename = 17;
+  }
+}
+
+// FilesScope says how a file call's paths resolve.
+enum FilesScope {
+  FILES_SCOPE_UNSPECIFIED = 0; // refused, InvalidArgument
+  // A relative path from the session's work folder, parts separated by "/", none empty,
+  // "." or "..", at most 4096 bytes; "." alone is the work folder. A link that stays
+  // inside the work folder is followed and one that would leave it is refused with
+  // FILES_ERROR_SYMLINK, by the kernel's own resolution (docs/session-files.md has the
+  // table per operation).
+  FILES_SCOPE_WORK = 1;
+  // An absolute path resolved as the guest's own user would resolve it, links followed.
+  // The sandbox's walls are the boundary.
+  FILES_SCOPE_SANDBOX = 2;
+}
+
+// FilesStat states one path's type, size and permission bits.
+message FilesStat {
+  bytes path = 1;
+}
+
+// FilesRead reads at most max_bytes (1 to 8 MiB) of one file, from offset.
+message FilesRead {
+  bytes path = 1;
+  uint64 offset = 2;
+  uint32 max_bytes = 3;
+}
+
+// FilesWrite writes one file of at most 4 MiB. replace and create_only write a file of
+// the helper's own, sync it and publish it whole at the target, so a reader never sees
+// part of it; append is not atomic: after a call that may have run, the file may have
+// grown. A call that gave no answer is never retried by a client (docs/session-files.md
+// says per operation what one may have left).
+message FilesWrite {
+  bytes path = 1;
+  bytes content = 2;
+  FilesWriteMode mode = 3;
+  bool make_parents = 4; // make the folders above path that are missing
+}
+
+enum FilesWriteMode {
+  FILES_WRITE_MODE_UNSPECIFIED = 0; // refused, InvalidArgument
+  FILES_WRITE_MODE_REPLACE = 1; // the file's whole content becomes content
+  FILES_WRITE_MODE_CREATE_ONLY = 2; // refused with FILES_ERROR_EXISTS if path is there
+  FILES_WRITE_MODE_APPEND = 3; // content goes after the file's end
+}
+
+// FilesList lists a folder, one page at a time: entries sorted by their bytes, folders
+// depth first, until budget_bytes (8 KiB to 8 MiB) ends the page (FilesListAnswer.more), a
+// page that ends with more always holding an entry.
+// A listing is not isolated from changes made while it pages.
+message FilesList {
+  bytes path = 1; // the folder
+  bool recursive = 2;
+  // A glob matched part by part: "*", "?" and "[...]" within one part, "**" as a whole
+  // part for zero or more parts, a leading dot not special. Empty lists every entry.
+  bytes match = 3;
+  bytes after = 4; // the last path of the page before; empty for the first page
+  uint32 budget_bytes = 5;
+}
+
+// FilesReadMany reads at most 16,384 files in order, each up to max_bytes_each, until
+// budget_bytes ends the answer (FilesReadManyAnswer.more). One file's error does not
+// fail the call.
+message FilesReadMany {
+  repeated bytes paths = 1;
+  uint32 max_bytes_each = 2;
+  uint32 budget_bytes = 3;
+}
+
+message FilesMakeDir {
+  bytes path = 1;
+  bool parents = 2; // make the folders above it that are missing, and accept one already there
+}
+
+// FilesRemove removes one file, or with dir one empty folder. There is no recursive
+// remove: an agent's shell has one.
+message FilesRemove {
+  bytes path = 1;
+  bool dir = 2;
+}
+
+// FilesRename renames from_path to to_path, replacing a file already at to_path only
+// with replace.
+message FilesRename {
+  bytes from_path = 1;
+  bytes to_path = 2;
+  bool replace = 3;
+}
+
+// FilesResult is a file call's answer. A file that is not there is an answered result
+// with FILES_ERROR_NOT_FOUND, as a nonzero exit is, not a transport error. No answer
+// carries free text from inside the sandbox. docs/run-records.md gives the result
+// digest's fields.
+message FilesResult {
+  // completed: the helper answered (error then says whether the operation succeeded);
+  // timed_out: the call's deadline passed; protocol_error: the helper's answer could not
+  // be parsed; runner_failed: the helper ended without one.
+  ProjectOutcome outcome = 1;
+  FilesError error = 2; // FILES_ERROR_UNSPECIFIED when the operation succeeded
+  string errno = 3; // the errno name the error came from, such as ENOENT; empty with none
+  // The operation's answer, which names the operation it answers; none with an error or
+  // an outcome other than completed.
+  oneof answer {
+    FilesStatAnswer stat = 10;
+    FilesReadAnswer read = 11;
+    FilesWriteAnswer write = 12;
+    FilesListAnswer list = 13;
+    FilesReadManyAnswer read_many = 14;
+    FilesDone make_dir = 15;
+    FilesDone remove = 16;
+    FilesDone rename = 17;
+  }
+}
+
+// FilesError is the closed set of a file call's errors.
+enum FilesError {
+  FILES_ERROR_UNSPECIFIED = 0; // no error
+  FILES_ERROR_NOT_FOUND = 1;
+  FILES_ERROR_IS_DIR = 2;
+  FILES_ERROR_NOT_DIR = 3;
+  FILES_ERROR_EXISTS = 4;
+  FILES_ERROR_SYMLINK = 5; // a link where the WORK scope follows none
+  FILES_ERROR_NOT_REGULAR = 6; // a pipe, a device or a socket where a file was asked for
+  FILES_ERROR_PERMISSION_DENIED = 7;
+  FILES_ERROR_TOO_LARGE = 8;
+  FILES_ERROR_NO_SPACE = 9;
+  FILES_ERROR_READ_ONLY = 10;
+  FILES_ERROR_NOT_EMPTY = 11;
+  // A listing passed one of its bounds before it filled its page: the entries one call may
+  // read, the names it may hold, the depth below the folder, or a path's 4096 bytes.
+  FILES_ERROR_SCAN_LIMIT = 12;
+  FILES_ERROR_OTHER = 13;
+}
+
+enum FilesEntryType {
+  FILES_ENTRY_TYPE_UNSPECIFIED = 0;
+  FILES_ENTRY_TYPE_FILE = 1;
+  FILES_ENTRY_TYPE_DIR = 2;
+  FILES_ENTRY_TYPE_LINK = 3; // a symbolic link, named as a link and never followed
+  FILES_ENTRY_TYPE_OTHER = 4;
+  // A folder a recursive listing could not enter: the guest may not read or search it. Its
+  // entries are not listed, and the listing goes on after it. Only a recursive listing's
+  // entry has this type, never a stat's answer.
+  FILES_ENTRY_TYPE_UNREADABLE = 5;
+}
+
+message FilesStatAnswer {
+  FilesEntryType type = 1;
+  uint64 size = 2;
+  uint32 mode = 3; // the permission bits
+}
+
+message FilesReadAnswer {
+  bytes content = 1;
+  // The file's size as the read's open saw it: no promise of its length at any later
+  // moment. A reader of many pieces checks each piece against its own answer; stat gives
+  // the current length.
+  uint64 size_at_open = 2;
+}
+
+message FilesWriteAnswer {
+  uint64 written = 1;
+}
+
+message FilesEntry {
+  bytes path = 1; // from the listed folder
+  FilesEntryType type = 2;
+  uint64 size = 3;
+}
+
+message FilesListAnswer {
+  repeated FilesEntry entries = 1;
+  bool more = 2; // the budget ended the page: ask again with after set to the last path
+}
+
+// FilesReadManyItem is one path's answer, in the order the paths were asked: its bytes,
+// or its error.
+message FilesReadManyItem {
+  FilesError error = 1;
+  string errno = 2;
+  bytes content = 3;
+  uint64 size_at_open = 4;
+}
+
+message FilesReadManyAnswer {
+  repeated FilesReadManyItem items = 1;
+  bool more = 2; // the next path's answer did not fit the budget
+}
+
+// FilesDone answers an operation that returns nothing: make_dir, remove, rename.
+message FilesDone {}
 
 message SessionRunResponse {
   RunResponse run = 1; // its record carries the session's chain fields
@@ -782,6 +1025,56 @@ message SessionEnded {
 // execution, whatever its status code, and is never a safe automatic-retry signal.
 message NotDispatched {
   NotDispatchedReason reason = 1;
+  // On a capacity refusal, which limit shed it, so a caller can tell a limit that
+  // closing one of its own sessions frees from one that no close cures. Unspecified
+  // on every other reason, and on a capacity refusal from a daemon that does not
+  // state it. Field 3, not 2: the Python client before it read a NotDispatched as
+  // SessionEnded's shape, an enum then a string, and drops the whole mark when field 2
+  // is a number, so a limit there would read as "may have run" to it.
+  CapacityLimit limit = 3;
+  reserved 2;
+}
+
+// CapacityLimit names the limit a capacity refusal met. A caller acts on it; the
+// refusal's text is for people.
+enum CapacityLimit {
+  // Not stated: not a capacity refusal, or a daemon that does not state the limit.
+  CAPACITY_LIMIT_UNSPECIFIED = 0;
+  // The daemon's session places are all taken (SANDBOX_MAX_SESSIONS). Closing one
+  // of the caller's sessions frees one.
+  CAPACITY_LIMIT_SESSIONS = 1;
+  // The caller holds as many sessions as one caller may
+  // (SANDBOX_MAX_SESSIONS_PER_CALLER). Closing one of them frees one.
+  CAPACITY_LIMIT_CALLER_SESSIONS = 2;
+  // The open's owner is at its cap (SANDBOX_MAX_SESSIONS_PER_OWNER) and the daemon
+  // could close none of that owner's sessions for it: each is running a call, or the
+  // open was warm-only. The daemon already closes an owner's idle session to make
+  // room, so a close by the caller frees nothing more.
+  CAPACITY_LIMIT_OWNER_SESSIONS = 3;
+  // The daemon's runs in flight are at their cap (SANDBOX_MAX_CONCURRENT). A running
+  // session holds one, so closing one may free one.
+  CAPACITY_LIMIT_RUNS = 4;
+  // The caller's runs in flight are at their cap (SANDBOX_PER_KEY_CONCURRENT). A
+  // running session holds one, so closing one may free one.
+  CAPACITY_LIMIT_CALLER_RUNS = 5;
+  // The caller's runs per minute are spent (SANDBOX_RATE_PER_MIN). Only time gives
+  // them back; no close does.
+  CAPACITY_LIMIT_RATE = 6;
+  // The paid seconds for today are spent, the caller's or the daemon's
+  // (SANDBOX_PAID_SECONDS_PER_DAY), until 00:00 UTC.
+  CAPACITY_LIMIT_PAID_SECONDS = 7;
+  // A short line is full: the requests the daemon decodes at once, the calls waiting
+  // for the ship scan, or a call already waiting for its session's turn. Retry shortly.
+  CAPACITY_LIMIT_QUEUE = 8;
+  // The provider shed it by its own capacity: a quota, a warm pool with no sandbox
+  // waiting, a provider shutting down.
+  CAPACITY_LIMIT_PROVIDER = 9;
+  // The call's own time ran out before any of it was sent: its deadline passed, or its
+  // caller canceled it, while it waited for its session's turn or a place, or while the
+  // sandbox, its grant or the provider's checks were made ready for it. No limit of the
+  // daemon's or the provider's was met, and no close frees anything; a retry with more
+  // time may succeed. The refusal's code is the context's: deadline_exceeded or canceled.
+  CAPACITY_LIMIT_DEADLINE = 10;
 }
 
 // UnansweredCall is the error detail of a session call that may have run but ended

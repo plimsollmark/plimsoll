@@ -37,6 +37,15 @@ var laterFields = []laterField{
 	{[]string{"response", "record", "daemon_version"}, ""},
 }
 
+// laterOneofs are the payload and result kinds the protocol gained after that format: each
+// is a member of a oneof, which protojson writes only when it is the one chosen, so a bill
+// of another kind never holds it, and every field under it is later too. Protocol 9: a
+// session's file call (the receipt checker reads project runs only).
+var laterOneofs = [][]string{
+	{"request", "files"},
+	{"response", "files"},
+}
+
 // laterField is a field's place in the exchange and the value EmitUnpopulated writes for it unset, by its kind: false
 // for a boolean, "" for a string, "0" for a 64-bit integer (written as text). A field holding any other value, a
 // sentence "0" included, is kept.

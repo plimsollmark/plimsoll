@@ -118,7 +118,7 @@ const _ = uint64(SuspendBound - e2bPauseBudget)
 // e2bRequiredBins are the programs the open must find on the root: every later start
 // names them by the path it found (e2b_session.js pin). python3 is pinned where the
 // machine has it.
-var e2bRequiredBins = []string{"node", "sh", "setpriv"}
+var e2bRequiredBins = []string{"node", "sh", "setpriv", "mount"}
 
 // e2bEnvName is an environment variable's name as the guest's environment may carry it.
 var e2bEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -142,8 +142,15 @@ var errE2BDraining = fmt.Errorf("%w: the e2b provider is shutting down", ErrAtCa
 // test there rather than state sessions it cannot open.
 func (e *E2B) SupportsSessions() bool { return true }
 
-// SessionEnvironments is the runs' environments: one template runs every payload kind.
-func (e *E2B) SessionEnvironments() Environments { return e.Environments() }
+// SessionEnvironments is the runs' environments, with file calls in both scopes: one
+// template runs every payload kind, every session's open puts the native helper in its
+// machine and bind-mounts the work folder on itself, so the work scope holds
+// (e2b_session_files.go).
+func (e *E2B) SessionEnvironments() Environments {
+	env := e.Environments()
+	env.JavaScript.FileScopes, env.Project.FileScopes = FilesScopesBoth(), FilesScopesBoth()
+	return env
+}
 
 func (e *E2B) guestUID() int {
 	if e.GuestUID > 0 {
@@ -221,7 +228,7 @@ func (e *E2B) OpenSession(ctx context.Context, opts SessionOptions) (Session, er
 	}
 	leave, ok := e.sessions.Enter()
 	if !ok {
-		return nil, NotDispatched(RefusalCapacity, errE2BDraining)
+		return nil, AtCapacity(CapacityProvider, errE2BDraining)
 	}
 	defer leave()
 	// The lifetime runs from the open's start; the declared expiry is rounded up, so a
@@ -251,7 +258,7 @@ func (e *E2B) OpenSession(ctx context.Context, opts SessionOptions) (Session, er
 	// waits for.
 	if !s.life.Activate(&e.sessions, expires, opts.DiskBytes) {
 		s.abandon(ctx)
-		return nil, NotDispatched(RefusalCapacity, errE2BDraining)
+		return nil, AtCapacity(CapacityProvider, errE2BDraining)
 	}
 	return s, nil
 }
@@ -299,7 +306,7 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 	// nothing of plimsoll's is ever looked for there), before any of the session's code,
 	// so nothing the session writes can be what is found. The open then pins every
 	// program later starts name by path.
-	argv, err := sessionkit.ControlArgvClosedByName(nil, sessionkit.NodeArgv("-e", e2bSessionJS, "open", strconv.Itoa(s.uid), e2bSessionWork, e2bSessionStage)...)
+	argv, err := sessionkit.ControlArgvClosedByName(nil, sessionkit.NodeArgv("-e", e2bSessionJS, "open", strconv.Itoa(s.uid), e2bSessionWork, e2bSessionStage, e2bHelperPath)...)
 	if err != nil {
 		return err
 	}
@@ -336,6 +343,8 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 		Envd     int               `json:"envd"`
 		Bins     map[string]string `json:"bins"`
 		UsrLocal e2bUsrLocal       `json:"usrLocal"`
+		Helper   string            `json:"helper"`
+		Arch     string            `json:"arch"`
 	}
 	if err := json.Unmarshal([]byte(out.Stdout), &prepared); err != nil || prepared.Envd <= 1 {
 		return fmt.Errorf("e2b session: the machine's preparation reported %q", truncateForError(out.Stdout))
@@ -345,6 +354,9 @@ func (s *e2bSession) setUp(ctx context.Context, md map[string]string) error {
 	}
 	s.bins = prepared.Bins
 	s.usrLocal = prepared.UsrLocal
+	if err := s.installHelper(ctx, prepared.Helper, prepared.Arch); err != nil {
+		return err
+	}
 	if s.guestEnv, err = s.readGuestEnv(ctx); err != nil {
 		return err
 	}
@@ -586,8 +598,8 @@ func (s *e2bSession) hooks() sessionkit.Hooks {
 
 func (s *e2bSession) Isolation() IsolationClass { return s.tier }
 
-// Environments is the provider's: a template is not an identity.
-func (s *e2bSession) Environments() Environments { return s.e.Environments() }
+// Environments is the provider's sessions': a template is not an identity.
+func (s *e2bSession) Environments() Environments { return s.e.SessionEnvironments() }
 func (s *e2bSession) ExpiresAt() time.Time       { return s.life.ExpiresAt() }
 func (s *e2bSession) Done() <-chan struct{}      { return s.life.Done() }
 func (s *e2bSession) Err() error                 { return s.life.Err() }
@@ -892,7 +904,7 @@ func (s *e2bSession) unsent(runCtx context.Context, err error) error {
 		return RefuseEndedSession(end)
 	}
 	if deadline.Expired(runCtx) == context.DeadlineExceeded {
-		return NotDispatched(RefusalCapacity, fmt.Errorf("%w: %v", context.DeadlineExceeded, err))
+		return RefuseDeadline(runCtx, err)
 	}
 	return NotDispatched(RefusalEnvironment, err)
 }

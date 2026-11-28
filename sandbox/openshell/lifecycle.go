@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -182,7 +184,7 @@ func (p *Provider) create(ctx context.Context) (box, error) {
 func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, command []string, extra map[string]string, disk *structpb.Struct) (box, map[string]string, error) {
 	leave, entered := p.sessions.Enter()
 	if !entered {
-		return box{}, nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
+		return box{}, nil, sandbox.AtCapacity(sandbox.CapacityProvider, errDraining)
 	}
 	b := box{name: namePrefix + providerkit.RandHex(7)}
 	labels := map[string]string{
@@ -273,8 +275,9 @@ func conditionSummary(sb *openshellv1.Sandbox) string {
 
 // verifySandbox checks the sandbox record against the request: every label sent, the
 // configured image, the requested limits, the driver config as sent (none when disk is
-// nil), the policy as sent, no credential providers attached, none of the fields
-// plimsoll never sets (unsetFields), and, when command is not nil, the main process.
+// nil), the policy as sent, no credential providers attached, no workload template, none
+// of the fields plimsoll never sets (unsetFields), and, when command is not nil, the main
+// process. readBackFields decides every field of the record.
 func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]string, command []string, disk *structpb.Struct) error {
 	meta, spec := sb.GetMetadata(), sb.GetSpec()
 	for key, want := range labels {
@@ -295,6 +298,8 @@ func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]stri
 		return errors.New("openshell verify sandbox: the sandbox spec's policy differs from the policy sent")
 	case len(spec.GetProviders()) > 0:
 		return fmt.Errorf("openshell verify sandbox: credential providers %v are attached; plimsoll attaches none", spec.GetProviders())
+	case sb.GetCreatedFromWorkloadTemplate() != nil:
+		return fmt.Errorf("openshell verify sandbox: the sandbox was made from workload template %q; plimsoll sends its spec inline", sb.GetCreatedFromWorkloadTemplate().GetName())
 	case unsetFields(spec) != "":
 		// Fields plimsoll never sets must read back empty: an agent socket, injected
 		// environment, another runtime class, user namespaces, or platform labels or
@@ -302,8 +307,47 @@ func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]stri
 		return fmt.Errorf("openshell verify sandbox: %s reads back set; plimsoll sets none", unsetFields(spec))
 	case command != nil && !slices.Equal(spec.GetCommand(), command):
 		return fmt.Errorf("openshell verify sandbox: the main process reads back as %q, requested %q", spec.GetCommand(), command)
+	case unknownField(spec.ProtoReflect()) != "":
+		return fmt.Errorf("openshell verify sandbox: the sandbox spec carries %s, which this plimsoll's copy of the OpenShell API (v0.1.10) does not define, so it cannot compare it; a newer gateway's setting is refused until plimsoll knows it", unknownField(spec.ProtoReflect()))
 	}
 	return nil
+}
+
+// unknownField names the first field under m that the generated code does not define
+// ("openshell.v1.SandboxSpec field 15"), or "". A read-back compares what it can decode;
+// a field from a newer gateway's API reaches it only as undecoded bytes, a setting it
+// can neither compare nor rule out, so the read-back refuses it instead of passing it
+// over.
+func unknownField(m protoreflect.Message) string {
+	if raw := m.GetUnknown(); len(raw) > 0 {
+		num, _, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			return fmt.Sprintf("an undecodable field of %s", m.Descriptor().FullName())
+		}
+		return fmt.Sprintf("%s field %d", m.Descriptor().FullName(), num)
+	}
+	found := ""
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.IsMap():
+			if fd.MapValue().Message() != nil {
+				v.Map().Range(func(_ protoreflect.MapKey, mv protoreflect.Value) bool {
+					found = unknownField(mv.Message())
+					return found == ""
+				})
+			}
+		case fd.IsList():
+			if fd.Message() != nil {
+				for i := 0; i < v.List().Len() && found == ""; i++ {
+					found = unknownField(v.List().Get(i).Message())
+				}
+			}
+		case fd.Message() != nil:
+			found = unknownField(v.Message())
+		}
+		return found == ""
+	})
+	return found
 }
 
 // unsetFields names the first field of spec that plimsoll never sets but that reads
@@ -325,18 +369,27 @@ func unsetFields(spec *openshellv1.SandboxSpec) string {
 		return "template.labels"
 	case len(t.GetAnnotations()) > 0:
 		return "template.annotations"
+	case spec.GetResourceRequirements().GetGpu() != nil:
+		// Its presence is a GPU request: a host device in the sandbox.
+		return "resource_requirements.gpu"
+	case spec.GetRestartPolicy() != openshellv1.SandboxRestartPolicy_SANDBOX_RESTART_POLICY_UNSPECIFIED &&
+		spec.GetRestartPolicy() != openshellv1.SandboxRestartPolicy_SANDBOX_RESTART_POLICY_NEVER:
+		// Under any other policy the gateway replaces the runtime after the main process
+		// exits, so a session whose main process ended would go on in a new one. v0.1.10
+		// stores an unset policy as NEVER (read back 2026-11-25).
+		return "restart_policy"
 	}
-	// Not checked: tty (the v0.1.2 gateway sets it on every sandbox; a terminal on the
-	// idle main process reaches nothing), log_level and resource_requirements (the
-	// gateway's own defaults and its reading of the resources sent, which are checked).
+	// Every other field's decision, and why, is its row in readBackFields.
 	return ""
 }
 
 // verifyConfig reads the sandbox's effective configuration back and refuses the run
 // on any difference from what was sent: the policy must come from the sandbox (a
 // gateway-wide policy would replace it), hash to the value computed from the policy
-// sent, equal it field for field, and be admitted; and the setting that lets code
-// inside the sandbox propose policy changes must be off.
+// sent, equal it field for field, and be admitted; no application route or supervisor
+// middleware service may be bound to the sandbox; the gateway's policy validation
+// failure mode must be fail_closed; and the setting that lets code inside the sandbox
+// propose policy changes must be off. readBackFields decides every field.
 func (p *Provider) verifyConfig(ctx context.Context, name string) error {
 	cfg, err := p.readConfig(ctx, name)
 	if err != nil {
@@ -399,15 +452,30 @@ func (p *Provider) checkConfig(cfg *sandboxv1.GetSandboxConfigResponse, release 
 		return errors.New("openshell read policy back: the effective policy differs from the policy sent")
 	case !cfg.GetConfigurationAdmitted():
 		return fmt.Errorf("openshell read policy back: the configuration is not admitted: %q", cfg.GetConfigurationError())
+	case len(cfg.GetServiceRoutes()) > 0:
+		return fmt.Errorf("openshell read policy back: %d application route(s) into the sandbox are configured; plimsoll exposes none", len(cfg.GetServiceRoutes()))
+	case len(cfg.GetSupervisorMiddlewareServices()) > 0:
+		return fmt.Errorf("openshell read policy back: %d supervisor middleware service(s) are bound to the sandbox; plimsoll's policy names none", len(cfg.GetSupervisorMiddlewareServices()))
+	case cfg.GetPolicyValidationFailureMode() != "" && cfg.GetPolicyValidationFailureMode() != "fail_closed":
+		// Under retain_last_valid a supervisor that rejects a policy generation keeps
+		// the one it loaded before, so the policy read back above would not be the one
+		// enforced; under fail_closed it denies new egress instead (OpenShell v0.1.10,
+		// apply_policy_validation_failure). A mode plimsoll does not know is refused too.
+		return fmt.Errorf("openshell read policy back: the gateway's policy_validation_failure_mode is %q; only fail_closed keeps the policy read back the one the sandbox enforces", cfg.GetPolicyValidationFailureMode())
+	case unknownField(cfg.ProtoReflect()) != "":
+		return fmt.Errorf("openshell read policy back: the effective configuration carries %s, which this plimsoll's copy of the OpenShell API (v0.1.10) does not define, so it cannot compare it; a newer gateway's setting is refused until plimsoll knows it", unknownField(cfg.ProtoReflect()))
 	}
 	return proposalsOff(cfg.GetSettings(), release)
 }
 
 // omittedMeansOff are the gateway releases measured to report agentProposalsSetting with
-// no value when nothing set it, and to default it to false (crates/openshell-core/src/
-// settings.rs at v0.1.2; measured 2026-09-29). A release joins only by the same
-// measurement.
-var omittedMeansOff = map[string]bool{"0.1.2": true}
+// no value when nothing set it, and to default it to false: v0.1.2 (crates/openshell-core/
+// src/settings.rs; measured 2026-09-29) and v0.1.10 (the supervisor's
+// agent_proposals_enabled_from_settings reads no value as false; measured 2026-11-25 by
+// TestOpenShellProposalsOffByDefaultLive: no policy_advisor skill in the sandbox, and
+// policy.local answers 404 feature_disabled). A release joins only by the same
+// measurement; the releases between the two were never measured.
+var omittedMeansOff = map[string]bool{"0.1.2": true, "0.1.10": true}
 
 // proposalsOff proves agentProposalsSetting off, failing closed: only an explicit
 // boolean false, or the key reported with no value by a gateway release in

@@ -20,6 +20,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/fileswire"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/protocol"
@@ -545,6 +546,26 @@ func cellResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.C
 	}, true
 }
 
+// filesResult maps a file call's response; false when it holds another kind.
+func filesResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.FilesResult, bool) {
+	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Files)
+	if !ok {
+		return sandbox.FilesResult{}, false
+	}
+	outcome, answer := fileswire.Answer(m.Files)
+	return sandbox.FilesResult{
+		Outcome:             outcome,
+		FilesAnswer:         answer,
+		Duration:            time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Sandbox:             resp.GetSandbox(),
+		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
+		SoftwareIdentity:    resp.GetSoftwareIdentity(),
+		EnvironmentIdentity: resp.GetEnvironment(),
+		Instance:            resp.GetInstance(),
+		Record:              rec,
+	}, true
+}
+
 // projectResult maps a project's response; false when it holds another kind.
 func projectResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.ProjectResult, bool) {
 	pm, ok := resp.GetResult().(*plimsollv1.RunResponse_Project)
@@ -709,7 +730,7 @@ func restoreSandboxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	reason, marked := notDispatchedDetail(err)
+	reason, limit, marked := notDispatchedDetail(err)
 	var sentinel error
 	if end, ok := sessionEndedDetail(err); ok {
 		sentinel = end
@@ -775,18 +796,25 @@ func restoreSandboxError(err error) error {
 	if sentinel != nil && !errors.Is(err, sentinel) {
 		err = errors.Join(sentinel, err)
 	}
+	if marked && reason == sandbox.RefusalCapacity {
+		// The limit that shed it, so sandbox.CapacityLimitOf tells a limit a close of the
+		// caller's own sessions frees from one no close cures (finding release-115).
+		return sandbox.AtCapacity(limit, err)
+	}
 	if marked {
 		return sandbox.NotDispatched(reason, err)
 	}
 	return err
 }
 
-// notDispatchedDetail reads the daemon's NotDispatched error detail. false means
-// the daemon did not state that nothing ran, so execution may have occurred.
-func notDispatchedDetail(err error) (sandbox.Refusal, bool) {
+// notDispatchedDetail reads the daemon's NotDispatched error detail: the reason and,
+// on a capacity refusal, the limit (CapacityUnstated when the daemon stated none or one
+// this client cannot name). false means the daemon did not state that nothing ran, so
+// execution may have occurred.
+func notDispatchedDetail(err error) (sandbox.Refusal, sandbox.CapacityLimit, bool) {
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
-		return sandbox.RefusalUnknown, false
+		return sandbox.RefusalUnknown, sandbox.CapacityUnstated, false
 	}
 	for _, d := range ce.Details() {
 		v, derr := d.Value()
@@ -794,10 +822,15 @@ func notDispatchedDetail(err error) (sandbox.Refusal, bool) {
 			continue
 		}
 		if nd, ok := v.(*plimsollv1.NotDispatched); ok {
-			return wireenum.RefusalFromWire(nd.GetReason()), true
+			reason := wireenum.RefusalFromWire(nd.GetReason())
+			limit := sandbox.CapacityUnstated
+			if reason == sandbox.RefusalCapacity {
+				limit = wireenum.CapacityLimitFromWire(nd.GetLimit())
+			}
+			return reason, limit, true
 		}
 	}
-	return sandbox.RefusalUnknown, false
+	return sandbox.RefusalUnknown, sandbox.CapacityUnstated, false
 }
 
 // sessionEndedDetail reads the daemon's SessionEnded error detail as the

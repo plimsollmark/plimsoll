@@ -189,7 +189,7 @@ func metricsAddrWith(getenv func(string) string) (string, error) {
 
 // guardAddrWith resolves the egress guard's listen address; "" means the daemon
 // serves no guard. serves reports whether the provider has a guard to serve (E2B with
-// E2B_GUARD_URL, Docker Cloud with SANDBOX_DOCKERCLOUD_GUARD_URL). The guard is a
+// E2B_GUARD_URL; Docker Cloud refuses grants and serves none). The guard is a
 // granted guest's one permitted destination, so it never shares the RPC listener,
 // where the guest would also reach the RPC procedures and the health endpoints. There
 // is no default: the guard must be reachable from the provider's VMs, and choosing an
@@ -201,7 +201,7 @@ func guardAddrWith(getenv func(string) string, serves bool) (string, error) {
 	case serves && raw == "":
 		return "", errors.New("PLIMSOLL_GUARD_ADDR is required: the provider serves the egress guard (its guard URL is set), and the guard has a listener of its own; set host:port and point the public guard URL at it")
 	case !serves && raw != "":
-		return "", fmt.Errorf("PLIMSOLL_GUARD_ADDR=%q is set but the provider serves no egress guard (only e2b with E2B_GUARD_URL and dockercloud with SANDBOX_DOCKERCLOUD_GUARD_URL do); unset it", raw)
+		return "", fmt.Errorf("PLIMSOLL_GUARD_ADDR=%q is set but the provider serves no egress guard (only e2b with E2B_GUARD_URL does; dockercloud refuses grants); unset it", raw)
 	case !serves:
 		return "", nil
 	}

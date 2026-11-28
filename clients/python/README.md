@@ -243,8 +243,8 @@ takeover. The rules in full:
 executor, which runs each Python block the model writes in a new sandbox; and
 `PlimsollEnvironment`, ADK's environment, a kept sandbox with a shell and files. Install
 them with the extra, `pip install 'plimsoll-client[adk]'` (0.20.0 and later; 0.19.0 has no
-extras; the environment from 0.28.0, whose extra installs exactly ADK 2.14.1, the
-version it is tested with), or from a
+extras; the environment from 0.28.0; the extra installs exactly the ADK version it is tested with:
+2.14.1 in 0.28.0 and 0.29.0, 2.15.0 from the next release), or from a
 checkout with `pip install './clients/python[adk]'`.
 
 The environment is one plimsoll session behind ADK's own `EnvironmentToolset`, so the agent
@@ -563,6 +563,22 @@ pass `approval_mode="always_require"` to keep a person in the loop). The framewo
 `platform.platform()` in the agent's process), not the sandbox; its `instructions_formatter`
 replaces that text.
 
+**Files on the same session.** `PlimsollFileStore(shell)` is the harness's other slot, Agent
+Framework's `AgentFileStore`, over the shell tool's session, so the model's `file_access_*` tools and
+its shell see one tree; `create_harness_agent(chat_client, **harness_options(shell))` fills both slots
+and gives the file tools the shell tool's approval mode (`file_approval="always_require"` or
+`"never_require"` sets theirs alone). The harness's file memory is best kept in Agent Framework's
+`InMemoryAgentFileStore` (`file_memory_store=InMemoryAgentFileStore()`), not in the sandbox, where
+every run after the session ends would raise. The store refuses, with `ValueError`, a path
+that is absolute, climbs with `..`, names the workspace's state, or passes through a symbolic link
+anywhere along it (each part is looked at before the operation, and plimsoll's helper refuses a link
+that leaves the work directory inside the operation's own file call), and with `OSError` (`EFBIG`) a
+file past `max_file_bytes`, 1 MiB by default and at most 8 MiB, one file call's read. Every
+operation is a file call of the session (`Session.run_files`), so it needs a provider whose sessions
+take them (docker, E2B and OpenShell; on OpenShell, in the sandbox scope, the helper's refusal of a
+link that leaves is not there, so a link swapped in after the store's look is followed); text only,
+as the framework's store is ([its README (EXTERNAL · source repo ↗)](https://github.com/plimsollmark/plimsoll/tree/main/clients/python/agent-framework-plimsoll#give-the-harness-files-too)).
+
 **What reaches the application.** `await shell.run(command)` returns a `PlimsollShellResult`, the
 framework's `ShellResult` with `isolation`, `isolation_qualification`, `outcome`, `record_sha256` and
 the checked `result`. Through an agent, each command's function result keeps the model's text, and
@@ -699,39 +715,79 @@ over ([Tests](#tests) says what it checks).
 ## Agent workspace
 
 `Workspace` (`plimsoll_client.workspace`) is a shell, files and search over one session, for an
-agent framework's tools: `exec`, `read`, `write`, `edit`, `glob`, `grep`, and `persist` and
-`hydrate` for the whole tree. The framework adapters that serve a shell to an agent are naming
-layers over it, so what the daemon guarantees (the floor the session was opened with, a run
-record on every call, no network) holds the same for each.
+agent framework's tools: `exec`, `read`, `write`, `edit`, `glob`, `grep`, `stat`, `list`,
+`read_many`, `make_dir`, `remove`, `rename`, and `persist` and `hydrate` for the whole tree. The
+framework adapters that serve a shell to an agent are naming layers over it, so what the daemon
+guarantees (the floor the session was opened with, a run record on every call, no network) holds
+the same for each.
 
-Every operation is one project call of the session, and every step is one of the module's fixed
-scripts: the command and every argument travel as files under `.plimsoll-shell/` in the work
-directory, which the daemon writes before the step runs. Nothing an agent writes becomes a step.
-The shell's working directory and its exported variables persist between commands through two
-files there (`cwd`, `env`); files persist as in any session. What does not persist: a process a
-command leaves running (the session's sweep ends it with the call), and `exit` in a command ends
-the step before its state is saved. Output limits are the daemon's, reported by the truncation
-flags on the outcome; `read` returns at most `max_bytes` (8 MiB at most, the artifact budget), and
-`persist` fails past that budget. `read_whole` returns a whole file, and `read_pieces`
-yields it 8 MiB a call: a file longer than one call is measured after its first piece, and when
-it changed size before the last one (another call of the session wrote it) they raise
+Every file operation is one *file call* of the session (`Session.run_files`): plimsoll's own
+helper program carries it out inside the sandbox as the guest's own user and answers in a typed
+form, so a file that is not there is `FileNotFoundError`, a folder `IsADirectoryError`, a file the
+guest may not read `PermissionError`, a pipe or a device `OSError` (`ENXIO`, never opened), and no
+text from inside the sandbox reaches an error. A session whose provider carries no file calls
+(`Session.file_scopes` is empty) refuses every file method, nothing run (`UnsupportedError`). In a
+confined workspace (the default) a path names a file in the work directory, and a symbolic link
+is followed only while it stays inside it: one that leaves is `WorkspacePathError`.
+`confined=False` takes an absolute path anywhere in the sandbox and follows links as the guest's
+own shell does.
+
+**On OpenShell a confined workspace follows a link that points out of the work directory.** An
+OpenShell session states the sandbox scope alone (`Session.file_scopes == ("sandbox",)`): its work
+folder is not a mount of its own, so plimsoll's helper refuses the work scope there
+([docs/openshell.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/openshell.md#sessions) says why). A confined workspace on such a
+session names each path in the sandbox scope, as the absolute path under the work directory, and
+checks it by its name only: a `..` that leads out of the work directory, or an absolute path
+outside it, is still `WorkspacePathError` before any call, but a symbolic link inside the work
+directory that points outside it (one the agent's own code made, say) is followed, to whatever the
+sandbox's user may reach there. The sandbox's walls are then the boundary, not the work directory.
+Each call's record names the scope it used.
+
+A read returns at most `max_bytes` (8 MiB at most, `MAX_READ_BYTES`). `read_whole` returns a whole
+file and `read_pieces` yields it 8 MiB a call; every read states the file's size as it opened it,
+and when a piece states another size than the first, or the pieces do not add up to it (another
+call of the session, or a process in the sandbox, changed the file), they raise
 `WorkspaceChangedError` rather than return a cut or spliced copy; a change that keeps the size is
 not seen. Both take a `limit`, 64 MiB (`MAX_WHOLE_BYTES`) unless you pass another (`None` for
-none): a longer file raises `WorkspaceTooLargeError` once its first piece or its measured size
-shows it, before any other piece is read. A whole read ends in your process's memory, and code in
-the sandbox can make a file of any size for nothing (a sparse file takes no disk), so the limit is
-what keeps an agent's read from making your process hold all of it; 64 MiB is eight calls, far
-past what a model takes in one tool answer. `read_head(path, max_bytes)` reads the first
-`max_bytes` of a file of any length the same way. The ADK, OpenAI Agents, Deep Agents and PydanticAI
-adapters read whole files through `read_whole`, so each refuses a file past 64 MiB (PydanticAI's
-before it reads any of it, from the size it measures first). Paths are resolved against the work directory, not the shell's current directory; an
-absolute path inside the work directory is accepted.
+none): a longer file raises `WorkspaceTooLargeError` on its first piece's answer, before any other
+piece is read. A whole read ends in your process's memory, and code in the sandbox can make a file
+of any size for nothing (a sparse file takes no disk), so the limit is what keeps an agent's read
+from making your process hold all of it; 64 MiB is eight calls, far past what a model takes in one
+tool answer. `read_head(path, max_bytes)` reads the first `max_bytes` of a file of any length the
+same way. The ADK, OpenAI Agents, Deep Agents and PydanticAI adapters read whole files through
+`read_whole`, so each refuses a file past 64 MiB (PydanticAI's before it reads any of it, from the
+size it measures first).
 
-A call the daemon answered without a report of its step raises `WorkspaceCallError`, a
-`RuntimeError` whose `result` is the checked answer (its outcome, the tier, the sentence the
-provider states beside the tier, and the run record), so the record is not lost with the error.
-Outcome `setup_failed` means no step began: the command did not run. `protocol_error`,
-`runner_failed` or a result with no step mean it may have run.
+A write of up to 4 MiB (`MAX_WRITE_BYTES`) is one call that replaces the file whole: the file
+holds the new content, or after an error what it held before. A longer one replaces the file with
+its first 4 MiB and appends the rest a call at a time, so a failure partway leaves the first
+pieces and the call that failed is never repeated (it may have changed the file): write it again
+from the start. `glob` is matched by the helper, part by part (`*`, `?`, `[...]` within a part,
+`**` as a whole part for any depth), and a leading dot is not special: `*` matches dot files.
+`grep` runs `grep -rnHE` in the sandbox as a program, so only matching lines come back.
+`persist` runs `tar` in the sandbox and reads the archive back by file calls (up to its `limit`,
+64 MiB unless you pass another); `hydrate` writes one back the same way and extracts it. Both
+stage the archive in the work directory, beside the tree, so a tree past about half of the work
+directory's room cannot be saved or restored this way (on docker, whose work directory is a 128 MiB
+tmpfs by default, 51 MiB of files persisted and 64 MiB did not): that is a `WorkspaceTooLargeError`
+saying so. A persist or hydrate stopped by its cancel handle still removes its archive.
+
+Commands are project calls, and every step is one of the module's fixed scripts: the command and
+every argument travel as files under `.plimsoll-shell/` in the work directory, which the daemon
+writes before the step runs. Nothing an agent writes becomes a step. The shell's working directory
+and its exported variables persist between commands through two files there (`cwd`, `env`); files
+persist as in any session. What does not persist: a process a command leaves running (the
+session's sweep ends it with the call), and `exit` in a command ends the step before its state is
+saved. Output limits are the daemon's, reported by the truncation flags on the outcome. Paths are
+resolved against the work directory, not the shell's current directory; an absolute path inside
+the work directory is accepted, and `root` is the work directory as the session's open stated it.
+
+A call the daemon answered without a usable result raises `WorkspaceCallError`, a `RuntimeError`
+whose `result` is the checked answer (a `ProjectResult` for a command, a `FilesResult` for a file
+call: its outcome, the tier, the sentence the provider states beside the tier, and the run record),
+so the record is not lost with the error. Outcome `setup_failed` means no step began: the command
+did not run. `protocol_error`, `runner_failed` or a command's result with no step mean it may have
+run.
 
 ```python
 from plimsoll_client import Client, Workspace
@@ -747,8 +803,8 @@ with Workspace(client.open_session(minimum_isolation="kernel")) as w:
 ```
 
 The real thing is checked on a docker session by `tests/docker_workspace_check.py`, which
-`make docker-suite` runs (`TestPythonWorkspaceDocker`); `tests/test_workspace.py` checks what is
-sent against a fake session.
+`make docker-suite` runs (`TestPythonWorkspaceDocker`; under gVisor with `SANDBOX_DOCKER_RUNTIME=runsc`); `tests/test_workspace.py`
+checks what is sent against a fake session whose file calls answer as the helper does.
 
 ## Claude Managed Agents, self-hosted worker
 
@@ -832,7 +888,9 @@ result = await Runner.run(agent, "Count the lines in data.csv", run_config=RunCo
 What it gives: every command and file operation is a plimsoll call with a run record; the
 session is opened at the floor the options name (`kernel` by default); no credential and no
 network in the sandbox; the SDK's snapshots and `RunState` work as with any provider, since
-`persist_workspace` and `hydrate_workspace` are the workspace's tar.
+`persist_workspace` and `hydrate_workspace` are the workspace's tar. That tar is staged in the
+session's work directory, so a snapshot of a tree past about half of that directory's room fails
+with `WorkspaceTooLargeError` (on docker the work directory is a 128 MiB tmpfs by default).
 
 **What the app sees for each command.** Six labels, each checked against the values plimsoll
 can state, so nothing the guest printed or named can become one: `plimsoll_dispatched` (`yes`,
@@ -1069,7 +1127,7 @@ a procedure (sessions, for one) answers it `unimplemented` without the mark:
 | `SoftwareMismatchError` | The software the daemon would run is outside the request's software rule. |
 | `UnsupportedError`, `DisabledError` | The daemon's provider cannot do this, or runs nothing. |
 | `ProtocolMismatchError` | The daemon serves another protocol number. |
-| `AtCapacityError` | Shed by the daemon's admission or rate limit; retry later or elsewhere. |
+| `AtCapacityError` | Shed by one of the daemon's limits; retry later or elsewhere. `limit` says which, as the daemon states it: `sessions`, `caller_sessions` (closing one of your sessions frees a place), `runs`, `caller_runs` (a running session holds one, so a close may free it), `owner_sessions`, `rate` (only time helps), `paid_seconds`, `queue`, `provider`, or `unknown` (a daemon that does not state it). Every capacity refusal also carries it as `capacity_limit`, including `deadline` (the call's own time ran out before any of it was sent), which comes with the code `deadline_exceeded` or `canceled` and so is not an `AtCapacityError`. The full table: [docs/run-results.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-results.md). |
 | `SessionEndedError` | The session has ended; `reason` says why (`closed`, `expired`, `disk_exceeded`, `main_process_ended`, `boundary_failed`, `sandbox_changed`, `shutdown`; `replaced`: the daemon closed it to open a newer session for the same `owner`, at its `SANDBOX_MAX_SESSIONS_PER_OWNER`; `not_found`: the daemon has no such session, after a restart, say; `unclaimed`: no request named it before its first idle timeout, so the daemon closed it, as it does a session whose open answer was lost; or `unknown`: an end a newer daemon has). Nothing of the refused call ran: open a new session. |
 | `StaleOwnerError` | Another process took the session over; this one must not use it again. Nothing of the refused call ran; the session goes on for its new owner. |
 | `CheckpointMismatchError` | A takeover's checkpoint is not the session's head, and the gap is not one the takeover named. Nothing moved. |

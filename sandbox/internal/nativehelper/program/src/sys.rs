@@ -11,8 +11,9 @@
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 compile_error!("plimsoll-helper's system constants are listed for x86_64 and aarch64 only (src/sys.rs)");
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, c_void};
+use std::ffi::{CStr, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 pub const PR_GET_DUMPABLE: c_int = 3;
@@ -23,7 +24,55 @@ pub const O_NONBLOCK: i32 = 0o4000;
 pub const O_NOFOLLOW: i32 = 0o400_000;
 #[cfg(target_arch = "aarch64")]
 pub const O_NOFOLLOW: i32 = 0o100_000;
-const O_CLOEXEC: c_int = 0o2_000_000;
+pub const O_CLOEXEC: c_int = 0o2_000_000;
+// The file commands' opens (src/files.rs).
+pub const O_RDONLY: c_int = 0;
+pub const O_WRONLY: c_int = 0o1;
+pub const O_CREAT: c_int = 0o100;
+pub const O_EXCL: c_int = 0o200;
+pub const O_APPEND: c_int = 0o2000;
+#[cfg(target_arch = "x86_64")]
+pub const O_DIRECTORY: c_int = 0o200_000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECTORY: c_int = 0o40_000;
+/// The same on every Linux machine: Go's syscall package lists it for arm64 and not for
+/// amd64, and its own exec_linux_test.go says the value is the same on both.
+pub const O_PATH: c_int = 0o10_000_000;
+pub const AT_REMOVEDIR: c_int = 0x200;
+pub const DT_UNKNOWN: u8 = 0;
+pub const DT_DIR: u8 = 4;
+pub const DT_REG: u8 = 8;
+pub const DT_LNK: u8 = 10;
+/// renameat2's flag that refuses a name already there, atomically.
+pub const RENAME_NOREPLACE: c_uint = 1;
+#[cfg(target_arch = "x86_64")]
+const SYS_RENAMEAT2: c_long = 316;
+#[cfg(target_arch = "aarch64")]
+const SYS_RENAMEAT2: c_long = 276;
+
+/// O_TMPFILE as open(2) takes it (__O_TMPFILE with O_DIRECTORY): a file with no name, in the
+/// folder given.
+#[cfg(target_arch = "x86_64")]
+pub const O_TMPFILE: c_int = 0o20_200_000;
+#[cfg(target_arch = "aarch64")]
+pub const O_TMPFILE: c_int = 0o20_040_000;
+pub const AT_EMPTY_PATH: c_int = 0x1000;
+pub const AT_SYMLINK_FOLLOW: c_int = 0x400;
+pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
+/// openat2's resolve flags: every part resolved beneath the folder given (a link or ".."
+/// that would leave it is EXDEV), no /proc magic link followed, and no mount crossed (a
+/// part that is a mount point, a bind mount included, is EXDEV too).
+pub const RESOLVE_BENEATH: u64 = 0x8;
+pub const RESOLVE_NO_MAGICLINKS: u64 = 0x2;
+pub const RESOLVE_NO_XDEV: u64 = 0x1;
+/// statx's mask bit for the mount's id.
+pub const STATX_MNT_ID: c_uint = 0x1000;
+/// The same number on both machines (the generic table's).
+const SYS_OPENAT2: c_long = 437;
+#[cfg(target_arch = "x86_64")]
+const SYS_STATX: c_long = 332;
+#[cfg(target_arch = "aarch64")]
+const SYS_STATX: c_long = 291;
 
 #[cfg(target_arch = "x86_64")]
 const SYS_RT_SIGACTION: c_long = 13;
@@ -77,6 +126,209 @@ unsafe extern "C" {
     fn getppid() -> c_int;
     fn __errno_location() -> *mut c_int;
     static mut environ: *const *const c_char;
+    fn openat(dirfd: c_int, path: *const c_char, flags: c_int, ...) -> c_int;
+    fn mkdirat(dirfd: c_int, path: *const c_char, mode: c_uint) -> c_int;
+    fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int;
+    fn linkat(olddir: c_int, old: *const c_char, newdir: c_int, new: *const c_char, flags: c_int) -> c_int;
+    fn kill(pid: c_int, sig: c_int) -> c_int;
+    fn fdopendir(fd: c_int) -> *mut c_void;
+    fn readdir(dir: *mut c_void) -> *const Dirent;
+    fn closedir(dir: *mut c_void) -> c_int;
+}
+
+/// musl's struct dirent, the same on x86-64 and aarch64 (and the same layout as the
+/// kernel's linux_dirent64): the inode, the offset, the record length, the type, then the
+/// name, NUL-terminated. store.rs's tests read a folder with it and compare the names and
+/// types with the standard library's reading of the same folder.
+#[repr(C)]
+pub struct Dirent {
+    ino: u64,
+    off: i64,
+    reclen: u16,
+    kind: u8,
+    name: [c_char; 256],
+}
+
+/// openat(2), `name` relative to the folder `dir`, with the mode a create takes (unused
+/// without O_CREAT). The descriptor is owned, so it is closed when dropped.
+pub fn open_at(dir: RawFd, name: &CStr, flags: c_int, mode: c_uint) -> io::Result<OwnedFd> {
+    // SAFETY: name is a valid C string; openat reads it and returns a new descriptor or -1.
+    let fd = unsafe { openat(dir, name.as_ptr(), flags, mode) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is the descriptor openat just returned, owned by nothing else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// mkdirat(2).
+pub fn mkdir_at(dir: RawFd, name: &CStr, mode: c_uint) -> io::Result<()> {
+    // SAFETY: name is a valid C string.
+    if unsafe { mkdirat(dir, name.as_ptr(), mode) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// renameat2(2), by its system call (musl declares no wrapper for it).
+pub fn rename_at(from_dir: RawFd, from: &CStr, to_dir: RawFd, to: &CStr, flags: c_uint) -> io::Result<()> {
+    // SAFETY: both names are valid C strings; renameat2 reads them and writes nothing of ours.
+    let r = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            c_long::from(from_dir),
+            from.as_ptr(),
+            c_long::from(to_dir),
+            to.as_ptr(),
+            c_long::from(flags),
+        )
+    };
+    if r != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// unlinkat(2): a file, or with AT_REMOVEDIR an empty folder.
+pub fn unlink_at(dir: RawFd, name: &CStr, flags: c_int) -> io::Result<()> {
+    // SAFETY: name is a valid C string.
+    if unsafe { unlinkat(dir, name.as_ptr(), flags) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// The kernel's struct open_how, openat2's argument.
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+/// openat2(2), by its system call (musl declares no wrapper for it): `path` relative to
+/// `dir`, resolved under `resolve` (RESOLVE_*). ENOSYS on a kernel without it (before 5.6).
+pub fn open_at2(dir: RawFd, path: &CStr, flags: c_int, resolve: u64) -> io::Result<OwnedFd> {
+    let how = OpenHow { flags: u64::from(flags as u32), mode: 0, resolve };
+    // SAFETY: path is a valid C string and how a valid open_how of the size given; openat2
+    // reads both and returns a new descriptor or -1.
+    let fd = unsafe { syscall(SYS_OPENAT2, c_long::from(dir), path.as_ptr(), &raw const how, size_of::<OpenHow>()) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is the descriptor openat2 just returned, owned by nothing else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd as c_int) })
+}
+
+/// The mount id of `name` in `dir` (`name` empty: `dir` itself) by statx(2), without following
+/// a link at the name; None when the kernel states no mount id (before 5.8). Some(Err) on a
+/// failed call.
+pub fn mount_id(dir: RawFd, name: &CStr) -> Option<io::Result<u64>> {
+    // struct statx is 256 bytes; stx_mask is its first u32 and stx_mnt_id the u64 at 144.
+    let mut buf = [0u64; 32];
+    let flags = AT_SYMLINK_NOFOLLOW | if name.is_empty() { AT_EMPTY_PATH } else { 0 };
+    // SAFETY: name is a valid C string and buf has room for the 256 bytes statx writes.
+    let r = unsafe {
+        syscall(
+            SYS_STATX,
+            c_long::from(dir),
+            name.as_ptr(),
+            c_long::from(flags),
+            c_long::from(STATX_MNT_ID),
+            buf.as_mut_ptr(),
+        )
+    };
+    if r != 0 {
+        return Some(Err(io::Error::last_os_error()));
+    }
+    let mask = buf[0] as u32;
+    if mask & STATX_MNT_ID == 0 {
+        return None;
+    }
+    Some(Ok(buf[144 / 8]))
+}
+
+/// linkat(2).
+pub fn link_at(olddir: RawFd, old: &CStr, newdir: RawFd, new: &CStr, flags: c_int) -> io::Result<()> {
+    // SAFETY: both names are valid C strings.
+    if unsafe { linkat(olddir, old.as_ptr(), newdir, new.as_ptr(), flags) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Whether a process `pid` exists in this process's pid namespace: kill(pid, 0) is anything
+/// but ESRCH (EPERM is a process of another user's, which exists).
+pub fn process_exists(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 sends nothing; kill only checks the process.
+    let alive = unsafe { kill(pid, 0) } == 0;
+    alive || io::Error::last_os_error().raw_os_error() != Some(3)
+}
+
+/// A folder's entries: each name and its type (DT_*).
+pub type Entries = Vec<(Vec<u8>, u8)>;
+
+/// The most of a folder read_folder holds: past either bound it stops reading and answers
+/// None, so one folder of any size costs at most this much memory.
+#[derive(Clone, Copy, Debug)]
+pub struct FolderBound {
+    pub entries: usize,
+    pub bytes: usize,
+}
+
+/// Bytes held per entry beyond its name: the entry's own (the name's pointer, length and
+/// capacity, and the type, padded).
+pub const ENTRY_OVERHEAD: usize = size_of::<(Vec<u8>, u8)>();
+
+#[cfg(test)]
+thread_local! {
+    /// The entries read_folder has taken on this thread (tests only).
+    pub static ENTRIES_TAKEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Every entry of the folder `dir` (open for reading, and closed here) but `.` and `..`:
+/// its name and its type (one of DT_*, DT_UNKNOWN where the file system states none), in
+/// the folder's own order; None as soon as it would hold more than `bound` allows (the
+/// entry past it is not kept), so a folder of any size is never read whole into memory.
+pub fn read_folder(dir: OwnedFd, bound: FolderBound) -> io::Result<Option<Entries>> {
+    // SAFETY: dir is a valid descriptor; on success fdopendir owns it and closedir closes it.
+    let d = unsafe { fdopendir(dir.as_raw_fd()) };
+    if d.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    std::mem::forget(dir);
+    let mut out = Vec::new();
+    let mut held = 0usize;
+    let result = loop {
+        // SAFETY: errno is this thread's; readdir changes it only on an error.
+        unsafe { *__errno_location() = 0 };
+        // SAFETY: d is the open folder stream fdopendir returned.
+        let e = unsafe { readdir(d) };
+        if e.is_null() {
+            // SAFETY: as above.
+            let n = unsafe { *__errno_location() };
+            break if n == 0 { Ok(true) } else { Err(io::Error::from_raw_os_error(n)) };
+        }
+        // SAFETY: e is the entry readdir returned, valid until the next call; its name is
+        // NUL-terminated inside it.
+        let (name, kind) = unsafe { (CStr::from_ptr((*e).name.as_ptr()), (*e).kind) };
+        let name = name.to_bytes();
+        if name != b"." && name != b".." {
+            held += name.len() + ENTRY_OVERHEAD;
+            if out.len() >= bound.entries || held > bound.bytes {
+                break Ok(false);
+            }
+            #[cfg(test)]
+            ENTRIES_TAKEN.with(|n| n.set(n.get() + 1));
+            out.push((name.to_vec(), kind));
+        }
+    };
+    // SAFETY: d is open and not used after this.
+    unsafe { closedir(d) };
+    result.map(|whole| whole.then_some(out))
 }
 
 /// Makes this process non-dumpable, so a process of the same user (every project step) can
@@ -88,6 +340,18 @@ pub fn set_non_dumpable() -> bool {
     unsafe {
         prctl(PR_SET_DUMPABLE, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) == 0
             && prctl(PR_GET_DUMPABLE) == 0
+    }
+}
+
+/// Makes this process dumpable, for the runner's test-only argument alone (main.rs): a helper
+/// installed readable by root alone is non-dumpable from its exec (the kernel's rule for a
+/// program its user cannot read), so only this call makes the runner reachable again for the
+/// test of its own refusal. Reads the setting back.
+pub fn set_dumpable_for_test() -> bool {
+    // SAFETY: prctl with these options reads and writes no memory of ours.
+    unsafe {
+        prctl(PR_SET_DUMPABLE, 1 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) == 0
+            && prctl(PR_GET_DUMPABLE) == 1
     }
 }
 

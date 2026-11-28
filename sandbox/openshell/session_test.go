@@ -1,6 +1,7 @@
 package openshell
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -350,6 +351,21 @@ func TestSessionRefusesACallAfterAnOutOfBandChange(t *testing.T) {
 	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
 	if _, ok := sandbox.NotDispatchedReason(err); !ok || sandbox.SessionEndReason(err) != sandbox.SessionSandboxChanged {
 		t.Fatalf("a call after the setting changed: %v", err)
+	}
+	if slices.Contains(sc.seen(), "payload") {
+		t.Fatal("the payload ran on a changed sandbox")
+	}
+}
+
+// A field the generated API does not define, set on the sandbox between calls (a newer
+// gateway's setting), ends the session before the call runs, as a known change does.
+func TestSessionRefusesACallAfterAnUnknownFieldAppears(t *testing.T) {
+	t.Parallel()
+	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
+	f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.ProtoReflect().SetUnknown(unknownVarint(99)) }
+	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if _, ok := sandbox.NotDispatchedReason(err); !ok || sandbox.SessionEndReason(err) != sandbox.SessionSandboxChanged {
+		t.Fatalf("a call after an unknown field appeared: %v", err)
 	}
 	if slices.Contains(sc.seen(), "payload") {
 		t.Fatal("the payload ran on a changed sandbox")
@@ -777,5 +793,85 @@ func TestDrainWaitsForACreateInFlight(t *testing.T) {
 	leave()
 	if err := <-drained; err != nil {
 		t.Fatalf("Drain after the create was tracked: %v", err)
+	}
+}
+
+// A session states file calls in the sandbox scope alone, on the session and in
+// SessionEnvironments but never on the runs' environments; a work-scope call is refused
+// before anything starts (not dispatched, unsupported, no exec); a sandbox-scope call starts
+// the image's helper under sessionkit.ControlArgv, through the work folder's start script,
+// with the command's words on stdin, and its answer is read. A read the helper answered is
+// followed by no sweep; a write is, since the sweep is what measures the disk budget here.
+func TestSessionFileCallsTakeTheSandboxScopeAlone(t *testing.T) {
+	t.Parallel()
+	_, p, s, sc := openFake(t, sandbox.SessionOptions{DiskBytes: 5 << 20})
+	only := []sandbox.FilesScope{sandbox.FilesScopeSandbox}
+	env := p.SessionEnvironments()
+	if !slices.Equal(env.Project.FileScopes, only) || !slices.Equal(env.JavaScript.FileScopes, only) ||
+		!slices.Equal(s.FileScopes(), only) || !slices.Equal(s.Environments().Project.FileScopes, only) {
+		t.Fatalf("stated file scopes: provider %v %v, session %v %v", env.JavaScript.FileScopes, env.Project.FileScopes, s.FileScopes(), s.Environments().Project.FileScopes)
+	}
+	if runs := p.Environments(); len(runs.Project.FileScopes) != 0 || len(runs.JavaScript.FileScopes) != 0 {
+		t.Fatalf("the runs' environments state file scopes: %v %v", runs.JavaScript.FileScopes, runs.Project.FileScopes)
+	}
+	execs := len(sc.seen())
+	work := sandbox.FilesCall{Scope: sandbox.FilesScopeWork, Op: sandbox.FilesStat, Path: []byte("a")}
+	_, err := s.RunFiles(context.Background(), sandbox.FilesRequest{FilesCall: work})
+	if reason, marked := sandbox.NotDispatchedReason(err); !marked || reason != sandbox.RefusalUnsupported || !errors.Is(err, sandbox.ErrUnsupported) {
+		t.Fatalf("a work-scope call: %v (marked %v, %v); want refused, not dispatched, unsupported", err, marked, reason)
+	}
+	if got := sc.seen(); len(got) != execs {
+		t.Fatalf("a refused call started execs: %v", got[execs:])
+	}
+	var mu sync.Mutex
+	var cmds [][]string
+	var stdins [][]byte
+	sc.mu.Lock()
+	sc.payload = func(e *fakeExec) error {
+		cmd, clean := controlled(e.start.GetCommand())
+		e.mu.Lock()
+		in := append([]byte(nil), e.received...)
+		e.mu.Unlock()
+		mu.Lock()
+		cmds, stdins = append(cmds, cmd), append(stdins, in)
+		mu.Unlock()
+		if !clean || len(e.start.GetEnvironment()) > 0 {
+			return fmt.Errorf("the helper started with the exec's environment: %q, %v", e.start.GetCommand(), e.start.GetEnvironment())
+		}
+		if bytes.HasPrefix(in, []byte("4:write\x00")) {
+			if err := e.stdout([]byte("n1:1.1:1")); err != nil {
+				return err
+			}
+			return e.exit(0)
+		}
+		return e.exit(81) // not found
+	}
+	sc.mu.Unlock()
+	read := sandbox.FilesCall{Scope: sandbox.FilesScopeSandbox, Op: sandbox.FilesRead, Path: []byte("/tmp/work/a"), MaxBytes: 64}
+	res, err := s.RunFiles(context.Background(), sandbox.FilesRequest{FilesCall: read})
+	if err != nil || res.Outcome != sandbox.ProjectOutcomeCompleted || res.Error != sandbox.FilesErrorNotFound || res.Sandbox != Name || res.Isolation != sandbox.IsolationContainer {
+		t.Fatalf("a sandbox-scope read: %+v, %v", res, err)
+	}
+	settled(t, s)
+	want := append([]string{"sh", "-c", fileStart, "sh", workDir}, read.Argv()...)
+	mu.Lock()
+	if len(cmds) != 1 || !slices.Equal(cmds[0], want) {
+		t.Fatalf("the helper's command %q, want %q", cmds, want)
+	}
+	if !bytes.Equal(stdins[0], read.Stdin()) {
+		t.Fatalf("the helper's stdin %q, want %q", stdins[0], read.Stdin())
+	}
+	mu.Unlock()
+	if got := sc.seen()[execs:]; !slices.Equal(got, []string{"payload"}) {
+		t.Fatalf("execs after an answered read: %v; want the helper alone", got)
+	}
+	write := sandbox.FilesCall{Scope: sandbox.FilesScopeSandbox, Op: sandbox.FilesWrite, Path: []byte("/tmp/work/a"), Content: []byte("x"), Mode: sandbox.FilesWriteReplace}
+	res, err = s.RunFiles(context.Background(), sandbox.FilesRequest{FilesCall: write})
+	if err != nil || res.Outcome != sandbox.ProjectOutcomeCompleted || res.Error != sandbox.FilesErrorNone || res.Written != 1 {
+		t.Fatalf("a sandbox-scope write: %+v, %v", res, err)
+	}
+	settled(t, s)
+	if got := sc.seen()[execs:]; !slices.Equal(got, []string{"payload", "payload", "sweep"}) {
+		t.Fatalf("execs after an answered write: %v; want the helper, then the sweep", got)
 	}
 }

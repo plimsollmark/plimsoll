@@ -29,7 +29,8 @@ const (
 // descriptor-pool-based auth table to enforce auth mode, role, and scope.
 type AuthorizationRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Authentication mode: "bearer", "sandbox", "dual", or "unauthenticated".
+	// Authentication mode: "bearer", "sandbox", "dual", "peer", "operator",
+	// or "unauthenticated". Operator requires a verified mTLS operator certificate.
 	AuthMode string `protobuf:"bytes,1,opt,name=auth_mode,json=authMode,proto3" json:"auth_mode,omitempty"`
 	// Minimum workspace-level role required (checked by handler via
 	// authorize_workspace): "user" or "admin". Mutually exclusive with
@@ -39,7 +40,12 @@ type AuthorizationRule struct {
 	// "platform_admin". Mutually exclusive with workspace_role.
 	GlobalRole string `protobuf:"bytes,3,opt,name=global_role,json=globalRole,proto3" json:"global_role,omitempty"`
 	// Required OIDC scope on the bearer path (e.g. "sandbox:read").
-	Scope         string `protobuf:"bytes,4,opt,name=scope,proto3" json:"scope,omitempty"`
+	Scope string `protobuf:"bytes,4,opt,name=scope,proto3" json:"scope,omitempty"`
+	// API Activity the gateway records for each call by a user or operator:
+	// "create", "update", "delete", "other", or "read". A method with a
+	// "*:write" scope must declare one of the first four; "read" marks a read
+	// that returns secret values.
+	Audit         string `protobuf:"bytes,5,opt,name=audit,proto3" json:"audit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -102,6 +108,13 @@ func (x *AuthorizationRule) GetScope() string {
 	return ""
 }
 
+func (x *AuthorizationRule) GetAudit() string {
+	if x != nil {
+		return x.Audit
+	}
+	return ""
+}
+
 var file_options_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
@@ -139,13 +152,14 @@ var File_options_proto protoreflect.FileDescriptor
 
 const file_options_proto_rawDesc = "" +
 	"\n" +
-	"\roptions.proto\x12\x14openshell.options.v1\x1a google/protobuf/descriptor.proto\"\x8e\x01\n" +
+	"\roptions.proto\x12\x14openshell.options.v1\x1a google/protobuf/descriptor.proto\"\xa4\x01\n" +
 	"\x11AuthorizationRule\x12\x1b\n" +
 	"\tauth_mode\x18\x01 \x01(\tR\bauthMode\x12%\n" +
 	"\x0eworkspace_role\x18\x02 \x01(\tR\rworkspaceRole\x12\x1f\n" +
 	"\vglobal_role\x18\x03 \x01(\tR\n" +
 	"globalRole\x12\x14\n" +
-	"\x05scope\x18\x04 \x01(\tR\x05scope:o\n" +
+	"\x05scope\x18\x04 \x01(\tR\x05scope\x12\x14\n" +
+	"\x05audit\x18\x05 \x01(\tR\x05audit:o\n" +
 	"\rauthorization\x12\x1e.google.protobuf.MethodOptions\x18І\x03 \x01(\v2'.openshell.options.v1.AuthorizationRuleR\rauthorization:7\n" +
 	"\x06secret\x12\x1d.google.protobuf.FieldOptions\x18ц\x03 \x01(\bR\x06secretb\x06proto3"
 

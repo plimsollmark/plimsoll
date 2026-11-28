@@ -180,9 +180,9 @@ call the API there, so the model learns it from the tool's description, not by f
 |---|---|---|
 | docker | yes | yes, through the module `plimsoll_host` the tool writes into the run |
 | [OpenShell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#openshell) | yes | yes, the same way (the same socket, through OpenShell's relay; not run on a live gateway) |
-| [E2B (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#e2b) with a [guard (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guard) URL, dockercloud | yes | no: a Python step there has no route to the broker |
+| [E2B (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#e2b) with a [guard (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guard) URL | yes | no: a Python step there has no route to the broker |
 | wasm | the TypeScript tools and the MCP server only, as a snippet without files or top-level `await` | no |
-| agentsandbox, wslc | no grants | no grants |
+| agentsandbox, wslc, dockercloud | no grants | no grants |
 
 A call in a language that cannot reach the API, a daemon that cannot carry the grant, and
 an unknown profile are refused before anything runs, marked
@@ -423,17 +423,17 @@ What this does and does not reach, stated plainly:
   transcription route) up to its `route_max_request_bytes`, passed through as it arrives;
   every other route sends its body as `application/json`, as before. See "Large uploads"
   below.
-- **Not in sessions, and not on `wasm`, <dfn>*E2B*</dfn> (a hosted service that runs each
-  sandbox in a small virtual machine) or Docker Cloud yet**: the forwarder exists for a run
+- **Not in sessions, and not on `wasm` or <dfn>*E2B*</dfn> (a hosted service that runs each
+  sandbox in a small virtual machine) yet**: the forwarder exists for a run
   on the docker provider (snippets and projects). A grant with `sdk_env` in a session is
   refused before anything runs, marked as unsupported: a session's container
   applies one seccomp profile for its life, and a later call could not change the profile of
   processes already running. The WASM guest has one function to call and no sockets, and
-  on E2B and Docker Cloud the guest's base URL would have to be the <dfn>*guard*</dfn>, the
+  on E2B the guest's base URL would have to be the <dfn>*guard*</dfn>, the
   HTTPS address outside the virtual machine that stands in for the socket there, which is
   not built.
 
-**The guard has the same door.** On E2B and Docker Cloud the broker is reached through the
+**The guard has the same door.** On E2B the broker is reached through the
 guard, an HTTPS address outside the virtual machine. Beside the JSON envelope the injected
 client posts to it, the guard serves a raw route: a request to `<guard URL>/raw/<target>`
 reaches the broker as a standard client's request to `<target>`, method, headers and body as
@@ -446,17 +446,16 @@ doubled slash or a trailing slash is refused by the broker exactly as on the soc
 (`TestEgressGuardRawRouteCarriesAStandardClientsRequest`,
 `TestEgressGuardRawRouteRefusesWhatIsNotTheRoute`). The injected client names the route for
 the guest: `host.raw.url` is the base URL, and `host.raw.headers` the headers a client must
-add (none on E2B, whose network rule adds the guard credential outside the guest; the run's
-guard credential on Docker Cloud, which that client already holds). A guest's `fetch` with
-those two reaches the API as a standard client, and the live tests (`TestE2BGuardLive`,
-`TestDockerCloudGuardLive`) make the three raw requests this way. Both passed against the
-live services on 2026-10-29: upstream saw the broker's credential and only the passed header,
+add (none on E2B, whose network rule adds the guard credential outside the guest). A
+guest's `fetch` with those two reaches the API as a standard client, and the live tests
+(`TestE2BGuardLive`, and `TestDockerCloudGuardLive`, from before Docker Cloud refused grants)
+make the three raw requests this way. Both passed against the live services on 2026-10-29: upstream saw the broker's credential and only the passed header,
 a refused request came back marked not to retry, a request carrying an expired guard
 credential was refused, and a streamed answer reached the guest in pieces. What is not built:
 `sdk_env` on these providers (a client library in another language would need the base URL
 and, on E2B, `SSL_CERT_FILE` pointed at the guest's trust store, which E2B's proxy
-certificate is added to; on Docker Cloud a loopback forwarder to add the credential, since a
-client library sends no custom header unchanged).
+certificate is added to). Docker Cloud refuses every grant
+([INTERNAL · Docker Cloud guide →](dockercloud.md#host-api-grants)).
 
 The two tests that state this are `TestDockerProjectGrantServesAStandardClientAtLoopback`
 (a Python step using the standard library, sending the exact header set the client

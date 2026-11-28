@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/fileswire"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/protocol"
@@ -24,6 +25,11 @@ func (e *sessionEntry) sessionInfo(generation uint64) *plimsollv1.OpenSessionRes
 	if e.minimum != sandbox.IsolationUnknown {
 		minimum = e.minimum.String()
 	}
+	var files []plimsollv1.FilesScope
+	workDir := ""
+	if fr, ok := e.sess.(sandbox.FileRunner); ok {
+		files, workDir = fileswire.Scopes(fr.FileScopes()), wireString(fr.WorkDir())
+	}
 	return &plimsollv1.OpenSessionResponse{
 		SessionId: e.id, Session: e.fingerprint, Generation: generation,
 		Sandbox: e.provider, Isolation: e.isolation.String(),
@@ -31,6 +37,7 @@ func (e *sessionEntry) sessionInfo(generation uint64) *plimsollv1.OpenSessionRes
 		MinimumIsolation: minimum, SoftwareRule: softwarewire.ToWire(e.rule),
 		ExpiresUnixMs: e.expires.UnixMilli(), IdleTimeoutMs: uint32(e.idleTimeout / time.Millisecond),
 		IsolationQualification: e.qualification,
+		FileScopes:             files, WorkDir: workDir,
 	}
 }
 

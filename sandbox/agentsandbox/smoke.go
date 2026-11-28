@@ -267,6 +267,11 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err := p.proveTier(ctx, peer); err != nil {
 		return fmt.Errorf("agentsandbox smoke: after the boundary test's guest got no answer from another sandbox's TLS terminator, plimsolld could not reach it either, so the silence proves nothing: %w", err)
 	}
+	// The guest cannot read the project runner (it is readable by root alone); root can, on
+	// the peer, a pod of the pool in which nothing but plimsoll's own programs has run.
+	if err := p.smokeHelperAsRoot(ctx, peer, proof); err != nil {
+		return fmt.Errorf("agentsandbox smoke: %w", err)
+	}
 	release()
 	if err := p.smokeRunner(ctx, proof); err != nil {
 		return fmt.Errorf("agentsandbox smoke: runner: %w", err)
@@ -472,6 +477,45 @@ func checkChannelFromInside(r boundaryReport) error {
 		errs = append(errs, fmt.Errorf("the TLS terminator's port %d answered a cleartext process start with %q; plaintext must reach nothing behind it", frontPort, got))
 	}
 	return errors.Join(errs...)
+}
+
+// smokeHelperAsRoot holds the image's project runner to the bytes this plimsolld carries
+// (nativehelper.FileReport.CheckBuiltAsRoot: its SHA-256 and its identity line), read as
+// root, on peer: the guest's reading in the boundary test proves its read is refused and its
+// size, which two builds can share; root alone can read the file (nativehelper.InstalledMode).
+// sandboxd starts every command as root, and plimsoll's programs drop to the guest only
+// through guestArgv, so this one, plimsoll's own node program under sessionkit.ControlArgv,
+// stays root. Peer is a pod of the pool claimed for the smoke test, deleted after it, in which
+// nothing of a guest's has run.
+func (p *Provider) smokeHelperAsRoot(ctx context.Context, peer box, proof *boundary.Proof) error {
+	argv, err := sessionkit.ControlArgv(nil, sessionkit.StartupNodeArgv("--eval", nativehelper.CheckJS, nativehelper.InContainer)...)
+	if err != nil {
+		return err
+	}
+	// 30 s, the bound of the smoke test's other steps (the boundary test, the runner probe),
+	// all inside smokeTimeout. The check's own work, a node start that reads and hashes the
+	// helper, took 25 to 29 ms under runc and 57 to 78 ms under gVisor in a running container
+	// (2026-11-27), so nearly all of the bound is left for sandboxd's exec into the pod's
+	// machine, which has never been measured on a cluster. A check that runs past it refuses
+	// the provider at startup: a slow cluster fails closed, it never passes unchecked.
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := p.exec(cctx, peer.ch, argv, nil, 4096, 4096)
+	if err != nil {
+		return fmt.Errorf("the project runner check as root: %w", err)
+	}
+	if !out.exited || out.exitCode != 0 || out.stdoutTruncated {
+		return fmt.Errorf("the project runner check as root exited %d (truncated %t): %s", out.exitCode, out.stdoutTruncated, truncate(out.stderr, 200))
+	}
+	var r nativehelper.FileReport
+	if err := json.Unmarshal(out.stdout, &r); err != nil {
+		return fmt.Errorf("the project runner check as root printed %q: %w", truncate(out.stdout, 200), err)
+	}
+	if err := r.CheckBuiltAsRoot(); err != nil {
+		return fmt.Errorf("image %q: %w; plimsoll starts that file as the project runner of every project, so the image must be built FROM a plimsoll/sandbox built from this plimsolld's source (make docker-images, then docker/agentsandbox.Dockerfile)", p.cfg.Image, err)
+	}
+	proof.Proved(boundary.ControlChannel, "smokeHelperAsRoot")
+	return nil
 }
 
 // checkNestedMounts refuses every mount strictly beneath a writable root, at every tier.

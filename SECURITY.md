@@ -53,7 +53,7 @@ project's full local check), and the isolation evidence each run reports.
     is created, receives the project files, runs a step, and is denied
     <dfn>*egress*</dfn> (network traffic leaving the VM).
   - The Docker Cloud provider likewise reports VM tier from provider identity. Its smoke
-    test proves a network policy in force that blocks every connection, file upload, its command wrapper,
+    test proves a network policy in force that lets no data through when no rule is set, file upload, its command wrapper,
     the step's working directory and egress denial from inside the sandbox.
 
   **None of them cryptographically <dfn>*attests*</dfn> the runtime implementation.** To

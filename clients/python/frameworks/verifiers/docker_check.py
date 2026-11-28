@@ -77,7 +77,7 @@ class VerifiersOnDocker(unittest.TestCase):
         with open(log, encoding="utf-8") as f:
             entries = [json.loads(line) for line in f]
         ops = [e["op"] for e in entries if e["kind"] == "record"]
-        for op in ("root", "run", "read", "write"):
+        for op in ("run", "read", "write"):  # the root is the open's: no call
             self.assertIn(op, ops)
         # The log holds digests and evidence, never a path or a file's content.
         self.assertNotIn("check.sh", json.dumps(entries))

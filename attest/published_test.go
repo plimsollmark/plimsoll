@@ -88,6 +88,36 @@ func TestTheBundlesV0271PublishedStillVerify(t *testing.T) {
 	}
 }
 
+// Record version 5 (v0.28.0 to v0.29.x) is published evidence once version 6 is current: a
+// bundle v0.29.0's own binaries signed still verifies whole, its results hashed under
+// plimsoll.run-result.v1, the domain its version fixes, never under v2. The bundle was made on
+// 2026-11-26 by plimsolld and plimsoll-attest built from the v0.29.0 tag (public 6dba3ee), the
+// wasm provider on loopback: a snippet and a cell (testdata/published, never edited). No
+// example page v0.28.0 or v0.29.0 published holds a version 5 record, so this is the
+// release's own code rather than a page it shipped.
+func TestTheBundleV0290SignedStillVerifies(t *testing.T) {
+	entries, v := publishedBundle(t, "v0.29.0-wasm")
+	if _, err := VerifyBundle(entries, v); err != nil {
+		t.Fatalf("the v0.29.0 bundle: %v", err)
+	}
+	if got := recordVersions(t, entries, v); len(got) != 1 || !got[5] {
+		t.Fatalf("record versions %v; v0.29.0 wrote version 5 only", got)
+	}
+	for i, e := range entries {
+		if e.Request == nil {
+			continue
+		}
+		_, resp, err := e.Messages()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := resp.GetRecord()
+		if rec.GetResultSha256() != record.ResultDigestFor(resp, 5) || rec.GetResultSha256() == record.ResultDigest(resp) {
+			t.Errorf("line %d: the result digest is not plimsoll.run-result.v1's, or is also v2's", i+1)
+		}
+	}
+}
+
 // Every record v0.11.1 published, version 1, still verifies against the request and
 // response stored beside it. The bundle as a whole does not: links arrived in v0.18.0,
 // and accepting a bundle without them would let anyone strip a newer bundle's links to

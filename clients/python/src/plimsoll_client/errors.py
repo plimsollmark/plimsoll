@@ -70,7 +70,12 @@ class PlimsollError(Exception):
     else ``None``. ``answer_not_bound`` is true for an error built from an answer that
     did not carry this request's ``Plimsoll-Request-Id`` back (Go:
     ``client.ErrAnswerNotBound``): nothing it said about the call was believed, so it
-    has no ``not_dispatched`` and no ``unanswered``.
+    has no ``not_dispatched`` and no ``unanswered``. ``capacity_limit`` is the limit a
+    capacity refusal states (``not_dispatched == "capacity"``), whatever its code, as
+    :attr:`AtCapacityError.limit` names it, and ``None`` on every other error (Go:
+    ``sandbox.CapacityLimitOf``). It is ``deadline`` on a refusal raised because the
+    call's own time ran out before any of it was sent, answered ``deadline_exceeded`` or
+    ``canceled``, not ``resource_exhausted``.
     """
 
     default_code = "unknown"
@@ -84,6 +89,7 @@ class PlimsollError(Exception):
         http_status: Optional[int] = None,
         unanswered: Optional[Dict[str, Any]] = None,
         answer_not_bound: bool = False,
+        capacity_limit: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -93,6 +99,7 @@ class PlimsollError(Exception):
         self.unanswered: Optional[Dict[str, Any]] = unanswered
         self.answer_not_bound: bool = answer_not_bound
         self.record: Optional["RunRecord"] = None
+        self.capacity_limit: Optional[str] = (capacity_limit or "unknown") if not_dispatched == "capacity" else None
 
 
 # --- refused before anything was sent ----------------------------------------
@@ -175,9 +182,30 @@ class ProtocolMismatchError(PlimsollError):
 
 
 class AtCapacityError(PlimsollError):
-    """Shed by the daemon's admission or rate limit (Go: ``sandbox.ErrAtCapacity``)."""
+    """Shed by one of the daemon's limits (Go: ``sandbox.ErrAtCapacity``).
+
+    ``limit`` says which, as the daemon states it (Go: ``sandbox.CapacityLimitOf``):
+    ``sessions`` (the daemon's session places are all taken), ``caller_sessions`` (this
+    caller holds as many sessions as one caller may), ``owner_sessions`` (the open's
+    owner is at its cap and every one of its sessions is running a call), ``runs`` (the
+    daemon's runs in flight; a running session holds one), ``caller_runs`` (this
+    caller's runs in flight), ``rate`` (this caller's runs per minute are spent),
+    ``paid_seconds`` (today's paid seconds are spent), ``queue`` (a short line is full;
+    retry shortly), ``provider`` (the provider's own capacity), or ``unknown`` (a daemon
+    that does not state it, or a limit this client has no name for). The one limit not
+    raised as this error is ``deadline`` (the call's own time ran out before any of it was
+    sent): it comes with the context's code, so read it as ``capacity_limit`` on any
+    :class:`PlimsollError`, which every capacity refusal carries. Closing one of the
+    caller's own sessions frees a place for ``sessions`` and ``caller_sessions``, and may
+    for ``runs`` and ``caller_runs``; for ``rate`` only time does.
+    """
 
     default_code = "resource_exhausted"
+
+    def __init__(self, message: str, *, limit: str = "unknown", **kwargs: Any) -> None:
+        kwargs.setdefault("capacity_limit", limit)
+        super().__init__(message, **kwargs)
+        self.limit: str = limit
 
 
 class SessionEndedError(PlimsollError):

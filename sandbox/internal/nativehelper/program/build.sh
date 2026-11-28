@@ -41,6 +41,18 @@ if [[ -n "$odd" ]]; then
   exit 1
 fi
 readonly inputs="Cargo.toml Cargo.lock rust-toolchain.toml build.sh $(cd "$script_dir" && find src -type f | LC_ALL=C sort | tr '\n' ' ')"
+# The build's identity, compiled in (PLIMSOLL_HELPER_INPUTS, which the helper's identity command
+# prints): the SHA-256 of the lines sha256sum writes for the inputs, the same lines that open
+# the pin written below, so the pinned file's identity is fixed by the pin.
+# sandbox/internal/nativehelper computes it from the pin (Identity), and the startup checks
+# compare it with what the installed helper reports.
+# shellcheck disable=SC2086
+build_inputs="$(cd "$script_dir" && sha256sum $inputs | sha256sum | cut -d ' ' -f 1)"
+readonly build_inputs
+if [[ ! "$build_inputs" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "build.sh: the inputs' digest is not a SHA-256: $build_inputs" >&2
+  exit 1
+fi
 
 mkdir -p "$repo_root/tmp"
 build_root="$(mktemp -d "$repo_root/tmp/nativehelper-build.XXXXXX")"
@@ -72,6 +84,7 @@ build_in_image() {
     --entrypoint /usr/bin/env "$image" -i PATH=/usr/local/cargo/bin:/usr/bin:/bin \
     RUSTUP_HOME=/usr/local/rustup RUSTUP_TOOLCHAIN="$rust_version" CARGO_HOME="$dir/cargo-home" \
     CARGO_TARGET_DIR="$dir/target" RUSTFLAGS="$(rustflags "$dir")" DIR="$dir" TARGET="$target" WANT="$rust_version" \
+    PLIMSOLL_HELPER_INPUTS="$build_inputs" \
     sh -euc '
       v="$(rustc --version)"; echo "in the image: $v"
       case "$v" in "rustc $WANT "*) ;; *) echo "build.sh: the image carries $v, not $WANT" >&2; exit 1 ;; esac
@@ -86,6 +99,7 @@ build_on_host() {
     cd "$dir/src"
     echo "on the host: $(RUSTUP_TOOLCHAIN="$rust_version" "$bin/rustc" --version)"
     env -u RUSTC_WRAPPER PATH="$bin:/usr/bin:/bin" RUSTUP_TOOLCHAIN="$rust_version" CARGO_HOME="$dir/cargo-home" \
+      PLIMSOLL_HELPER_INPUTS="$build_inputs" \
       CARGO_TARGET_DIR="$dir/target" RUSTFLAGS="$(rustflags "$dir")" "$bin/cargo" build --offline --locked --release --target "$target"
   )
   cp "$dir/target/$target/release/plimsoll-helper" "$dir/out/plimsoll-helper_amd64"
@@ -102,6 +116,13 @@ for b in $builds; do
   if ! cmp -s "$build_root/first/out/plimsoll-helper_amd64" "$b/out/plimsoll-helper_amd64"; then
     echo "build.sh: plimsoll-helper_amd64 differs between $build_root/first and $b" >&2
     sha256sum "$build_root/first/out/plimsoll-helper_amd64" "$b/out/plimsoll-helper_amd64" >&2
+    exit 1
+  fi
+done
+for b in "$build_root/first" $builds; do
+  got="$("$b/out/plimsoll-helper_amd64" identity)"
+  if [[ "$got" != "inputs $build_inputs" ]]; then
+    echo "build.sh: $b's helper reports \"$got\", not \"inputs $build_inputs\"" >&2
     exit 1
   fi
 done

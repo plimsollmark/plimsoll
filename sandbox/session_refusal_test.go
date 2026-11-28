@@ -161,6 +161,12 @@ func TestSessionCellLaunchFailureIsNotUnsupported(t *testing.T) {
 	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalUnsupported || !errors.Is(err, ErrUnsupported) || launches != 0 {
 		t.Fatalf("a language the environment does not state: %v (reason %q) after %d launches; want unsupported before any launch", err, reason, launches)
 	}
+	// The cause, whole and in plimsoll's words (release-66): nothing in it is marked
+	// private, so the caller reads it as written.
+	const why = "operation not supported by this sandbox provider: the sandbox runs no interpreter for the language: the session's image is stated to run javascript, not python: a python cell needs python3 in the image, which plimsoll's startup check did not show there"
+	if err.Error() != why {
+		t.Fatalf("a language the environment does not state reads %q; want %q", err, why)
+	}
 	checkCannotRun := &sessionkit.Interpreters{Checker: func(context.Context, []string, map[string]string, []byte, int, int) (sessionkit.ExecResult, error) {
 		return sessionkit.ExecResult{}, errors.New("docker exec could not start")
 	}}

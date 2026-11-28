@@ -96,12 +96,13 @@ code.
   guest holds neither the API credential nor the guard credential. The guard checks that
   header, then hands the message to the same broker.
   [INTERNAL · source: guard endpoint rules and header injection →](../../sandbox/e2b.go)
-- **`dockercloud`: the same guard, with the credential in the guest.**
-  <dfn>*Docker Cloud Sandboxes*</dfn> is Docker's hosted microVM service; its sandbox may
-  reach only the guard's host on 443. Docker's proxy adds credentials only for
-  its own fixed list of services, so the guest holds its run's guard credential, short-lived
-  and good for the guard alone; the API credential still never enters it.
-  [INTERNAL · source: the Docker Cloud guard rule →](../../sandbox/dockercloud_guard.go)
+- **`dockercloud`: no grants.** <dfn>*Docker Cloud Sandboxes*</dfn> is Docker's hosted
+  microVM service. It refuses every grant before any sandbox is made: its allow rules
+  cannot hold a sandbox to one server, since Docker's page on network rules says a rule
+  matches the hostname attributed to the connection, such as its TLS Server Name
+  Indication (SNI), a name the run's code chooses
+  ([EXTERNAL · official docs ↗](https://docs.docker.com/ai/governance/local/network-rules/)).
+  [INTERNAL · Docker Cloud guide →](../dockercloud.md#host-api-grants)
 - **`openshell`: a relay inside, the broker outside.** <dfn>*OpenShell*</dfn> is NVIDIA's
   agent sandbox runtime, whose gateway server creates the sandboxes. The sandbox keeps the
   gateway's deny-all policy. A relay in the sandbox pairs each connection the guest makes to its local

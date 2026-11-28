@@ -822,8 +822,8 @@ func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent i
 }
 
 // egressGuardOf returns the provider's egress guard and the path it serves, or nil
-// and "" when the provider serves none (one without a guard, or E2B and Docker Cloud
-// without a guard URL).
+// and "" when the provider serves none (one without a guard, E2B without a guard
+// URL, or Docker Cloud, which refuses grants).
 func egressGuardOf(sb sandbox.Sandbox) (sandbox.EgressGuardCapable, string) {
 	guard, ok := sb.(sandbox.EgressGuardCapable)
 	if !ok {
@@ -890,8 +890,24 @@ func writeMetrics(w http.ResponseWriter, svc *rpc.SandboxService) {
 	fmt.Fprintf(w, "# HELP plimsoll_session_close_gave_up_total Closes the daemon made by itself that failed every try; the provider's lifetime for the session ends it.\n")
 	fmt.Fprintf(w, "# TYPE plimsoll_session_close_gave_up_total counter\n")
 	fmt.Fprintf(w, "plimsoll_session_close_gave_up_total %d\n", closeGaveUp)
+	writeFileCallMetrics(w, svc)
 	writeHostCallMetrics(w, svc.HostCallStats())
 	writeAdviceMetrics(w, svc.AdviceStats())
+}
+
+// writeFileCallMetrics renders the file calls of sessions, one series per operation, outcome
+// and error. Every label is a word of a closed set (rpc.FileCallSeries), never a path.
+func writeFileCallMetrics(w io.Writer, svc *rpc.SandboxService) {
+	series, counts := svc.FileCallCounts()
+	if len(series) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "# HELP plimsoll_file_calls_total File calls of sessions, by operation, outcome (completed, timed_out, protocol_error, runner_failed, refused before dispatch, unanswered) and error.\n")
+	fmt.Fprintf(w, "# TYPE plimsoll_file_calls_total counter\n")
+	for i, s := range series {
+		fmt.Fprintf(w, "plimsoll_file_calls_total{op=\"%s\",outcome=\"%s\",error=\"%s\"} %d\n",
+			escapeLabelValue(s.Op), escapeLabelValue(s.Outcome), escapeLabelValue(s.Error), counts[i])
+	}
 }
 
 // writeAdviceMetrics renders the Prospector Phase 4 advice counters, one series per

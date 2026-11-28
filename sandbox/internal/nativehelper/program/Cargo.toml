@@ -3,7 +3,7 @@ name = "plimsoll-helper"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.99"
-description = "plimsoll's own program inside a docker sandbox: the project runner (run-project) and its per-run self-check"
+description = "plimsoll's own program inside a docker sandbox: the project runner (run-project), its per-run self-check, and the file store's commands (store)"
 license = "Apache-2.0"
 publish = false
 

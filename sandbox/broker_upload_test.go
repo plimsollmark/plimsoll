@@ -1,11 +1,13 @@
 package sandbox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -344,6 +346,182 @@ func TestBrokerRefusesABodyTypeTheRouteDoesNotTake(t *testing.T) {
 	}
 	if trace := b.core.traceSnapshot(); trace == nil || trace.Denied != 1 || len(trace.Calls) != 1 {
 		t.Errorf("trace = %+v", trace)
+	}
+}
+
+// TestBrokerRefusalReachesAConnectionCloseClient: a refusal raised before a small body is
+// read (here a type the route does not take) is answered only after the body has been
+// read and discarded, so a client that says Connection: close, as Python's urllib does,
+// and sends its body after a pause still finishes sending and reads the 415 and the
+// no-retry mark. Before drainSmallBody, net/http answered at once and closed the socket
+// with the body unread (it does not drain when the request says close): the second write
+// here failed, and under gVisor the sandbox's forwarder cut the guest's connection before
+// the answer. The body never reaches the API.
+func TestBrokerRefusalReachesAConnectionCloseClient(t *testing.T) {
+	t.Parallel()
+	upstream, seen := newUploadUpstream(t)
+	b, err := startDockerBroker(uploadGrant(upstream.URL, 8<<20, 64<<20), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	conn, err := net.Dial("unix", b.sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	const size = 16 << 10
+	head := fmt.Sprintf("POST /v1/files HTTP/1.1\r\nHost: broker\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n", size)
+	if _, err := io.WriteString(conn, head+strings.Repeat("a", 1024)); err != nil {
+		t.Fatal(err)
+	}
+	// fixed-wait: the pause is the request's shape, not a wait for an event: the server
+	// should answer with the body still coming. A pause too short for that on a slow host
+	// only makes the test weaker (it passes either way with the drain), never flaky; it is
+	// well inside brokerDrainTimeout (2 s), so the drain does not give up on the rest.
+	time.Sleep(300 * time.Millisecond)
+	if _, err := io.WriteString(conn, strings.Repeat("b", size-1024)); err != nil {
+		t.Fatalf("the rest of the body could not be sent (the server closed before reading it): %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType || resp.Header.Get(brokerNoRetryHeader) != "false" {
+		t.Fatalf("answer %d %q, want 415 and the no-retry mark", resp.StatusCode, resp.Header.Get(brokerNoRetryHeader))
+	}
+	if seen.calls.Load() != 0 {
+		t.Fatalf("the API saw %d requests, want none", seen.calls.Load())
+	}
+}
+
+// TestBrokerDrainGivesUpOnAStalledSmallBody: a guest that declares a small body, sends part
+// of it and then stalls is answered within brokerDrainTimeout of the refusal, not at the
+// server's read timeout (10 s) or never: drainSmallBody's read deadline bounds the drain, so
+// a stall in a small body cannot hold the refusal's answer back (release-124).
+func TestBrokerDrainGivesUpOnAStalledSmallBody(t *testing.T) {
+	t.Parallel()
+	upstream, seen := newUploadUpstream(t)
+	b, err := startDockerBroker(uploadGrant(upstream.URL, 8<<20, 64<<20), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	conn, err := net.Dial("unix", b.sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	head := "POST /v1/files HTTP/1.1\r\nHost: broker\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: 16384\r\n\r\n"
+	sent := time.Now()
+	if _, err := io.WriteString(conn, head+strings.Repeat("a", 1024)); err != nil {
+		t.Fatal(err)
+	}
+	// The rest of the body is never sent: the guest stalls.
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+	took := time.Since(sent)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType || resp.Header.Get(brokerNoRetryHeader) != "false" {
+		t.Fatalf("answer %d %q, want 415 and the no-retry mark", resp.StatusCode, resp.Header.Get(brokerNoRetryHeader))
+	}
+	// The answer comes once the deadline has passed, and well before the server's own read
+	// timeout (10 s), the next bound a stall meets: 3 s of slack is past any scheduling delay
+	// on a loaded host and below the 8 s that tells the two apart.
+	if took < brokerDrainTimeout || took > brokerDrainTimeout+3*time.Second {
+		t.Fatalf("the refusal was answered %v after the stalled body began, want within %v to %v", took, brokerDrainTimeout, brokerDrainTimeout+3*time.Second)
+	}
+	if seen.calls.Load() != 0 {
+		t.Fatalf("the API saw %d requests, want none", seen.calls.Load())
+	}
+}
+
+// TestBrokerDrainSkipsAWriterWithNoReadDeadline: a response writer that cannot take a read
+// deadline gets no drain, since nothing would then bound it by brokerDrainTimeout
+// (session-files-24). A recorder takes no deadline, and the body is never read.
+func TestBrokerDrainSkipsAWriterWithNoReadDeadline(t *testing.T) {
+	t.Parallel()
+	body := &countingBody{r: strings.NewReader(strings.Repeat("a", 1024))}
+	r := httptest.NewRequest(http.MethodPost, "/v1/files", body)
+	r.ContentLength = 1024
+	drainSmallBody(httptest.NewRecorder(), r)
+	if n := body.n.Load(); n != 0 {
+		t.Fatalf("the drain read %d bytes through a writer with no read deadline, want none", n)
+	}
+}
+
+// deadlineRecorder is a recorder that takes a read deadline, as the daemon's RPC listener
+// does (net/http's own writer, HTTP/1 and HTTP/2): drainSmallBody drains only a writer that
+// takes one.
+type deadlineRecorder struct{ *httptest.ResponseRecorder }
+
+func (deadlineRecorder) SetReadDeadline(time.Time) error { return nil }
+
+// countingBody is a request body that counts the bytes read from it.
+type countingBody struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (c *countingBody) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n.Add(int64(n))
+	return n, err
+}
+
+// TestEgressGuardRawRefusalReadsASmallBodyFirst: on the egress guard's raw route, as on the
+// docker broker's socket (TestBrokerRefusalReachesAConnectionCloseClient), a refusal the
+// broker raises before it reads the body (a type the route does not take) is written only
+// once a body of at most brokerDrainBytes has been read to its end, declared or not
+// (drainSmallBody), so the answer reaches a client that says Connection: close; a body
+// declared past that bound is not read at all. The body never reaches the API.
+func TestEgressGuardRawRefusalReadsASmallBodyFirst(t *testing.T) {
+	t.Parallel()
+	upstream, seen := newUploadUpstream(t)
+	reg := &guardRegistry{}
+	grant := uploadGrant(upstream.URL, 8<<20, 64<<20)
+	grant.Minter = StaticToken("minted")
+	token, _, cleanup, err := reg.open(context.Background(), grant, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	h := EgressGuardHTTPHandler(&registryGuard{reg: reg}, "/v1/e2b/guard", 0, 0)
+	for _, c := range []struct {
+		name     string
+		size     int64
+		declared bool
+		wantRead int64
+	}{
+		{"declared small", 16 << 10, true, 16 << 10},
+		{"undeclared small", 16 << 10, false, 16 << 10},
+		{"declared at the bound", brokerDrainBytes, true, brokerDrainBytes},
+		{"declared past the bound", brokerDrainBytes + 1, true, 0},
+	} {
+		body := &countingBody{r: io.LimitReader(zeros{}, c.size)}
+		req := httptest.NewRequest(http.MethodPost, "/v1/e2b/guard/raw/v1/files", body)
+		req.ContentLength = -1
+		if c.declared {
+			req.ContentLength = c.size
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set(EgressGuardHeader, token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(deadlineRecorder{rec}, req)
+		if rec.Code != http.StatusUnsupportedMediaType || rec.Header().Get(brokerNoRetryHeader) != "false" {
+			t.Fatalf("%s: answer %d %q, want 415 and the no-retry mark", c.name, rec.Code, rec.Header().Get(brokerNoRetryHeader))
+		}
+		if got := body.n.Load(); got != c.wantRead {
+			t.Errorf("%s: %d bytes of the body were read before the answer, want %d", c.name, got, c.wantRead)
+		}
+	}
+	if seen.calls.Load() != 0 {
+		t.Fatalf("the API saw %d requests, want none", seen.calls.Load())
 	}
 }
 

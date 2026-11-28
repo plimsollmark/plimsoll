@@ -14,12 +14,29 @@ import (
 // dispatched and attaches the NotDispatched detail saying so. Every handler-side
 // refusal goes through it; an error built any other way carries no detail and
 // reads as "may have run", which is the safe default for a site that forgets.
+//
+// A capacity refusal goes through refuseCapacity instead, which states the limit that
+// shed it; TestEveryCapacityRefusalStatesItsLimit fails a refuse call with
+// sandbox.RefusalCapacity.
 func refuse(code connect.Code, reason sandbox.Refusal, err error) *connect.Error {
-	return withNotDispatched(connect.NewError(code, err), reason)
+	return withNotDispatched(connect.NewError(code, err), reason, sandbox.CapacityUnstated)
 }
 
-func withNotDispatched(ce *connect.Error, reason sandbox.Refusal) *connect.Error {
-	detail, derr := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: wireenum.RefusalToWire(reason)})
+// refuseCapacity is refuse for a capacity refusal (ResourceExhausted, reason capacity),
+// stating which limit shed it, so a client can tell a limit a close of its own sessions
+// frees from one no close cures without reading the text (finding release-115).
+func refuseCapacity(limit sandbox.CapacityLimit, err error) *connect.Error {
+	return withNotDispatched(connect.NewError(connect.CodeResourceExhausted, err), sandbox.RefusalCapacity, limit)
+}
+
+// withNotDispatched adds the mark, and on a capacity refusal its limit (unspecified on
+// every other reason).
+func withNotDispatched(ce *connect.Error, reason sandbox.Refusal, limit sandbox.CapacityLimit) *connect.Error {
+	nd := &plimsollv1.NotDispatched{Reason: wireenum.RefusalToWire(reason)}
+	if reason == sandbox.RefusalCapacity {
+		nd.Limit = wireenum.CapacityLimitToWire(limit)
+	}
+	detail, derr := connect.NewErrorDetail(nd)
 	if derr == nil {
 		ce.AddDetail(detail)
 	}

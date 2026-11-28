@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // readyPerRun is a per-run provider on a good fake whose smoke test has passed, with the
@@ -177,13 +178,17 @@ func TestHolderInputIsOnlyTheExitLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	canary := "canary-91c2; reboot -f\n exit\n"
-	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "console.log('" + canary + "')"}); err != nil {
+	snip, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "console.log('" + canary + "')"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.RunProject(context.Background(), sandbox.ProjectRequest{
-		Files: []sandbox.File{{Path: "exit", Content: canary}}, Steps: []string{"cat exit # " + canary}}); err != nil {
+	tiercheck.Stated(t, "snippet", snip.Isolation, p.IsolationClass())
+	pr, err := p.RunProject(context.Background(), sandbox.ProjectRequest{
+		Files: []sandbox.File{{Path: "exit", Content: canary}}, Steps: []string{"cat exit # " + canary}})
+	if err != nil {
 		t.Fatal(err)
 	}
+	tiercheck.Stated(t, "project", pr.Isolation, p.IsolationClass())
 	p.drain()
 	enters := f.enters()
 	if len(enters) != 5 { // the template build, the two smoke sessions, the two runs

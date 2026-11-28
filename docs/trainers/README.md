@@ -163,9 +163,9 @@ strong the wall around a run is, and the pages state them this way:
   runtime that docker uses.
 - Grants to a host API all go through one shared broker core. `docker` and `openshell`
   take them on snippets and projects; `wasm` on snippets only, since it runs no projects;
-  `e2b` and `dockercloud` only through their configured guard, and on `dockercloud` the
-  <dfn>*guest*</dfn>, the code in the sandbox, holds its own run's short-lived guard
-  credential. `openshell` reaches the broker
+  `e2b` only through its configured guard; `dockercloud` refuses every grant, because the
+  one network rule a granted run would get does not hold the run to the guard. `openshell`
+  reaches the broker
   through a relay inside the sandbox that plimsoll connects to from outside, so the
   sandbox keeps no network rules.
 - <dfn>*Sessions*</dfn>, one sandbox kept for many calls, exist on `docker` with a project

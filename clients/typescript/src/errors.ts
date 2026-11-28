@@ -4,11 +4,25 @@
 // execution and is never a safe automatic retry (docs/run-results.md).
 
 import type { RunRecord } from "./record.ts";
-import { CHECKPOINT_MISMATCH_TEXT, REFUSAL_NAMES, REQUEST_ID_HEADER, SESSION_END_NAMES } from "./tables.gen.ts";
+import { CAPACITY_LIMIT_NAMES, CHECKPOINT_MISMATCH_TEXT, REFUSAL_NAMES, REQUEST_ID_HEADER, SESSION_END_NAMES } from "./tables.gen.ts";
 import { wireBytes, type WireError, type WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
 export type Refusal = (typeof REFUSAL_NAMES)[number];
+
+/**
+ * Which limit shed a capacity refusal (plimsoll.v1.CapacityLimit): "sessions" (the
+ * daemon's session places are all taken), "caller_sessions" (this caller holds as many
+ * sessions as one caller may), "owner_sessions" (the open's owner is at its cap and every
+ * one of its sessions is running a call), "runs" (the daemon's runs in flight; a running
+ * session holds one), "caller_runs" (this caller's runs in flight), "rate" (this caller's
+ * runs per minute are spent), "paid_seconds" (today's paid seconds are spent), "queue" (a
+ * short line is full; retry shortly), "provider" (the provider's own capacity), "deadline"
+ * (the call's own time ran out before any of it was sent; its code is deadline_exceeded or
+ * canceled), or "unknown" (a daemon that does not state it, or a limit this client has no
+ * name for).
+ */
+export type CapacityLimit = (typeof CAPACITY_LIMIT_NAMES)[number];
 
 /**
  * Why a session ended (plimsoll.v1.SessionEnd), "open" while it has not. "unknown" is
@@ -47,6 +61,13 @@ export class PlimsollError extends Error {
    * have occurred, whatever the code.
    */
   readonly notDispatched: Refusal | undefined;
+  /**
+   * On a capacity refusal (notDispatched "capacity"), the limit that shed it, so a caller
+   * can tell a limit that closing one of its own sessions frees ("sessions",
+   * "caller_sessions", and "runs" or "caller_runs" when a running session holds the run)
+   * from one no close cures ("rate"); undefined on every other error.
+   */
+  readonly capacityLimit: CapacityLimit | undefined;
   /** Set when a session call was refused because its session had ended. */
   readonly sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   /**
@@ -81,6 +102,7 @@ export class PlimsollError extends Error {
     message: string,
     opts: {
       notDispatched?: Refusal;
+      capacityLimit?: CapacityLimit;
       sessionEnded?: { reason: SessionEnd; detail: string };
       result?: unknown;
       unanswered?: WireRecord;
@@ -92,6 +114,7 @@ export class PlimsollError extends Error {
     this.name = "PlimsollError";
     this.code = code;
     this.notDispatched = opts.notDispatched;
+    this.capacityLimit = opts.notDispatched === "capacity" ? (opts.capacityLimit ?? "unknown") : undefined;
     this.sessionEnded = opts.sessionEnded;
     this.result = opts.result;
     this.unanswered = opts.unanswered;
@@ -196,9 +219,12 @@ function varint(b: Uint8Array, i: number): [number, number] {
 
 // Decodes the two tiny detail messages by hand (field 1 an enum, field 2 a
 // string), so the client needs no protobuf runtime.
-function decodeDetail(b: Uint8Array): { reason: number; detail: string } {
+// NotDispatched (reason, field 3 the capacity limit) and SessionEnded (reason, detail)
+// share it: field 1 an enum, field 2 a string, field 3 an enum.
+function decodeDetail(b: Uint8Array): { reason: number; detail: string; limit: number } {
   let reason = 0;
   let detail = "";
+  let limit = 0;
   let i = 0;
   while (i < b.length) {
     const [tag, j] = varint(b, i);
@@ -209,6 +235,7 @@ function decodeDetail(b: Uint8Array): { reason: number; detail: string } {
       const [v, k] = varint(b, i);
       i = k;
       if (field === 1) reason = v;
+      if (field === 3) limit = v;
     } else if (wire === 2) {
       const [n, k] = varint(b, i);
       if (k + n > b.length) throw new Error("bad length");
@@ -224,7 +251,7 @@ function decodeDetail(b: Uint8Array): { reason: number; detail: string } {
       throw new Error("unexpected wire type");
     }
   }
-  return { reason, detail };
+  return { reason, detail, limit };
 }
 
 // Reads one varint at b[i] as a bigint (an int64 or uint64 field); returns [value,
@@ -395,6 +422,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
   const message = typeof wire?.message === "string" ? wire.message : `HTTP ${httpStatus}`;
   if (!answer.bound) return new PlimsollError(code, `${message} (${NOT_BOUND})`, { answerNotBound: true });
   let notDispatched: Refusal | undefined;
+  let capacityLimit: CapacityLimit | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   let unanswered: WireRecord | undefined;
   let head: SessionHead | undefined;
@@ -402,7 +430,10 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
     try {
       const bytes = wireBytes(d.value);
       if (d.type === "plimsoll.v1.NotDispatched") {
-        notDispatched = REFUSAL_NAMES[decodeDetail(bytes).reason] ?? "unknown";
+        const m = decodeDetail(bytes);
+        notDispatched = REFUSAL_NAMES[m.reason] ?? "unknown";
+        // The limit a capacity refusal states (finding release-115).
+        capacityLimit = CAPACITY_LIMIT_NAMES[m.limit] ?? "unknown";
       } else if (d.type === "plimsoll.v1.SessionEnded") {
         // The detail itself says the session ended, so an unspecified reason is not "open".
         const m = decodeDetail(bytes);
@@ -421,7 +452,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
     const named = REFUSAL_NAMES.find((r) => r !== "unknown" && r === answer.mark);
     if (named) notDispatched = named;
   }
-  const opts = { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered };
+  const opts = { notDispatched, capacityLimit, sessionEnded, unanswered: notDispatched ? undefined : unanswered };
   // The ownership refusals of a session's run, close or attach (protocol 6): reason
   // permission is a stale worker; reason request with the daemon's constant text is a
   // checkpoint that is not the head: an attach's, or, with the daemon's head as a

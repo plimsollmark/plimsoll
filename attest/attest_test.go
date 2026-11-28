@@ -115,7 +115,7 @@ func TestVersion5FieldsRoundTripThroughASignedBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Version != 5 || rec.IsolationQualification != sentence || !rec.Warm || rec.DaemonVersion != "v0.28.0" {
+	if rec.Version != record.Version || rec.IsolationQualification != sentence || !rec.Warm || rec.DaemonVersion != "v0.28.0" {
 		t.Fatalf("the signed record states %+v", rec)
 	}
 	payload, _ := base64.StdEncoding.DecodeString(entries[0].Envelope.Payload)
@@ -195,10 +195,10 @@ func TestSignAndVerify(t *testing.T) {
 func TestEarlierRecordVersionsAreNotSigned(t *testing.T) {
 	key := newKey(t)
 	signer := NewSigner(key)
-	if record.Version != 5 {
-		t.Fatalf("record version %d; this test lists the versions before 5", record.Version)
+	if record.Version != 6 {
+		t.Fatalf("record version %d; this test lists the versions before 6", record.Version)
 	}
-	for _, v := range []int{1, 2, 3, 4} {
+	for _, v := range []int{1, 2, 3, 4, 5} {
 		req, resp := exchange("old", "ok", sandbox.RunRecord{})
 		r := record.FromWire(resp.GetRecord())
 		r.Version = v

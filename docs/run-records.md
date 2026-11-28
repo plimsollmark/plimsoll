@@ -62,17 +62,31 @@ anything runs, instead of running it and giving an answer the client would have 
 Protocol 7 (2026-11-21) came with the provider name's character rule (below): every client
 refuses a record whose provider holds a control or bidirectional format character, which a
 client of protocol 6 accepted, so a daemon of either number refuses a client of the other
-before anything runs.
+before anything runs. Protocol 8 (2026-11-24) came with the head every session call states
+(`SessionRunRequest.head`), which an older daemon would ignore. Protocol 9 (2026-11-26) came
+with record version 6 and the request domain `plimsoll.run-request.v3`, both for the
+`files` kind (one operation on a session's files, [sessions.md](sessions.md)): every client
+requires version 6 of a live answer, so a daemon of protocol 8, which writes version 5,
+and a client of protocol 9 refuse each other before anything runs.
+
+What a files call's record proves: the request the daemon sent into the sandbox and the answer
+the helper gave at that call, no more. A write's record does not prove that the file still holds
+the content later (code running in the sandbox owns it and may change it between calls or during one), and a
+sequence of read records is no snapshot of a file at one moment; [session-files.md](session-files.md#writes-how-they-publish-what-a-success-proves-what-a-failure-leaves)
+states per operation what a successful, a failed and an unanswered call may have done. The
+call's scope (the work folder, or the whole sandbox) is part of the request digest, so a record
+states which confinement its call had, and no record of a sandbox-scope call, the only scope an
+`openshell` session takes, can be read as one confined to the work folder ([sessions.md](sessions.md#files)).
 
 ## Fields
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version. A daemon writes `5`, for every record, a call answered or one that may have run but ended in an error (below), and signers sign `5` only; a live answer must carry it. A verifier of stored evidence (`attest`, `record.CheckExchange`) also reads every version an earlier release wrote, by that version's own layout (below): `1` (v0.10.0 to v0.11.1), `2` (answered calls, v0.12.0 to v0.22.0), `3` (unanswered session calls, v0.15.0 to v0.22.0) and `4` (v0.23.0 to v0.27.x), so evidence signed under an older release checks without its release's binary. A version no release wrote is `record.ErrVersion`: upgrade the verifier, not "forged". |
+| `version` | The encoding version. A daemon writes `6`, for every record, a call answered or one that may have run but ended in an error (below), and signers sign `6` only; a live answer must carry it. A verifier of stored evidence (`attest`, `record.CheckExchange`) also reads every version an earlier release wrote, by that version's own layout and result domain (below): `1` (v0.10.0 to v0.11.1), `2` (answered calls, v0.12.0 to v0.22.0), `3` (unanswered session calls, v0.15.0 to v0.22.0), `4` (v0.23.0 to v0.27.x) and `5` (v0.28.0 to v0.29.x), so evidence signed under an older release checks without its release's binary. A version no release wrote is `record.ErrVersion`: upgrade the verifier, not "forged". |
 | `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
 | `provider` | The provider that ran it (the response's `sandbox`). It is shown to a reader beside the tier, so it holds to the qualification's character rule (below) in every version: valid UTF-8 with no control character and none of the bidirectional controls or line and paragraph separators. A record whose provider holds one is refused, and a daemon refuses every call, before anything runs, when its provider's name holds one. Since 2026-11-21; before, such a name passed every reader's check and was signed. |
-| `isolation` | The tier the response states, verbatim: one of `none`, `process`, `container`, `kernel` or `vm` ([INTERNAL · isolation tiers →](isolation-tiers.md)). A record that names anything else, another spelling, `unknown` or nothing at all, is refused, whatever floor the request named. |
+| `isolation` | The tier the response states, verbatim: one of `none`, `process`, `container`, `kernel` or `vm` ([INTERNAL · isolation tiers →](isolation-tiers.md)). A record that names anything else, another spelling, `unknown` or nothing at all, is refused, whatever floor the request named. plimsolld writes none: a run whose provider's result names no tier is answered as an internal error, unmarked since the code may have run, and logged as a failed run naming the provider; a session whose provider states no tier for it is refused at the open, marked not dispatched. |
 | `isolation_qualification` | The sentence the provider's vendor or its design requires beside the tier, as the response states it (`RunResponse.isolation_qualification`, the same sentence `Describe` states), or empty when the provider states none. Only the [WSL containers (INTERNAL · operator guide →)](wslc.md) provider states one so far: Microsoft's statement that WSL is not a security sandbox for running untrusted code, and, when the operator turns it on, the place of the user-space kernel that also runs inside each run's virtual machine. At most 1024 bytes of UTF-8 with no control character (U+0000 to U+001F, U+007F to U+009F) and none of U+061C, U+200E, U+200F, U+2028, U+2029, U+202A to U+202E or U+2066 to U+2069: Unicode's bidirectional controls, which show text in another order than it is stored, and its line and paragraph separators. A record outside that is refused. Other invisible characters, such as the zero-width space, are not refused. From version 5. |
 | `environment` | The exact outer image artifact or embedded interpreter selected for the run. For Docker this is the image index ID (the ID of the list that points to the image for each platform), which may include fresh build metadata even when the executable image is unchanged. Empty when none is stated. |
 | `software_identity` | The <dfn>*manifest*</dfn> (the file listing one image's configuration and layers) of the executable image selected, with its platform, for example `oci-manifest:linux/amd64@sha256:<digest>`. Empty when the provider cannot establish which image it selected. |
@@ -123,18 +137,25 @@ alone.
 A domain string names one encoding for good. Any change to what it covers, a new payload
 kind included, takes a new domain string, so a digest under a given domain string always
 means one byte layout. Nothing in a result says which result domain hashed it: the
-record's version fixes that (every version so far uses `plimsoll.run-result.v1`), so a new
-result domain comes with a new record version. `plimsoll.run-result.v1` covers the four
-kinds listed under it and no other; the `cell` kind joined it on 2026-10-01, before this
-rule was written down. `TestResultDomainCoversItsKinds` in `record/` fails if a fifth kind
-appears beside them.
+record's version fixes that, so a new result domain comes with a new record version.
+Records of versions 1 to 5 state results hashed under `plimsoll.run-result.v1`, which
+covers the four kinds listed under it and no other (the `cell` kind joined it on
+2026-10-01, before this rule was written down); records of version 6 state results hashed
+under `plimsoll.run-result.v2`, which covers those four and `files`. A request's domain is
+fixed the same way by the protocol number it states: `plimsoll.run-request.v1` below 2,
+`plimsoll.run-request.v2` from 2 to 8, `plimsoll.run-request.v3` (the same encoding with
+the `files` kind) from 9. Under a domain that does not cover the `files` kind, a files
+payload or result is encoded as no kind (`kind` empty, nothing after it), and every
+verifier refuses a record of a files call stated under a version before 6 or a protocol
+before 9, whatever its digests. `TestResultDomainCoversItsKinds` in `record/` fails if a
+kind appears that the current result domain does not list.
 
-### Request: domain `plimsoll.run-request.v2`
+### Request: domain `plimsoll.run-request.v3`
 
-`protocol`, `minimum_isolation`, `timeout_ms`, `software_mode` (`""`, `exact` or
-`approved`), `software_identities` (count) and each `software_identity` in the order
-sent, then `kind`
-(`javascript`, `project`, `module` or `cell`), then by kind:
+From protocol 9. `protocol`, `minimum_isolation`, `timeout_ms`, `software_mode` (`""`,
+`exact` or `approved`), `software_identities` (count) and each `software_identity` in the
+order sent, then `kind` (`javascript`, `project`, `module`, `cell` or `files`), then by
+kind:
 
 - javascript: `code`, `grant_profile`
 - project: `grant_profile`; `files` (count), then per file `file_path`,
@@ -143,10 +164,27 @@ sent, then `kind`
 - module: `model`, `end_time`, `step`, `rows` (count), then per row `row_values`
 - [cell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell) (a session call to the session's interpreter, [sessions.md](sessions.md)):
   `language`, `code`; `files` (count), then per file `file_path`, `file_content`
+- files (one operation on a session's files, `FilesRun`): `scope` (the `FilesScope`
+  number: 1 the work folder, 2 the whole sandbox), then `op`, the operation's word, then
+  its fields. Every path, `match` and `after` is raw bytes, not text: a file's name may
+  hold any byte but `/` and zero, which is not always UTF-8.
+  - stat: `path`
+  - read: `path`, `offset`, `max_bytes`
+  - write: `path`, `content`, `write_mode` (the `FilesWriteMode` number: 1 replace,
+    2 create only, 3 append), `make_parents`
+  - list: `path`, `recursive`, `match`, `after`, `budget_bytes`
+  - read_many: `paths` (count), then each `path`; `max_bytes_each`, `budget_bytes`
+  - make_dir: `path`, `parents`
+  - remove: `path`, `dir`
+  - rename: `from_path`, `to_path`, `replace`
+  - none (an empty operation, which no daemon runs): `op` empty and nothing after it
 
-### Result: domain `plimsoll.run-result.v1`
+`plimsoll.run-request.v2` (protocols 2 to 8) is the same encoding without the `files`
+kind.
 
-`kind`, then by kind:
+### Result: domain `plimsoll.run-result.v2`
+
+From record version 6. `kind`, then by kind:
 
 - javascript: `exit_code`, `timed_out`, `stdout`, `stderr`, `stdout_truncated`,
   `stderr_truncated`
@@ -159,26 +197,78 @@ sent, then `kind`
   then per row `run_status`, `run_outputs`
 - cell: `exit_code`, `timed_out`, `stdout`, `stderr`, `stdout_truncated`,
   `stderr_truncated`, `interpreter_started`, `interpreter_ended`
+- files: `outcome` (the `ProjectOutcome` number), `error` (the `FilesError` number, 0 for
+  none: one of a closed set, such as 1 not found or 5 a link where the work folder's scope
+  follows none), `errno` (the name of the system error it came from, such as `ENOENT`, or
+  empty), then `op`, the word of the operation the answer names (empty when there is no
+  answer: an error, a timeout), then the answer's fields. Contents and paths are raw
+  bytes.
+  - stat: `type` (the `FilesEntryType` number: 1 file, 2 folder, 3 link, 4 other),
+    `size`, `mode` (the permission bits)
+  - read: `content`, `size_at_open` (the file's size when the read opened it, which says
+    nothing of its length later)
+  - write: `written`
+  - list: `entries` (count), then per entry `entry_path`, `entry_type`, `entry_size`;
+    `more`
+  - read_many: `items` (count), then per item `item_error`, `item_errno`,
+    `item_content`, `item_size_at_open`; `more`
+  - make_dir, remove, rename: nothing after `op`
+
+### A file call's answer
+
+A files result holds one operation's answer or none, and every verifier (Go's `record`
+package, the Python and TypeScript clients) checks that its outcome, error and answer agree
+before it believes the result, since a part the digest does not cover, or covers in a shape
+no daemon writes, is something a reader could act on that the record does not prove:
+
+- `completed` with no error: exactly one answer, of the operation the request asked, and an
+  empty `errno`;
+- `completed` with an error: no answer (`errno` may name the system error);
+- `timed_out`, `protocol_error` and `runner_failed`: no answer, no error and no `errno`;
+- any other outcome (unspecified, `setup_failed`) is not a file call's;
+- in a `read_many` answer, each item holds its bytes or its error, never both, and no
+  `errno` without an error.
+
+A result holding two answers is malformed: the protobuf oneof cannot carry two, but the JSON
+form can, and a verifier that hashed the first would leave the second unproven. The Python
+and TypeScript clients refuse it while computing the result digest, and Go's JSON decoder
+refuses it. So is a field of another JSON type than its own (a flag that is not `true` or
+`false`, such as the string `"false"`; a number that is not an integer in its range): a verifier
+that hashed `"false"` by its truthiness as `true` and handed its caller the string would prove
+one value and give another. Each verifier decodes a files result once into typed values, and the
+digest covers, and the caller gets, those same values; an integer may come as a JSON number or a
+decimal string, as proto3 JSON allows, and either reaches the caller as the integer. A call that
+breaks the rule is refused as a mismatch, like a result of another kind. An attach that returns a lost call's answer checks all of the rule but the operation:
+the attach has the lost call's request digest, not its request. The shared cases of the
+`files-answer` family (`internal/clientcases/testdata/records.json`) hold one case for each
+shape refused and every client runs them.
+
+`plimsoll.run-result.v1` (records of versions 1 to 5) is the same encoding without the
+`files` kind.
 
 A cell's result depends on what earlier cells of its session left in the interpreter,
 so a cell is replayed only as part of its session's chain, in order, never alone.
 
-### Record: domain `plimsoll.run-record.v5`
+### Record: domain `plimsoll.run-record.v6`
 
 The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
 digest covers the version without a field of its own: a record that names another version
 cannot keep its digest.
 
-Version 5 encodes every field, every time, empty strings, zeros and `false` included:
+Version 6 encodes every field, every time, empty strings, zeros and `false` included:
 `request_sha256`, `result_sha256`, `unanswered`, `provider`, `isolation`,
 `isolation_qualification`, `environment`, `policy`, `software_identity`,
 `software_rule_id`, `instance`, `warm`, `daemon_version`, `started_unix_ms`,
 `ended_unix_ms`, `session`, `sequence`, `previous_sha256`. An answered call's record has
-an empty `unanswered`; an unanswered call's has an empty `result_sha256`.
+an empty `unanswered`; an unanswered call's has an empty `result_sha256`. Its
+`result_sha256` is over `plimsoll.run-result.v2`.
 
-The earlier versions, which verifiers still read, encode fewer fields, in this order, and
-a record of one may state no field its version leaves out (so no earlier record states a
-qualification, `warm` as `true` or a daemon version):
+The earlier versions, which verifiers still read, state results hashed under
+`plimsoll.run-result.v1`, and record no files call. Version 5 encodes the same fields as
+version 6, in the same order (v0.28.0 to v0.29.x; its vectors are frozen in
+`record/testdata/published/v0.29.0-golden.json`). The ones before it encode fewer fields,
+in this order, and a record of one may state no field its version leaves out (so no record
+before version 5 states a qualification, `warm` as `true` or a daemon version):
 
 - version 1: `request_sha256`, `result_sha256`, `provider`, `isolation`, `environment`,
   `policy`, `started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`.
@@ -259,7 +349,7 @@ response to read it from), and sends that record with the error as the
 `CloseSession` counts it. A call refused before it ran (an error marked not dispatched)
 gets no record and is not counted.
 
-The official clients check that record (version 5, no result, a status code, the digest
+The official clients check that record (version 6, no result, a status code, the digest
 of the request they sent, its software rule and that its software is in it, its tier
 against the call's floor, its own digest, its place in the chain, and that its provider,
 tier, the tier's qualification and software are what the session stated at open), keep it in their chain, and
@@ -541,7 +631,7 @@ not that the predicate is true: the harness signs what it is given, so a reader 
 predicate from the evidence it names and compares, as `examples/pr-receipt/verify.py` does.
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 8, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 9, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only

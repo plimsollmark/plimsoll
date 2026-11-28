@@ -314,6 +314,45 @@ func goConst(t *testing.T, file, name string) int64 {
 	return v
 }
 
+// xsysConst is goConst for a table of golang.org/x/sys at the version go.mod requires, read
+// from the module cache.
+func xsysConst(t *testing.T, file, name string) int64 {
+	t.Helper()
+	mod, err := os.ReadFile("../../../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*golang\.org/x/sys (v[0-9.]+)`).FindSubmatch(mod)
+	if m == nil {
+		t.Fatal("go.mod requires no golang.org/x/sys")
+	}
+	// The module cache as the go command places it, read without starting it: GOMODCACHE, else
+	// the first GOPATH entry's pkg/mod, else ~/go/pkg/mod.
+	cache := os.Getenv("GOMODCACHE")
+	if cache == "" {
+		gopath := filepath.SplitList(os.Getenv("GOPATH"))
+		if len(gopath) > 0 && gopath[0] != "" {
+			cache = filepath.Join(gopath[0], "pkg", "mod")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			cache = filepath.Join(home, "go", "pkg", "mod")
+		}
+	}
+	path := filepath.Join(cache, "golang.org", "x", "sys@"+string(m[1]), file)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("golang.org/x/sys is not in the module cache (go mod download): %v", err)
+	}
+	v := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `\s+=\s+(0x[0-9a-f]+|[0-9]+)\s*$`).FindSubmatch(b)
+	if v == nil {
+		t.Fatalf("%s has no %s", path, name)
+	}
+	n, err := strconv.ParseInt(string(v[1]), 0, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // rustConsts reads sys.rs's integer constants for each machine: a constant under
 // #[cfg(target_arch = "...")] is that machine's, any other is both machines'.
 func rustConsts(t *testing.T) map[string]map[string]int64 {
@@ -385,6 +424,35 @@ func TestSysConstantsMatchGo(t *testing.T) {
 			"SIG_DFL":          goConst(t, "runtime/signal_unix.go", "_SIG_DFL"),
 			"SIG_IGN":          goConst(t, "runtime/signal_unix.go", "_SIG_IGN"),
 			"POLLIN":           1,
+			"O_WRONLY":         goConst(t, "syscall/zerrors_linux_"+g+".go", "O_WRONLY"),
+			"O_CREAT":          goConst(t, "syscall/zerrors_linux_"+g+".go", "O_CREAT"),
+			"O_EXCL":           goConst(t, "syscall/zerrors_linux_"+g+".go", "O_EXCL"),
+			"O_APPEND":         goConst(t, "syscall/zerrors_linux_"+g+".go", "O_APPEND"),
+			"O_DIRECTORY":      goConst(t, "syscall/zerrors_linux_"+g+".go", "O_DIRECTORY"),
+			// Go's syscall package lists O_PATH for arm64 and not for amd64; its own
+			// exec_linux_test.go says the value is the same on every machine.
+			"O_PATH":       goConst(t, "syscall/zerrors_linux_arm64.go", "O_PATH"),
+			"AT_REMOVEDIR": goConst(t, "syscall/ztypes_linux_"+g+".go", "_AT_REMOVEDIR"),
+			"DT_UNKNOWN":   goConst(t, "syscall/zerrors_linux_"+g+".go", "DT_UNKNOWN"),
+			"DT_DIR":       goConst(t, "syscall/zerrors_linux_"+g+".go", "DT_DIR"),
+			"DT_REG":       goConst(t, "syscall/zerrors_linux_"+g+".go", "DT_REG"),
+			"DT_LNK":       goConst(t, "syscall/zerrors_linux_"+g+".go", "DT_LNK"),
+			// Go's syscall package lists neither for amd64; golang.org/x/sys, a module of
+			// this build, lists both.
+			"SYS_RENAMEAT2":    xsysConst(t, "unix/zsysnum_linux_"+g+".go", "SYS_RENAMEAT2"),
+			"RENAME_NOREPLACE": xsysConst(t, "unix/zerrors_linux.go", "RENAME_NOREPLACE"),
+			// The file commands' resolution and staging (session-files-3, -4, -8, -10).
+			"O_RDONLY":              goConst(t, "syscall/zerrors_linux_"+g+".go", "O_RDONLY"),
+			"O_TMPFILE":             xsysConst(t, "unix/zerrors_linux_"+g+".go", "O_TMPFILE"),
+			"AT_EMPTY_PATH":         xsysConst(t, "unix/ztypes_linux.go", "AT_EMPTY_PATH"),
+			"AT_SYMLINK_FOLLOW":     xsysConst(t, "unix/ztypes_linux.go", "AT_SYMLINK_FOLLOW"),
+			"AT_SYMLINK_NOFOLLOW":   xsysConst(t, "unix/ztypes_linux.go", "AT_SYMLINK_NOFOLLOW"),
+			"RESOLVE_BENEATH":       xsysConst(t, "unix/ztypes_linux.go", "RESOLVE_BENEATH"),
+			"RESOLVE_NO_MAGICLINKS": xsysConst(t, "unix/ztypes_linux.go", "RESOLVE_NO_MAGICLINKS"),
+			"RESOLVE_NO_XDEV":       xsysConst(t, "unix/ztypes_linux.go", "RESOLVE_NO_XDEV"),
+			"STATX_MNT_ID":          xsysConst(t, "unix/zerrors_linux.go", "STATX_MNT_ID"),
+			"SYS_OPENAT2":           xsysConst(t, "unix/zsysnum_linux_"+g+".go", "SYS_OPENAT2"),
+			"SYS_STATX":             xsysConst(t, "unix/zsysnum_linux_"+g+".go", "SYS_STATX"),
 		}
 		for name, v := range consts {
 			w, checked := want[name]
@@ -403,6 +471,28 @@ func TestSysConstantsMatchGo(t *testing.T) {
 	}
 	if rust["x86_64"]["O_NOFOLLOW"] == rust["aarch64"]["O_NOFOLLOW"] {
 		t.Error("O_NOFOLLOW is one value for both machines; it is not")
+	}
+}
+
+// TestPinnedHelperHoldsNoTestHooks: the file commands' test hooks (files.rs's hooks module:
+// pause points, the work scope's mount rule lifted, no openat2, no O_TMPFILE) are compiled into a
+// debug build alone, the one cargo test runs; the pinned helper is a release build, so none of
+// their variables' names is in its bytes, and nothing started in a sandbox can turn one on.
+func TestPinnedHelperHoldsNoTestHooks(t *testing.T) {
+	src, err := os.ReadFile("program/src/files.rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prefix = "PLIMSOLL_HELPER_TEST_"
+	if !bytes.Contains(src, []byte(prefix)) {
+		t.Fatalf("files.rs names no %s variable: this test checks nothing", prefix)
+	}
+	b, err := Program("amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := bytes.Index(b, []byte(prefix)); i >= 0 {
+		t.Fatalf("the pinned helper holds a test hook's variable at byte %d: it was not built as a release build", i)
 	}
 }
 

@@ -12,6 +12,7 @@ import {
   checkLostAnswer,
   checkRecord,
   checkUnanswered,
+  filesOp,
   recordDigest,
   recordFromWire,
   requestDigest,
@@ -38,6 +39,7 @@ import {
   TIERS,
 } from "./tables.gen.ts";
 import { checkpointProblem, validDaemonName, type SessionCheckpoint } from "./checkpoint.ts";
+import { filesOutcome, filesPayload, statedScopes, type FilesOperation, type FilesOutcome, type FilesPath, type FilesScope } from "./files.ts";
 import {
   errorFromWire,
   HeadMismatchError,
@@ -58,6 +60,7 @@ import type {
   WireDescribeResponse,
   WireEnvelope,
   WireError,
+  WireFilesRun,
   WireOpenSessionResponse,
   WirePayloadEnvironment,
   WireRunResponse,
@@ -225,6 +228,13 @@ export type ProjectResult = Evidence & {
   advice: AdviceFinding[];
 };
 
+/**
+ * A file call's result (Session.runFiles): its outcome, error and answer
+ * (docs/session-files.md), with the evidence every answered call carries. Paths and
+ * contents are bytes.
+ */
+export type FilesResult = Evidence & FilesOutcome;
+
 /** An interpreter language: a cell's, and one an environment states. */
 export type Language = (typeof LANGUAGES)[number];
 
@@ -368,7 +378,8 @@ export type LostCall = {
 export type LostAnswer =
   | { kind: "javascript"; result: JavaScriptResult }
   | { kind: "project"; result: ProjectResult }
-  | { kind: "cell"; result: CellResult };
+  | { kind: "cell"; result: CellResult }
+  | { kind: "files"; result: FilesResult };
 
 /**
  * What an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll session owner key
@@ -525,6 +536,10 @@ function projectResult(resp: WireRunResponse, record: RunRecord): ProjectResult 
   };
 }
 
+function filesResult(resp: WireRunResponse, record: RunRecord): FilesResult {
+  return { ...evidence(resp, record), ...filesOutcome(resp.files ?? {}) };
+}
+
 function cellResult(resp: WireRunResponse, record: RunRecord): CellResult {
   const c = resp.cell ?? {};
   const out = bytes(c.stdout);
@@ -548,7 +563,12 @@ function cellResult(resp: WireRunResponse, record: RunRecord): CellResult {
 type Payload =
   | { javascript: { code: string; grantProfile?: string } }
   | { project: { files: ProjectRequest["files"]; steps: string[]; artifacts: string[]; grantProfile?: string } }
-  | { cell: WireCellRun & { files: { path: string; content: string }[] } };
+  | { cell: WireCellRun & { files: { path: string; content: string }[] } }
+  | { files: WireFilesRun };
+
+type SessionKind = "javascript" | "project" | "cell" | "files";
+
+const payloadKind = (p: Payload): SessionKind => ("javascript" in p ? "javascript" : "project" in p ? "project" : "cell" in p ? "cell" : "files");
 
 // A lone surrogate has no UTF-8 form, so no protobuf string can hold one, though JSON
 // carries it as an escape: the daemon would refuse the request after it arrived, with
@@ -578,6 +598,7 @@ function decoded<T>(read: () => T): T {
 }
 
 function digestPayload(p: Payload): DigestPayload {
+  if ("files" in p) return { kind: "files", files: p.files };
   if ("javascript" in p) return { kind: "javascript", code: p.javascript.code, grantProfile: p.javascript.grantProfile ?? "" };
   if ("cell" in p) return { kind: "cell", language: p.cell.language, code: p.cell.code, files: p.cell.files };
   return { kind: "project", grantProfile: p.project.grantProfile ?? "", files: p.project.files, steps: p.project.steps, artifacts: p.project.artifacts };
@@ -965,9 +986,10 @@ export class PlimsollClient {
   private checked(env: WireEnvelope, payload: Payload, resp: WireRunResponse): { run: WireRunResponse; record: RunRecord } {
     const checked = checkRecord(
       requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: env.softwareRule, payload: digestPayload(payload) }),
-      "javascript" in payload ? "javascript" : "project" in payload ? "project" : "cell",
+      payloadKind(payload),
       env.softwareRule,
       resp,
+      "files" in payload ? filesOp(payload.files) : "",
     );
     if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: resp });
     const r = checked.record;
@@ -1002,9 +1024,10 @@ export function lostRecord(cp: SessionCheckpoint, lost: string, m: NonNullable<W
 
 // A lost call's checked answer as the result its kind maps to, as the call would have
 // returned it.
-function lostAnswerResult(resp: WireRunResponse, record: RunRecord, kind: "javascript" | "project" | "cell"): LostAnswer {
+function lostAnswerResult(resp: WireRunResponse, record: RunRecord, kind: SessionKind): LostAnswer {
   if (kind === "javascript") return { kind, result: javascriptResult(resp, record) };
   if (kind === "project") return { kind, result: projectResult(resp, record) };
+  if (kind === "files") return { kind, result: filesResult(resp, record) };
   return { kind, result: cellResult(resp, record) };
 }
 
@@ -1047,10 +1070,10 @@ function finish<T extends Evidence>(
   resp: WireRunResponse,
   record: RunRecord,
   map: (r: WireRunResponse, rec: RunRecord) => T,
-  kind: "javascript" | "project" | "cell",
+  kind: SessionKind,
   floor: Isolation | undefined,
 ): T {
-  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  const kinds = (["javascript", "project", "module", "cell", "files"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
   if (kinds.length > 1) throw new PlimsollError("data_loss", `plimsoll: the answer holds ${kinds.length} results; a run has one`, { result: resp });
   if (!resp[kind]) throw new PlimsollError("data_loss", "plimsoll: the daemon's result is not of the request's kind", { result: resp });
   const out = map(resp, record);
@@ -1079,6 +1102,14 @@ export class Session {
   readonly softwareIdentity: string;
   readonly expiresAtMs: number;
   readonly idleTimeoutMs: number;
+  /**
+   * The scopes the open stated the session takes file calls in (runFiles), work then sandbox; empty when it takes none.
+   * An OpenShell session states ["sandbox"] alone: its work folder is not a mount of its own, so the work scope's
+   * confinement is not offered there. Informational: the daemon refuses a call in a scope it does not take, not dispatched.
+   */
+  readonly fileScopes: readonly FilesScope[];
+  /** The session's work folder as the open stated it, the folder a "work" path resolves from; "" when it stated none. */
+  readonly workDir: string;
   // The session ID is a capability: it goes to the daemon and nowhere else.
   readonly #id: string;
   readonly #generation: bigint;
@@ -1141,6 +1172,8 @@ export class Session {
     // after closing the session with this one; attached() compares both with the checkpoint.
     this.expiresAtMs = Number(wholeInt(m.expiresUnixMs, INT64) ?? 0n);
     this.idleTimeoutMs = Number(wholeInt(m.idleTimeoutMs, UINT32) ?? 0n);
+    this.fileScopes = statedScopes(m.fileScopes);
+    this.workDir = typeof m.workDir === "string" ? m.workDir : "";
   }
 
   /**
@@ -1257,6 +1290,68 @@ export class Session {
     return decoded(() => finish(run.run, run.record, cellResult, "cell", opts.minimumIsolation));
   }
 
+  /**
+   * Carries out one operation on the session's files, inside its sandbox, as the guest's
+   * own user (docs/session-files.md): a session call like any other, in the chain, its
+   * record checked against the request sent, the operation included. Paths are bytes end to
+   * end; a string path is encoded as UTF-8. A file that is not there is an answered result
+   * (error "not_found"), not a thrown error. A session whose provider carries no file calls
+   * refuses the call, not dispatched, reason unsupported.
+   */
+  async runFiles(op: FilesOperation, opts: RunOptions = {}): Promise<FilesResult> {
+    const files = filesPayload(op);
+    opts = this.#withFloor(opts);
+    const run = await this.#call({ files }, opts);
+    return decoded(() => finish(run.run, run.record, filesResult, "files", opts.minimumIsolation));
+  }
+
+  /** stat: a path's type, size and permission bits. */
+  stat(path: FilesPath, opts: RunOptions & { scope?: "work" | "sandbox" } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "stat", path, scope: opts.scope }, opts);
+  }
+
+  /** read: at most maxBytes (default 8 MiB) of a file, from offset. */
+  readFile(path: FilesPath, opts: RunOptions & { scope?: "work" | "sandbox"; offset?: bigint | number; maxBytes?: number } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "read", path, offset: opts.offset, maxBytes: opts.maxBytes, scope: opts.scope }, opts);
+  }
+
+  /** write: one file of at most 4 MiB, replaced atomically unless mode says otherwise. */
+  writeFile(
+    path: FilesPath,
+    content: Uint8Array | string,
+    opts: RunOptions & { scope?: "work" | "sandbox"; mode?: "replace" | "create_only" | "append"; makeParents?: boolean } = {},
+  ): Promise<FilesResult> {
+    return this.runFiles({ op: "write", path, content, mode: opts.mode, makeParents: opts.makeParents, scope: opts.scope }, opts);
+  }
+
+  /** list: one page of a folder's entries (answer.more: ask again with after set to the last entry's path). */
+  list(
+    path: FilesPath = ".",
+    opts: RunOptions & { scope?: "work" | "sandbox"; recursive?: boolean; match?: FilesPath; after?: FilesPath; budgetBytes?: number } = {},
+  ): Promise<FilesResult> {
+    return this.runFiles({ op: "list", path, recursive: opts.recursive, match: opts.match, after: opts.after, budgetBytes: opts.budgetBytes, scope: opts.scope }, opts);
+  }
+
+  /** read_many: at most 16,384 files in order, one file's error not failing the call. */
+  readMany(paths: FilesPath[], opts: RunOptions & { scope?: "work" | "sandbox"; maxBytesEach?: number; budgetBytes?: number } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "read_many", paths, maxBytesEach: opts.maxBytesEach, budgetBytes: opts.budgetBytes, scope: opts.scope }, opts);
+  }
+
+  /** make_dir: a folder, with parents the folders above it too. */
+  makeDir(path: FilesPath, opts: RunOptions & { scope?: "work" | "sandbox"; parents?: boolean } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "make_dir", path, parents: opts.parents, scope: opts.scope }, opts);
+  }
+
+  /** remove: one file, or with dir one empty folder. */
+  removeFile(path: FilesPath, opts: RunOptions & { scope?: "work" | "sandbox"; dir?: boolean } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "remove", path, dir: opts.dir, scope: opts.scope }, opts);
+  }
+
+  /** rename: fromPath to toPath, replacing a file there only with replace. */
+  rename(fromPath: FilesPath, toPath: FilesPath, opts: RunOptions & { scope?: "work" | "sandbox"; replace?: boolean } = {}): Promise<FilesResult> {
+    return this.runFiles({ op: "rename", fromPath, toPath, replace: opts.replace, scope: opts.scope }, opts);
+  }
+
   // The call's options with the session's floor, unless the call asks for more.
   #withFloor(opts: RunOptions): RunOptions {
     const a = this.#floor;
@@ -1361,15 +1456,23 @@ export class Session {
       if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
       throw e;
     }
-    return decoded(() => this.#chained(m, env, rule, digest, "javascript" in payload ? "javascript" : "project" in payload ? "project" : "cell"));
+    // A file call's answer must be of the operation the request asked (its record's rule).
+    return decoded(() => this.#chained(m, env, rule, digest, payloadKind(payload), "files" in payload ? filesOp(payload.files) : ""));
   }
 
-  #chained(m: WireSessionRunResponse, env: ReturnType<PlimsollClient["envelope"]>, rule: WireSoftwareRule | undefined, digest: string, kind: "javascript" | "project" | "cell"): { run: WireRunResponse; record: RunRecord } {
+  #chained(
+    m: WireSessionRunResponse,
+    env: ReturnType<PlimsollClient["envelope"]>,
+    rule: WireSoftwareRule | undefined,
+    digest: string,
+    kind: SessionKind,
+    op: string,
+  ): { run: WireRunResponse; record: RunRecord } {
     const run = m.run;
     if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
     const end = sessionEndFromWire(m.ended);
     if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
-    const checked = checkRecord(digest, kind, rule, run);
+    const checked = checkRecord(digest, kind, rule, run, op);
     if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
     const r = checked.record;
     if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {

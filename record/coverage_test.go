@@ -57,6 +57,11 @@ func TestEveryFieldMovesADigest(t *testing.T) {
 		for _, path := range fieldPaths(md, nil, seen) {
 			base := d.msg.ProtoReflect().New()
 			fill(base, path)
+			// A request states a protocol whose request domain covers every kind (the files
+			// kind from plimsoll.run-request.v3); fill's value for it is below that.
+			if f := base.Descriptor().Fields().ByName("protocol"); f != nil && path[len(path)-1] != f {
+				base.Set(f, protoreflect.ValueOfUint32(FirstFilesProtocol))
+			}
 			for _, change := range []string{"value", "count"} {
 				changed := proto.Clone(base.Interface()).ProtoReflect()
 				if !mutate(changed, path, change) {

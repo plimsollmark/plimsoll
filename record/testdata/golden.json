@@ -9,15 +9,21 @@
     "docs/run-records.md alone by an independent Python implementation, which also reproduced",
     "each vector that did not change (the four results, the session fingerprint and the four",
     "protocol 2 requests) before the new ones were written.",
-    "Record version 5 and protocol 6 (2026-11-17): the version 5 records and the refused records",
-    "were computed by record/testdata/record_v5.py, a second implementation in Python written from",
-    "docs/run-records.md, which first reproduced every record vector v0.27.1 and v0.22.0 published.",
-    "Each refused record's digest matches its fields; every reader must refuse it anyway, for the",
-    "reason it gives. The version 1 record is one v0.11.1 signed in its bundle",
-    "(attest/testdata/published/v0.11.1-sessions), with the digest that release computed.",
-    "qualifications: sentences every reader's qualification check must accept or refuse (both ends",
-    "of each forbidden range, their neighbors, the byte bound). meets: whether a tier meets a floor,",
-    "for every pair of the five tiers, the empty string and an unknown name."
+    "Record version 6 and protocol 9 (2026-11-26): every vector was computed by",
+    "record/testdata/record_v6.py, a second implementation in Python written from",
+    "docs/run-records.md, which first reproduced every request, result and record vector v0.29.0,",
+    "v0.27.1 and v0.22.0 published. Requests of protocol 9 are hashed under plimsoll.run-request.v3",
+    "and the others as before; a result vector names the record version whose result domain hashed",
+    "it (recordVersion: plimsoll.run-result.v2 from version 6), and one without it, as in every file",
+    "published before version 6, is under plimsoll.run-result.v1. The files kind is in both new",
+    "domains, its paths and contents bytes. The version 5 records, written by record_v5.py on",
+    "2026-11-17, are frozen in record/testdata/published/v0.29.0-golden.json. Each refused record's",
+    "digest matches its fields; every reader must refuse it anyway, for the reason it gives. The",
+    "version 1 record is one v0.11.1 signed in its bundle (attest/testdata/published/v0.11.1-sessions),",
+    "with the digest that release computed. qualifications: sentences every reader's qualification",
+    "check must accept or refuse (both ends of each forbidden range, their neighbors, the byte bound).",
+    "meets: whether a tier meets a floor, for every pair of the five tiers, the empty string and an",
+    "unknown name."
   ],
   "requests": [
     {
@@ -199,6 +205,192 @@
         }
       },
       "sha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
+    },
+    {
+      "name": "javascript request, protocol 9",
+      "kind": "run",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "traceId": "t-1",
+        "timeoutMs": 5000,
+        "javascript": {
+          "code": "console.log(1+1)"
+        }
+      },
+      "sha256": "22055535293922a2d5961cf0fbce0e794e2d77c6ca2d6b92fe86f48b967b77c6"
+    },
+    {
+      "name": "files stat request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "stat": {
+            "path": "c3JjL21haW4ucHk="
+          }
+        }
+      },
+      "sha256": "951d9ab876e6626b9a1c5abc88dc7cba61d961e7c7064a1dd24b1ff04fcd85bb"
+    },
+    {
+      "name": "files read request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "read": {
+            "path": "ZGF0YS9iaWcuYmlu",
+            "offset": "8388608",
+            "maxBytes": 8388608
+          }
+        }
+      },
+      "sha256": "708ce37909c77d350299cdaca2b5ccd0786856a3d1e6c40bb63b730dd15e877f"
+    },
+    {
+      "name": "files write request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_SANDBOX",
+          "write": {
+            "path": "L3RtcC9vdXQvY2Fm6QpsaXN0LnR4dA==",
+            "content": "AP8gbGluZQo=",
+            "mode": "FILES_WRITE_MODE_CREATE_ONLY",
+            "makeParents": true
+          }
+        }
+      },
+      "sha256": "1a65a01ce9c20ee493f2eb8638817c67c00bc2156c48260a880628e77def31fa"
+    },
+    {
+      "name": "files list request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "list": {
+            "path": "Lg==",
+            "recursive": true,
+            "match": "KiovKi5weQ==",
+            "after": "c3JjL2EucHk=",
+            "budgetBytes": 65536
+          }
+        }
+      },
+      "sha256": "4753998228ef0b5001a293f14e7c8cead80c199623c4d601b1b7d5eada5ffdf8"
+    },
+    {
+      "name": "files read_many request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "readMany": {
+            "paths": [
+              "YS50eHQ=",
+              "Y2Fm6QpsaXN0LnR4dA==",
+              "Yi9jLnR4dA=="
+            ],
+            "maxBytesEach": 1024,
+            "budgetBytes": 4096
+          }
+        }
+      },
+      "sha256": "6a53e4844ec9f4b88e3e74c789b175619f42ab3a0d05c1e10627644552f713ef"
+    },
+    {
+      "name": "files make_dir request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "makeDir": {
+            "path": "b3V0L2xvZ3M=",
+            "parents": true
+          }
+        }
+      },
+      "sha256": "4c0dcab4485ce20051b3a056bf2a0a23ba893987a26391ff834aa2aa13c8ed45"
+    },
+    {
+      "name": "files remove request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "remove": {
+            "path": "b2xk",
+            "dir": true
+          }
+        }
+      },
+      "sha256": "7b9004d62dc2187d7ef2c5e2ada1aa9c225e68c545a114d49b53de32cf4d9bb4"
+    },
+    {
+      "name": "files rename request",
+      "kind": "session",
+      "request": {
+        "protocol": 9,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "rename": {
+            "fromPath": "LnRtcC0x",
+            "toPath": "YmlnLmJpbg==",
+            "replace": true
+          }
+        }
+      },
+      "sha256": "241fb5a23a8185617be96ae7677bde1c42fd8357686aa61912e411b94fbed880"
+    },
+    {
+      "name": "files request stating protocol 8",
+      "kind": "session",
+      "request": {
+        "protocol": 8,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "files": {
+          "scope": "FILES_SCOPE_WORK",
+          "stat": {
+            "path": "c3JjL21haW4ucHk="
+          }
+        }
+      },
+      "sha256": "bdb98f3737153dbd8823ca9a3c44535a7ae8f9b7ddd219dc4811acebbbc04ed5"
     }
   ],
   "results": [
@@ -281,6 +473,296 @@
         }
       },
       "sha256": "0ac5e3bdf4e3bc7f4bd2b5b11b44a57c2ac22bf5869825c6d8dc6f56909d1b61"
+    },
+    {
+      "name": "javascript result, version 6",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "container",
+        "durationMs": "812",
+        "javascript": {
+          "stdout": "Mgo=",
+          "stderr": "/3g="
+        }
+      },
+      "sha256": "9788ce02ff26cee3eb1a35773977efeed6310e0b89ad2d49b9821268124cef16",
+      "recordVersion": 6
+    },
+    {
+      "name": "project result, version 6",
+      "response": {
+        "sandbox": "openshell",
+        "isolation": "container",
+        "durationMs": "4210",
+        "project": {
+          "steps": [
+            {
+              "command": "node main.js > out.txt",
+              "durationMs": "90"
+            },
+            {
+              "command": "cat out.txt",
+              "stdout": "NDIK",
+              "durationMs": "3"
+            }
+          ],
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "artifacts": [
+            {
+              "path": "out.txt",
+              "content": "NDIK"
+            }
+          ]
+        }
+      },
+      "sha256": "4cec2dbb625e460b7080e2cfd0c4ec65e24c7eefc64ee2190583f93f1da16396",
+      "recordVersion": 6
+    },
+    {
+      "name": "module result, version 6",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "module": {
+          "runs": [
+            {
+              "status": 2,
+              "outputs": [
+                1,
+                1.5
+              ]
+            },
+            {
+              "status": -3
+            }
+          ],
+          "width": 1,
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "stdout": "cm93cz0yCg=="
+        }
+      },
+      "sha256": "b1e0e231adf5ec4fefe146fe22cf70b86fc953d0530bb15218097a8b0ffac869",
+      "recordVersion": 6
+    },
+    {
+      "name": "cell result, version 6",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "95",
+        "cell": {
+          "stdout": "NDIK",
+          "interpreterStarted": true
+        }
+      },
+      "sha256": "fd7c9d44d3bbc75d08baaecef1406531e0d1af577be5c87a3646547ddd9098e4",
+      "recordVersion": 6
+    },
+    {
+      "name": "files stat result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "stat": {
+            "type": "FILES_ENTRY_TYPE_FILE",
+            "size": "1234",
+            "mode": 420
+          }
+        }
+      },
+      "sha256": "fd57d6b673eaea438f6bc429ac82ac62cb7370b924a7e06625df4e872883a54c"
+    },
+    {
+      "name": "files read result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "read": {
+            "content": "AAH+/yB0YWls",
+            "sizeAtOpen": "9000000"
+          }
+        }
+      },
+      "sha256": "4629ccea5039d123acf0b65b4022dc7ef7e42ba9caf653d3f108b679273bb7a4"
+    },
+    {
+      "name": "files write result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "write": {
+            "written": "8"
+          }
+        }
+      },
+      "sha256": "34ae4226f4d67b96e8be994f7abecbdaa59b2aec79c6d96292280a96d3ecf5f7"
+    },
+    {
+      "name": "files list result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "list": {
+            "entries": [
+              {
+                "path": "LmhpZGRlbg==",
+                "type": "FILES_ENTRY_TYPE_FILE",
+                "size": "3"
+              },
+              {
+                "path": "Y2Fm6QpsaXN0LnR4dA==",
+                "type": "FILES_ENTRY_TYPE_FILE"
+              },
+              {
+                "path": "c3Jj",
+                "type": "FILES_ENTRY_TYPE_DIR",
+                "size": "4096"
+              },
+              {
+                "path": "c3JjL2xpbms=",
+                "type": "FILES_ENTRY_TYPE_LINK",
+                "size": "8"
+              }
+            ],
+            "more": true
+          }
+        }
+      },
+      "sha256": "e2a796519c0a6845e1910a4e529d8fc6e8762f71646a736f76fa86028ba7b770"
+    },
+    {
+      "name": "files read_many result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "readMany": {
+            "items": [
+              {
+                "content": "Zmlyc3QK",
+                "sizeAtOpen": "6"
+              },
+              {
+                "error": "FILES_ERROR_NOT_FOUND",
+                "errno": "ENOENT"
+              },
+              {
+                "error": "FILES_ERROR_IS_DIR",
+                "errno": "EISDIR"
+              }
+            ],
+            "more": true
+          }
+        }
+      },
+      "sha256": "a3458b4ccbceccbe7c8aed394be19edc1e472e2ad5645562e3eabdbfe9dbd625"
+    },
+    {
+      "name": "files make_dir result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "makeDir": {}
+        }
+      },
+      "sha256": "80b0a67870691cd828548b2110139b9381a73e15ae13a6447e68e6562a5c688b"
+    },
+    {
+      "name": "files remove result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "remove": {}
+        }
+      },
+      "sha256": "bf3d2477c097f753578754d7dc366ff5469d090219ff6b92c4109d2b3979048b"
+    },
+    {
+      "name": "files rename result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "rename": {}
+        }
+      },
+      "sha256": "20368c5af14adc86b65f49bb1fc63a67b3f1a0b33b501f5e7d1572456bdd80db"
+    },
+    {
+      "name": "files error result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "error": "FILES_ERROR_SYMLINK",
+          "errno": "ELOOP"
+        }
+      },
+      "sha256": "1bd7b040185302974f84f2680987bdfc15596a9b75c99fdf863ca56e4b968f91"
+    },
+    {
+      "name": "files timed out result",
+      "recordVersion": 6,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_TIMED_OUT"
+        }
+      },
+      "sha256": "e72ee9a63b0297dd3bbb5abe401945b822ef09ef92dbf620603733d1fb39800b"
+    },
+    {
+      "name": "files result under a version 5 record",
+      "recordVersion": 5,
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "12",
+        "files": {
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "stat": {
+            "type": "FILES_ENTRY_TYPE_FILE",
+            "size": "1234",
+            "mode": 420
+          }
+        }
+      },
+      "sha256": "cdcc8fe156dfd51739f77167fb5926c4057c6fd396bee2ed0479d0eb3399e053"
     }
   ],
   "records": [
@@ -298,12 +780,12 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "instance": "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37",
         "isolationQualification": "A sentence its vendor requires beside the tier, with bytes past ASCII: caf\u00e9, \u2265 2.",
         "daemonVersion": "v0.28.0"
       },
-      "sha256": "8402c5db3596af9425418ae8d9301fa10adb8e06677876205316374291c80def"
+      "sha256": "6dca543ac64a09c5ae0087228aaebc759b0ed37fc8eda91203078e2ee63086e0"
     },
     {
       "name": "unanswered record",
@@ -319,17 +801,17 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "unanswered": "unavailable",
         "isolationQualification": "Stated at open.",
         "daemonVersion": "(devel)"
       },
-      "sha256": "90b340923e174d3b5cff00ed35ff76bf9a2ded389c0dfb315bbf61532d08be5a"
+      "sha256": "613b3372a1250512e68989d9131785d3c83f2668028bc5e860496c758cf15e4b"
     },
     {
       "name": "warm record",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -339,12 +821,12 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "c96b93bbaaddc7fd73265841f4cd123dceaaac941ea6c817ed4d1e2c22cc546c"
+      "sha256": "576f57260f1a5a29e6b6589d23e12819ddc817addcf64c4f0e8411ceb4bfa625"
     },
     {
       "name": "wslc record",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -355,7 +837,7 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "e9b890a1d40297f8b9a6342e0964c9a8783f3990dd9056b50a50fe2a4dbeb3ba"
+      "sha256": "b85626cc35233dd65ec9e00a1a4365ebbf64462079c39ef0d5971100c7025e4e"
     },
     {
       "name": "version 1 record",
@@ -387,7 +869,7 @@
     {
       "name": "a qualification of 1025 bytes",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -398,13 +880,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "8272eb6d36c1c78dc25191ab917852322a3c7ec6a3a5e7bba09c1add2a6e29ed",
+      "sha256": "ea00fc19fd5496aa0e18e2e0793dcdc695fa39df346c76ff000f2167dda529f2",
       "why": "over 1024 bytes"
     },
     {
       "name": "a qualification with a line feed",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -415,13 +897,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "e08f71a44849fca4710418101e5763edc3b1cfebaffe279b4d72615bbedaea3b",
+      "sha256": "35f9b0a645e008d9b09f4270c62b44a53e42459498548423338f422614ca4405",
       "why": "a control character"
     },
     {
       "name": "a qualification with a C1 control",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -432,13 +914,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "e76a8a40b7c49f9e6ebff51678212e40c9772152b3be927fad960cd179781496",
+      "sha256": "1ce674eac2ea841b8c6c47bb0879c98294836e112183a44a8d0c8e1d3e698254",
       "why": "a control character, U+0085"
     },
     {
       "name": "a qualification with a right-to-left override",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -449,13 +931,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "4cc62cc70ae83777f6be5811fd96b954ff7c4e4a4553e49b01ace2119880e4b1",
+      "sha256": "c512e648b4c0acc858d177aaa6f3d997a347f3b5384719091bb68364e1cb5352",
       "why": "a bidirectional format character, U+202E"
     },
     {
       "name": "a qualification with an Arabic letter mark",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -466,13 +948,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "9631be46c0f2e818ad304d8e31f42de252bcbf96c9da6ce58702fac409e4bfa7",
+      "sha256": "b4e1430ee6edb49f35e2075988db62da7bd43cb68a8c34a4b4d54d994d06d471",
       "why": "a bidirectional control, U+061C"
     },
     {
       "name": "a qualification with a line separator",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -483,13 +965,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "0a22b5d90ba694b0cded750bfebfc029a95e62eed0ba464fc5e89c6fe18dec8e",
+      "sha256": "b82accc4b24f1df264c83051efa8dd4100c395a00a7619b0869c173c80b92f62",
       "why": "a line separator, U+2028"
     },
     {
       "name": "a provider with an escape",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc\u001b[2Jdocker",
@@ -500,13 +982,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "cd54f466b47f3aa5f012b1e0971ca76950fb7b50687d38caccb5177b5e9f8d1e",
+      "sha256": "9f8aec350c791943eb447edc20a94cf4181867ccf2982813c598bec4a2d306a7",
       "why": "a control character in the provider, ESC"
     },
     {
       "name": "a provider with a carriage return",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc\rdocker",
@@ -517,13 +999,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "5d53bf85c2733499f4c9aa104a1d885b7dd0e46a9e769f5bf6a6397371c54b1c",
+      "sha256": "cba6143021dcaf6a4059ac5c0a91a6c4625409a90619fdd9c05aded443cfa67c",
       "why": "a control character in the provider, CR"
     },
     {
       "name": "a provider with a right-to-left override",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc\u202ecod",
@@ -534,13 +1016,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "ab14e1aafb40be187ba1aa9471614d4a5d4b62c336d663e4704a90c71f66180f",
+      "sha256": "39a08e8193cb5f213d6a59cfc48f32d9877d859158c4b3cc4f48ce50fbf63a70",
       "why": "a bidirectional format character in the provider, U+202E"
     },
     {
       "name": "a provider with a C1 control",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc\u009b",
@@ -551,7 +1033,7 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "5f689ed6ad164204acf66b01c0f7ded16f872f237ec5b5e442141f0fc5bbbeaa",
+      "sha256": "bdc2172661a9b6a046bce3b9708d6dfc24cb45ed195a64a4f0ef42bc06763ffd",
       "why": "a control character in the provider, U+009B"
     },
     {
@@ -568,12 +1050,12 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "unanswered": "unavailable",
         "isolationQualification": "Stated at open.",
         "daemonVersion": "(devel)"
       },
-      "sha256": "1c796c37fa7f708f7c5a3adb5f7c66a19640e21e4aea09dd0f2bdce739d1752b",
+      "sha256": "6f581f95c1c58dd6257705012e397bdfbf50284c96f485efbdf1b5d8f4538ac7",
       "why": "a control character in the provider, LF"
     },
     {
@@ -594,7 +1076,7 @@
     {
       "name": "a daemon version without its v",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -605,13 +1087,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "482a5347f8be2d93f6015b6e86520daa17ce4572b834695ad00ef2331f991901",
+      "sha256": "f0698b6736ec3d593bb3970f439e409f606af44a8e90039628e6de577ae22b99",
       "why": "not a module version"
     },
     {
       "name": "a daemon version of two numbers",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -622,13 +1104,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "04aab01a1cf9f29b47feaf0de005cc541b92952fb71b18aeb4e4c3ee22bb3e72",
+      "sha256": "0521382769d4e71d45e1a704e4eaf12cdbb2cb75bd3618877114695bcdb4912b",
       "why": "not a module version"
     },
     {
       "name": "a daemon version with a space",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -639,7 +1121,7 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "e954b1b2d201b2645e01bb790304f65a856636fa0dd13b1c4b5d070e88671fdc",
+      "sha256": "dfc39438207641fe5a02b7636f22333fa99cdfc177cd7b16142ceaea6d16865f",
       "why": "not a module version"
     },
     {
@@ -676,7 +1158,7 @@
     {
       "name": "a tier in capitals",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -687,13 +1169,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "802d2fdcc2926d97d09c7e5155d1471999d660343d2e5a646bc1bed663b20002",
+      "sha256": "8c5f2b86938008f3e3e1183ae8a11139661753e18daa9654f7f65c129bcf8b33",
       "why": "not a tier"
     },
     {
       "name": "a tier with words after it",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -704,13 +1186,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "0943fd4a8e6a443907b518b6439d146e5362fadb2bd7f5944bd495bf9320debe",
+      "sha256": "fee37a3cb8262e024535fe270a111aadba38473df2d5a692eabf7cdec2733cb5",
       "why": "not a tier"
     },
     {
       "name": "the tier unknown",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -721,13 +1203,13 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "77890384ef254c4d550a9d59dd6464734302a13aa5f958dba5d78315111d094c",
+      "sha256": "8f40ef07e8900bc7051034945e3b027d26b08fe270eee82bb926d387a1baad6a",
       "why": "not a tier"
     },
     {
       "name": "no tier",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -738,7 +1220,7 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "0663e0fac320097f4372a2be25abaf9e00c21e83f5996eeb0accfc9202cbf4cc",
+      "sha256": "66de5aa9a8461056fc7e01cf93e177129de444d4b8a4f8484a1cfa421ef07c4d",
       "why": "not a tier"
     },
     {
@@ -755,12 +1237,12 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "unanswered": "unavailable",
         "isolationQualification": "Stated at open.",
         "daemonVersion": "(devel)"
       },
-      "sha256": "f89677986f33144225e9b39191f9b33575d096dab044e14ba4538d616ba92b2e",
+      "sha256": "d8ceb88cbcbe523f607d7f1e26d747e69770870013821fb707bde3c358e80acd",
       "why": "not a tier"
     },
     {
@@ -792,18 +1274,18 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "unanswered": "unavailable",
         "isolationQualification": "Stated at open.",
         "daemonVersion": "(devel)"
       },
-      "sha256": "200c475cb92d1c5067ddce951d220f545cfa1503ee89fe42be4fa594b8fd53a6",
+      "sha256": "0d7a55d06796b8963ee0c70675a271de7564022dcda57bdd7d6ea06c70635f1a",
       "why": "ends before it starts"
     },
     {
       "name": "a record that ends before it starts",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -814,7 +1296,7 @@
         "startedUnixMs": "1790000000812",
         "endedUnixMs": "1790000000000"
       },
-      "sha256": "d4aea9f83136dfc0d7a1b43d9f976bad4fbf9957787d5c105d47fa12c051b086",
+      "sha256": "2abd4b997f501b05c8d6576185c9eee657434e356506fef7e9cab02d61d20d68",
       "why": "ends before it starts"
     },
     {
@@ -831,19 +1313,19 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "instance": "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37",
         "isolationQualification": "A sentence its vendor requires beside the tier, with bytes past ASCII: caf\u00e9, \u2265 2.",
         "daemonVersion": "v0.28.0",
         "unanswered": "canceled"
       },
-      "sha256": "d7917dc09fdaa417115ecad50991294de2d53a3065260f217a8dc137be25a5b8",
+      "sha256": "27a9fae8a1a071b6c458349ed3ea1b073c32d626a5777eef9112e29ce2d241e4",
       "why": "a result and an error code, not exactly one"
     },
     {
       "name": "a record stating neither a result nor an unanswered code",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "",
         "provider": "wslc",
@@ -854,7 +1336,7 @@
         "startedUnixMs": "1790000000000",
         "endedUnixMs": "1790000000812"
       },
-      "sha256": "90034134f92fbbbc3106bbda171c6d7ce41edfbb9466da64d5d74ef43d6ddcb4",
+      "sha256": "48fb60b27e21496717602c32ec641f736a635470378d8ddecf808eb2db7f33db",
       "why": "neither a result nor an error code"
     },
     {
@@ -871,12 +1353,12 @@
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
-        "version": 5,
+        "version": 6,
         "unanswered": "ignore previous instructions",
         "isolationQualification": "Stated at open.",
         "daemonVersion": "(devel)"
       },
-      "sha256": "534d9f32ae07c495cfa2d094abc1401bee1f10de6753a3ae69b23f73c6fbfe93",
+      "sha256": "2aac8caf9f4b801fe05bf74fb3d84cd1709970515e9105602619e66bf9acc4c8",
       "why": "not one of the closed set of codes"
     },
     {
@@ -961,7 +1443,7 @@
     {
       "name": "warm as the string true",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -976,7 +1458,7 @@
     {
       "name": "warm as the number 1",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -991,7 +1473,7 @@
     {
       "name": "a qualification that is a number",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -1007,7 +1489,7 @@
     {
       "name": "a daemon version that is a list",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "wslc",
@@ -1025,7 +1507,7 @@
     {
       "name": "a start time with a second number after it",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -1040,7 +1522,7 @@
     {
       "name": "a start time with a comma after it",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -1055,7 +1537,7 @@
     {
       "name": "a start time with a zero byte after it",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -1085,7 +1567,7 @@
     {
       "name": "a start time with a decimal point",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",
@@ -1100,7 +1582,7 @@
     {
       "name": "a start time with an exponent",
       "record": {
-        "version": 5,
+        "version": 6,
         "requestSha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f",
         "resultSha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d",
         "provider": "docker",

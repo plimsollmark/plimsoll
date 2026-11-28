@@ -1,0 +1,695 @@
+{
+ "about": [
+  "Shared file-call cases every client runs through its own checked file call (internal/clientcases,",
+  "path files-call): Go's Session.RunFiles, Python's Session.run_files, TypeScript's",
+  "Session.runFiles, each against the files daemon of internal/clientsuite (files.go), which is the",
+  "real RPC handler over sessions whose file calls an in-memory work folder answers. Each case is",
+  "one session, opened fresh, and its calls in order. A call names its operation and its fields in",
+  "a form no client uses itself: paths, contents, globs and cursors in hex, so a name that is not",
+  "UTF-8 or holds a newline is written exactly; scope is work. forge names the forged answer the",
+  "daemon gives (clientsuite.FilesForgeries, asked by the trace ID forge-files-<name>).",
+  "expect: per call, the answer as each client returned it (outcome, error and errno by their",
+  "words, op the answer's operation or \"\" for none, its fields with bytes in hex), or the",
+  "refusal: refused is not_dispatched:<reason> or may_have_run, and check, given where the call",
+  "says rule, the kind of rule that refused it (a client whose errors name no kind is compared",
+  "without it). Ids are never reused: a retired case's id moves to retired."
+ ],
+ "retired": [],
+ "cases": [
+  {
+   "id": "files-call/every-operation",
+   "family": "files-call",
+   "breaks": "nothing: every operation in one chain, through each client's own file call, names holding a byte that is not UTF-8 (0xff, 0xfe) and a newline sent and returned byte for byte",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "6f75742f72ff73756c740a2e747874",
+       "content": "34320a",
+       "mode": "create_only",
+       "make_parents": true
+      }
+     },
+     {
+      "call": {
+       "op": "list",
+       "path": "6f7574",
+       "recursive": false,
+       "match": "",
+       "after": "",
+       "budget_bytes": 8192
+      }
+     },
+     {
+      "call": {
+       "op": "read",
+       "path": "6f75742f72ff73756c740a2e747874",
+       "offset": 0,
+       "max_bytes": 64
+      }
+     },
+     {
+      "call": {
+       "op": "read",
+       "path": "6f75742f72ff73756c740a2e747874",
+       "offset": 1,
+       "max_bytes": 1
+      }
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "6f75742f72ff73756c740a2e747874"
+      }
+     },
+     {
+      "call": {
+       "op": "read_many",
+       "paths": [
+        "6f75742f72ff73756c740a2e747874",
+        "6f7574",
+        "616273656e74"
+       ],
+       "max_bytes_each": 64,
+       "budget_bytes": 8192
+      }
+     },
+     {
+      "call": {
+       "op": "rename",
+       "from": "6f75742f72ff73756c740a2e747874",
+       "to": "6f75742f62fe",
+       "replace": false
+      }
+     },
+     {
+      "call": {
+       "op": "make_dir",
+       "path": "64ff0a",
+       "parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "write",
+       "path": "64ff0a2f66",
+       "content": "61",
+       "mode": "append",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "remove",
+       "path": "64ff0a",
+       "dir": true
+      }
+     },
+     {
+      "call": {
+       "op": "remove",
+       "path": "64ff0a2f66",
+       "dir": false
+      }
+     },
+     {
+      "call": {
+       "op": "remove",
+       "path": "64ff0a",
+       "dir": true
+      }
+     },
+     {
+      "call": {
+       "op": "list",
+       "path": "2e",
+       "recursive": false,
+       "match": "",
+       "after": "",
+       "budget_bytes": 8192
+      }
+     },
+     {
+      "call": {
+       "op": "list",
+       "path": "6f7574",
+       "recursive": false,
+       "match": "",
+       "after": "61",
+       "budget_bytes": 8192
+      }
+     },
+     {
+      "call": {
+       "op": "read",
+       "path": "616273656e74",
+       "offset": 0,
+       "max_bytes": 64
+      }
+     },
+     {
+      "call": {
+       "op": "write",
+       "path": "6f75742f62fe",
+       "content": "78",
+       "mode": "create_only",
+       "make_parents": false
+      }
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 3
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "list",
+        "entries": [
+         {
+          "path": "72ff73756c740a2e747874",
+          "type": "file",
+          "size": 3
+         }
+        ],
+        "more": false
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "read",
+        "content": "34320a",
+        "size_at_open": 3
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "read",
+        "content": "32",
+        "size_at_open": 3
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "stat",
+        "type": "file",
+        "size": 3,
+        "mode": 420
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "read_many",
+        "items": [
+         {
+          "error": "none",
+          "errno": "",
+          "content": "34320a",
+          "size_at_open": 3
+         },
+         {
+          "error": "is_dir",
+          "errno": "EISDIR",
+          "content": "",
+          "size_at_open": 0
+         },
+         {
+          "error": "not_found",
+          "errno": "ENOENT",
+          "content": "",
+          "size_at_open": 0
+         }
+        ],
+        "more": false
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "rename"
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "make_dir"
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 1
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "not_empty",
+        "errno": "ENOTEMPTY",
+        "op": ""
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "remove"
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "remove"
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "list",
+        "entries": [
+         {
+          "path": "6f7574",
+          "type": "dir",
+          "size": 0
+         }
+        ],
+        "more": false
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "list",
+        "entries": [
+         {
+          "path": "62fe",
+          "type": "file",
+          "size": 3
+         }
+        ],
+        "more": false
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "not_found",
+        "errno": "ENOENT",
+        "op": ""
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "exists",
+        "errno": "EEXIST",
+        "op": ""
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/forged/answer-op",
+   "family": "files-call",
+   "breaks": "the answer is of another operation than the one asked, its record sealed again: refused by the record's rule, and the session sends nothing more",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "78",
+       "content": "68656c6c6f",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "78"
+      },
+      "forge": "answer-op",
+      "rule": true
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "78"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 5
+       }
+      },
+      {
+       "refused": "may_have_run",
+       "check": "mismatch"
+      },
+      {
+       "refused": "not_dispatched:request"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/forged/error-beside-answer",
+   "family": "files-call",
+   "breaks": "an error stated beside the answer, the record sealed again: refused by the record's rule",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "78",
+       "content": "68656c6c6f",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "read",
+       "path": "78",
+       "offset": 0,
+       "max_bytes": 64
+      },
+      "forge": "error-beside-answer",
+      "rule": true
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 5
+       }
+      },
+      {
+       "refused": "may_have_run",
+       "check": "mismatch"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/forged/result",
+   "family": "files-call",
+   "breaks": "a read's bytes changed after its record was sealed: refused, the result digest differs",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "78",
+       "content": "68656c6c6f",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "read",
+       "path": "78",
+       "offset": 0,
+       "max_bytes": 64
+      },
+      "forge": "result",
+      "rule": true
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 5
+       }
+      },
+      {
+       "refused": "may_have_run",
+       "check": "mismatch"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/forged/chain",
+   "family": "files-call",
+   "breaks": "the record placed after another call than the client's last: refused as a broken chain",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "78",
+       "content": "68656c6c6f",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "78"
+      },
+      "forge": "chain",
+      "rule": true
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 5
+       }
+      },
+      {
+       "refused": "may_have_run",
+       "check": "chain"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/forged/kind",
+   "family": "files-call",
+   "breaks": "a project's result answers the file call: refused, a result of another kind",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "stat",
+       "path": "78"
+      },
+      "forge": "kind",
+      "rule": true
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "refused": "may_have_run",
+       "check": "mismatch"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/lost",
+   "family": "files-call",
+   "breaks": "a write runs and its answer never arrives: the call may have run, so the session sends nothing more",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "78",
+       "content": "68656c6c6f",
+       "mode": "replace",
+       "make_parents": false
+      },
+      "forge": "lost"
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "78"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "refused": "may_have_run"
+      },
+      {
+       "refused": "not_dispatched:request"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "files-call/unanswered",
+   "family": "files-call",
+   "breaks": "nothing: a write fails after it reached the sandbox and the daemon chains its unanswered record, which the client checks and follows, so the next call runs",
+   "paths": [
+    "files-call"
+   ],
+   "input": {
+    "calls": [
+     {
+      "call": {
+       "op": "write",
+       "path": "637574",
+       "content": "61",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "write",
+       "path": "6166746572",
+       "content": "62",
+       "mode": "replace",
+       "make_parents": false
+      }
+     },
+     {
+      "call": {
+       "op": "stat",
+       "path": "6166746572"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "files-call": {
+     "calls": [
+      {
+       "refused": "may_have_run"
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "write",
+        "written": 1
+       }
+      },
+      {
+       "answer": {
+        "outcome": "completed",
+        "error": "none",
+        "errno": "",
+        "op": "stat",
+        "type": "file",
+        "size": 1,
+        "mode": 420
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

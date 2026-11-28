@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 func TestConfigRefuses(t *testing.T) {
@@ -57,9 +58,10 @@ func TestRunsClaimRunAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stdout != "out:console.log(1)" || res.ExitCode != 0 || res.Isolation != sandbox.IsolationKernel {
+	if res.Stdout != "out:console.log(1)" || res.ExitCode != 0 {
 		t.Fatalf("snippet %+v", res)
 	}
+	tiercheck.Stated(t, "snippet", res.Isolation, p.IsolationClass())
 	// Every result names the pod that ran it, from the provider's own read of the pod.
 	if !strings.HasPrefix(res.Instance, "k8s-pod-uid:pod-uid-") {
 		t.Fatalf("snippet instance %q", res.Instance)
@@ -71,6 +73,7 @@ func TestRunsClaimRunAndDelete(t *testing.T) {
 	if pr.Outcome != sandbox.ProjectOutcomeCompleted || len(pr.Steps) != 1 || string(pr.Steps[0].Stdout) != "ran node main.js" {
 		t.Fatalf("project %+v", pr)
 	}
+	tiercheck.Stated(t, "project", pr.Isolation, p.IsolationClass())
 	if !strings.HasPrefix(pr.Instance, "k8s-pod-uid:pod-uid-") || pr.Instance == res.Instance {
 		t.Fatalf("project instance %q (the snippet's was %q; each run claims its own pod)", pr.Instance, res.Instance)
 	}

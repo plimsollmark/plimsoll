@@ -217,7 +217,7 @@ func checkSeedResponse(ev *Evidence, ex *exchange) error {
 		return fmt.Errorf("%s: %w", fileSeedResponse, err)
 	}
 	r := resp.GetRecord()
-	if got := record.ResultDigest(&resp); got != seed.Record.ResultSHA256 || r.GetResultSha256() != got ||
+	if got := record.ResultDigestFor(&resp, int(r.GetVersion())); got != seed.Record.ResultSHA256 || r.GetResultSha256() != got ||
 		r.GetRequestSha256() != seed.Record.RequestSHA256 || int(r.GetVersion()) != seed.Record.Version {
 		return fmt.Errorf("the seed call's response gives result %s (record v%d, %s, %s), the evidence says v%d %s %s",
 			got, r.GetVersion(), r.GetRequestSha256(), r.GetResultSha256(), seed.Record.Version, seed.Record.RequestSHA256, seed.Record.ResultSHA256)

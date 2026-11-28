@@ -305,6 +305,12 @@ func TestRelayedCellUnstatedLanguageIsNoInterpreterAndAFailedLaunchIsNot(t *test
 	if !errors.Is(err, ErrNoInterpreter) || errors.Is(err, ErrLaunch) || launches.Load() != 0 {
 		t.Fatalf("an unstated language: err %v after %d launches; want ErrNoInterpreter before any", err, launches.Load())
 	}
+	// The refusal says why, in plimsoll's words only (release-66): what the image runs,
+	// and the program it lacks. Before, a reader was told the interpreter could not start.
+	const why = "the sandbox runs no interpreter for the language: the session's image is stated to run javascript, not python: a python cell needs python3 in the image, which plimsoll's startup check did not show there"
+	if err.Error() != why {
+		t.Fatalf("an unstated language reads %q; want %q", err, why)
+	}
 
 	stated := plainCell
 	stated.Stated = []string{"javascript", "python"}

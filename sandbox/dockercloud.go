@@ -82,10 +82,10 @@ type DockerCloud struct {
 	// RequirePinnedImage refuses an Image that is not an @sha256: digest (a StoreImage
 	// always carries one).
 	RequirePinnedImage bool
-	// GuardURL is the public HTTPS endpoint of this process's egress guard
-	// (SANDBOX_DOCKERCLOUD_GUARD_URL). Set, it enables host-API grants: a grant run's
-	// sandbox may reach this host on 443 and nothing else. Empty keeps grants
-	// unsupported and every run deny-all.
+	// GuardURL is the public HTTPS endpoint of an egress guard
+	// (SANDBOX_DOCKERCLOUD_GUARD_URL). Host-API grants are refused on this provider
+	// (errDCGrantsRefused says why), so a set GuardURL fails configuration and every
+	// run is deny-all.
 	GuardURL string
 	// PolicyURL is the base of Docker's per-sandbox network-policy REST endpoint
 	// (SANDBOX_DOCKERCLOUD_POLICY_URL); default dcDefaultPolicyURL. It is NOT part
@@ -97,14 +97,19 @@ type DockerCloud struct {
 
 	HTTP *http.Client // nil = a default client; redirects are never followed either way
 
-	authMu         sync.Mutex
-	access         string
-	accessExp      time.Time
-	guards         guardRegistry // live per-run guard credentials (guard_registry.go)
-	DefaultTimeout time.Duration
-	MaxTimeout     time.Duration
-	MaxOutputBytes int    // per stream; default 64 KiB
-	ProjectDir     string // default /tmp/plimsoll-project
+	authMu    sync.Mutex
+	access    string
+	accessExp time.Time
+	guards    guardRegistry // live per-run guard credentials (guard_registry.go)
+	// grantsUnrefused lifts the refusal of every host-API grant (errDCGrantsRefused).
+	// No setting and no constructor sets it: only this package's tests of the guard
+	// path do, so the path stays tested for the day Docker Cloud can hold a granted
+	// run to the guard.
+	grantsUnrefused bool
+	DefaultTimeout  time.Duration
+	MaxTimeout      time.Duration
+	MaxOutputBytes  int    // per stream; default 64 KiB
+	ProjectDir      string // default /tmp/plimsoll-project
 
 	// The per-run envelope. CPU and memory are requested at create and verified
 	// against the created sandbox. The contract has no disk or process-count
@@ -140,15 +145,17 @@ func (*DockerCloud) BillingTeardown() time.Duration { return meteredBillingTail 
 // SupportsProjects is true: project runs use the configured toolchain image.
 func (*DockerCloud) SupportsProjects() bool { return true }
 
-// Host-API grants need a forced, authenticated channel out of the VM that keeps the
-// credential host-side (E2B's guard). None exists for this provider yet, so grants
-// are refused before any sandbox is created.
+// Host-API grants are refused on this provider before any sandbox is created
+// (errDCGrantsRefused), so neither payload kind states grant support.
 func (d *DockerCloud) SupportsJavaScriptGrants() bool { return d.grantsServed() }
 func (d *DockerCloud) SupportsProjectGrants() bool    { return d.grantsServed() }
 
-// grantsServed: a guard URL is configured and the API is one on which the guard's
-// network rule has been shown to take effect (Connect, live 2026-09-24).
-func (d *DockerCloud) grantsServed() bool { return d.guardConfig() != nil && !d.rest() }
+// grantsServed: grants are not refused, a guard URL is configured, and the API is
+// one on which the guard's network rule has been shown to take effect (Connect,
+// live 2026-09-24). With the refusal in force it is always false.
+func (d *DockerCloud) grantsServed() bool {
+	return d.grantsUnrefused && d.guardConfig() != nil && !d.rest()
+}
 
 // IsolationClass is VM: each run gets a disposable Docker-managed microVM. As for
 // every provider, the tier is configuration and provider evidence plus the startup
@@ -285,6 +292,9 @@ func (d *DockerCloud) validateConfig() error {
 	}
 	if _, err := parseDockerCloudURL(d.apiURL(), settings.DockercloudAPIURL.Name); err != nil {
 		return err
+	}
+	if !d.grantsUnrefused && strings.TrimSpace(d.GuardURL) != "" {
+		return fmt.Errorf("%s is set, but %w: unset it", settings.DockercloudGuardURL.Name, errDCGrantsRefused)
 	}
 	if d.rest() && strings.TrimSpace(d.GuardURL) != "" {
 		return errors.New("dockercloud host-API grants cannot be verified on the REST API (it does not report a sandbox's policy once the guard's rule is on): unset SANDBOX_DOCKERCLOUD_GUARD_URL, or set SANDBOX_DOCKERCLOUD_API=connect")

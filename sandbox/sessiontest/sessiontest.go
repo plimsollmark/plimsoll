@@ -17,6 +17,7 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // Config is what the suite needs besides the provider.
@@ -100,6 +101,11 @@ func runCases(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	} {
 		run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
 	}
+	// File calls: every provider states them only where its sessions carry them, in the
+	// scopes they carry, and one that states them passes every file case for those scopes
+	// (files.go).
+	run("FileCallsAreStatedWhereTheyRun", func(t *testing.T) { filesStated(t, p, cfg) })
+	runFileCases(p, cfg, run)
 	langs := cfg.Languages
 	if len(langs) == 0 {
 		langs = []sandbox.Language{sandbox.LanguageJavaScript}
@@ -304,7 +310,17 @@ func cell(t *testing.T, s sandbox.Session, lang sandbox.Language, code string, t
 	if err != nil {
 		t.Fatalf("RunCell(%s, %.60q): %v", lang, code, err)
 	}
+	statesTier(t, s, string(lang)+" cell", res.Isolation)
 	return res
+}
+
+// statesTier fails t when a result of s names no tier, or another than s states: the
+// daemon would answer it as "unknown", and every official client refuses that record
+// after the code ran (release-55). The cases' snippets and cells, and the project
+// case's project, pass through it.
+func statesTier(t *testing.T, s sandbox.Session, kind string, got sandbox.IsolationClass) {
+	t.Helper()
+	tiercheck.Stated(t, kind, got, s.Isolation())
 }
 
 // cellCode is each case's code per language: what defines state, what reads it,
@@ -574,6 +590,7 @@ func jsAtFloor(t *testing.T, s sandbox.Session, code string, floor sandbox.Isola
 	if err != nil {
 		t.Fatalf("RunJavaScript with floor %v: %v", floor, err)
 	}
+	statesTier(t, s, "snippet", res.Isolation)
 	return res
 }
 
@@ -585,6 +602,7 @@ func js(t *testing.T, s sandbox.Session, code string, timeout time.Duration) san
 	if err != nil {
 		t.Fatalf("RunJavaScript(%.60q): %v", code, err)
 	}
+	statesTier(t, s, "snippet", res.Isolation)
 	return res
 }
 
@@ -619,6 +637,7 @@ func filesPersist(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	if err != nil || pr.Outcome != sandbox.ProjectOutcomeCompleted || len(pr.Steps) != 2 {
 		t.Fatalf("project: %+v, %v", pr, err)
 	}
+	statesTier(t, s, "project", pr.Isolation)
 	if pr.Steps[0].Stdout != tok || pr.Steps[1].Stdout != tok+"-b" {
 		t.Fatalf("project steps read %q and %q", pr.Steps[0].Stdout, pr.Steps[1].Stdout)
 	}

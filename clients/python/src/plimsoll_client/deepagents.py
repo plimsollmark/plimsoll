@@ -486,6 +486,13 @@ class PlimsollSandbox(BaseSandbox):
                 raise  # as an upload's: never a file's error
             except FileNotFoundError as e:
                 out.append(FileDownloadResponse(path=path, error=self._why_unreadable(path, str(e), cancel)))
+            # A file call's error comes typed (the workspace's read names a folder and a permission).
+            except IsADirectoryError:
+                out.append(FileDownloadResponse(path=path, error="is_directory"))
+            except PermissionError:
+                out.append(FileDownloadResponse(path=path, error="permission_denied"))
+            except NotADirectoryError:
+                out.append(FileDownloadResponse(path=path, error="file_not_found"))
             except OSError as e:
                 out.append(FileDownloadResponse(path=path, error=_file_error(str(e))))
             else:

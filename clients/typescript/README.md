@@ -1,9 +1,8 @@
 # @plimsollmark/client
 
-A TypeScript client for `plimsolld`, plus three add-ons that give an agent an
-`executeCode` tool backed by plimsoll: one for the [Vercel AI SDK](https://ai-sdk.dev),
-one for [Trigger.dev](https://trigger.dev) chat agents and one for
-[Mastra](https://mastra.ai) agents. All three sit on the same client and the same
+A TypeScript client for `plimsolld`, plus two add-ons that give an agent an
+`executeCode` tool backed by plimsoll: one for the [Vercel AI SDK](https://ai-sdk.dev)
+and one for [Mastra](https://mastra.ai) agents. Both sit on the same client and the same
 per-conversation sandbox layer, so they behave the same way.
 
 The client has no runtime dependencies (Node >= 22.18). It speaks Connect's JSON
@@ -19,7 +18,13 @@ protocol over `fetch` and keeps the promises the Go client keeps:
 - in a **session** it tracks the chain of records, so a call made by anyone else who holds
   the session ID is caught at the next call, and at close;
 - an error says whether anything ran: `notDispatched` is set only when the daemon stated
-  that nothing did, and only then is a retry safe;
+  that nothing did, and only then is a retry safe; on a `capacity` refusal,
+  `capacityLimit` says which limit shed it (`sessions`, `caller_sessions`, `runs`,
+  `caller_runs`, `owner_sessions`, `rate`, `paid_seconds`, `queue`, `provider`, `deadline`
+  when the call's own time ran out before any of it was sent, or `unknown` from a daemon
+  that does not state it), so a caller can tell a limit a close of its own
+  sessions frees from the rate limit, which only time does
+  ([docs/run-results.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-results.md));
 - every request carries a fresh `Plimsoll-Request-Id` and an answer counts only if it
   carries the ID back: one that does not (another request's answer, served by an
   intermediary, or a daemon older than protocol 3) has `answerNotBound` set and no
@@ -36,21 +41,16 @@ npm install @plimsollmark/client
 
 The package's version is the plimsoll release it ships in: version X.Y.Z was built and
 tested against plimsolld vX.Y.Z. The add-ons need their framework installed beside it:
-`ai` and `zod` for `/ai-sdk`, `@trigger.dev/sdk`, `ai` and `zod` for `/trigger`, `@mastra/core` and `zod` for `/mastra`.
+`ai` and `zod` for `/ai-sdk`, `@mastra/core` and `zod` for `/mastra`.
 
 This package has no dependencies, so it brings nothing into your installation; the
-frameworks do. One worth knowing about: `@trigger.dev/sdk` 4.7 pins `socket.io-client`
-4.7.5, whose `engine.io-client` resolves a `ws` affected by two advisories fixed in 8.21.0
-([GHSA-58qx-3vcg-4xpx and GHSA-96hv-2xvq-fx4p, EXTERNAL · advisory ↗](https://github.com/advisories/GHSA-96hv-2xvq-fx4p)).
-npm applies `overrides` only from your application's own `package.json`, so this
-package's override cannot reach your installation. Until Trigger.dev moves, add one
-there, as this repository's tests do:
-
-```json
-"overrides": { "engine.io-client": "^6.6.7" }
-```
+frameworks do.
 
 ## The client
+
+The session part of this example needs a daemon started with sessions on (`SANDBOX_MAX_SESSIONS`, for example
+`SANDBOX_MAX_SESSIONS=4`; they are off by default), and its Python cells need `python3` in the project image (on
+docker, `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`).
 
 ```ts
 import { PlimsollClient } from "@plimsollmark/client";
@@ -163,7 +163,7 @@ from your own authenticated user and conversation (or job) IDs, never from a str
 or the model supplies, or give each customer a plimsoll credential of their own
 ([who may share a session](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#who-may-share-a-session)).
 
-A key is a `SandboxKey`: either a string (the Trigger.dev add-on passes its run ID) or
+A key is a `SandboxKey`: either a string or
 `{ owner, conversation }`, the user a conversation belongs to and the conversation's ID
 (the AI SDK add-on passes `{ owner: userId, conversation: conversationId }`, the Mastra
 add-on `{ owner: resourceId, conversation: threadId }`). The parts are encoded as a JSON
@@ -272,7 +272,7 @@ one user, or one app, from holding them all:
   Set it to this app's share of the daemon's `SANDBOX_MAX_SESSIONS`, a number only the
   daemon's operator knows.
 
-A `warm` is a guess (Trigger.dev's recipe warms in every new run's `onTurnStart`, a chat the
+A `warm` is a guess (an application may warm at every new chat's first turn, a chat the
 user opened and never typed in included), so it never closes a sandbox to make room: when
 either cap is reached it does nothing, and the conversation's first call opens its sandbox,
 closing the least recently used idle one as any call does. The daemon closes a session no
@@ -283,7 +283,7 @@ end `unclaimed` (not dispatched) and runs once more in a new sandbox, saying
 `freshSandbox: true`.
 
 Both caps count what one process holds. A host that runs many processes (serverless
-functions, several Trigger.dev workers) keeps one count per process, so set the daemon's
+functions, several workers) keeps one count per process, so set the daemon's
 `SANDBOX_MAX_SESSIONS_PER_OWNER`, which counts them all: every open names the key's owner
 to the daemon (`openSession({ owner })`, sent as a hex HMAC-SHA256 of the owner under a key derived from
 the client's token (SHA-256 of a fixed prefix and the token), so the ID itself never leaves the process and the daemon, which stores
@@ -303,8 +303,7 @@ a close would not help.
 Each tool answer also includes `isolation` and `recordSha256`. The client checks
 the run record before returning, then gives the tool the checked record's SHA-256.
 The digest names that record; it is not a signature or a proof that the guest
-computed honestly. See the [Trigger.dev feature and deployment guide](https://github.com/plimsollmark/plimsoll/blob/main/docs/trigger-dev.md)
-for the three properties together.
+computed honestly.
 
 The model sees only a run record's digest (`recordSha256`). The record itself, checked by
 the client, goes to `onRecord(record, key)`, once for every call that ran: an answered call's,
@@ -336,8 +335,7 @@ using or has used is closed as soon as it opens. The
 sent.
 
 The session ID is a capability. It lives in the client's memory and nowhere else: not in
-a log line, not in a record, not in Trigger.dev's `chat.local` (which is serialized into
-subtask metadata). Records carry its SHA-256.
+a log line, not in a record. Records carry its SHA-256.
 
 ### A grant: `executeCode` whose code calls one web API
 
@@ -355,7 +353,8 @@ const { executeCode } = await plimsollGrantedCodeTool({ client, grant: { profile
 ```
 
 - **Built after the daemon's Describe**, which decides what it offers: JavaScript wherever
-  a granted project runs (docker, openshell, e2b with a guard URL, dockercloud) or, on a
+  a granted project runs (docker, openshell, e2b with a guard URL; dockercloud refuses
+  grants) or, on a
   daemon that runs snippets only, a granted snippet without files; Python too on docker and
   openshell, through `import plimsoll_host` (`plimsoll_host.get(path)`, `post(path, body)`,
   `put`, `patch`, `delete`, `call`). The description tells the model the routes and how to
@@ -373,8 +372,7 @@ const { executeCode } = await plimsollGrantedCodeTool({ client, grant: { profile
   last expression's value still prints), never a conversation's kept sandbox: a cell
   carries no grant, so kept state is not available to the granted tool, and it says so.
   `sessions: "always"` with a grant is refused; keep `plimsollCodeTools`' tool beside it
-  for kept state. `plimsollCodeTools`, `plimsollExecuteCode` and `plimsollCodeSandbox`
-  refuse a grant.
+  for kept state. `plimsollCodeTools` and `plimsollExecuteCode` refuse a grant.
 - **Refusals say what to do.** A Python call where steps cannot reach the broker is refused
   `unsupported` with what to write instead; an unknown profile is `permission`, the
   operator's to fix; a call that may have run says the API may have been called too.
@@ -397,62 +395,6 @@ verified gVisor or VM daemon for hostile code.
 
 See [usage, lifecycle and the no-spend local smoke check, EXTERNAL · official docs ↗](https://github.com/plimsollmark/plimsoll/blob/main/docs/ai-sdk.md).
 This source add-on needs the optional `ai` (>=7.0.126 <8, tested at exactly 7.0.126) and `zod` (>=4.6.7 <5, tested at exactly 4.6.7) peer packages.
-
-## Trigger.dev
-
-The add-on follows Trigger.dev's own
-[code-sandbox recipe](https://trigger.dev/docs/ai-chat/patterns/code-sandbox): warm in
-`onTurnStart`, reuse in `executeCode`, dispose in `onChatSuspend` (right before the run
-sleeps) and in `onComplete`.
-
-This add-on needs the optional `@trigger.dev/sdk` (>=4.7.0 <5, tested at exactly 4.7.0),
-`ai` (>=7.0.126 <8, tested at exactly 7.0.126) and `zod` (>=4.6.7 <5, tested at exactly
-4.6.7) peer packages.
-
-```ts
-import { chat } from "@trigger.dev/sdk/ai";
-import { PlimsollClient } from "@plimsollmark/client";
-import { plimsollCodeSandbox } from "@plimsollmark/client/trigger";
-
-const sandbox = plimsollCodeSandbox({
-  client: () => new PlimsollClient({ baseUrl: process.env.PLIMSOLL_URL!, token: process.env.PLIMSOLL_TOKEN }),
-  minimumIsolation: "kernel",
-});
-
-export const codeChat = chat.agent({
-  id: "code-chat",
-  tools: { executeCode: sandbox.executeCode },
-  onTurnStart: async ({ runId }) => sandbox.warm(runId),
-  onChatSuspend: async ({ runId }) => sandbox.dispose(runId),
-  onComplete: async ({ ctx }) => sandbox.dispose(ctx.run.id),
-  run: async ({ messages, tools, signal, streamText }) => streamText({ model, messages, tools, abortSignal: signal }),
-});
-```
-
-The full example, with a test that drives real turns through Trigger.dev's `mockChatAgent`:
-[examples/trigger-chat](https://github.com/plimsollmark/plimsoll/tree/main/examples/trigger-chat/).
-Its source sets a `container` floor for local development. The
-[deployable sister starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
-uses `kernel`, the add-on's default (the snippet above writes it out). Hostile
-production code needs the verified kernel or VM tier; choose `vm` when the threat
-model requires a VM boundary: `e2b` keeps cells until a suspend, and `dockercloud` runs
-every call fresh.
-
-The key is the run ID. To cap each user's sandboxes, name the run's user in the warm,
-as your server authenticated it: `sandbox.warm(runId, userId)`. Never take it from
-`clientData`, which the browser sets: a user who could choose it could close another
-user's sandboxes. The key is then the user and the run, `maxSessionsPerOwner` counts
-the worker's sandboxes per user, and a daemon with `SANDBOX_MAX_SESSIONS_PER_OWNER`
-counts them across every worker of the deployment. The user stays in the worker's
-memory, never in `chat.local`. Without it no per-user cap applies; `maxSessions`, when
-set, caps the sandboxes one worker holds.
-
-What the hooks cannot cover: a run that dies without reaching `onChatSuspend` or
-`onComplete` (its process killed, a crash) leaves its sandbox open until the add-on's idle
-close (`idleCloseMs`, default 10 minutes) or, if the process is gone too, the daemon's own
-idle suspend and session lifetime (`SANDBOX_SESSION_IDLE`, `SANDBOX_SESSION_LIFETIME`); a
-sandbox no call ever used is closed at the daemon's first idle timeout. A
-worker shutting down can close every sandbox it holds with `sandbox.sandboxes.disposeAll()`.
 
 ## Mastra
 
@@ -499,14 +441,11 @@ same owner to `dispose(threadId, resourceId, owner)`. The caps then count that o
 
 `go test ./clients/typescript/` serves the real RPC handler (the wasm provider for single
 runs, an in-memory session provider for sessions and cells, and a provider that answers a
-project with the plan it received, for the project a fresh call sends) and runs three
+project with the plan it received, for the project a fresh call sends) and runs two
 suites against them: the
-client's (needs only node), the add-ons' (needs `npm install` here), and the Trigger.dev
-example's (needs `npm install` in `examples/trigger-chat`; it waits out the example's
-3-second idle window, Trigger.dev's default being 30 seconds, to prove the suspend closes
-the sandbox). An ordinary Go test
+client's (needs only node) and the add-ons' (needs `npm install` here). An ordinary Go test
 skips a suite whose runtime or dependencies are absent. CI runs `make clients-suite`,
-which installs both npm lockfiles and sets `PLIMSOLL_REQUIRE_CLIENTS=1`, so a missing
+which installs the npm lockfile and sets `PLIMSOLL_REQUIRE_CLIENTS=1`, so a missing
 prerequisite or skipped Go test fails. The client's digests are also checked against the
 golden vectors of `record/record_test.go`, and the fresh-run runners are run on this
 machine's `node` and `python3` to check they print the last expression.

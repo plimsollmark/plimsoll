@@ -24,6 +24,7 @@ from plimsoll_client import (AtCapacityError, Client, InsufficientIsolationError
 from plimsoll_client.checkpoint import MemoryCheckpointStore
 from plimsoll_client.deepagents import PlimsollSandbox
 from plimsoll_client.types import LostCall, RunRecord, StepResult
+from plimsoll_client.files import FilesReadAnswer
 from plimsoll_client.workspace import MAX_READ_BYTES, MAX_WHOLE_BYTES, ExecOutcome, Workspace, WorkspaceCallError, WorkspacePathError
 from tests._env import setting
 
@@ -113,16 +114,20 @@ class FakeWorkspace:
         assert argv[:3] == ["wc", "-c", "--"], argv
         return outcome(stdout=f"{self.sizes[argv[-1]]} {argv[-1]}\n".encode())
 
-    # The whole-file reads are the real Workspace's, over this fake's read and run, so the
+    # The whole-file reads are the real Workspace's, over this fake's read, so the
     # backend's downloads past one call's budget run the code they run on a real session.
     read_whole = Workspace.read_whole
     read_pieces = Workspace.read_pieces
     read_head = Workspace.read_head
     _pieces = Workspace._pieces
-    _size = Workspace._size
 
-    def _file_path(self, path: str) -> str:
+    def _path(self, path: str, *, folder: bool) -> str:
         return path
+
+    def _read(self, rel: str, shown: Any, offset: int, max_bytes: int, cancel: Any) -> FilesReadAnswer:
+        # A read states the file's size as its open saw it, as a file call's does.
+        content = self.read(rel, max_bytes=max_bytes, offset=offset, cancel=cancel)
+        return FilesReadAnswer(content=content, size_at_open=self.sizes.get(rel, len(self.files.get(rel, b""))))
 
 
 class Backend:
@@ -302,6 +307,16 @@ class BackendTests(unittest.TestCase):
             ("rel", None, "invalid_path"),
             ("/work/odd", None, "/work/odd: head: something else"),
         ])
+
+    def test_a_typed_read_error_is_its_word_with_no_more_calls(self) -> None:
+        # A file call names a folder, a permission and a part that is not a folder itself.
+        import errno
+        b = Backend()
+        b.ws.errors = {"/work/d": IsADirectoryError(errno.EISDIR, "Is a directory", "/work/d"),
+                       "/work/s": PermissionError(errno.EACCES, "Permission denied", "/work/s"),
+                       "/work/f/x": NotADirectoryError(errno.ENOTDIR, "Not a directory", "/work/f/x")}
+        r = b.backend.download_files(["/work/d", "/work/s", "/work/f/x"])
+        self.assertEqual([x.error for x in r], ["is_directory", "permission_denied", "file_not_found"])
 
     def test_a_file_past_one_call_is_read_in_pieces_and_never_handed_over_cut(self) -> None:
         b = Backend()

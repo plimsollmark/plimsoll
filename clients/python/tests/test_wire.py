@@ -258,3 +258,22 @@ class OwnerDigestTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FileScopesTest(unittest.TestCase):
+    """The scopes a session states (OpenSessionResponse.file_scopes): names or numbers, each
+    once, in the enum's order; a value this client does not know is left out, never refused."""
+
+    def test_a_statement_reads_as_its_words(self) -> None:
+        from plimsoll_client._tables import FILES_SCOPE_NAMES, FILES_SCOPES
+
+        def read(v: object) -> tuple:
+            return Msg({"fileScopes": v}, "m").get_enum_set("fileScopes", FILES_SCOPES, FILES_SCOPE_NAMES)
+
+        self.assertEqual(Msg({}, "m").get_enum_set("fileScopes", FILES_SCOPES, FILES_SCOPE_NAMES), ())
+        self.assertEqual(read(["FILES_SCOPE_SANDBOX"]), ("sandbox",))
+        self.assertEqual(read(["FILES_SCOPE_SANDBOX", "FILES_SCOPE_WORK", 2]), ("work", "sandbox"))
+        self.assertEqual(read(["FILES_SCOPE_UNSPECIFIED", "FILES_SCOPE_LATER", 7, 0]), ())
+        for bad in (["FILES_SCOPE_WORK", True], [1.5], "FILES_SCOPE_WORK"):
+            with self.assertRaises(MalformedResponseError, msg=bad):
+                read(bad)

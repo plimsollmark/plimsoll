@@ -21,6 +21,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/internal/boundary"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // TestHostedMicroVMClaimsRefuseADoubleAnswer keeps the answers e2b and dockercloud share in
@@ -648,14 +649,17 @@ func TestE2BSingleRunsServeANodeTooOldForSessions(t *testing.T) {
 	if got := e.smokeStepNode(); got != "v20.9.0" {
 		t.Errorf("the smoke test kept the steps' node %q, want v20.9.0", got)
 	}
-	if res, err := e.RunJavaScript(ctx, Request{Code: `console.log(1)`, Timeout: 5 * time.Second}); err != nil || res.ExitCode != 0 {
+	res, err := e.RunJavaScript(ctx, Request{Code: `console.log(1)`, Timeout: 5 * time.Second})
+	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("a snippet on node v20.9.0: %+v, %v", res, err)
 	}
+	tiercheck.Stated(t, "snippet", res.Isolation, e.IsolationClass())
 	pres, err := e.RunProject(ctx, ProjectRequest{Files: []File{{Path: "main.js", Content: "console.log(1)"}},
 		Steps: []string{sessionkit.GuestNode + " main.js"}, Timeout: 5 * time.Second})
 	if err != nil || pres.Outcome != ProjectOutcomeCompleted {
 		t.Fatalf("a project on node v20.9.0: %+v, %v", pres, err)
 	}
+	tiercheck.Stated(t, "project", pres.Isolation, e.IsolationClass())
 	if len(calls.argvs) < 5 {
 		t.Fatalf("the fake saw %d process starts, want the smoke test's three, a snippet's and a step's", len(calls.argvs))
 	}

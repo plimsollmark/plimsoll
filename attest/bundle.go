@@ -980,7 +980,7 @@ func Replay(ctx context.Context, entries []Entry, v *Verifier, opts ReplayOption
 		if err != nil {
 			r.Err = err
 		} else {
-			r.Replayed = record.ResultDigest(got)
+			r.Replayed = record.ResultDigestFor(got, recs[i].Version)
 		}
 		out = append(out, r)
 	}
@@ -1069,7 +1069,7 @@ func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, opts Repl
 				if err != nil {
 					r.Err = err
 				} else {
-					r.Replayed = record.ResultDigest(got)
+					r.Replayed = record.ResultDigestFor(got, recs[i].Version)
 				}
 			}
 			out = append(out, r)

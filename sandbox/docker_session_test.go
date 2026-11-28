@@ -181,6 +181,47 @@ func TestDockerSessionSmokeTest(t *testing.T) {
 	}
 }
 
+// A Python cell in a session on the default image, which has no python3, is refused
+// before anything starts, marked not dispatched, reason unsupported, with the cause in
+// plimsoll's words: the image is stated to run javascript only and the startup check did
+// not show python3 there (release-66: a reader of the client README's first session example was told
+// only that the interpreter could not start, the cause in the daemon's log). The
+// session goes on, and a cell run by itself on that image is refused the same way.
+func TestDockerSessionPythonCellOnTheDefaultImageNamesTheCause(t *testing.T) {
+	t.Parallel()
+	d := sessionDocker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := d.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest: %v", err)
+	}
+	if langs := d.SessionEnvironments().Project.Languages; !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript}) {
+		t.Skipf("the default project image %s runs %v, not javascript alone", d.ProjectImage, langs)
+	}
+	const why = "the session's image is stated to run javascript, not python: a python cell needs python3 in the image, which plimsoll's startup check did not show there"
+	refused := func(what string, err error) {
+		t.Helper()
+		if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalUnsupported || !errors.Is(err, sandbox.ErrUnsupported) {
+			t.Fatalf("%s: %v (reason %q); want ErrUnsupported, not dispatched, reason unsupported", what, err, reason)
+		}
+	}
+	s := openDockerSession(t, d)
+	_, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "1 + 1"})
+	refused("a python cell", err)
+	if !strings.HasSuffix(err.Error(), why) {
+		t.Fatalf("a python cell reads %q; want it to end %q", err, why)
+	}
+	res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "6 * 7"})
+	if err != nil || res.ExitCode != 0 || res.Stdout != "42\n" {
+		t.Fatalf("the session after the refusal: %+v, %v; want a javascript cell printing 42", res, err)
+	}
+	err = sandbox.CheckRunCell(d, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "1 + 1"})
+	refused("a python cell run by itself", err)
+	if !strings.HasSuffix(err.Error(), "the project image is stated to run javascript, not python: a python cell needs python3 in the image, which plimsoll's startup check did not show there") {
+		t.Fatalf("a python cell run by itself reads %q", err)
+	}
+}
+
 // A suspend or a resume the caller gives up on is not cut short: docker finishes the
 // pause or unpause, the session's view of the container stays true, and the session
 // goes on. Cut short, a pause docker had taken left the session thinking the

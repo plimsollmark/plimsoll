@@ -27,6 +27,7 @@ from . import _validate as v
 from ._transport import in_thread
 from .checkpoint import CheckpointStore, SessionCheckpoint
 from .client import DEFAULT_REQUEST_TIMEOUT, Client, Session
+from .files import FilesOperation, FilesResult
 from .types import (
     CellResult,
     Info,
@@ -328,6 +329,24 @@ class AsyncSession:
             code,
             language,
             files=files,
+            timeout=timeout,
+            minimum_isolation=minimum_isolation,
+            software=software,
+            trace_id=trace_id,
+        )
+
+    async def run_files(
+        self,
+        op: FilesOperation,
+        *,
+        timeout: Optional[float] = None,
+        minimum_isolation: Optional[str] = None,
+        software: Optional[SoftwareRule] = None,
+        trace_id: Optional[str] = None,
+    ) -> FilesResult:
+        return await in_thread(
+            self.sync.run_files,
+            op,
             timeout=timeout,
             minimum_isolation=minimum_isolation,
             software=software,

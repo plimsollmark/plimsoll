@@ -38,11 +38,19 @@
     field(name, content) { this.parts.push(value(utf8(name)), value(content instanceof Uint8Array ? content : utf8(content))); return this; }
     sum() { return hash(concat(this.parts)); }
   }
+  // The request domain a request's protocol picks: that of the highest first protocol at or
+  // below it (tables.REQUEST_DOMAINS, record.RequestDomains). Protocol 1 requests used the
+  // first, which had no software rule; protocol 9 and later the third, which adds the files
+  // kind (record.requestDigest).
+  function requestDomain(protocol) {
+    const firsts = Object.keys(tables.REQUEST_DOMAINS).map(Number).sort((a, b) => a - b);
+    const first = firsts.filter(n => n <= Number(protocol)).pop() ?? firsts[0];
+    return tables.REQUEST_DOMAINS[first];
+  }
   function requestDigest(q) {
-    // Protocol 1 requests used the first request domain, which had no software rule; the
-    // Go record package reads both (record.requestDigest).
-    const first = Number(q.protocol) < 2;
-    const e = new Encoder(first ? 'plimsoll.run-request.v1' : 'plimsoll.run-request.v2');
+    const domain = requestDomain(q.protocol);
+    const first = domain === 'plimsoll.run-request.v1';
+    const e = new Encoder(domain);
     e.field('protocol', q.protocol).field('minimum_isolation', q.minimum_isolation).field('timeout_ms', q.timeout_ms);
     if (!first) {
       const rule = q.software_rule || {mode: '', identities: []};
@@ -70,9 +78,13 @@
     if (i < 0) throw new Error('Unknown project outcome');
     return i;
   }
-  function resultDigest(a) {
+  // The result domain is the record version's (tables.RESULT_DOMAINS: plimsoll.run-result.v1
+  // to version 5, plimsoll.run-result.v2 from 6); a project result's fields are the same in both.
+  function resultDigest(a, version) {
     const p = a.project;
-    const e = new Encoder('plimsoll.run-result.v1');
+    const domain = tables.RESULT_DOMAINS[Number(version)];
+    if (!domain) throw new Error('Only receipts of a published record version are supported');
+    const e = new Encoder(domain);
     e.field('kind', 'project').field('outcome', outcomeNumber(p)).field('outcome_detail', p.outcome_detail)
       .field('artifacts_truncated', p.artifacts_truncated).field('steps', p.steps.length);
     for (const s of p.steps) {
@@ -203,7 +215,7 @@
       const body = from64(env.payload);
       const statement = JSON.parse(decode.decode(body));
       const r = x.response.record, p = statement.predicate;
-      const reqHash = await requestDigest(x.request), resultHash = await resultDigest(x.response);
+      const reqHash = await requestDigest(x.request), resultHash = await resultDigest(x.response, r.version);
       const recHash = await recordDigest({...r, request_sha256: reqHash, result_sha256: resultHash});
       add('request', 'Request fingerprint', reqHash === r.request_sha256 && reqHash === p.request_sha256);
       add('result', 'Result fingerprint', resultHash === r.result_sha256 && resultHash === p.result_sha256);

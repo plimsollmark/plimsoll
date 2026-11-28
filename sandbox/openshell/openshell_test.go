@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -43,6 +44,7 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // echoScript is a `node -` stand-in: stdout is the code it received, exit 0.
@@ -115,12 +117,15 @@ func TestPolicyHashMatchesTheGateway(t *testing.T) {
 	}{
 		// The run policy as it was on 2026-09-28, with the Node runner's /runner.mjs read-only;
 		// runPolicy() is it without that path since the native helper (under /usr) replaced
-		// it, a policy no gateway has hashed for this test yet.
+		// it.
 		{"run policy of 2026-09-28", func() *sandboxv1.SandboxPolicy {
 			p := runPolicy()
 			p.Filesystem.ReadOnly = append(p.Filesystem.ReadOnly, "/runner.mjs")
 			return p
 		}(), "d1c56801c3fcf0b1d8473339f3b625b1cbf43d5401c1268026551dd28a39d871"},
+		// The run policy of the native helper, as a v0.1.10 gateway hashed it (the
+		// live suite's smoke line, 2026-11-25).
+		{"run policy, v0.1.10 gateway", runPolicy(), "6fea616f3f83e6fc7ddc89c594ee12853d92ccaaa623086573071da45042a6bd"},
 		{"gateway default", &sandboxv1.SandboxPolicy{
 			Version:    1,
 			Filesystem: &sandboxv1.FilesystemPolicy{IncludeWorkdir: true, ReadOnly: append(append([]string{}, sys...), "/var/log"), ReadWrite: []string{"/tmp", "/dev/null"}},
@@ -183,9 +188,10 @@ func TestRunJavaScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunJavaScript: %v", err)
 	}
-	if res.Stdout != code || res.ExitCode != 0 || res.TimedOut || res.Isolation != sandbox.IsolationContainer || res.Sandbox != Name {
+	if res.Stdout != code || res.ExitCode != 0 || res.TimedOut || res.Sandbox != Name {
 		t.Fatalf("got %+v", res)
 	}
+	tiercheck.Stated(t, "snippet", res.Isolation, sandbox.IsolationContainer)
 	e := f.lastExec()
 	if got := e.start.GetCommand(); len(got) != 2 || got[0] != "node" || got[1] != "-" || !e.start.GetNoLoginShell() || e.start.GetExecutionTimeout() == nil {
 		t.Fatalf("exec start = %v", e.start)
@@ -469,6 +475,7 @@ func TestRunProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunProject: %v", err)
 	}
+	tiercheck.Stated(t, "project", res.Isolation, p.IsolationClass())
 	e := f.lastExec()
 	if cmd := e.start.GetCommand(); strings.Join(cmd, "\x00") != strings.Join(runnerCommand, "\x00") || e.start.GetEnvironment()["PLIMSOLL_WORK"] != workDir {
 		t.Fatalf("runner exec %q env %v", cmd, e.start.GetEnvironment())
@@ -557,6 +564,25 @@ func TestRunProjectDeadline(t *testing.T) {
 // TestReadBackRefusals: any difference between what a run asked for and what the
 // gateway reads back refuses the run before any code executes, and the sandbox is
 // deleted.
+// unknownVarint is a field number the generated code does not define, set to 1, as a
+// newer gateway's field reaches this client.
+func unknownVarint(num protowire.Number) []byte {
+	return protowire.AppendVarint(protowire.AppendTag(nil, num, protowire.VarintType), 1)
+}
+
+// A v0.1.10 gateway stores an unset restart policy as NEVER: that reads back as asked.
+func TestRestartPolicyNeverIsAccepted(t *testing.T) {
+	t.Parallel()
+	f, p := newFake(t)
+	f.run = echoScript
+	f.mutateSpec = func(sb *openshellv1.Sandbox) {
+		sb.Spec.RestartPolicy = openshellv1.SandboxRestartPolicy_SANDBOX_RESTART_POLICY_NEVER
+	}
+	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "x"}); err != nil {
+		t.Fatalf("a sandbox whose restart policy reads back NEVER: %v", err)
+	}
+}
+
 func TestReadBackRefusals(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -642,6 +668,39 @@ func TestReadBackRefusals(t *testing.T) {
 		{"template annotations", func(f *fakeGateway) {
 			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.Annotations = map[string]string{"a": "b"} }
 		}, "template.annotations"},
+		// Fields of the v0.1.10 API (the protos were brought up from v0.1.2 on 2026-11-25).
+		{"restart policy", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) {
+				sb.Spec.RestartPolicy = openshellv1.SandboxRestartPolicy_SANDBOX_RESTART_POLICY_ALWAYS
+			}
+		}, "restart_policy"},
+		{"service routes", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+				c.ServiceRoutes = []*sandboxv1.SandboxServiceRoute{{Name: "web", TargetPort: 8080}}
+			}
+		}, "application route"},
+		{"cedar policy", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+				c.Policy.CedarPolicy = &sandboxv1.CedarPolicy{Source: "permit(principal, action, resource);"}
+			}
+		}, "differs from the policy sent"},
+		// A field from a newer gateway's API arrives undecoded and is refused, wherever
+		// it sits in what the read-back compares.
+		{"unknown spec field", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.ProtoReflect().SetUnknown(unknownVarint(99)) }
+		}, "openshell.v1.SandboxSpec field 99"},
+		{"unknown template field", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.ProtoReflect().SetUnknown(unknownVarint(98)) }
+		}, "openshell.v1.SandboxTemplate field 98"},
+		{"unknown config field", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) { c.ProtoReflect().SetUnknown(unknownVarint(97)) }
+		}, "GetSandboxConfigResponse field 97"},
+		{"unknown setting field", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+				c.Settings["another"] = &sandboxv1.EffectiveSetting{}
+				c.Settings["another"].ProtoReflect().SetUnknown(unknownVarint(96))
+			}
+		}, "EffectiveSetting field 96"},
 		{"error phase", func(f *fakeGateway) { f.failPhase = openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR }, "ImagePullFailed"},
 	} {
 		f, p := newFake(t)
@@ -1097,13 +1156,32 @@ func goodProbeReport() map[string]any {
 
 // goodHelper is the probe's reading of the image's project runner that passes: the native
 // helper this test binary carries for x86-64 (the one machine it is built for), root's, mode
-// 0755, on an x86-64 gateway, whatever machine this test runs on.
+// 0711, as the sandbox's user reads it (its size, its read refused, the line its identity
+// command prints), on an x86-64 gateway, whatever machine this test runs on.
 func goodHelper() map[string]any {
-	sum, err := nativehelper.SHA256(nativehelper.BuiltMachine)
+	prog, err := nativehelper.Program(nativehelper.BuiltMachine)
 	if err != nil {
 		panic(err)
 	}
-	return map[string]any{"type": "file", "uid": 0, "mode": 0o755, "size": 516768, "sha256": sum, "arch": "x64"}
+	id, err := nativehelper.Identity()
+	if err != nil {
+		panic(err)
+	}
+	size := len(prog)
+	return map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": size, "read": "EACCES", "arch": "x64", "identity": id}
+}
+
+// helperWith is goodHelper with key set to value, or removed when value is nil.
+func helperWith(kv ...any) map[string]any {
+	h := goodHelper()
+	for i := 0; i+1 < len(kv); i += 2 {
+		if kv[i+1] == nil {
+			delete(h, kv[i].(string))
+		} else {
+			h[kv[i].(string)] = kv[i+1]
+		}
+	}
+	return h
 }
 
 func TestSmokeTestAgainstFake(t *testing.T) {
@@ -1122,16 +1200,26 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 		{"survives the cancel", func(s *smokeFake) { s.surviveKill = true }, "left 2 of its processes"},
 		{"no project runner", func(s *smokeFake) { s.report["helper"] = map[string]any{"error": "ENOENT"} }, "there is no file at /usr/local/libexec/plimsoll-helper"},
 		{"another project runner", func(s *smokeFake) {
-			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64), "arch": "x64"}
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": 7, "read": "EACCES", "arch": "x64"}
 		}, "the native helper this plimsolld carries"},
 		{"a project runner the guest may write", func(s *smokeFake) {
-			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o777, "sha256": goodHelper()["sha256"], "arch": "x64"}
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o777, "size": goodHelper()["size"], "read": "EACCES", "arch": "x64"}
 		}, "writable by no one else"},
 		{"a setuid project runner", func(s *smokeFake) {
-			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o4755, "sha256": goodHelper()["sha256"], "arch": "x64"}
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o4711, "size": goodHelper()["size"], "read": "EACCES", "arch": "x64"}
 		}, "no setuid, setgid or sticky bit"},
+		// The sandbox's user cannot read the 0711 helper, so its size is all the bytes tell, and
+		// the build pinned 1b403142 (file contract 5) was the same size as this one: what tells
+		// them apart is the line the identity command prints, which that build lacks.
+		{"the earlier build 1b403142, of the same size", func(s *smokeFake) {
+			s.report["helper"] = helperWith("identity", nil, "identityError", "exit 2")
+		}, "did not report which build it is (its identity command: exit 2)"},
+		{"another build of the same size", func(s *smokeFake) {
+			s.report["helper"] = helperWith("identity", "inputs "+strings.Repeat("0", 64))
+		}, `reports the build "inputs 0000`},
+		{"no identity reported", func(s *smokeFake) { s.report["helper"] = helperWith("identity", nil) }, `reports the build ""`},
 		{"an arm64 gateway", func(s *smokeFake) {
-			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64), "arch": "arm64"}
+			s.report["helper"] = map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": 7, "read": "EACCES", "arch": "arm64"}
 		}, "the sandbox's machine is arm64 (node's process.arch); the native helper is built for x86-64 (x64) only"},
 	} {
 		f, p := newFake(t)
@@ -1481,13 +1569,14 @@ func TestProposalsWithNoValueAreOffOnlyOnAMeasuredRelease(t *testing.T) {
 	unset := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {}}
 	off := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}}}}
 	version := func(v string) func() (string, error) { return func() (string, error) { return v, nil } }
-	for _, v := range []string{"0.1.2", "v0.1.2", "0.1.2+fake", "0.1.2+build.7"} {
+	for _, v := range []string{"0.1.2", "v0.1.2", "0.1.2+fake", "0.1.2+build.7", "0.1.10", "v0.1.10"} {
 		if err := proposalsOff(unset, version(v)); err != nil {
 			t.Errorf("no value on %q: %v", v, err)
 		}
 	}
 	// A prerelease of the measured release was never measured itself (review, 2026-10-24).
-	for _, v := range []string{"0.1.3", "0.2.0", "", "unknown", "0.1.2-rc.1", "0.1.2-dev+changed-default"} {
+	// The releases between the two measured ones were never measured, nor was any later.
+	for _, v := range []string{"0.1.3", "0.1.9", "0.1.11", "0.1.100", "0.2.0", "", "unknown", "0.1.2-rc.1", "0.1.10-rc.1", "0.1.2-dev+changed-default"} {
 		if err := proposalsOff(unset, version(v)); err == nil {
 			t.Errorf("no value on %q was taken as off", v)
 		}

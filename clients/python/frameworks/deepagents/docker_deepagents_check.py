@@ -31,9 +31,10 @@ if not URL:
     pytest.fail("PLIMSOLL_DOCKER_SESSIONS_URL is not set: run through TestDeepAgentsDocker (make docker-suite)", pytrace=False)
 
 
-# Cases where langchain-tests 1.1.9 and deepagents 0.7.38 disagree with each other: they
-# fail the same way for a plain local-shell BaseSandbox that has nothing of plimsoll's
-# (checked 2026-11-14, private/langchain-plimsoll-plan-2026-11-14.md). deepagents' glob
+# Cases where langchain-tests and deepagents 0.7.38 disagree with each other: they fail
+# the same way for a plain local-shell BaseSandbox that has nothing of plimsoll's (checked
+# 2026-11-14 at langchain-tests 1.1.9, private/langchain-plimsoll-plan-2026-11-14.md; the
+# same seven, and only they, at 1.2.0 on 2026-11-25). deepagents' glob
 # answers absolute paths of regular files only ("glob's tool contract is absolute paths";
 # "Regular files only"), where the suite expects names relative to the search root and
 # directories; deepagents' write overwrites (its preflight only makes the parent

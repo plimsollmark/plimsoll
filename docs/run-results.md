@@ -45,6 +45,25 @@ if reason, ok := sandbox.NotDispatchedReason(err); ok {
 | `environment` | the selected software identity (the exact hash of the image the run would use) is unknown or outside the caller's required set; or, in a [session (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#session), the sandbox could not be confirmed (an interpreter could not start, or docker did not answer the read-back before the call) | yes, on a backend with an approved image; a session call can be sent to the same session again |
 | `capacity` | <dfn>*admission*</dfn> (the daemon's capacity check just before a run starts) or the rate limit <dfn>*shed*</dfn> the run: refused it at once instead of queueing it | yes, later or elsewhere |
 
+A `capacity` refusal also says which limit shed it, in the same detail (its `limit`
+field), so a caller can act on it without reading the refusal's words. In Go,
+`sandbox.CapacityLimitOf(err)`; in Python, `err.capacity_limit` (and `AtCapacityError.limit`);
+in TypeScript, `err.capacityLimit`.
+
+| Limit | Shed by | Does closing one of the caller's own sessions help? |
+|---|---|---|
+| `sessions` | the daemon's session places are all taken (`SANDBOX_MAX_SESSIONS`) | yes, it frees one |
+| `caller_sessions` | the caller holds as many sessions as one caller may (`SANDBOX_MAX_SESSIONS_PER_CALLER`) | yes, it frees one |
+| `owner_sessions` | the open's owner is at its cap (`SANDBOX_MAX_SESSIONS_PER_OWNER`) and every one of that owner's sessions is running a call, or the open was warm-only | no: the daemon already closes the owner's idle session itself |
+| `runs` | the daemon's runs in flight are at their cap (`SANDBOX_MAX_CONCURRENT`) | it may: a running session holds one, a suspended one none |
+| `caller_runs` | the caller's runs in flight are at their cap (`SANDBOX_PER_KEY_CONCURRENT`) | it may, as for `runs` |
+| `rate` | the caller's runs per minute are spent (`SANDBOX_RATE_PER_MIN`) | no, only time gives them back |
+| `paid_seconds` | today's paid seconds are spent, the caller's or the daemon's (`SANDBOX_PAID_SECONDS_PER_DAY`), until 00:00 UTC | no |
+| `queue` | a short line is full (requests being decoded, calls waiting for the ship scan, a call already waiting for its session's turn) | no; retry shortly |
+| `provider` | the provider's own capacity: a quota, a warm pool with no sandbox waiting, a provider shutting down | no |
+| `deadline` | the call's own time ran out (its deadline passed, or its caller canceled it) before any of it was sent: while it waited for its session's turn, or while the sandbox, its grant or the provider's checks were made ready; the error's code is `deadline_exceeded` or `canceled`, not `resource_exhausted` | no; retry with more time |
+| `unknown` | a daemon older than the limit field, which does not state it, or a limit this client has no name for | not known |
+
 **No mark means the run may have executed**, whatever the error code, so it is never a
 safe automatic retry. That is the conservative default: a refusal path that forgot to
 mark its error reads as "may have run", never as "safe to repeat". The same call works

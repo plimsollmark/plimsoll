@@ -37,20 +37,37 @@ type fakeSandbox struct {
 
 func (f *fakeSandbox) Name() string                           { return "fake" }
 func (f *fakeSandbox) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationVM }
+
+// The fake's results name its tier when the test's result leaves it unset, as every
+// provider's do: an answer naming none fails this package's run (TestMain, release-55).
 func (f *fakeSandbox) RunJavaScript(_ context.Context, req sandbox.Request) (sandbox.Result, error) {
 	f.lastReq = req
-	return f.jsResult, f.jsErr
+	res := f.jsResult
+	res.Isolation = fakeTier(res.Isolation)
+	return res, f.jsErr
 }
 func (f *fakeSandbox) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	f.lastProj = req
-	return f.projResult, f.projErr
+	res := f.projResult
+	res.Isolation = fakeTier(res.Isolation)
+	return res, f.projErr
 }
 func (f *fakeSandbox) RunModule(_ context.Context, req sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
 	f.lastMod = req
 	if f.modErr == nil && f.modResult.Outcome == sandbox.ProjectOutcomeUnspecified {
 		return sandbox.ModuleResult{}, sandbox.ErrUnsupported
 	}
-	return f.modResult, f.modErr
+	res := f.modResult
+	res.Isolation = fakeTier(res.Isolation)
+	return res, f.modErr
+}
+
+// fakeTier is tier, or the fake's own (IsolationClass) when tier is unset.
+func fakeTier(tier sandbox.IsolationClass) sandbox.IsolationClass {
+	if tier == sandbox.IsolationUnknown {
+		return sandbox.IsolationVM
+	}
+	return tier
 }
 
 // projectCapableFake wraps fakeSandbox with a declared project capability.
@@ -109,6 +126,22 @@ func TestDescribeReportsMeasuredCapabilities(t *testing.T) {
 	}
 	if resp.Msg.GetSupportsProject() || resp.Msg.GetSupportsJavascriptGrants() || resp.Msg.GetSupportsProjectGrants() || resp.Msg.GetProtocol() != protocol.Number {
 		t.Fatal("undeclared provider capabilities must be false and the protocol number stated")
+	}
+}
+
+// Docker Cloud refuses every host-API grant (its one network rule for the guard does
+// not hold a run to the guard), so Describe states no grant support for it, a guard
+// URL set or not.
+func TestDescribeStatesNoGrantsOnDockerCloud(t *testing.T) {
+	for _, guardURL := range []string{"", "https://guard.example.com/v1/dockercloud/guard"} {
+		svc := NewSandboxService(&sandbox.DockerCloud{API: "connect", GuardURL: guardURL})
+		resp, err := svc.Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{}))
+		if err != nil {
+			t.Fatalf("describe: %v", err)
+		}
+		if resp.Msg.GetSandbox() != "dockercloud" || resp.Msg.GetSupportsJavascriptGrants() || resp.Msg.GetSupportsProjectGrants() {
+			t.Fatalf("guard URL %q: describe = %+v, want dockercloud with no grant support", guardURL, resp.Msg)
+		}
 	}
 }
 

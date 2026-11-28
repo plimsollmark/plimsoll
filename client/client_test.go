@@ -268,22 +268,23 @@ func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testin
 	}
 }
 
-// This client states the head on every session call, so it states protocol 8, and a daemon
-// of the release before (protocol 7, which ignored the head and would run a call made from
-// stale state) refuses it before anything runs. So do the daemons before that: protocol 6,
-// whose clients accepted a record whose provider name holds a control or bidirectional
-// format character (record.ValidText, finding hunt-security-39, 2026-11-21), and protocol 5
-// (record version 4): without that bump, it would run the code, billed by the second on e2b
-// and dockercloud, and the client would then refuse its version 4 answer (finding
-// cyclonedx-20).
+// This client requires record version 6 of a live answer, so it states protocol 9, and a
+// daemon of the release before (protocol 8, which writes version 5: results under
+// plimsoll.run-result.v1, which has no files kind) refuses it before anything runs, instead
+// of running the code and giving an answer this client would refuse. So do the daemons
+// before that: protocol 7, which ignored the head on every session call and would run a call
+// made from stale state; protocol 6, whose clients accepted a record whose provider name
+// holds a control or bidirectional format character (record.ValidText, finding
+// hunt-security-39, 2026-11-21); and protocol 5 (record version 4), billed by the second on
+// e2b and dockercloud (finding cyclonedx-20).
 func TestAnOlderDaemonRefusesThisClientBeforeDispatch(t *testing.T) {
-	if Protocol != 8 || record.Version != 5 {
-		t.Fatalf("protocol %d with record version %d; this test pins protocol 8 to version 5 and the session head's rule", Protocol, record.Version)
+	if Protocol != 9 || record.Version != 6 {
+		t.Fatalf("protocol %d with record version %d; this test pins protocol 9 to version 6", Protocol, record.Version)
 	}
 	if record.ValidText("wslc\x1b[2Jdocker") {
 		t.Fatal("record.ValidText accepts a provider name with an escape; protocol 7 is the client's refusal of one")
 	}
-	for _, serves := range []uint32{5, 6, 7} {
+	for _, serves := range []uint32{5, 6, 7, 8} {
 		backend := &otherProtocolServer{serves: serves}
 		mux := http.NewServeMux()
 		mux.Handle(rpc.NewHandler(backend))

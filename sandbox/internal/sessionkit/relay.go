@@ -387,7 +387,7 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		return CellOutcome{}, fmt.Errorf("unknown interpreter language %q", c.Language)
 	}
 	if len(c.Stated) > 0 && !slices.Contains(c.Stated, c.Language) {
-		return CellOutcome{}, fmt.Errorf("%w: the environment states %s, not %s", ErrNoInterpreter, strings.Join(c.Stated, ", "), c.Language)
+		return CellOutcome{}, fmt.Errorf("%w: %s", ErrNoInterpreter, NoInterpreter("the session's image", c.Language, strings.Join(c.Stated, ", ")))
 	}
 	nonce := providerkit.RandHex(16)
 	var outcome CellOutcome

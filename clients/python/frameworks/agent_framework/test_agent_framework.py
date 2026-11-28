@@ -916,8 +916,11 @@ class AgentFrameworkPlimsollPackageTests(unittest.TestCase):
         self.assertIs(agent_framework_plimsoll.Client, Client)
         self.assertIs(agent_framework_plimsoll.PlimsollShellResult, PlimsollShellResult)
         self.assertIs(agent_framework_plimsoll.call_labels, call_labels)
+        self.assertIs(agent_framework_plimsoll.PlimsollFileStore, paf.PlimsollFileStore)
+        self.assertIs(agent_framework_plimsoll.harness_options, paf.harness_options)
         self.assertEqual(sorted(agent_framework_plimsoll.__all__),
-                         ["Client", "CodeExecutor", "PlimsollShellResult", "PlimsollShellTool", "call_labels", "plimsoll_code_tool"])
+                         ["Client", "CodeExecutor", "PlimsollFileStore", "PlimsollShellResult", "PlimsollShellTool", "call_labels",
+                          "harness_options", "plimsoll_code_tool"])
 
     def test_version_is_plimsoll_clients(self) -> None:
         import agent_framework_plimsoll

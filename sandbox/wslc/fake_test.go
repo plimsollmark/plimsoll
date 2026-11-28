@@ -51,6 +51,7 @@ type fakeSetup struct {
 	Moby             string            `json:"moby"`
 	ProbeStep        string            `json:"probeStep"`
 	ProbeStdout      string            `json:"probeStdout"`
+	RootHelper       string            `json:"rootHelper"`
 	Mode             string            `json:"mode"`
 	StepExit         int               `json:"stepExit"`
 	RemoveFails      bool              `json:"removeFails"`
@@ -160,13 +161,31 @@ func goodProbe() map[string]any { return goodProbeFor(Config{}) }
 
 // goodProbeFor is the report a container built by runArgv with cfg gives.
 // goodHelper is the probe's reading of an image's project runner that passes: the native
-// helper this test binary carries, root's, mode 0755.
+// helper this test binary carries, root's, mode 0711, as the guest reads it: its size, its
+// read refused, and the line its identity command prints.
 func goodHelper() map[string]any {
-	sum, err := nativehelper.SHA256(runtime.GOARCH)
+	prog, err := nativehelper.Program(runtime.GOARCH)
 	if err != nil {
 		panic(err)
 	}
-	return map[string]any{"type": "file", "uid": 0, "mode": 0o755, "size": 516768, "sha256": sum}
+	id, err := nativehelper.Identity()
+	if err != nil {
+		panic(err)
+	}
+	return map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": len(prog), "read": "EACCES", "identity": id}
+}
+
+// goodRootHelper is the smoke test's root check's reading of the same file: its bytes read,
+// so its SHA-256 as well.
+func goodRootHelper() map[string]any {
+	want, err := nativehelper.Pinned(runtime.GOARCH)
+	if err != nil {
+		panic(err)
+	}
+	h := goodHelper()
+	delete(h, "read")
+	h["sha256"] = want.SHA256
+	return h
 }
 
 func goodProbeFor(cfg Config) map[string]any {
@@ -212,13 +231,17 @@ func goodSetupFor(t *testing.T, cfg Config) fakeSetup {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rootHelper, err := json.Marshal(goodRootHelper())
+	if err != nil {
+		t.Fatal(err)
+	}
 	images, _ := json.Marshal([]map[string]any{{
 		"Id": fakeImageID, "RepoDigests": []string{"docker.io/plimsoll/sandbox@sha256:" + strings.Repeat("cd", 32)},
 		"Architecture": "amd64", "Os": "linux",
 		"Config": map[string]any{"Env": []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "NODE_VERSION=22.11.0", "YARN_VERSION=1.22.22"}},
 	}})
 	return fakeSetup{Version: "3.0.5.0", Images: images, Kernel: fakeKernel, BootID: fakeBootID, Moby: "Docker version 28.5.1, build e180ab8",
-		ProbeStep: probeStep, ProbeStdout: string(probe), DefaultSession: "wslc-cli-test", GPU: fakeGPU, VMMounts: fakeVMMounts,
+		ProbeStep: probeStep, ProbeStdout: string(probe), RootHelper: string(rootHelper), DefaultSession: "wslc-cli-test", GPU: fakeGPU, VMMounts: fakeVMMounts,
 		LAD: `C:\Users\fake\AppData\Local`, ACL: ownerOnlyACL}
 }
 
@@ -285,7 +308,23 @@ func (f *fake) runs() []fakeCall {
 		if len(a) >= 2 && a[0] == "--session" {
 			a = a[2:]
 		}
-		if c.Prog == "wslc.exe" && len(a) >= 2 && a[0] == "container" && a[1] == "run" {
+		if c.Prog == "wslc.exe" && len(a) >= 2 && a[0] == "container" && a[1] == "run" && c.Stdin != nativehelper.CheckStdinJS {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// helperChecks are the recorded `container run` calls of the smoke test's root check of the
+// project runner, which runs does not count.
+func (f *fake) helperChecks() []fakeCall {
+	var out []fakeCall
+	for _, c := range f.calls() {
+		a := c.Argv
+		if len(a) >= 2 && a[0] == "--session" {
+			a = a[2:]
+		}
+		if c.Prog == "wslc.exe" && len(a) >= 2 && a[0] == "container" && a[1] == "run" && c.Stdin == nativehelper.CheckStdinJS {
 			out = append(out, c)
 		}
 	}

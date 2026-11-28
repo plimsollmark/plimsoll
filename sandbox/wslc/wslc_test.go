@@ -17,6 +17,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/nativehelper"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // ready is a provider on a good fake whose smoke test has passed, with the calls so far
@@ -313,31 +314,36 @@ func TestSmokeTestRefusesAWeakerContainer(t *testing.T) {
 		mut  func(probe)
 		want string
 	}{
-		"no seccomp filter":       {status("Seccomp", "0"), "not a filter"},
-		"a capability left":       {status("CapEff", "00000000a80425fb"), "CapEff"},
-		"bounding set left":       {status("CapBnd", "00000000a80425fb"), "CapBnd"},
-		"root":                    {status("Uid", "0\t0\t0\t0"), "--user was not applied"},
-		"a supplementary group":   {status("Groups", "61000 27"), "supplementary"},
-		"a network":               {set("interfaces", []string{"lo", "eth0"}), "loopback alone"},
-		"a connection":            {set("connect", map[string]string{"1.1.1.1:443": "connected"}), "reached"},
-		"a writable image dir":    {set("writable", []string{"/dev/shm", "/opt/x", "/tmp", "/var/tmp", "/work"}), "accepted a write"},
-		"a tmpfs refused writes":  {set("writable", []string{"/dev/shm", "/tmp", "/work"}), "accepted a write"},
-		"walk cut short":          {set("walk", map[string]any{"entries": 400001, "truncated": true}), "stopped"},
-		"memory not applied":      {set("memoryMax", "max"), "memory.max"},
-		"nproc not applied":       {set("limits", map[string]string{"Max processes": "unlimited unlimited", "Max open files": "4096 4096", "Max core file size": "0 0"}), "Max processes"},
-		"a search domain":         {set("resolv", "nameserver 127.0.0.1\nsearch corp.example\n"), "search"},
-		"an outside nameserver":   {set("resolv", "nameserver 10.255.255.254\n"), "nameserver"},
-		"an outside variable":     {set("envNames", []string{"HOME", "PATH", "WSL_INTEROP"}), "WSL_INTEROP"},
-		"runner memory readable":  {set("runnerMem", "open"), "not non-dumpable"},
-		"no runner":               {set("helper", map[string]any{"error": "ENOENT"}), "no file at /usr/local/libexec/plimsoll-helper"},
-		"another runner":          {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o755, "sha256": strings.Repeat("0", 64)}), "the native helper this plimsolld carries"},
-		"a runner the guest owns": {set("helper", map[string]any{"type": "file", "uid": 61000, "mode": 0o755, "sha256": goodHelper()["sha256"]}), "must be root's"},
-		"another kernel":          {set("kernel", "6.6.87.2-microsoft-standard-WSL2"), "kernel"},
-		"another boot":            {set("bootID", "ffffffff-0000-0000-0000-000000000000"), "boot ID"},
-		"a windows folder":        {mount("/var/tmp", "605 600 0:65 / /mnt/host rw,relatime - 9p drvfs rw,aname=drvfs;path=C:\\"), "Windows folder"},
-		"var tmp not tmpfs":       {mount("/var/tmp", "605 600 0:65 / /var/tmp rw,relatime - overlay overlay rw"), "not tmpfs"},
-		"tmp may run programs":    {mount(" /tmp ", "604 600 0:64 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=16384k"), "noexec"},
-		"work unbounded":          {mount(" /work ", "606 600 0:66 / /work rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,mode=1777"), "size="},
+		"no seccomp filter":        {status("Seccomp", "0"), "not a filter"},
+		"a capability left":        {status("CapEff", "00000000a80425fb"), "CapEff"},
+		"bounding set left":        {status("CapBnd", "00000000a80425fb"), "CapBnd"},
+		"root":                     {status("Uid", "0\t0\t0\t0"), "--user was not applied"},
+		"a supplementary group":    {status("Groups", "61000 27"), "supplementary"},
+		"a network":                {set("interfaces", []string{"lo", "eth0"}), "loopback alone"},
+		"a connection":             {set("connect", map[string]string{"1.1.1.1:443": "connected"}), "reached"},
+		"a writable image dir":     {set("writable", []string{"/dev/shm", "/opt/x", "/tmp", "/var/tmp", "/work"}), "accepted a write"},
+		"a tmpfs refused writes":   {set("writable", []string{"/dev/shm", "/tmp", "/work"}), "accepted a write"},
+		"walk cut short":           {set("walk", map[string]any{"entries": 400001, "truncated": true}), "stopped"},
+		"memory not applied":       {set("memoryMax", "max"), "memory.max"},
+		"nproc not applied":        {set("limits", map[string]string{"Max processes": "unlimited unlimited", "Max open files": "4096 4096", "Max core file size": "0 0"}), "Max processes"},
+		"a search domain":          {set("resolv", "nameserver 127.0.0.1\nsearch corp.example\n"), "search"},
+		"an outside nameserver":    {set("resolv", "nameserver 10.255.255.254\n"), "nameserver"},
+		"an outside variable":      {set("envNames", []string{"HOME", "PATH", "WSL_INTEROP"}), "WSL_INTEROP"},
+		"runner memory readable":   {set("runnerMem", "open"), "not non-dumpable"},
+		"no runner":                {set("helper", map[string]any{"error": "ENOENT"}), "no file at /usr/local/libexec/plimsoll-helper"},
+		"another runner":           {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": 7, "read": "EACCES"}), "the native helper this plimsolld carries"},
+		"a runner the guest owns":  {set("helper", map[string]any{"type": "file", "uid": 61000, "mode": 0o711, "size": goodHelper()["size"], "read": "EACCES"}), "must be root's"},
+		"a runner the guest reads": {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o755, "size": goodHelper()["size"], "sha256": strings.Repeat("0", 64)}), "readable by root alone"},
+		// The build pinned 1b403142 (file contract 5) was this build's size: the guest's reading
+		// tells them apart by the identity line alone, which that build lacks.
+		"the earlier runner 1b403142": {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": goodHelper()["size"], "read": "EACCES", "identityError": "exit 2"}), "did not report which build it is"},
+		"a runner of another build":   {set("helper", map[string]any{"type": "file", "uid": 0, "mode": 0o711, "size": goodHelper()["size"], "read": "EACCES", "identity": "inputs " + strings.Repeat("0", 64)}), "reports the build"},
+		"another kernel":              {set("kernel", "6.6.87.2-microsoft-standard-WSL2"), "kernel"},
+		"another boot":                {set("bootID", "ffffffff-0000-0000-0000-000000000000"), "boot ID"},
+		"a windows folder":            {mount("/var/tmp", "605 600 0:65 / /mnt/host rw,relatime - 9p drvfs rw,aname=drvfs;path=C:\\"), "Windows folder"},
+		"var tmp not tmpfs":           {mount("/var/tmp", "605 600 0:65 / /var/tmp rw,relatime - overlay overlay rw"), "not tmpfs"},
+		"tmp may run programs":        {mount(" /tmp ", "604 600 0:64 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=16384k"), "noexec"},
+		"work unbounded":              {mount(" /work ", "606 600 0:66 / /work rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,mode=1777"), "size="},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -358,6 +364,59 @@ func TestSmokeTestRefusesAWeakerContainer(t *testing.T) {
 			if len(f.runs()) != 0 {
 				t.Fatal("a run started after a failed smoke test")
 			}
+		})
+	}
+}
+
+// The smoke test's root check of the project runner: one container of its own, as uid 0 with
+// no capability or network, the program on its input and every argument safeArg's; and an
+// image whose runner, read as root, is the earlier build 1b403142 (the same size as this one),
+// or reads otherwise than as root, is refused, and runs stay refused after.
+func TestSmokeTestReadsTheRunnerAsRoot(t *testing.T) {
+	f := newFake(t, goodSetup(t))
+	if err := f.provider().SmokeTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	checks := f.helperChecks()
+	if len(checks) != 1 {
+		t.Fatalf("%d root checks of the project runner; want one", len(checks))
+	}
+	a := strings.Join(checks[0].Argv, " ")
+	for _, want := range []string{"--user 0:0", "--cap-drop ALL", "--network none", "--interactive", "--rm", "--entrypoint /usr/bin/env " + fakeImageID + " -i PATH="} {
+		if !strings.Contains(a, want) {
+			t.Fatalf("the root check %q does not hold %q", a, want)
+		}
+	}
+	if err := checkArgs(checks[0].Argv); err != nil {
+		t.Fatalf("the root check's arguments: %v", err)
+	}
+	for name, c := range map[string]struct {
+		edit func(map[string]any)
+		want string
+	}{
+		"the earlier build 1b403142": {func(h map[string]any) {
+			h["sha256"] = "1b403142dc274dd62c6c6eeba429e26833bb7c792ccf79687fb469b48e2d137a"
+			delete(h, "identity")
+			h["identityError"] = "exit 2"
+		}, "has sha256 1b403142"},
+		"another identity":  {func(h map[string]any) { h["identity"] = "inputs none" }, `reports the build "inputs none"`},
+		"read as the guest": {func(h map[string]any) { delete(h, "sha256"); h["read"] = "EACCES" }, "so the check must read it as root"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := goodRootHelper()
+			c.edit(h)
+			b, _ := json.Marshal(h)
+			s := goodSetup(t)
+			s.RootHelper = string(b)
+			f := newFake(t, s)
+			p := f.provider()
+			err := p.SmokeTest(context.Background())
+			if err == nil || !strings.Contains(err.Error(), c.want) || !errors.Is(err, nativehelper.ErrNotTheHelper) {
+				t.Fatalf("smoke test: %v, want a refusal naming %q", err, c.want)
+			}
+			f.clearCalls()
+			_, err = p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+			refusal(t, err, sandbox.RefusalEnvironment)
 		})
 	}
 }
@@ -412,9 +471,10 @@ func TestRunProjectAndSnippet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Outcome != sandbox.ProjectOutcomeCompleted || len(res.Steps) != 2 || res.Steps[1].Stdout != "ran: node a.js --again\n" ||
-		res.Isolation != sandbox.IsolationContainer || res.Sandbox != Name || res.EnvironmentIdentity != "wslc-image:"+fakeImageID {
+		res.Sandbox != Name || res.EnvironmentIdentity != "wslc-image:"+fakeImageID {
 		t.Fatalf("project result: %+v", res)
 	}
+	tiercheck.Stated(t, "project", res.Isolation, p.IsolationClass())
 	if len(f.removes()) != 0 {
 		t.Fatal("a clean run was force-removed")
 	}
@@ -422,9 +482,10 @@ func TestRunProjectAndSnippet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snip.Stdout != "ran: "+snippetStep+"\n" || snip.Stderr != "err\n" || snip.ExitCode != 0 || snip.Isolation != sandbox.IsolationContainer {
+	if snip.Stdout != "ran: "+snippetStep+"\n" || snip.Stderr != "err\n" || snip.ExitCode != 0 {
 		t.Fatalf("snippet result: %+v", snip)
 	}
+	tiercheck.Stated(t, "snippet", snip.Isolation, p.IsolationClass())
 	runs := f.runs()
 	if !strings.Contains(runs[len(runs)-1].Stdin, `"path":"snippet.js","content":"console.log(2)"`) {
 		t.Fatalf("the snippet's plan: %s", runs[len(runs)-1].Stdin)
@@ -650,5 +711,24 @@ func TestSharedModeWaitingRunIsRefusedWithTheMark(t *testing.T) {
 	}
 	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatalf("the run after the first one ended: %v", err)
+	}
+}
+
+// The provider states JavaScript alone, the runner's own language, and its startup test
+// never looks for python3 (claims.go), so the refusal of a Python cell run by itself must
+// not say that a startup check found none: an operator whose image holds python3 would be
+// sent looking for a program that is there.
+func TestPythonCellRefusalClaimsNoLookForPython(t *testing.T) {
+	p, f := ready(t)
+	err := sandbox.CheckRunCell(p, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "print(1)"})
+	refusal(t, err, sandbox.RefusalUnsupported)
+	if strings.Contains(err.Error(), "found no python3") {
+		t.Errorf("the refusal %q claims a look for python3 the provider never made", err)
+	}
+	if !strings.Contains(err.Error(), "python3") {
+		t.Errorf("the refusal %q does not name the program a Python cell needs", err)
+	}
+	if n := len(f.calls()); n != 0 {
+		t.Errorf("the refusal started %d processes", n)
 	}
 }

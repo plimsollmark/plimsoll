@@ -493,11 +493,10 @@ func (p *Provider) ready(ctx context.Context, grant *sandbox.HostAPIGrant, floor
 	tier, err := p.check(c)
 	cancel()
 	if err != nil {
-		reason := sandbox.RefusalEnvironment
 		if ctx.Err() != nil {
-			reason = sandbox.RefusalCapacity
+			return tier, sandbox.RefuseDeadline(ctx, err)
 		}
-		return tier, sandbox.NotDispatched(reason, providerkit.DeadlineAware(ctx, err))
+		return tier, sandbox.NotDispatched(sandbox.RefusalEnvironment, providerkit.DeadlineAware(ctx, err))
 	}
 	return tier, sandbox.CheckMinimumIsolation(tier, floor)
 }

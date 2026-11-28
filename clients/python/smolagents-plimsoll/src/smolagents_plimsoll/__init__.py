@@ -23,4 +23,4 @@ from plimsoll_client import Client
 from plimsoll_client.smolagents import PlimsollCellRecord, PlimsollExecutor, code_agent
 
 __all__ = ["Client", "PlimsollCellRecord", "PlimsollExecutor", "code_agent"]
-__version__ = "0.29.0"
+__version__ = "0.30.0"

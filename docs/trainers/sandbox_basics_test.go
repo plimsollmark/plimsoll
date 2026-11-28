@@ -243,7 +243,7 @@ func TestSandboxBasicsEvidence(t *testing.T) {
 		if got := record.RunRequestDigest(req); got != rec.RequestSHA256 {
 			t.Errorf("line %d: request digest %s, record states %s", i+1, got, rec.RequestSHA256)
 		}
-		if got := record.ResultDigest(resp); got != rec.ResultSHA256 {
+		if got := record.ResultDigestFor(resp, rec.Version); got != rec.ResultSHA256 {
 			t.Errorf("line %d: result digest %s, record states %s", i+1, got, rec.ResultSHA256)
 		}
 		if got := record.Digest(rec); got != rec.SHA256 {

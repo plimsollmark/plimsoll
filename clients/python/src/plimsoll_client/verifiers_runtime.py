@@ -203,6 +203,20 @@ class _RecordingSession:
             self._backend._note_record(op, result.record)
         return result
 
+    def run_files(self, op: Any, **kwargs: Any) -> Any:
+        # A file call is labeled by its operation (FilesRead is "read", FilesMakeDir "makedir").
+        label = type(op).__name__.removeprefix("Files").lower() or "other"
+        try:
+            result = self._session.run_files(op, **kwargs)
+        except PlimsollError as e:
+            record = getattr(e, "record", None)
+            if isinstance(record, RunRecord):
+                self._backend._note_record(label, record)
+            raise
+        if result.record is not None:
+            self._backend._note_record(label, result.record)
+        return result
+
     def close(self) -> Any:
         return self._session.close()
 

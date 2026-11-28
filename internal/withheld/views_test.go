@@ -298,8 +298,8 @@ func TestViewsAddNoFindsOnOrdinaryText(t *testing.T) {
 }
 
 // The work stays bounded per run in every view: at most MaxValueRuns hashes for each
-// run of letters and digits in the written, decoded and base64 views, and one per blob
-// for file entries. Each input here is built to make one view as costly as it can be.
+// run of letters and digits in the written, decoded and base64 views, and two per blob
+// for file entries (its normalized form and its bytes as written). Each input here is built to make one view as costly as it can be.
 func TestScanViewsWorkIsBoundedPerRun(t *testing.T) {
 	var entries []map[string]any
 	for n := MinValueBytes; n <= MaxValueBytes; n++ {
@@ -315,7 +315,7 @@ func TestScanViewsWorkIsBoundedPerRun(t *testing.T) {
 		}
 		base64Blobs(data, func(b []byte) { runs += Runs(b); blobCount++ })
 		hashes := s.scanViews(data, func(int) { t.Fatalf("%s: nothing here is withheld", name) }, nil)
-		if limit := MaxValueRuns*runs + blobCount; hashes > limit {
+		if limit := MaxValueRuns*runs + 2*blobCount; hashes > limit {
 			t.Errorf("%s: %d hashes, over the bound %d", name, hashes, limit)
 		}
 		if hashes > 14*len(data) {
@@ -420,7 +420,7 @@ func FuzzScanViews(f *testing.F) {
 			runs += Runs(u)
 		}
 		base64Blobs(data, func(b []byte) { runs += Runs(b); blobCount++ })
-		if hashes := s.scanViews(data, func(int) {}, nil); hashes > MaxValueRuns*runs+blobCount {
+		if hashes := s.scanViews(data, func(int) {}, nil); hashes > MaxValueRuns*runs+2*blobCount {
 			t.Fatalf("%d hashes for %d runs and %d blobs", hashes, runs, blobCount)
 		}
 		foundIn(s, []Part{{Where: "code", Data: data, Whole: true}})

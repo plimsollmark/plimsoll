@@ -78,7 +78,7 @@ var ErrNoWarmSandbox = fmt.Errorf("%w: no warm sandbox is waiting, and a warm-on
 
 // RefuseNoWarmSandbox is the refusal of a warm-only open that found no member: not
 // dispatched, reason capacity, nothing made.
-func RefuseNoWarmSandbox() error { return NotDispatched(RefusalCapacity, ErrNoWarmSandbox) }
+func RefuseNoWarmSandbox() error { return AtCapacity(CapacityProvider, ErrNoWarmSandbox) }
 
 // SessionLanguages checks a session's language hint and returns the languages in it
 // that its environment states, without repeats, in the stated order. A language
@@ -253,9 +253,10 @@ func nodeScriptArgv(script string, args ...string) []string {
 // RefuseGaveUp is the error a session call returns when its context ends before any
 // of it ran: while it waited for the session's turn (held by a call in flight, or by
 // the sweep after the previous one), or while the sandbox was made ready for it. It
-// is marked as refused before dispatch, reason capacity: the session was busy.
+// is RefuseDeadline of the context's error alone: limit deadline, since what ran out
+// was the call's own time; a line that was full refuses at once, limit queue.
 func RefuseGaveUp(ctx context.Context) error {
-	return NotDispatched(RefusalCapacity, ctx.Err())
+	return RefuseDeadline(ctx, nil)
 }
 
 // RefuseCell is the refusal for a cell none of whose code ran, from the error the
@@ -271,8 +272,9 @@ func RefuseGaveUp(ctx context.Context) error {
 //     reason environment, never ErrUnsupported: a retry starts the interpreter again.
 //   - Files that could not be written (sessionkit.ErrFiles): a request this session's
 //     work directory cannot take. The interpreter and the session go on.
-//   - A deadline before the code was sent (sessionkit.ErrUnsent): DeadlineExceeded,
-//     marked; the next cell starts a fresh interpreter and says so.
+//   - A deadline before the code was sent (sessionkit.ErrUnsent): RefuseDeadline, so
+//     DeadlineExceeded (or Canceled), limit deadline; the next cell starts a fresh
+//     interpreter and says so.
 func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 	switch {
 	case errors.Is(err, sessionkit.ErrNoInterpreter):
@@ -288,9 +290,8 @@ func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 	case errors.Is(err, sessionkit.ErrFiles):
 		return NotDispatched(RefusalRequest, fmt.Errorf("%w: %v", ErrInvalidRequest, err)), true
 	case errors.Is(err, sessionkit.ErrUnsent):
-		// DeadlineExceeded, so the caller reads it as its timeout; the mark says no
-		// code of the cell ran.
-		return NotDispatched(RefusalCapacity, fmt.Errorf("%w: %v", context.DeadlineExceeded, err)), true
+		// The caller reads it as its timeout; the mark says no code of the cell ran.
+		return RefuseDeadline(ctx, err), true
 	}
 	return nil, false
 }

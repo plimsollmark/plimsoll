@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 # need Python 3.11 or later.
 [project]
 name = "langchain-plimsoll"
-version = "0.29.0"
+version = "0.30.0"
 description = "A LangChain tool and a Deep Agents sandbox backend that run agent-written code in plimsoll, a self-hosted sandbox that refuses to run below the isolation you require"
 readme = "README.md"
 license = "Apache-2.0"
@@ -19,7 +19,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "langchain-core==1.8.0",
-    "plimsoll-client==0.29.0",
+    "plimsoll-client==0.30.0",
 ]
 keywords = ["langchain", "langgraph", "deepagents", "sandbox", "code execution", "agents", "gvisor"]
 classifiers = [

@@ -164,9 +164,9 @@ console.log(`PASS: ${names.length} receipts (${verdicts} with a verdict), seal, 
 if (process.argv[2]) {
   for (const v of JSON.parse(readFileSync(process.argv[2]))) {
     assert.equal(await PlimsollReceipt.requestDigest(v.exchange.request), v.request, 'Go request vector');
-    assert.equal(await PlimsollReceipt.resultDigest(v.exchange.response), v.result, 'Go raw-byte result vector');
+    assert.equal(await PlimsollReceipt.resultDigest(v.exchange.response, v.exchange.response.record.version), v.result, 'Go raw-byte result vector');
     assert.equal(await PlimsollReceipt.recordDigest(v.exchange.response.record), v.record, 'Go record vector');
     assert.equal(await PlimsollReceipt.fileSetDigest(v.files), v.fileSet, 'Go UTF-8 path-order vector');
   }
-  console.log('PASS: Go vectors for protocols 1/2/3/4, Unicode paths, raw outputs, truncation and software rules');
+  console.log('PASS: Go vectors for protocols 1/2/3/4/9, Unicode paths, raw outputs, truncation and software rules');
 }

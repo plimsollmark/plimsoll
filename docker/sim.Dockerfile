@@ -174,7 +174,7 @@ ARG TARGETARCH
 COPY --from=nativehelper plimsoll-helper_${TARGETARCH} plimsoll-helper.sha256 /h/
 RUN cd /h && pin="$(grep -x "[0-9a-f]\{64\}  plimsoll-helper_${TARGETARCH}" plimsoll-helper.sha256)" \
  && echo "$pin" | sha256sum -c - \
- && install -m 0755 plimsoll-helper_${TARGETARCH} /plimsoll-helper
+ && install -m 0711 plimsoll-helper_${TARGETARCH} /plimsoll-helper
 
 # ---- runtime: the project image contract, plus the worker and the models --------
 FROM ${BASE_NODE_SLIM}

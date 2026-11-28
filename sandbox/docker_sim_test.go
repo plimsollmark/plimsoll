@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // simProjectImage is the tag `make docker-images` gives docker/sim.Dockerfile.
@@ -201,6 +203,7 @@ func TestDockerRunModule(t *testing.T) {
 	if res.Outcome != ProjectOutcomeCompleted {
 		t.Fatalf("outcome = %s (%s); stderr=%q", res.Outcome, res.Detail, res.Stderr)
 	}
+	tiercheck.Stated(t, "module", res.Isolation, d.IsolationClass())
 	t.Logf("worker: %s", strings.TrimSpace(res.Stdout))
 	if res.Width != 2 || len(res.Runs) != simRows {
 		t.Fatalf("width %d, %d runs; want 2, %d", res.Width, len(res.Runs), simRows)

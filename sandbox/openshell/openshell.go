@@ -1,6 +1,6 @@
 // Package openshell runs plimsoll snippets and projects in NVIDIA OpenShell
 // sandboxes, through an OpenShell gateway's gRPC API (openshell.v1, vendored at
-// v0.1.2 under third_party/openshell and generated into gen/go/openshell).
+// v0.1.10 under third_party/openshell and generated into gen/go/openshell).
 //
 // Every run gets its own sandbox. The provider creates it with plimsoll's policy
 // (runPolicy: no network rules, so the gateway's deny-all egress default holds; a
@@ -428,11 +428,10 @@ func (p *Provider) ready(ctx context.Context, grant *sandbox.HostAPIGrant, floor
 	tier, err := p.checkDriver(check)
 	cancel()
 	if err != nil {
-		reason := sandbox.RefusalEnvironment
 		if ctx.Err() != nil {
-			reason = sandbox.RefusalCapacity
+			return tier, sandbox.RefuseDeadline(ctx, err)
 		}
-		return tier, sandbox.NotDispatched(reason, providerkit.DeadlineAware(ctx, err))
+		return tier, sandbox.NotDispatched(sandbox.RefusalEnvironment, providerkit.DeadlineAware(ctx, err))
 	}
 	return tier, sandbox.CheckMinimumIsolation(tier, floor)
 }

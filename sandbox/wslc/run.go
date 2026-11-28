@@ -140,7 +140,7 @@ func (p *Provider) takeTurn(ctx context.Context, budget time.Duration) (release 
 	case p.turn <- struct{}{}:
 		return func() { <-p.turn }, nil
 	case <-wctx.Done():
-		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity,
+		return nil, sandbox.RefuseDeadline(wctx,
 			fmt.Errorf("wslc: another run holds the shared session (one run at a time, because --ulimit nproc counts across the session VM) and this one's wait ended: %w", wctx.Err()))
 	}
 }
@@ -196,11 +196,11 @@ func (p *Provider) runInNamed(ctx context.Context, s *verified, session, name st
 		// wslc.exe could not be started at all (a missing file, an unsafe argument, a
 		// caller that already gave up): exec reports that before a process exists, so
 		// nothing ran.
-		reason := sandbox.RefusalEnvironment
+		err = fmt.Errorf("wslc: could not start %s: %w", p.cfg.Path, err)
 		if ctx.Err() != nil {
-			reason = sandbox.RefusalCapacity
+			return planRun{}, sandbox.RefuseDeadline(ctx, err)
 		}
-		return planRun{}, sandbox.NotDispatched(reason, fmt.Errorf("wslc: could not start %s: %w", p.cfg.Path, err))
+		return planRun{}, sandbox.NotDispatched(sandbox.RefusalEnvironment, err)
 	}
 	runErr := cmd.Wait()
 	ended := runCtx.Err()

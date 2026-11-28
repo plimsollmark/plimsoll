@@ -168,7 +168,8 @@ func TestCrossPodCheckRefuses(t *testing.T) {
 
 // The smoke test claims a third sandbox, the peer, before the boundary test; the boundary
 // script dials the peer's terminator port; plimsolld reaches the peer (its tier check, and
-// nothing else) only after the boundary command; and all three sandboxes are deleted.
+// then the root check of the project runner, and nothing else) only after the boundary
+// command; and all three sandboxes are deleted.
 func TestSmokeDialsAnotherSandboxsTerminator(t *testing.T) {
 	p, api, sd := testProvider(t)
 	fakeSmoke(t, p, sd, nil)
@@ -194,8 +195,9 @@ func TestSmokeDialsAnotherSandboxsTerminator(t *testing.T) {
 		t.Fatalf("the boundary script's targets %v leave out the peer's terminator %s", targets, want)
 	}
 	// The boundary pod's tier check and its command, then the peer's tier check (the
-	// positive control), then the runner pod's tier check and its command.
-	if want := []string{boundaryPod, boundaryPod, peer, runnerPod, runnerPod}; !slices.Equal(dialed, want) {
+	// positive control) and the root check of the project runner, then the runner pod's tier
+	// check and its command.
+	if want := []string{boundaryPod, boundaryPod, peer, peer, runnerPod, runnerPod}; !slices.Equal(dialed, want) {
 		t.Fatalf("pods dialed in order %v, want %v (peer %s)", dialed, want, peer)
 	}
 }

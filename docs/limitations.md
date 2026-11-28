@@ -80,7 +80,22 @@ Part of the [plimsoll README](../README.md).
   an image against a withheld set before a push
   ([INTERNAL · the ship scan →](ship-scan.md)).
 - **On Docker Cloud the no-network statement rests on a check of ordinary connections;**
-  one other route has not been measured.
+  one other route has not been measured. Under the <dfn>*deny-all*</dfn> account policy
+  (the account setting that allows nothing a rule does not name) every TCP connection completes its
+  handshake on Docker's side and then no data passes (measured 2026-11-25), so the check
+  counts data that comes back, never a completed connection
+  ([INTERNAL · Docker Cloud guide →](dockercloud.md#startup-smoke-test)).
+- **Docker Cloud refuses host-API grants.** A granted run, on either of its APIs, is
+  refused before any sandbox is made, marked as not run with the reason `unsupported`;
+  `Describe` states no grant support, and a set `SANDBOX_DOCKERCLOUD_GUARD_URL` fails
+  startup. The reason: Docker Cloud's allow rules cannot hold a sandbox to one server.
+  Docker's own page on network rules says a rule matches the hostname attributed to the
+  connection, such as its TLS Server Name Indication (SNI), the server name the code itself
+  announces when it opens a TLS connection (the encryption HTTPS runs on)
+  ([EXTERNAL · official docs ↗](https://docs.docker.com/ai/governance/local/network-rules/)),
+  so the single rule a granted run would get, the guard's `host:443`, would not keep the
+  run's code at the guard. Use docker, E2B or OpenShell for granted runs
+  ([INTERNAL · Docker Cloud guide →](dockercloud.md#host-api-grants)).
 - **An upload has 30 seconds to arrive.** The daemon's read timeout covers the request
   body, up to its 8 MiB limit, so a client slower than about 280 KB/s on a full-size
   project is cut off (8 MiB in 30 seconds); a faster link or a smaller project is the
@@ -116,9 +131,9 @@ Part of the [plimsoll README](../README.md).
   needs a separate guard address for each daemon (a distinct hostname or path), not
   requests spread across the copies in turn.
 - **The guard needs an address of its own, `PLIMSOLL_GUARD_ADDR`.** Code in a granted
-  E2B or Docker Cloud run may connect to the guard and nowhere else, so plimsolld serves
-  the guard on a listener that answers the guard path (`/v1/e2b/guard`,
-  `/v1/dockercloud/guard`) and nothing else, never on the address callers use for the
+  E2B run may connect to the guard and nowhere else (Docker Cloud refuses grants, as
+  above), so plimsolld serves
+  the guard on a listener that answers the guard path (`/v1/e2b/guard`) and nothing else, never on the address callers use for the
   RPC procedures, `/healthz` and `/readyz`. Setting a guard URL without
   `PLIMSOLL_GUARD_ADDR` fails startup, and the public guard URL must reach that address,
   so a deployment with grants publishes two addresses: the guard to the provider's
@@ -185,6 +200,11 @@ Part of the [plimsoll README](../README.md).
   waits its whole timeout before docker kills the container; plimsoll's own close removes the
   container without waiting. None of this reaches past the session itself
   ([seccomp.md](seccomp.md#the-guest-guard-a-second-filter-in-front-of-every-program)).
+- **A session's file calls in the work scope need Linux 5.8 or later, or gVisor.** On an
+  older kernel a docker session states the sandbox scope alone, so a work-scope call is refused
+  before it starts as unsupported, and a work-scope call that reaches the helper anyway answers a
+  file error whose errno is `ENOSYS`, never an answer
+  ([session-files.md](session-files.md#scopes)).
 - **The `wslc` provider is not a security sandbox by its own vendor's account.** Microsoft
   states that WSL, the Windows Subsystem for Linux that the provider's WSL containers run
   in, is "not a security sandbox for running untrusted code". The per-run mode gives each

@@ -1,5 +1,5 @@
 // Package wireenum is the one table between package sandbox's typed values and their
-// protocol enums: project outcomes, session ends, refusal reasons. The daemon writes
+// protocol enums: project outcomes, session ends, refusal reasons, capacity limits. The daemon writes
 // through it and the Go client reads through it, so the two directions cannot disagree,
 // and its test fails when the protocol gains a value the table lacks. The two sides once
 // kept a switch each (review D4, 2026-10-23): a session end missing from the daemon's
@@ -114,4 +114,41 @@ func RefusalFromWire(w plimsollv1.NotDispatchedReason) sandbox.Refusal {
 		}
 	}
 	return sandbox.RefusalUnknown
+}
+
+var capacityLimits = []struct {
+	s sandbox.CapacityLimit
+	w plimsollv1.CapacityLimit
+}{
+	{sandbox.CapacitySessions, plimsollv1.CapacityLimit_CAPACITY_LIMIT_SESSIONS},
+	{sandbox.CapacityCallerSessions, plimsollv1.CapacityLimit_CAPACITY_LIMIT_CALLER_SESSIONS},
+	{sandbox.CapacityOwnerSessions, plimsollv1.CapacityLimit_CAPACITY_LIMIT_OWNER_SESSIONS},
+	{sandbox.CapacityRuns, plimsollv1.CapacityLimit_CAPACITY_LIMIT_RUNS},
+	{sandbox.CapacityCallerRuns, plimsollv1.CapacityLimit_CAPACITY_LIMIT_CALLER_RUNS},
+	{sandbox.CapacityRate, plimsollv1.CapacityLimit_CAPACITY_LIMIT_RATE},
+	{sandbox.CapacityPaidSeconds, plimsollv1.CapacityLimit_CAPACITY_LIMIT_PAID_SECONDS},
+	{sandbox.CapacityQueue, plimsollv1.CapacityLimit_CAPACITY_LIMIT_QUEUE},
+	{sandbox.CapacityProvider, plimsollv1.CapacityLimit_CAPACITY_LIMIT_PROVIDER},
+	{sandbox.CapacityDeadline, plimsollv1.CapacityLimit_CAPACITY_LIMIT_DEADLINE},
+}
+
+// CapacityLimitToWire is l's enum; unspecified for CapacityUnstated.
+func CapacityLimitToWire(l sandbox.CapacityLimit) plimsollv1.CapacityLimit {
+	for _, e := range capacityLimits {
+		if e.s == l {
+			return e.w
+		}
+	}
+	return plimsollv1.CapacityLimit_CAPACITY_LIMIT_UNSPECIFIED
+}
+
+// CapacityLimitFromWire is w's limit; CapacityUnstated for unspecified and for a value
+// this code does not know.
+func CapacityLimitFromWire(w plimsollv1.CapacityLimit) sandbox.CapacityLimit {
+	for _, e := range capacityLimits {
+		if e.w == w {
+			return e.s
+		}
+	}
+	return sandbox.CapacityUnstated
 }

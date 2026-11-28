@@ -36,14 +36,19 @@
 // alone), and the daemon runs it only on that head; a daemon that predated it would
 // ignore the head and run a call made from stale state, which this one refuses. In the
 // same number, OpenSessionRequest.keep_no_answer asks the daemon to keep no answer, which
-// an older daemon would ignore.
+// an older daemon would ignore. 9: clients accept only record version 6, whose results
+// are hashed under plimsoll.run-result.v2, and requests of this number are hashed under
+// plimsoll.run-request.v3; both domains add the files kind, one operation on a session's
+// files (SessionRunRequest.files). An older daemon would drop that payload; a client of
+// this number refuses an older daemon's record version, and the daemon of either number
+// refuses the other's requests, before anything runs.
 package protocol
 
 import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
-const Number uint32 = 8
+const Number uint32 = 9
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
 // another number. A client recognises the refusal by its NotDispatched detail

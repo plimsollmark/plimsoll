@@ -219,11 +219,11 @@ the sandbox API itself`})
 	DockerSBXUsername  = sectionProviders.text(Meta{Name: "DOCKER_SBX_USERNAME", Doc: `the Docker account the token belongs to`})
 	DockercloudAuthURL = sectionProviders.text(Meta{Name: "SANDBOX_DOCKERCLOUD_AUTH_URL", Doc: `token exchange endpoint; default
 https://hub.docker.com/v2/auth/token`})
-	DockercloudGuardURL = sectionProviders.text(Meta{Name: "SANDBOX_DOCKERCLOUD_GUARD_URL", Doc: `absolute HTTPS egress-guard endpoint on 443; enables
-dockercloud grants (connect only). A grant run's sandbox may reach
-only this host; the guest holds a per-run, guard-only
-credential (Docker's proxy cannot inject one); served
-on PLIMSOLL_GUARD_ADDR`})
+	DockercloudGuardURL = sectionProviders.text(Meta{Name: "SANDBOX_DOCKERCLOUD_GUARD_URL", Doc: `must be unset: dockercloud refuses host-API grants,
+because its allow rules match the host name a
+connection announces (its TLS SNI, as Docker
+documents), so no rule holds a guest to the guard.
+Set, configuration fails`})
 	DockercloudPolicyURL = sectionProviders.text(Meta{Name: "SANDBOX_DOCKERCLOUD_POLICY_URL", Doc: `per-sandbox network-policy REST base; default
 https://api.sandboxes-cloud.docker.com/v1. Not in
 Docker's published contract (the sbx CLI's call);

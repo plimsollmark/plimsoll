@@ -153,7 +153,7 @@ agent = create_deep_agent(model=model, backend=backend, middleware=[ToolRetryMid
   The Deep Agents backend's calls take no grant.
 - **Tested against LangChain's own suites.** The tool passes LangChain's standard tool tests (`langchain-tests`). The
   backend passes LangChain's standard sandbox tests on a real plimsoll session, except seven cases where
-  langchain-tests 1.1.9 and deepagents 0.7.38 disagree with each other (six about what `glob` returns, one about writing
+  langchain-tests 1.2.0 and deepagents 0.7.38 disagree with each other (six about what `glob` returns, one about writing
   over an existing file); they fail the same way for any backend built on Deep Agents' `BaseSandbox`.
 
 ## Tracing

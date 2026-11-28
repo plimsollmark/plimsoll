@@ -205,3 +205,23 @@ func TestHTTP2RefusalDoesNotWaitForAHeldBackBody(t *testing.T) {
 		t.Fatal("an HTTP/2 refusal must not ask to close the connection: Go turns that into a GOAWAY for every stream on it")
 	}
 }
+
+// TestWrappedWriterTakesAReadDeadline: a handler behind Handler can still set the
+// connection's read deadline through http.ResponseController (the writer's Unwrap), which
+// the sandbox broker's drain of a small refused body relies on: it drains only a writer that
+// takes one (sandbox.drainSmallBody, session-files-24).
+func TestWrappedWriterTakesAReadDeadline(t *testing.T) {
+	got := make(chan error, 1)
+	srv := httptest.NewServer(Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- http.NewResponseController(w).SetReadDeadline(time.Now().Add(time.Second))
+	})))
+	defer srv.Close()
+	resp, err := http.Post(srv.URL, "text/plain", strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if err := <-got; err != nil {
+		t.Fatalf("SetReadDeadline through the wrapped writer: %v, want nil", err)
+	}
+}

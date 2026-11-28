@@ -440,28 +440,24 @@ py-frameworks-lock:
 	   (cd $$dir && ../../../../tmp/piptools/bin/pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url -o requirements.txt requirements.in) || exit 1; \
 	 done
 
-# Install both lockfiles and the Python framework environments, then require the
-# Python, Python framework adapter, TypeScript client, add-on and Trigger.dev suites.
+# Install the TypeScript client's lockfile and the Python framework environments, then
+# require the Python, Python framework adapter, TypeScript client and add-on suites.
 # The runner fails on any Go test skip in case a future test bypasses
 # PLIMSOLL_REQUIRE_CLIENTS.
-# npm ci runs with --ignore-scripts: the trigger example's lockfile holds three packages
-# with install scripts (@depot/cli's downloads a binary at install), and its tests need
-# none of them (esbuild's binary comes as an optional dependency). Checked 2026-10-24.
-# That also skips the client's own prepare script, which compiles clients/typescript/dist
-# (gitignored), and the Trigger.dev example imports the client through dist, so the
-# client is built here, from the source under test: a fresh checkout has no dist, and a
-# stale one would test old code (found in review, 2026-10-28).
+# npm ci runs with --ignore-scripts, so no dependency's install script runs. That also
+# skips the client's own prepare script, which compiles clients/typescript/dist
+# (gitignored), so the client is built here, from a clean dist: the build is the suite's
+# check that the package compiles as it is published (the suites run the source).
 # The Python package took 9 to 11 minutes (TestPython about 500 s and TestDeepAgentsDocker about
 # 130 s on 2026-11-17), past go test's default 10-minute package timeout, so the suite sets
 # GO_TEST_TIMEOUT (see above). The checks on real docker sessions (the framework ones, the example
 # programs) have since moved to docker-suite, and TestPython's growth was a working copy's own
 # test modules, which it has run apart since 2026-11-18.
-## clients-suite: install both npm dependency sets, build the TypeScript client's dist, install the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (the Python client's checks on real docker sessions, DOCKER_PY_TESTS, are docker-suite's, so they are excluded here rather than skipped)
+## clients-suite: install the TypeScript client's npm dependencies, build its dist, install the Python framework environments, then run the Python, framework adapter, TypeScript and add-on suites; missing prerequisites or a skipped Go test FAILS (the Python client's checks on real docker sessions, DOCKER_PY_TESTS, are docker-suite's, so they are excluded here rather than skipped)
 clients-suite:
 	@$(MAKE) --no-print-directory py-frameworks
 	@$(SUITE_BEGIN) (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null && \
 	    rm -rf dist && $(NO_PAID_KEYS) npm run build --userconfig=/dev/null) && \
-	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
 	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) $(SUITE_TEST) ./clients/python/ ./clients/typescript/ -skip '^($(DOCKER_PY_TESTS))$$' -count=1 -timeout $(GO_TEST_TIMEOUT); $(SUITE_END)
 
 # The capsule example is its own Go module (Go 1.27 and the capsule emitter's COSE

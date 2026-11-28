@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // dcFake is an in-process stand-in for both Docker Cloud Sandboxes endpoints: the
@@ -597,9 +599,10 @@ func TestDockerCloudCreateDeniesAllEgressAndWrapsTheSnippet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunJavaScript: %v", err)
 		}
-		if res.ExitCode != 0 || res.Stdout != "dc 42\n" || res.Sandbox != "dockercloud" || res.Isolation != IsolationVM {
+		if res.ExitCode != 0 || res.Stdout != "dc 42\n" || res.Sandbox != "dockercloud" {
 			t.Fatalf("result = %+v", res)
 		}
+		tiercheck.Stated(t, "snippet", res.Isolation, d.IsolationClass())
 
 		create := f.creates[0]
 		name, _ := create["name"].(string)
@@ -1542,18 +1545,61 @@ func dcGrant(t *testing.T) (*HostAPIGrant, *httptest.Server) {
 	return &HostAPIGrant{BaseURL: up.URL, Allow: []HostRoute{{Method: "GET", Path: "/items/*"}}, Minter: StaticToken("downstream-secret")}, up
 }
 
-func TestDockerCloudGrantRefusedWithoutGuardURL(t *testing.T) {
+// Every grant is refused on dockercloud, on both APIs and with a guard URL set:
+// marked not dispatched with the reason unsupported (another provider may take the
+// run), before any API call or sandbox, and neither payload kind states grant
+// support, so Describe reports none and plimsolld mounts no guard. The refusal is
+// errDCGrantsRefused: the guard's one network rule does not hold a run to the guard.
+// A run without a grant is unchanged. Deletion checks: removing refuseGrant's call
+// from either run fails the first check (the guard URL's configuration refusal comes
+// next, marked environment); removing it from openGuard fails the openGuard check;
+// removing grantsUnrefused from grantsServed fails the support checks; removing the
+// guard URL's configuration refusal fails the Preflight check.
+func TestDockerCloudRefusesEveryGrant(t *testing.T) {
 	t.Parallel()
-	f := newDCFake(t)
-	d := f.provider()
-	grant, _ := dcGrant(t)
-	if d.SupportsJavaScriptGrants() || d.SupportsProjectGrants() {
-		t.Fatal("grants advertised without a guard URL")
-	}
-	_, err := d.RunJavaScript(context.Background(), Request{Code: "1", Grant: grant})
-	if !errors.Is(err, ErrUnsupported) || len(f.creates) != 0 {
-		t.Fatalf("err = %v, creates = %d; want ErrUnsupported before any sandbox", err, len(f.creates))
-	}
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+		grant, _ := dcGrant(t)
+		_, jsErr := d.RunJavaScript(context.Background(), Request{Code: "1", Grant: grant})
+		_, projErr := d.RunProject(context.Background(), ProjectRequest{Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"true"}, Grant: grant})
+		for kind, err := range map[string]error{"snippet": jsErr, "project": projErr} {
+			reason, marked := NotDispatchedReason(err)
+			if !marked || reason != RefusalUnsupported || !errors.Is(err, errDCGrantsRefused) || !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("%s grant: err = %v (marked %v, reason %v), want the grant refusal marked not dispatched, unsupported", kind, err, marked, reason)
+			}
+		}
+		if len(f.calls) != 0 || len(f.creates) != 0 || len(f.policyPuts) != 0 {
+			t.Fatalf("the refusals reached the service: calls %v, creates %d, policy PUTs %d", f.calls, len(f.creates), len(f.policyPuts))
+		}
+		if d.SupportsJavaScriptGrants() || d.SupportsProjectGrants() {
+			t.Fatal("dockercloud states grant support while grants are refused")
+		}
+		if p := d.EgressGuardPath(); p != "" {
+			t.Fatalf("guard path %q stated while grants are refused; plimsolld would mount a guard", p)
+		}
+		if _, _, err := d.openGuard(context.Background(), grant, time.Minute); !errors.Is(err, errDCGrantsRefused) {
+			t.Fatalf("openGuard: err = %v, want the grant refusal", err)
+		}
+		if err := d.Preflight(context.Background()); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_GUARD_URL") || !errors.Is(err, errDCGrantsRefused) {
+			t.Fatalf("Preflight with a guard URL: %v, want the grant refusal naming the setting", err)
+		}
+
+		// A run without a grant, on a provider with no guard URL, is unchanged.
+		plain := f.provider()
+		f.exec = func([]string) (int, string, string) { return 0, "ok\n", "" }
+		res, err := plain.RunJavaScript(context.Background(), Request{Code: `console.log("ok")`})
+		if err != nil || res.ExitCode != 0 || res.Stdout != "ok\n" {
+			t.Fatalf("no-grant run: res = %+v, err = %v", res, err)
+		}
+		if len(f.policyPuts) != 0 {
+			t.Fatalf("a no-grant run sent %d policy PUT(s)", len(f.policyPuts))
+		}
+		if err := plain.Preflight(context.Background()); err != nil {
+			t.Fatalf("Preflight with no guard URL: %v", err)
+		}
+	})
 }
 
 func TestDockerCloudGrantSnippetOpensOnlyTheGuard(t *testing.T) {
@@ -1561,6 +1607,7 @@ func TestDockerCloudGrantSnippetOpensOnlyTheGuard(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	grant, _ := dcGrant(t)
 	if !d.SupportsJavaScriptGrants() || !d.SupportsProjectGrants() || d.EgressGuardPath() != "/v1/dockercloud/guard" {
 		t.Fatal("grant capability or guard path not reported")
@@ -1619,6 +1666,7 @@ func TestDockerCloudNoGrantRunNeverOpensTheNetwork(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/g"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	f.exec = func([]string) (int, string, string) { return 0, "", "" }
 	if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
 		t.Fatal(err)
@@ -1643,6 +1691,7 @@ func TestDockerCloudGrantFailsClosed(t *testing.T) {
 			tweak(f)
 			d := f.provider()
 			d.GuardURL = "https://guard.example.com/g"
+			d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 			grant, _ := dcGrant(t)
 			ran := false
 			f.exec = func([]string) (int, string, string) { ran = true; return 0, "", "" }
@@ -1664,6 +1713,7 @@ func TestDockerCloudGrantProjectPreloadsTheClient(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/g"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	grant, _ := dcGrant(t)
 	var steps [][]string
 	f.exec = func(argv []string) (int, string, string) {
@@ -1702,6 +1752,7 @@ func TestDockerCloudGuardEnforcesTheGrant(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	grant, _ := dcGrant(t)
 	guard, closeGuard, err := d.openGuard(context.Background(), grant, 30*time.Second)
 	if err != nil {
@@ -1749,16 +1800,20 @@ func TestBuildDockerCloudRejectsABadGuardURL(t *testing.T) {
 	}
 	for _, bad := range []string{"http://guard.example.com/g", "https://guard.example.com:8443/g", "https://localhost/g", "https://guard.example.com/a/../b"} {
 		env["SANDBOX_DOCKERCLOUD_GUARD_URL"] = bad
-		if _, err := Build(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_GUARD_URL") {
-			t.Fatalf("%s: err = %v, want a guard URL refusal", bad, err)
+		if _, err := Build(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_GUARD_URL") || errors.Is(err, errDCGrantsRefused) {
+			t.Fatalf("%s: err = %v, want the guard URL's own refusal", bad, err)
 		}
 	}
+	// A well-formed guard URL fails configuration too: grants are refused on
+	// dockercloud, so a daemon configured for them does not start quietly without them.
 	env["SANDBOX_DOCKERCLOUD_GUARD_URL"] = "https://guard.example.com"
-	p, err := Build(func(k string) string { return env[k] })
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Build(func(k string) string { return env[k] }); !errors.Is(err, errDCGrantsRefused) {
+		t.Fatalf("a well-formed guard URL: err = %v, want the grant refusal", err)
 	}
-	if g, ok := p.Sandbox.(EgressGuardCapable); !ok || g.EgressGuardPath() != dcGuardDefaultPath {
+	// The refused guard path, kept tested for a re-enable: a URL with no path serves
+	// the default one.
+	d := &DockerCloud{GuardURL: "https://guard.example.com", grantsUnrefused: true}
+	if d.EgressGuardPath() != dcGuardDefaultPath {
 		t.Fatal("a configured guard URL does not expose the default guard path")
 	}
 }
@@ -1845,6 +1900,7 @@ func TestDockerCloudGrantEndsBeforeTheTeardown(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	grant, _ := dcGrant(t)
 	var token string
 	f.exec = func(argv []string) (int, string, string) {
@@ -1881,6 +1937,7 @@ func TestDockerCloudFailedRunKeepsItsCallTrace(t *testing.T) {
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 	grant, _ := dcGrant(t)
 	served := -1
 	f.execHandler = func(w http.ResponseWriter, _ *http.Request) {

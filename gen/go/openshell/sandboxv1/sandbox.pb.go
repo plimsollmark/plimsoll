@@ -248,7 +248,7 @@ func (SettingScope) EnumDescriptor() ([]byte, []int) {
 	return file_sandbox_proto_rawDescGZIP(), []int{3}
 }
 
-// Source used for the policy payload in GetSandboxConfigResponse.
+// Source used for a sandbox configuration payload.
 type PolicySource int32
 
 const (
@@ -298,6 +298,117 @@ func (PolicySource) EnumDescriptor() ([]byte, []int) {
 	return file_sandbox_proto_rawDescGZIP(), []int{4}
 }
 
+// Operator authority over the bindings in a supervisor middleware manifest.
+type SupervisorMiddlewareBindingPolicy int32
+
+const (
+	// Older gateways omit this field, which selects dynamic discovery.
+	SupervisorMiddlewareBindingPolicy_SUPERVISOR_MIDDLEWARE_BINDING_POLICY_UNSPECIFIED SupervisorMiddlewareBindingPolicy = 0
+	// Accept all supported bindings in the manifest.
+	SupervisorMiddlewareBindingPolicy_SUPERVISOR_MIDDLEWARE_BINDING_POLICY_DYNAMIC SupervisorMiddlewareBindingPolicy = 1
+	// Require and enable the listed bindings; ignore other supported bindings.
+	SupervisorMiddlewareBindingPolicy_SUPERVISOR_MIDDLEWARE_BINDING_POLICY_ALLOWLIST SupervisorMiddlewareBindingPolicy = 2
+	// Require the listed bindings and reject additional bindings.
+	SupervisorMiddlewareBindingPolicy_SUPERVISOR_MIDDLEWARE_BINDING_POLICY_EXACT SupervisorMiddlewareBindingPolicy = 3
+)
+
+// Enum value maps for SupervisorMiddlewareBindingPolicy.
+var (
+	SupervisorMiddlewareBindingPolicy_name = map[int32]string{
+		0: "SUPERVISOR_MIDDLEWARE_BINDING_POLICY_UNSPECIFIED",
+		1: "SUPERVISOR_MIDDLEWARE_BINDING_POLICY_DYNAMIC",
+		2: "SUPERVISOR_MIDDLEWARE_BINDING_POLICY_ALLOWLIST",
+		3: "SUPERVISOR_MIDDLEWARE_BINDING_POLICY_EXACT",
+	}
+	SupervisorMiddlewareBindingPolicy_value = map[string]int32{
+		"SUPERVISOR_MIDDLEWARE_BINDING_POLICY_UNSPECIFIED": 0,
+		"SUPERVISOR_MIDDLEWARE_BINDING_POLICY_DYNAMIC":     1,
+		"SUPERVISOR_MIDDLEWARE_BINDING_POLICY_ALLOWLIST":   2,
+		"SUPERVISOR_MIDDLEWARE_BINDING_POLICY_EXACT":       3,
+	}
+)
+
+func (x SupervisorMiddlewareBindingPolicy) Enum() *SupervisorMiddlewareBindingPolicy {
+	p := new(SupervisorMiddlewareBindingPolicy)
+	*p = x
+	return p
+}
+
+func (x SupervisorMiddlewareBindingPolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SupervisorMiddlewareBindingPolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_sandbox_proto_enumTypes[5].Descriptor()
+}
+
+func (SupervisorMiddlewareBindingPolicy) Type() protoreflect.EnumType {
+	return &file_sandbox_proto_enumTypes[5]
+}
+
+func (x SupervisorMiddlewareBindingPolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SupervisorMiddlewareBindingPolicy.Descriptor instead.
+func (SupervisorMiddlewareBindingPolicy) EnumDescriptor() ([]byte, []int) {
+	return file_sandbox_proto_rawDescGZIP(), []int{5}
+}
+
+// An operation/phase pair that the platform can authorize. These identify
+// platform capabilities, not service-owned binding names.
+type SupervisorMiddlewareBinding int32
+
+const (
+	SupervisorMiddlewareBinding_SUPERVISOR_MIDDLEWARE_BINDING_UNSPECIFIED                       SupervisorMiddlewareBinding = 0
+	SupervisorMiddlewareBinding_SUPERVISOR_MIDDLEWARE_BINDING_HTTP_REQUEST_PRE_CREDENTIALS      SupervisorMiddlewareBinding = 1
+	SupervisorMiddlewareBinding_SUPERVISOR_MIDDLEWARE_BINDING_HTTP_RESPONSE_PRE_RETURN          SupervisorMiddlewareBinding = 2
+	SupervisorMiddlewareBinding_SUPERVISOR_MIDDLEWARE_BINDING_WEBSOCKET_MESSAGE_PRE_CREDENTIALS SupervisorMiddlewareBinding = 3
+)
+
+// Enum value maps for SupervisorMiddlewareBinding.
+var (
+	SupervisorMiddlewareBinding_name = map[int32]string{
+		0: "SUPERVISOR_MIDDLEWARE_BINDING_UNSPECIFIED",
+		1: "SUPERVISOR_MIDDLEWARE_BINDING_HTTP_REQUEST_PRE_CREDENTIALS",
+		2: "SUPERVISOR_MIDDLEWARE_BINDING_HTTP_RESPONSE_PRE_RETURN",
+		3: "SUPERVISOR_MIDDLEWARE_BINDING_WEBSOCKET_MESSAGE_PRE_CREDENTIALS",
+	}
+	SupervisorMiddlewareBinding_value = map[string]int32{
+		"SUPERVISOR_MIDDLEWARE_BINDING_UNSPECIFIED":                       0,
+		"SUPERVISOR_MIDDLEWARE_BINDING_HTTP_REQUEST_PRE_CREDENTIALS":      1,
+		"SUPERVISOR_MIDDLEWARE_BINDING_HTTP_RESPONSE_PRE_RETURN":          2,
+		"SUPERVISOR_MIDDLEWARE_BINDING_WEBSOCKET_MESSAGE_PRE_CREDENTIALS": 3,
+	}
+)
+
+func (x SupervisorMiddlewareBinding) Enum() *SupervisorMiddlewareBinding {
+	p := new(SupervisorMiddlewareBinding)
+	*p = x
+	return p
+}
+
+func (x SupervisorMiddlewareBinding) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SupervisorMiddlewareBinding) Descriptor() protoreflect.EnumDescriptor {
+	return file_sandbox_proto_enumTypes[6].Descriptor()
+}
+
+func (SupervisorMiddlewareBinding) Type() protoreflect.EnumType {
+	return &file_sandbox_proto_enumTypes[6]
+}
+
+func (x SupervisorMiddlewareBinding) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SupervisorMiddlewareBinding.Descriptor instead.
+func (SupervisorMiddlewareBinding) EnumDescriptor() ([]byte, []int) {
+	return file_sandbox_proto_rawDescGZIP(), []int{6}
+}
+
 // Sandbox security policy configuration.
 type SandboxPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -315,8 +426,37 @@ type SandboxPolicy struct {
 	// policy-local names. At most 10 configs are accepted, and at most 10 stages
 	// can be selected per request.
 	NetworkMiddlewares map[string]*NetworkMiddlewareConfig `protobuf:"bytes,6,rep,name=network_middlewares,json=networkMiddlewares,proto3" json:"network_middlewares,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Raw Cedar policy source (.cedar syntax, against the canonical schema
+	// published by the openshell-policy-cedar-schema crate). When present,
+	// this sandbox's network, per-request, and filesystem decisions come
+	// entirely from Cedar: Landlock grants are derived from the Cedar text
+	// (plus the supervisor's baseline paths), and `filesystem` is not used.
+	// `landlock.compatibility`, `process`, and `network_middlewares` are
+	// still honored through the policy API. The CLI accepts Cedar source only.
+	// Rejected at validation if
+	// `network_policies` or `filesystem` paths are also set.
+	// A sandbox cannot switch between Cedar and YAML after creation, and
+	// global policies must be YAML.
+	CedarPolicy *CedarPolicy `protobuf:"bytes,7,opt,name=cedar_policy,json=cedarPolicy,proto3" json:"cedar_policy,omitempty"`
+	// Gateway-managed, for Cedar policies only: the network rules of the
+	// sandbox's attached providers, keyed like provider-composed
+	// `network_policies` entries. They supply endpoint settings for credential
+	// injection (credential markers, rewrite options, request signing) on
+	// connections the Cedar policy allows, and never grant access themselves.
+	// Rejected in user-submitted policies.
+	ProviderCredentialRules map[string]*NetworkPolicyRule `protobuf:"bytes,8,rep,name=provider_credential_rules,json=providerCredentialRules,proto3" json:"provider_credential_rules,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// For Cedar policies only: endpoint settings that are configuration, not
+	// access control, supplied through the policy API. Each entry selects
+	// endpoints by `host` (exact or glob),
+	// `port`/`ports`, and an optional `path`, and may set only `tls`,
+	// `allow_encoded_slash`, `json_rpc_max_body_bytes`,
+	// `graphql_max_body_bytes`, `mcp` (`versions`, `strict_tool_names`),
+	// `persisted_queries`, and `graphql_persisted_queries`. The Cedar policy
+	// decides access and inspection; these settings apply to the connections
+	// and requests it inspects. Rejected when `cedar_policy` is absent.
+	EndpointSettings []*NetworkEndpoint `protobuf:"bytes,9,rep,name=endpoint_settings,json=endpointSettings,proto3" json:"endpoint_settings,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SandboxPolicy) Reset() {
@@ -391,6 +531,72 @@ func (x *SandboxPolicy) GetNetworkMiddlewares() map[string]*NetworkMiddlewareCon
 	return nil
 }
 
+func (x *SandboxPolicy) GetCedarPolicy() *CedarPolicy {
+	if x != nil {
+		return x.CedarPolicy
+	}
+	return nil
+}
+
+func (x *SandboxPolicy) GetProviderCredentialRules() map[string]*NetworkPolicyRule {
+	if x != nil {
+		return x.ProviderCredentialRules
+	}
+	return nil
+}
+
+func (x *SandboxPolicy) GetEndpointSettings() []*NetworkEndpoint {
+	if x != nil {
+		return x.EndpointSettings
+	}
+	return nil
+}
+
+// Cedar-authored policy. Message presence selects Cedar even for empty source.
+type CedarPolicy struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CedarPolicy) Reset() {
+	*x = CedarPolicy{}
+	mi := &file_sandbox_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CedarPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CedarPolicy) ProtoMessage() {}
+
+func (x *CedarPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CedarPolicy.ProtoReflect.Descriptor instead.
+func (*CedarPolicy) Descriptor() ([]byte, []int) {
+	return file_sandbox_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CedarPolicy) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
 // Filesystem access policy.
 type FilesystemPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -406,7 +612,7 @@ type FilesystemPolicy struct {
 
 func (x *FilesystemPolicy) Reset() {
 	*x = FilesystemPolicy{}
-	mi := &file_sandbox_proto_msgTypes[1]
+	mi := &file_sandbox_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -418,7 +624,7 @@ func (x *FilesystemPolicy) String() string {
 func (*FilesystemPolicy) ProtoMessage() {}
 
 func (x *FilesystemPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[1]
+	mi := &file_sandbox_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -431,7 +637,7 @@ func (x *FilesystemPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FilesystemPolicy.ProtoReflect.Descriptor instead.
 func (*FilesystemPolicy) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{1}
+	return file_sandbox_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *FilesystemPolicy) GetIncludeWorkdir() bool {
@@ -466,7 +672,7 @@ type LandlockPolicy struct {
 
 func (x *LandlockPolicy) Reset() {
 	*x = LandlockPolicy{}
-	mi := &file_sandbox_proto_msgTypes[2]
+	mi := &file_sandbox_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -478,7 +684,7 @@ func (x *LandlockPolicy) String() string {
 func (*LandlockPolicy) ProtoMessage() {}
 
 func (x *LandlockPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[2]
+	mi := &file_sandbox_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -491,7 +697,7 @@ func (x *LandlockPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LandlockPolicy.ProtoReflect.Descriptor instead.
 func (*LandlockPolicy) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{2}
+	return file_sandbox_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *LandlockPolicy) GetCompatibility() string {
@@ -514,7 +720,7 @@ type ProcessPolicy struct {
 
 func (x *ProcessPolicy) Reset() {
 	*x = ProcessPolicy{}
-	mi := &file_sandbox_proto_msgTypes[3]
+	mi := &file_sandbox_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -526,7 +732,7 @@ func (x *ProcessPolicy) String() string {
 func (*ProcessPolicy) ProtoMessage() {}
 
 func (x *ProcessPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[3]
+	mi := &file_sandbox_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -539,7 +745,7 @@ func (x *ProcessPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessPolicy.ProtoReflect.Descriptor instead.
 func (*ProcessPolicy) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{3}
+	return file_sandbox_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ProcessPolicy) GetRunAsUser() string {
@@ -571,7 +777,7 @@ type NetworkPolicyRule struct {
 
 func (x *NetworkPolicyRule) Reset() {
 	*x = NetworkPolicyRule{}
-	mi := &file_sandbox_proto_msgTypes[4]
+	mi := &file_sandbox_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -583,7 +789,7 @@ func (x *NetworkPolicyRule) String() string {
 func (*NetworkPolicyRule) ProtoMessage() {}
 
 func (x *NetworkPolicyRule) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[4]
+	mi := &file_sandbox_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -596,7 +802,7 @@ func (x *NetworkPolicyRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkPolicyRule.ProtoReflect.Descriptor instead.
 func (*NetworkPolicyRule) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{4}
+	return file_sandbox_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *NetworkPolicyRule) GetName() string {
@@ -641,7 +847,7 @@ type NetworkMiddlewareConfig struct {
 
 func (x *NetworkMiddlewareConfig) Reset() {
 	*x = NetworkMiddlewareConfig{}
-	mi := &file_sandbox_proto_msgTypes[5]
+	mi := &file_sandbox_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -653,7 +859,7 @@ func (x *NetworkMiddlewareConfig) String() string {
 func (*NetworkMiddlewareConfig) ProtoMessage() {}
 
 func (x *NetworkMiddlewareConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[5]
+	mi := &file_sandbox_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -666,7 +872,7 @@ func (x *NetworkMiddlewareConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkMiddlewareConfig.ProtoReflect.Descriptor instead.
 func (*NetworkMiddlewareConfig) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{5}
+	return file_sandbox_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NetworkMiddlewareConfig) GetName() string {
@@ -726,7 +932,7 @@ type MiddlewareEndpointSelector struct {
 
 func (x *MiddlewareEndpointSelector) Reset() {
 	*x = MiddlewareEndpointSelector{}
-	mi := &file_sandbox_proto_msgTypes[6]
+	mi := &file_sandbox_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -738,7 +944,7 @@ func (x *MiddlewareEndpointSelector) String() string {
 func (*MiddlewareEndpointSelector) ProtoMessage() {}
 
 func (x *MiddlewareEndpointSelector) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[6]
+	mi := &file_sandbox_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -751,7 +957,7 @@ func (x *MiddlewareEndpointSelector) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MiddlewareEndpointSelector.ProtoReflect.Descriptor instead.
 func (*MiddlewareEndpointSelector) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{6}
+	return file_sandbox_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MiddlewareEndpointSelector) GetInclude() []string {
@@ -780,7 +986,7 @@ type NetworkCredentialBinding struct {
 
 func (x *NetworkCredentialBinding) Reset() {
 	*x = NetworkCredentialBinding{}
-	mi := &file_sandbox_proto_msgTypes[7]
+	mi := &file_sandbox_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -792,7 +998,7 @@ func (x *NetworkCredentialBinding) String() string {
 func (*NetworkCredentialBinding) ProtoMessage() {}
 
 func (x *NetworkCredentialBinding) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[7]
+	mi := &file_sandbox_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -805,7 +1011,7 @@ func (x *NetworkCredentialBinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkCredentialBinding.ProtoReflect.Descriptor instead.
 func (*NetworkCredentialBinding) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{7}
+	return file_sandbox_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *NetworkCredentialBinding) GetProvider() string {
@@ -911,13 +1117,17 @@ type NetworkEndpoint struct {
 	// Internal gateway-derived marker indicating that this endpoint belongs to
 	// an attached credentialed provider. User-authored values are ignored.
 	ProviderCredentialed bool `protobuf:"varint,26,opt,name=provider_credentialed,json=providerCredentialed,proto3" json:"provider_credentialed,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Internal gateway-derived identity of this endpoint's token-grant authority.
+	// It binds the provider record and complete profile policy, or the active
+	// global policy, to this endpoint. User-authored values are ignored.
+	TokenGrantOwner string `protobuf:"bytes,27,opt,name=token_grant_owner,json=tokenGrantOwner,proto3" json:"token_grant_owner,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *NetworkEndpoint) Reset() {
 	*x = NetworkEndpoint{}
-	mi := &file_sandbox_proto_msgTypes[8]
+	mi := &file_sandbox_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -929,7 +1139,7 @@ func (x *NetworkEndpoint) String() string {
 func (*NetworkEndpoint) ProtoMessage() {}
 
 func (x *NetworkEndpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[8]
+	mi := &file_sandbox_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -942,7 +1152,7 @@ func (x *NetworkEndpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkEndpoint.ProtoReflect.Descriptor instead.
 func (*NetworkEndpoint) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{8}
+	return file_sandbox_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *NetworkEndpoint) GetHost() string {
@@ -1127,6 +1337,13 @@ func (x *NetworkEndpoint) GetProviderCredentialed() bool {
 	return false
 }
 
+func (x *NetworkEndpoint) GetTokenGrantOwner() string {
+	if x != nil {
+		return x.TokenGrantOwner
+	}
+	return ""
+}
+
 // MCP options are grouped so MCP-specific policy can grow without adding more
 // top-level NetworkEndpoint fields. OpenShell owns the supported revision
 // profiles instead of treating dependency enums as the policy contract.
@@ -1168,7 +1385,7 @@ type McpOptions struct {
 
 func (x *McpOptions) Reset() {
 	*x = McpOptions{}
-	mi := &file_sandbox_proto_msgTypes[9]
+	mi := &file_sandbox_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1397,7 @@ func (x *McpOptions) String() string {
 func (*McpOptions) ProtoMessage() {}
 
 func (x *McpOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[9]
+	mi := &file_sandbox_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1410,7 @@ func (x *McpOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use McpOptions.ProtoReflect.Descriptor instead.
 func (*McpOptions) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{9}
+	return file_sandbox_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *McpOptions) GetStrictToolNames() bool {
@@ -1232,7 +1449,7 @@ type GraphqlOperation struct {
 
 func (x *GraphqlOperation) Reset() {
 	*x = GraphqlOperation{}
-	mi := &file_sandbox_proto_msgTypes[10]
+	mi := &file_sandbox_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1244,7 +1461,7 @@ func (x *GraphqlOperation) String() string {
 func (*GraphqlOperation) ProtoMessage() {}
 
 func (x *GraphqlOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[10]
+	mi := &file_sandbox_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1257,7 +1474,7 @@ func (x *GraphqlOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GraphqlOperation.ProtoReflect.Descriptor instead.
 func (*GraphqlOperation) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{10}
+	return file_sandbox_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GraphqlOperation) GetOperationType() string {
@@ -1312,7 +1529,7 @@ type L7DenyRule struct {
 
 func (x *L7DenyRule) Reset() {
 	*x = L7DenyRule{}
-	mi := &file_sandbox_proto_msgTypes[11]
+	mi := &file_sandbox_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1324,7 +1541,7 @@ func (x *L7DenyRule) String() string {
 func (*L7DenyRule) ProtoMessage() {}
 
 func (x *L7DenyRule) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[11]
+	mi := &file_sandbox_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1337,7 +1554,7 @@ func (x *L7DenyRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use L7DenyRule.ProtoReflect.Descriptor instead.
 func (*L7DenyRule) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{11}
+	return file_sandbox_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *L7DenyRule) GetMethod() string {
@@ -1406,7 +1623,7 @@ type L7Rule struct {
 
 func (x *L7Rule) Reset() {
 	*x = L7Rule{}
-	mi := &file_sandbox_proto_msgTypes[12]
+	mi := &file_sandbox_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1418,7 +1635,7 @@ func (x *L7Rule) String() string {
 func (*L7Rule) ProtoMessage() {}
 
 func (x *L7Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[12]
+	mi := &file_sandbox_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1431,7 +1648,7 @@ func (x *L7Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use L7Rule.ProtoReflect.Descriptor instead.
 func (*L7Rule) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{12}
+	return file_sandbox_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *L7Rule) GetAllow() *L7Allow {
@@ -1471,7 +1688,7 @@ type L7Allow struct {
 
 func (x *L7Allow) Reset() {
 	*x = L7Allow{}
-	mi := &file_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1483,7 +1700,7 @@ func (x *L7Allow) String() string {
 func (*L7Allow) ProtoMessage() {}
 
 func (x *L7Allow) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1496,7 +1713,7 @@ func (x *L7Allow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use L7Allow.ProtoReflect.Descriptor instead.
 func (*L7Allow) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{13}
+	return file_sandbox_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *L7Allow) GetMethod() string {
@@ -1568,7 +1785,7 @@ type L7QueryMatcher struct {
 
 func (x *L7QueryMatcher) Reset() {
 	*x = L7QueryMatcher{}
-	mi := &file_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1580,7 +1797,7 @@ func (x *L7QueryMatcher) String() string {
 func (*L7QueryMatcher) ProtoMessage() {}
 
 func (x *L7QueryMatcher) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1593,7 +1810,7 @@ func (x *L7QueryMatcher) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use L7QueryMatcher.ProtoReflect.Descriptor instead.
 func (*L7QueryMatcher) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{14}
+	return file_sandbox_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *L7QueryMatcher) GetGlob() string {
@@ -1620,7 +1837,7 @@ type NetworkBinary struct {
 
 func (x *NetworkBinary) Reset() {
 	*x = NetworkBinary{}
-	mi := &file_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1632,7 +1849,7 @@ func (x *NetworkBinary) String() string {
 func (*NetworkBinary) ProtoMessage() {}
 
 func (x *NetworkBinary) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1645,7 +1862,7 @@ func (x *NetworkBinary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkBinary.ProtoReflect.Descriptor instead.
 func (*NetworkBinary) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{15}
+	return file_sandbox_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *NetworkBinary) GetPath() string {
@@ -1661,13 +1878,15 @@ type GetSandboxConfigRequest struct {
 	// Workspace scope. Select one named workspace; authenticated sandbox callers may omit it during bootstrap.
 	WorkspaceScope *datamodelv1.WorkspaceSelector `protobuf:"bytes,3,opt,name=workspace_scope,json=workspaceScope,proto3" json:"workspace_scope,omitempty"`
 	Name           string                         `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Policy capabilities of sandbox-authenticated callers receiving config.
+	SupportedCapabilities []string `protobuf:"bytes,5,rep,name=supported_capabilities,json=supportedCapabilities,proto3" json:"supported_capabilities,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *GetSandboxConfigRequest) Reset() {
 	*x = GetSandboxConfigRequest{}
-	mi := &file_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1679,7 +1898,7 @@ func (x *GetSandboxConfigRequest) String() string {
 func (*GetSandboxConfigRequest) ProtoMessage() {}
 
 func (x *GetSandboxConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1692,7 +1911,7 @@ func (x *GetSandboxConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSandboxConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetSandboxConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{16}
+	return file_sandbox_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetSandboxConfigRequest) GetWorkspaceScope() *datamodelv1.WorkspaceSelector {
@@ -1709,6 +1928,13 @@ func (x *GetSandboxConfigRequest) GetName() string {
 	return ""
 }
 
+func (x *GetSandboxConfigRequest) GetSupportedCapabilities() []string {
+	if x != nil {
+		return x.SupportedCapabilities
+	}
+	return nil
+}
+
 // Request to get gateway-global settings.
 type GetGatewayConfigRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1718,7 +1944,7 @@ type GetGatewayConfigRequest struct {
 
 func (x *GetGatewayConfigRequest) Reset() {
 	*x = GetGatewayConfigRequest{}
-	mi := &file_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1730,7 +1956,7 @@ func (x *GetGatewayConfigRequest) String() string {
 func (*GetGatewayConfigRequest) ProtoMessage() {}
 
 func (x *GetGatewayConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1743,7 +1969,7 @@ func (x *GetGatewayConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGatewayConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetGatewayConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{17}
+	return file_sandbox_proto_rawDescGZIP(), []int{18}
 }
 
 // Response containing gateway-global settings.
@@ -1760,7 +1986,7 @@ type GetGatewayConfigResponse struct {
 
 func (x *GetGatewayConfigResponse) Reset() {
 	*x = GetGatewayConfigResponse{}
-	mi := &file_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1772,7 +1998,7 @@ func (x *GetGatewayConfigResponse) String() string {
 func (*GetGatewayConfigResponse) ProtoMessage() {}
 
 func (x *GetGatewayConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1785,7 +2011,7 @@ func (x *GetGatewayConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGatewayConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetGatewayConfigResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{18}
+	return file_sandbox_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetGatewayConfigResponse) GetSettings() map[string]*SettingValue {
@@ -1818,7 +2044,7 @@ type SettingValue struct {
 
 func (x *SettingValue) Reset() {
 	*x = SettingValue{}
-	mi := &file_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1830,7 +2056,7 @@ func (x *SettingValue) String() string {
 func (*SettingValue) ProtoMessage() {}
 
 func (x *SettingValue) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1843,7 +2069,7 @@ func (x *SettingValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettingValue.ProtoReflect.Descriptor instead.
 func (*SettingValue) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{19}
+	return file_sandbox_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SettingValue) GetValue() isSettingValue_Value {
@@ -1928,7 +2154,7 @@ type EffectiveSetting struct {
 
 func (x *EffectiveSetting) Reset() {
 	*x = EffectiveSetting{}
-	mi := &file_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1940,7 +2166,7 @@ func (x *EffectiveSetting) String() string {
 func (*EffectiveSetting) ProtoMessage() {}
 
 func (x *EffectiveSetting) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1953,7 +2179,7 @@ func (x *EffectiveSetting) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EffectiveSetting.ProtoReflect.Descriptor instead.
 func (*EffectiveSetting) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{20}
+	return file_sandbox_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *EffectiveSetting) GetValue() *SettingValue {
@@ -1970,7 +2196,194 @@ func (x *EffectiveSetting) GetScope() SettingScope {
 	return SettingScope_SETTING_SCOPE_UNSPECIFIED
 }
 
-// Response containing effective sandbox settings and policy.
+// Complete effective sandbox configuration delivered to a supervisor. Fields
+// have the same meaning as the identically numbered GetSandboxConfigResponse
+// fields, including fail-closed handling of an unknown
+// policy_validation_failure_mode and treating absent configuration_admitted as
+// not admitted. Move those field comments here when the polling RPC is removed.
+type SandboxConfigSnapshot struct {
+	state                          protoimpl.MessageState         `protogen:"open.v1"`
+	Policy                         *SandboxPolicy                 `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty"`
+	Version                        uint32                         `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	PolicyHash                     string                         `protobuf:"bytes,3,opt,name=policy_hash,json=policyHash,proto3" json:"policy_hash,omitempty"`
+	Settings                       map[string]*EffectiveSetting   `protobuf:"bytes,4,rep,name=settings,proto3" json:"settings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ConfigRevision                 uint64                         `protobuf:"varint,5,opt,name=config_revision,json=configRevision,proto3" json:"config_revision,omitempty"`
+	PolicySource                   PolicySource                   `protobuf:"varint,6,opt,name=policy_source,json=policySource,proto3,enum=openshell.sandbox.v1.PolicySource" json:"policy_source,omitempty"`
+	GlobalPolicyVersion            uint32                         `protobuf:"varint,7,opt,name=global_policy_version,json=globalPolicyVersion,proto3" json:"global_policy_version,omitempty"`
+	ProviderEnvRevision            uint64                         `protobuf:"varint,8,opt,name=provider_env_revision,json=providerEnvRevision,proto3" json:"provider_env_revision,omitempty"`
+	SupervisorMiddlewareServices   []*SupervisorMiddlewareService `protobuf:"bytes,9,rep,name=supervisor_middleware_services,json=supervisorMiddlewareServices,proto3" json:"supervisor_middleware_services,omitempty"`
+	Workspace                      string                         `protobuf:"bytes,10,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	PolicyValidationFailureMode    string                         `protobuf:"bytes,11,opt,name=policy_validation_failure_mode,json=policyValidationFailureMode,proto3" json:"policy_validation_failure_mode,omitempty"`
+	ExtensionAuthenticationEnabled bool                           `protobuf:"varint,12,opt,name=extension_authentication_enabled,json=extensionAuthenticationEnabled,proto3" json:"extension_authentication_enabled,omitempty"`
+	ConfigurationAdmitted          bool                           `protobuf:"varint,13,opt,name=configuration_admitted,json=configurationAdmitted,proto3" json:"configuration_admitted,omitempty"`
+	ProviderAttachmentEpoch        string                         `protobuf:"bytes,14,opt,name=provider_attachment_epoch,json=providerAttachmentEpoch,proto3" json:"provider_attachment_epoch,omitempty"`
+	ConfigurationInstanceId        string                         `protobuf:"bytes,15,opt,name=configuration_instance_id,json=configurationInstanceId,proto3" json:"configuration_instance_id,omitempty"`
+	ConfigurationError             string                         `protobuf:"bytes,16,opt,name=configuration_error,json=configurationError,proto3" json:"configuration_error,omitempty"`
+	SettingsRevision               uint64                         `protobuf:"varint,17,opt,name=settings_revision,json=settingsRevision,proto3" json:"settings_revision,omitempty"`
+	// Explicit application ingress allowlist. Absent means no app routes.
+	ServiceRoutes []*SandboxServiceRoute `protobuf:"bytes,18,rep,name=service_routes,json=serviceRoutes,proto3" json:"service_routes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxConfigSnapshot) Reset() {
+	*x = SandboxConfigSnapshot{}
+	mi := &file_sandbox_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxConfigSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxConfigSnapshot) ProtoMessage() {}
+
+func (x *SandboxConfigSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxConfigSnapshot.ProtoReflect.Descriptor instead.
+func (*SandboxConfigSnapshot) Descriptor() ([]byte, []int) {
+	return file_sandbox_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SandboxConfigSnapshot) GetPolicy() *SandboxPolicy {
+	if x != nil {
+		return x.Policy
+	}
+	return nil
+}
+
+func (x *SandboxConfigSnapshot) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *SandboxConfigSnapshot) GetPolicyHash() string {
+	if x != nil {
+		return x.PolicyHash
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetSettings() map[string]*EffectiveSetting {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+func (x *SandboxConfigSnapshot) GetConfigRevision() uint64 {
+	if x != nil {
+		return x.ConfigRevision
+	}
+	return 0
+}
+
+func (x *SandboxConfigSnapshot) GetPolicySource() PolicySource {
+	if x != nil {
+		return x.PolicySource
+	}
+	return PolicySource_POLICY_SOURCE_UNSPECIFIED
+}
+
+func (x *SandboxConfigSnapshot) GetGlobalPolicyVersion() uint32 {
+	if x != nil {
+		return x.GlobalPolicyVersion
+	}
+	return 0
+}
+
+func (x *SandboxConfigSnapshot) GetProviderEnvRevision() uint64 {
+	if x != nil {
+		return x.ProviderEnvRevision
+	}
+	return 0
+}
+
+func (x *SandboxConfigSnapshot) GetSupervisorMiddlewareServices() []*SupervisorMiddlewareService {
+	if x != nil {
+		return x.SupervisorMiddlewareServices
+	}
+	return nil
+}
+
+func (x *SandboxConfigSnapshot) GetWorkspace() string {
+	if x != nil {
+		return x.Workspace
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetPolicyValidationFailureMode() string {
+	if x != nil {
+		return x.PolicyValidationFailureMode
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetExtensionAuthenticationEnabled() bool {
+	if x != nil {
+		return x.ExtensionAuthenticationEnabled
+	}
+	return false
+}
+
+func (x *SandboxConfigSnapshot) GetConfigurationAdmitted() bool {
+	if x != nil {
+		return x.ConfigurationAdmitted
+	}
+	return false
+}
+
+func (x *SandboxConfigSnapshot) GetProviderAttachmentEpoch() string {
+	if x != nil {
+		return x.ProviderAttachmentEpoch
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetConfigurationInstanceId() string {
+	if x != nil {
+		return x.ConfigurationInstanceId
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetConfigurationError() string {
+	if x != nil {
+		return x.ConfigurationError
+	}
+	return ""
+}
+
+func (x *SandboxConfigSnapshot) GetSettingsRevision() uint64 {
+	if x != nil {
+		return x.SettingsRevision
+	}
+	return 0
+}
+
+func (x *SandboxConfigSnapshot) GetServiceRoutes() []*SandboxServiceRoute {
+	if x != nil {
+		return x.ServiceRoutes
+	}
+	return nil
+}
+
+// Response containing effective sandbox settings and policy, projected from
+// the SandboxConfigSnapshot that push supervisors receive.
 type GetSandboxConfigResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The sandbox policy configuration.
@@ -2016,13 +2429,16 @@ type GetSandboxConfigResponse struct {
 	ConfigurationError string `protobuf:"bytes,16,opt,name=configuration_error,json=configurationError,proto3" json:"configuration_error,omitempty"`
 	// Registration fence for a new supervisor; capture once and retain on retry.
 	ConfigurationInstanceId string `protobuf:"bytes,15,opt,name=configuration_instance_id,json=configurationInstanceId,proto3" json:"configuration_instance_id,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Monotonic revision of the sandbox-scoped settings row.
+	SettingsRevision uint64                 `protobuf:"varint,17,opt,name=settings_revision,json=settingsRevision,proto3" json:"settings_revision,omitempty"`
+	ServiceRoutes    []*SandboxServiceRoute `protobuf:"bytes,18,rep,name=service_routes,json=serviceRoutes,proto3" json:"service_routes,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GetSandboxConfigResponse) Reset() {
 	*x = GetSandboxConfigResponse{}
-	mi := &file_sandbox_proto_msgTypes[21]
+	mi := &file_sandbox_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2034,7 +2450,7 @@ func (x *GetSandboxConfigResponse) String() string {
 func (*GetSandboxConfigResponse) ProtoMessage() {}
 
 func (x *GetSandboxConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[21]
+	mi := &file_sandbox_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2047,7 +2463,7 @@ func (x *GetSandboxConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSandboxConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetSandboxConfigResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{21}
+	return file_sandbox_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetSandboxConfigResponse) GetPolicy() *SandboxPolicy {
@@ -2162,6 +2578,109 @@ func (x *GetSandboxConfigResponse) GetConfigurationInstanceId() string {
 	return ""
 }
 
+func (x *GetSandboxConfigResponse) GetSettingsRevision() uint64 {
+	if x != nil {
+		return x.SettingsRevision
+	}
+	return 0
+}
+
+func (x *GetSandboxConfigResponse) GetServiceRoutes() []*SandboxServiceRoute {
+	if x != nil {
+		return x.ServiceRoutes
+	}
+	return nil
+}
+
+// Gateway-declared service installed by a supervisor; this does not grant
+// access to arbitrary workload ports or assert application health.
+type SandboxServiceRoute struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EndpointId        string                 `protobuf:"bytes,1,opt,name=endpoint_id,json=endpointId,proto3" json:"endpoint_id,omitempty"`
+	Name              string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	TargetPort        uint32                 `protobuf:"varint,3,opt,name=target_port,json=targetPort,proto3" json:"target_port,omitempty"`
+	AuthorizationMode int32                  `protobuf:"varint,4,opt,name=authorization_mode,json=authorizationMode,proto3" json:"authorization_mode,omitempty"`
+	ResourceVersion   uint64                 `protobuf:"varint,5,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
+	// Canonical application SNI/Host selected by the gateway's hostname format.
+	// Includes the application domain, without a scheme or port. An empty value
+	// from an older gateway retains readable workspace--sandbox[--service] routing.
+	ApplicationHostname string `protobuf:"bytes,6,opt,name=application_hostname,json=applicationHostname,proto3" json:"application_hostname,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *SandboxServiceRoute) Reset() {
+	*x = SandboxServiceRoute{}
+	mi := &file_sandbox_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxServiceRoute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxServiceRoute) ProtoMessage() {}
+
+func (x *SandboxServiceRoute) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxServiceRoute.ProtoReflect.Descriptor instead.
+func (*SandboxServiceRoute) Descriptor() ([]byte, []int) {
+	return file_sandbox_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *SandboxServiceRoute) GetEndpointId() string {
+	if x != nil {
+		return x.EndpointId
+	}
+	return ""
+}
+
+func (x *SandboxServiceRoute) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SandboxServiceRoute) GetTargetPort() uint32 {
+	if x != nil {
+		return x.TargetPort
+	}
+	return 0
+}
+
+func (x *SandboxServiceRoute) GetAuthorizationMode() int32 {
+	if x != nil {
+		return x.AuthorizationMode
+	}
+	return 0
+}
+
+func (x *SandboxServiceRoute) GetResourceVersion() uint64 {
+	if x != nil {
+		return x.ResourceVersion
+	}
+	return 0
+}
+
+func (x *SandboxServiceRoute) GetApplicationHostname() string {
+	if x != nil {
+		return x.ApplicationHostname
+	}
+	return ""
+}
+
 // Connection details for one operator-registered supervisor middleware service.
 // V1 supports plaintext and server-authenticated TLS gRPC.
 type SupervisorMiddlewareService struct {
@@ -2188,13 +2707,20 @@ type SupervisorMiddlewareService struct {
 	// no bearer credential; supervisors must not request one. Intended only for
 	// trusted-network development deployments.
 	AllowInsecureTransport bool `protobuf:"varint,7,opt,name=allow_insecure_transport,json=allowInsecureTransport,proto3" json:"allow_insecure_transport,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// How the gateway and supervisor authorize the bindings returned by Describe.
+	// Absence preserves dynamic discovery. A supervisor predating this field
+	// cannot enforce a binding policy; upgrade supervisors before requiring one.
+	BindingPolicy SupervisorMiddlewareBindingPolicy `protobuf:"varint,8,opt,name=binding_policy,json=bindingPolicy,proto3,enum=openshell.sandbox.v1.SupervisorMiddlewareBindingPolicy" json:"binding_policy,omitempty"`
+	// Operation/phase pairs required by an allowlist or exact policy. Every
+	// listed binding must be advertised, and only listed bindings may run.
+	Bindings      []SupervisorMiddlewareBinding `protobuf:"varint,9,rep,packed,name=bindings,proto3,enum=openshell.sandbox.v1.SupervisorMiddlewareBinding" json:"bindings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SupervisorMiddlewareService) Reset() {
 	*x = SupervisorMiddlewareService{}
-	mi := &file_sandbox_proto_msgTypes[22]
+	mi := &file_sandbox_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2206,7 +2732,7 @@ func (x *SupervisorMiddlewareService) String() string {
 func (*SupervisorMiddlewareService) ProtoMessage() {}
 
 func (x *SupervisorMiddlewareService) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_proto_msgTypes[22]
+	mi := &file_sandbox_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2219,7 +2745,7 @@ func (x *SupervisorMiddlewareService) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SupervisorMiddlewareService.ProtoReflect.Descriptor instead.
 func (*SupervisorMiddlewareService) Descriptor() ([]byte, []int) {
-	return file_sandbox_proto_rawDescGZIP(), []int{22}
+	return file_sandbox_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SupervisorMiddlewareService) GetName() string {
@@ -2271,11 +2797,25 @@ func (x *SupervisorMiddlewareService) GetAllowInsecureTransport() bool {
 	return false
 }
 
+func (x *SupervisorMiddlewareService) GetBindingPolicy() SupervisorMiddlewareBindingPolicy {
+	if x != nil {
+		return x.BindingPolicy
+	}
+	return SupervisorMiddlewareBindingPolicy_SUPERVISOR_MIDDLEWARE_BINDING_POLICY_UNSPECIFIED
+}
+
+func (x *SupervisorMiddlewareService) GetBindings() []SupervisorMiddlewareBinding {
+	if x != nil {
+		return x.Bindings
+	}
+	return nil
+}
+
 var File_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_proto_rawDesc = "" +
 	"\n" +
-	"\rsandbox.proto\x12\x14openshell.sandbox.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x0fdatamodel.proto\"\xa8\x05\n" +
+	"\rsandbox.proto\x12\x14openshell.sandbox.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x0fdatamodel.proto\"\xb5\b\n" +
 	"\rSandboxPolicy\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12F\n" +
 	"\n" +
@@ -2284,13 +2824,21 @@ const file_sandbox_proto_rawDesc = "" +
 	"\blandlock\x18\x03 \x01(\v2$.openshell.sandbox.v1.LandlockPolicyR\blandlock\x12=\n" +
 	"\aprocess\x18\x04 \x01(\v2#.openshell.sandbox.v1.ProcessPolicyR\aprocess\x12c\n" +
 	"\x10network_policies\x18\x05 \x03(\v28.openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntryR\x0fnetworkPolicies\x12l\n" +
-	"\x13network_middlewares\x18\x06 \x03(\v2;.openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntryR\x12networkMiddlewares\x1ak\n" +
+	"\x13network_middlewares\x18\x06 \x03(\v2;.openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntryR\x12networkMiddlewares\x12D\n" +
+	"\fcedar_policy\x18\a \x01(\v2!.openshell.sandbox.v1.CedarPolicyR\vcedarPolicy\x12|\n" +
+	"\x19provider_credential_rules\x18\b \x03(\v2@.openshell.sandbox.v1.SandboxPolicy.ProviderCredentialRulesEntryR\x17providerCredentialRules\x12R\n" +
+	"\x11endpoint_settings\x18\t \x03(\v2%.openshell.sandbox.v1.NetworkEndpointR\x10endpointSettings\x1ak\n" +
 	"\x14NetworkPoliciesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12=\n" +
 	"\x05value\x18\x02 \x01(\v2'.openshell.sandbox.v1.NetworkPolicyRuleR\x05value:\x028\x01\x1at\n" +
 	"\x17NetworkMiddlewaresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12C\n" +
-	"\x05value\x18\x02 \x01(\v2-.openshell.sandbox.v1.NetworkMiddlewareConfigR\x05value:\x028\x01\"w\n" +
+	"\x05value\x18\x02 \x01(\v2-.openshell.sandbox.v1.NetworkMiddlewareConfigR\x05value:\x028\x01\x1as\n" +
+	"\x1cProviderCredentialRulesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12=\n" +
+	"\x05value\x18\x02 \x01(\v2'.openshell.sandbox.v1.NetworkPolicyRuleR\x05value:\x028\x01\"%\n" +
+	"\vCedarPolicy\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\"w\n" +
 	"\x10FilesystemPolicy\x12'\n" +
 	"\x0finclude_workdir\x18\x01 \x01(\bR\x0eincludeWorkdir\x12\x1b\n" +
 	"\tread_only\x18\x02 \x03(\tR\breadOnly\x12\x1d\n" +
@@ -2319,7 +2867,7 @@ const file_sandbox_proto_rawDesc = "" +
 	"\ainclude\x18\x01 \x03(\tR\ainclude\x12\x18\n" +
 	"\aexclude\x18\x02 \x03(\tR\aexclude\"6\n" +
 	"\x18NetworkCredentialBinding\x12\x1a\n" +
-	"\bprovider\x18\x01 \x01(\tR\bprovider\"\xdb\v\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\"\x87\f\n" +
 	"\x0fNetworkEndpoint\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1a\n" +
@@ -2349,7 +2897,8 @@ const file_sandbox_proto_rawDesc = "" +
 	"\x03mcp\x18\x17 \x01(\v2 .openshell.sandbox.v1.McpOptionsR\x03mcp\x12]\n" +
 	"\x12credential_binding\x18\x18 \x01(\v2..openshell.sandbox.v1.NetworkCredentialBindingR\x11credentialBinding\x12B\n" +
 	"\x1dallow_uninspected_credentials\x18\x19 \x01(\bR\x1ballowUninspectedCredentials\x123\n" +
-	"\x15provider_credentialed\x18\x1a \x01(\bR\x14providerCredentialed\x1ar\n" +
+	"\x15provider_credentialed\x18\x1a \x01(\bR\x14providerCredentialed\x12*\n" +
+	"\x11token_grant_owner\x18\x1b \x01(\tR\x0ftokenGrantOwner\x1ar\n" +
 	"\x1cGraphqlPersistedQueriesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12<\n" +
 	"\x05value\x18\x02 \x01(\v2&.openshell.sandbox.v1.GraphqlOperationR\x05value:\x028\x01\"\xd2\x01\n" +
@@ -2403,10 +2952,11 @@ const file_sandbox_proto_rawDesc = "" +
 	"\x04glob\x18\x01 \x01(\tR\x04glob\x12\x10\n" +
 	"\x03any\x18\x02 \x03(\tR\x03any\"2\n" +
 	"\rNetworkBinary\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04pathJ\x04\b\x02\x10\x03R\aharness\"\x81\x01\n" +
+	"\x04path\x18\x01 \x01(\tR\x04pathJ\x04\b\x02\x10\x03R\aharness\"\xb8\x01\n" +
 	"\x17GetSandboxConfigRequest\x12R\n" +
 	"\x0fworkspace_scope\x18\x03 \x01(\v2).openshell.datamodel.v1.WorkspaceSelectorR\x0eworkspaceScope\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\x19\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x125\n" +
+	"\x16supported_capabilities\x18\x05 \x03(\tR\x15supportedCapabilities\"\x19\n" +
 	"\x17GetGatewayConfigRequest\"\x82\x02\n" +
 	"\x18GetGatewayConfigResponse\x12X\n" +
 	"\bsettings\x18\x01 \x03(\v2<.openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntryR\bsettings\x12+\n" +
@@ -2424,7 +2974,31 @@ const file_sandbox_proto_rawDesc = "" +
 	"\x05value\"\x86\x01\n" +
 	"\x10EffectiveSetting\x128\n" +
 	"\x05value\x18\x01 \x01(\v2\".openshell.sandbox.v1.SettingValueR\x05value\x128\n" +
-	"\x05scope\x18\x02 \x01(\x0e2\".openshell.sandbox.v1.SettingScopeR\x05scope\"\xb1\b\n" +
+	"\x05scope\x18\x02 \x01(\x0e2\".openshell.sandbox.v1.SettingScopeR\x05scope\"\xaa\t\n" +
+	"\x15SandboxConfigSnapshot\x12;\n" +
+	"\x06policy\x18\x01 \x01(\v2#.openshell.sandbox.v1.SandboxPolicyR\x06policy\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\rR\aversion\x12\x1f\n" +
+	"\vpolicy_hash\x18\x03 \x01(\tR\n" +
+	"policyHash\x12U\n" +
+	"\bsettings\x18\x04 \x03(\v29.openshell.sandbox.v1.SandboxConfigSnapshot.SettingsEntryR\bsettings\x12'\n" +
+	"\x0fconfig_revision\x18\x05 \x01(\x04R\x0econfigRevision\x12G\n" +
+	"\rpolicy_source\x18\x06 \x01(\x0e2\".openshell.sandbox.v1.PolicySourceR\fpolicySource\x122\n" +
+	"\x15global_policy_version\x18\a \x01(\rR\x13globalPolicyVersion\x122\n" +
+	"\x15provider_env_revision\x18\b \x01(\x04R\x13providerEnvRevision\x12w\n" +
+	"\x1esupervisor_middleware_services\x18\t \x03(\v21.openshell.sandbox.v1.SupervisorMiddlewareServiceR\x1csupervisorMiddlewareServices\x12\x1c\n" +
+	"\tworkspace\x18\n" +
+	" \x01(\tR\tworkspace\x12C\n" +
+	"\x1epolicy_validation_failure_mode\x18\v \x01(\tR\x1bpolicyValidationFailureMode\x12H\n" +
+	" extension_authentication_enabled\x18\f \x01(\bR\x1eextensionAuthenticationEnabled\x125\n" +
+	"\x16configuration_admitted\x18\r \x01(\bR\x15configurationAdmitted\x12:\n" +
+	"\x19provider_attachment_epoch\x18\x0e \x01(\tR\x17providerAttachmentEpoch\x12:\n" +
+	"\x19configuration_instance_id\x18\x0f \x01(\tR\x17configurationInstanceId\x12/\n" +
+	"\x13configuration_error\x18\x10 \x01(\tR\x12configurationError\x12+\n" +
+	"\x11settings_revision\x18\x11 \x01(\x04R\x10settingsRevision\x12P\n" +
+	"\x0eservice_routes\x18\x12 \x03(\v2).openshell.sandbox.v1.SandboxServiceRouteR\rserviceRoutes\x1ac\n" +
+	"\rSettingsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12<\n" +
+	"\x05value\x18\x02 \x01(\v2&.openshell.sandbox.v1.EffectiveSettingR\x05value:\x028\x01\"\xb0\t\n" +
 	"\x18GetSandboxConfigResponse\x12;\n" +
 	"\x06policy\x18\x01 \x01(\v2#.openshell.sandbox.v1.SandboxPolicyR\x06policy\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12\x1f\n" +
@@ -2443,10 +3017,21 @@ const file_sandbox_proto_rawDesc = "" +
 	"\x19provider_attachment_epoch\x18\x0e \x01(\tR\x17providerAttachmentEpoch\x125\n" +
 	"\x16configuration_admitted\x18\r \x01(\bR\x15configurationAdmitted\x12/\n" +
 	"\x13configuration_error\x18\x10 \x01(\tR\x12configurationError\x12:\n" +
-	"\x19configuration_instance_id\x18\x0f \x01(\tR\x17configurationInstanceId\x1ac\n" +
+	"\x19configuration_instance_id\x18\x0f \x01(\tR\x17configurationInstanceId\x12+\n" +
+	"\x11settings_revision\x18\x11 \x01(\x04R\x10settingsRevision\x12P\n" +
+	"\x0eservice_routes\x18\x12 \x03(\v2).openshell.sandbox.v1.SandboxServiceRouteR\rserviceRoutes\x1ac\n" +
 	"\rSettingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12<\n" +
-	"\x05value\x18\x02 \x01(\v2&.openshell.sandbox.v1.EffectiveSettingR\x05value:\x028\x01\"\xd2\x02\n" +
+	"\x05value\x18\x02 \x01(\v2&.openshell.sandbox.v1.EffectiveSettingR\x05value:\x028\x01\"\xf8\x01\n" +
+	"\x13SandboxServiceRoute\x12\x1f\n" +
+	"\vendpoint_id\x18\x01 \x01(\tR\n" +
+	"endpointId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\vtarget_port\x18\x03 \x01(\rR\n" +
+	"targetPort\x12-\n" +
+	"\x12authorization_mode\x18\x04 \x01(\x05R\x11authorizationMode\x12)\n" +
+	"\x10resource_version\x18\x05 \x01(\x04R\x0fresourceVersion\x121\n" +
+	"\x14application_hostname\x18\x06 \x01(\tR\x13applicationHostname\"\x81\x04\n" +
 	"\x1bSupervisorMiddlewareService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
 	"\rgrpc_endpoint\x18\x02 \x01(\tR\fgrpcEndpoint\x12*\n" +
@@ -2454,7 +3039,9 @@ const file_sandbox_proto_rawDesc = "" +
 	"\x0frequest_timeout\x18h \x01(\v2\x19.google.protobuf.DurationR\x0erequestTimeout\x12%\n" +
 	"\x0ftls_ca_cert_pem\x18\x05 \x01(\fR\ftlsCaCertPem\x12\x1a\n" +
 	"\baudience\x18\x06 \x01(\tR\baudience\x128\n" +
-	"\x18allow_insecure_transport\x18\a \x01(\bR\x16allowInsecureTransportJ\x04\b\x04\x10\x05R\atimeout*\x97\x01\n" +
+	"\x18allow_insecure_transport\x18\a \x01(\bR\x16allowInsecureTransport\x12^\n" +
+	"\x0ebinding_policy\x18\b \x01(\x0e27.openshell.sandbox.v1.SupervisorMiddlewareBindingPolicyR\rbindingPolicy\x12M\n" +
+	"\bbindings\x18\t \x03(\x0e21.openshell.sandbox.v1.SupervisorMiddlewareBindingR\bbindingsJ\x04\b\x04\x10\x05R\atimeout*\x97\x01\n" +
 	"\x0eNetworkTlsMode\x12 \n" +
 	"\x1cNETWORK_TLS_MODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15NETWORK_TLS_MODE_SKIP\x10\x01\x12\"\n" +
@@ -2476,7 +3063,17 @@ const file_sandbox_proto_rawDesc = "" +
 	"\fPolicySource\x12\x1d\n" +
 	"\x19POLICY_SOURCE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15POLICY_SOURCE_SANDBOX\x10\x01\x12\x18\n" +
-	"\x14POLICY_SOURCE_GLOBAL\x10\x02b\x06proto3"
+	"\x14POLICY_SOURCE_GLOBAL\x10\x02*\xef\x01\n" +
+	"!SupervisorMiddlewareBindingPolicy\x124\n" +
+	"0SUPERVISOR_MIDDLEWARE_BINDING_POLICY_UNSPECIFIED\x10\x00\x120\n" +
+	",SUPERVISOR_MIDDLEWARE_BINDING_POLICY_DYNAMIC\x10\x01\x122\n" +
+	".SUPERVISOR_MIDDLEWARE_BINDING_POLICY_ALLOWLIST\x10\x02\x12.\n" +
+	"*SUPERVISOR_MIDDLEWARE_BINDING_POLICY_EXACT\x10\x03*\x8d\x02\n" +
+	"\x1bSupervisorMiddlewareBinding\x12-\n" +
+	")SUPERVISOR_MIDDLEWARE_BINDING_UNSPECIFIED\x10\x00\x12>\n" +
+	":SUPERVISOR_MIDDLEWARE_BINDING_HTTP_REQUEST_PRE_CREDENTIALS\x10\x01\x12:\n" +
+	"6SUPERVISOR_MIDDLEWARE_BINDING_HTTP_RESPONSE_PRE_RETURN\x10\x02\x12C\n" +
+	"?SUPERVISOR_MIDDLEWARE_BINDING_WEBSOCKET_MESSAGE_PRE_CREDENTIALS\x10\x03b\x06proto3"
 
 var (
 	file_sandbox_proto_rawDescOnce sync.Once
@@ -2490,96 +3087,116 @@ func file_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_proto_rawDescData
 }
 
-var file_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
+var file_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_sandbox_proto_goTypes = []any{
-	(NetworkTlsMode)(0),                   // 0: openshell.sandbox.v1.NetworkTlsMode
-	(NetworkEnforcementMode)(0),           // 1: openshell.sandbox.v1.NetworkEnforcementMode
-	(NetworkAccessPreset)(0),              // 2: openshell.sandbox.v1.NetworkAccessPreset
-	(SettingScope)(0),                     // 3: openshell.sandbox.v1.SettingScope
-	(PolicySource)(0),                     // 4: openshell.sandbox.v1.PolicySource
-	(*SandboxPolicy)(nil),                 // 5: openshell.sandbox.v1.SandboxPolicy
-	(*FilesystemPolicy)(nil),              // 6: openshell.sandbox.v1.FilesystemPolicy
-	(*LandlockPolicy)(nil),                // 7: openshell.sandbox.v1.LandlockPolicy
-	(*ProcessPolicy)(nil),                 // 8: openshell.sandbox.v1.ProcessPolicy
-	(*NetworkPolicyRule)(nil),             // 9: openshell.sandbox.v1.NetworkPolicyRule
-	(*NetworkMiddlewareConfig)(nil),       // 10: openshell.sandbox.v1.NetworkMiddlewareConfig
-	(*MiddlewareEndpointSelector)(nil),    // 11: openshell.sandbox.v1.MiddlewareEndpointSelector
-	(*NetworkCredentialBinding)(nil),      // 12: openshell.sandbox.v1.NetworkCredentialBinding
-	(*NetworkEndpoint)(nil),               // 13: openshell.sandbox.v1.NetworkEndpoint
-	(*McpOptions)(nil),                    // 14: openshell.sandbox.v1.McpOptions
-	(*GraphqlOperation)(nil),              // 15: openshell.sandbox.v1.GraphqlOperation
-	(*L7DenyRule)(nil),                    // 16: openshell.sandbox.v1.L7DenyRule
-	(*L7Rule)(nil),                        // 17: openshell.sandbox.v1.L7Rule
-	(*L7Allow)(nil),                       // 18: openshell.sandbox.v1.L7Allow
-	(*L7QueryMatcher)(nil),                // 19: openshell.sandbox.v1.L7QueryMatcher
-	(*NetworkBinary)(nil),                 // 20: openshell.sandbox.v1.NetworkBinary
-	(*GetSandboxConfigRequest)(nil),       // 21: openshell.sandbox.v1.GetSandboxConfigRequest
-	(*GetGatewayConfigRequest)(nil),       // 22: openshell.sandbox.v1.GetGatewayConfigRequest
-	(*GetGatewayConfigResponse)(nil),      // 23: openshell.sandbox.v1.GetGatewayConfigResponse
-	(*SettingValue)(nil),                  // 24: openshell.sandbox.v1.SettingValue
-	(*EffectiveSetting)(nil),              // 25: openshell.sandbox.v1.EffectiveSetting
-	(*GetSandboxConfigResponse)(nil),      // 26: openshell.sandbox.v1.GetSandboxConfigResponse
-	(*SupervisorMiddlewareService)(nil),   // 27: openshell.sandbox.v1.SupervisorMiddlewareService
-	nil,                                   // 28: openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry
-	nil,                                   // 29: openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry
-	nil,                                   // 30: openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry
-	nil,                                   // 31: openshell.sandbox.v1.L7DenyRule.QueryEntry
-	nil,                                   // 32: openshell.sandbox.v1.L7DenyRule.ParamsEntry
-	nil,                                   // 33: openshell.sandbox.v1.L7Allow.QueryEntry
-	nil,                                   // 34: openshell.sandbox.v1.L7Allow.ParamsEntry
-	nil,                                   // 35: openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry
-	nil,                                   // 36: openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry
-	(*structpb.Struct)(nil),               // 37: google.protobuf.Struct
-	(*datamodelv1.WorkspaceSelector)(nil), // 38: openshell.datamodel.v1.WorkspaceSelector
-	(*durationpb.Duration)(nil),           // 39: google.protobuf.Duration
+	(NetworkTlsMode)(0),                    // 0: openshell.sandbox.v1.NetworkTlsMode
+	(NetworkEnforcementMode)(0),            // 1: openshell.sandbox.v1.NetworkEnforcementMode
+	(NetworkAccessPreset)(0),               // 2: openshell.sandbox.v1.NetworkAccessPreset
+	(SettingScope)(0),                      // 3: openshell.sandbox.v1.SettingScope
+	(PolicySource)(0),                      // 4: openshell.sandbox.v1.PolicySource
+	(SupervisorMiddlewareBindingPolicy)(0), // 5: openshell.sandbox.v1.SupervisorMiddlewareBindingPolicy
+	(SupervisorMiddlewareBinding)(0),       // 6: openshell.sandbox.v1.SupervisorMiddlewareBinding
+	(*SandboxPolicy)(nil),                  // 7: openshell.sandbox.v1.SandboxPolicy
+	(*CedarPolicy)(nil),                    // 8: openshell.sandbox.v1.CedarPolicy
+	(*FilesystemPolicy)(nil),               // 9: openshell.sandbox.v1.FilesystemPolicy
+	(*LandlockPolicy)(nil),                 // 10: openshell.sandbox.v1.LandlockPolicy
+	(*ProcessPolicy)(nil),                  // 11: openshell.sandbox.v1.ProcessPolicy
+	(*NetworkPolicyRule)(nil),              // 12: openshell.sandbox.v1.NetworkPolicyRule
+	(*NetworkMiddlewareConfig)(nil),        // 13: openshell.sandbox.v1.NetworkMiddlewareConfig
+	(*MiddlewareEndpointSelector)(nil),     // 14: openshell.sandbox.v1.MiddlewareEndpointSelector
+	(*NetworkCredentialBinding)(nil),       // 15: openshell.sandbox.v1.NetworkCredentialBinding
+	(*NetworkEndpoint)(nil),                // 16: openshell.sandbox.v1.NetworkEndpoint
+	(*McpOptions)(nil),                     // 17: openshell.sandbox.v1.McpOptions
+	(*GraphqlOperation)(nil),               // 18: openshell.sandbox.v1.GraphqlOperation
+	(*L7DenyRule)(nil),                     // 19: openshell.sandbox.v1.L7DenyRule
+	(*L7Rule)(nil),                         // 20: openshell.sandbox.v1.L7Rule
+	(*L7Allow)(nil),                        // 21: openshell.sandbox.v1.L7Allow
+	(*L7QueryMatcher)(nil),                 // 22: openshell.sandbox.v1.L7QueryMatcher
+	(*NetworkBinary)(nil),                  // 23: openshell.sandbox.v1.NetworkBinary
+	(*GetSandboxConfigRequest)(nil),        // 24: openshell.sandbox.v1.GetSandboxConfigRequest
+	(*GetGatewayConfigRequest)(nil),        // 25: openshell.sandbox.v1.GetGatewayConfigRequest
+	(*GetGatewayConfigResponse)(nil),       // 26: openshell.sandbox.v1.GetGatewayConfigResponse
+	(*SettingValue)(nil),                   // 27: openshell.sandbox.v1.SettingValue
+	(*EffectiveSetting)(nil),               // 28: openshell.sandbox.v1.EffectiveSetting
+	(*SandboxConfigSnapshot)(nil),          // 29: openshell.sandbox.v1.SandboxConfigSnapshot
+	(*GetSandboxConfigResponse)(nil),       // 30: openshell.sandbox.v1.GetSandboxConfigResponse
+	(*SandboxServiceRoute)(nil),            // 31: openshell.sandbox.v1.SandboxServiceRoute
+	(*SupervisorMiddlewareService)(nil),    // 32: openshell.sandbox.v1.SupervisorMiddlewareService
+	nil,                                    // 33: openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry
+	nil,                                    // 34: openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry
+	nil,                                    // 35: openshell.sandbox.v1.SandboxPolicy.ProviderCredentialRulesEntry
+	nil,                                    // 36: openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry
+	nil,                                    // 37: openshell.sandbox.v1.L7DenyRule.QueryEntry
+	nil,                                    // 38: openshell.sandbox.v1.L7DenyRule.ParamsEntry
+	nil,                                    // 39: openshell.sandbox.v1.L7Allow.QueryEntry
+	nil,                                    // 40: openshell.sandbox.v1.L7Allow.ParamsEntry
+	nil,                                    // 41: openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry
+	nil,                                    // 42: openshell.sandbox.v1.SandboxConfigSnapshot.SettingsEntry
+	nil,                                    // 43: openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry
+	(*structpb.Struct)(nil),                // 44: google.protobuf.Struct
+	(*datamodelv1.WorkspaceSelector)(nil),  // 45: openshell.datamodel.v1.WorkspaceSelector
+	(*durationpb.Duration)(nil),            // 46: google.protobuf.Duration
 }
 var file_sandbox_proto_depIdxs = []int32{
-	6,  // 0: openshell.sandbox.v1.SandboxPolicy.filesystem:type_name -> openshell.sandbox.v1.FilesystemPolicy
-	7,  // 1: openshell.sandbox.v1.SandboxPolicy.landlock:type_name -> openshell.sandbox.v1.LandlockPolicy
-	8,  // 2: openshell.sandbox.v1.SandboxPolicy.process:type_name -> openshell.sandbox.v1.ProcessPolicy
-	28, // 3: openshell.sandbox.v1.SandboxPolicy.network_policies:type_name -> openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry
-	29, // 4: openshell.sandbox.v1.SandboxPolicy.network_middlewares:type_name -> openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry
-	13, // 5: openshell.sandbox.v1.NetworkPolicyRule.endpoints:type_name -> openshell.sandbox.v1.NetworkEndpoint
-	20, // 6: openshell.sandbox.v1.NetworkPolicyRule.binaries:type_name -> openshell.sandbox.v1.NetworkBinary
-	37, // 7: openshell.sandbox.v1.NetworkMiddlewareConfig.config:type_name -> google.protobuf.Struct
-	11, // 8: openshell.sandbox.v1.NetworkMiddlewareConfig.endpoints:type_name -> openshell.sandbox.v1.MiddlewareEndpointSelector
-	0,  // 9: openshell.sandbox.v1.NetworkEndpoint.tls:type_name -> openshell.sandbox.v1.NetworkTlsMode
-	1,  // 10: openshell.sandbox.v1.NetworkEndpoint.enforcement:type_name -> openshell.sandbox.v1.NetworkEnforcementMode
-	2,  // 11: openshell.sandbox.v1.NetworkEndpoint.access:type_name -> openshell.sandbox.v1.NetworkAccessPreset
-	17, // 12: openshell.sandbox.v1.NetworkEndpoint.rules:type_name -> openshell.sandbox.v1.L7Rule
-	16, // 13: openshell.sandbox.v1.NetworkEndpoint.deny_rules:type_name -> openshell.sandbox.v1.L7DenyRule
-	30, // 14: openshell.sandbox.v1.NetworkEndpoint.graphql_persisted_queries:type_name -> openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry
-	14, // 15: openshell.sandbox.v1.NetworkEndpoint.mcp:type_name -> openshell.sandbox.v1.McpOptions
-	12, // 16: openshell.sandbox.v1.NetworkEndpoint.credential_binding:type_name -> openshell.sandbox.v1.NetworkCredentialBinding
-	31, // 17: openshell.sandbox.v1.L7DenyRule.query:type_name -> openshell.sandbox.v1.L7DenyRule.QueryEntry
-	32, // 18: openshell.sandbox.v1.L7DenyRule.params:type_name -> openshell.sandbox.v1.L7DenyRule.ParamsEntry
-	18, // 19: openshell.sandbox.v1.L7Rule.allow:type_name -> openshell.sandbox.v1.L7Allow
-	33, // 20: openshell.sandbox.v1.L7Allow.query:type_name -> openshell.sandbox.v1.L7Allow.QueryEntry
-	34, // 21: openshell.sandbox.v1.L7Allow.params:type_name -> openshell.sandbox.v1.L7Allow.ParamsEntry
-	38, // 22: openshell.sandbox.v1.GetSandboxConfigRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
-	35, // 23: openshell.sandbox.v1.GetGatewayConfigResponse.settings:type_name -> openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry
-	24, // 24: openshell.sandbox.v1.EffectiveSetting.value:type_name -> openshell.sandbox.v1.SettingValue
-	3,  // 25: openshell.sandbox.v1.EffectiveSetting.scope:type_name -> openshell.sandbox.v1.SettingScope
-	5,  // 26: openshell.sandbox.v1.GetSandboxConfigResponse.policy:type_name -> openshell.sandbox.v1.SandboxPolicy
-	36, // 27: openshell.sandbox.v1.GetSandboxConfigResponse.settings:type_name -> openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry
-	4,  // 28: openshell.sandbox.v1.GetSandboxConfigResponse.policy_source:type_name -> openshell.sandbox.v1.PolicySource
-	27, // 29: openshell.sandbox.v1.GetSandboxConfigResponse.supervisor_middleware_services:type_name -> openshell.sandbox.v1.SupervisorMiddlewareService
-	39, // 30: openshell.sandbox.v1.SupervisorMiddlewareService.request_timeout:type_name -> google.protobuf.Duration
-	9,  // 31: openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry.value:type_name -> openshell.sandbox.v1.NetworkPolicyRule
-	10, // 32: openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry.value:type_name -> openshell.sandbox.v1.NetworkMiddlewareConfig
-	15, // 33: openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry.value:type_name -> openshell.sandbox.v1.GraphqlOperation
-	19, // 34: openshell.sandbox.v1.L7DenyRule.QueryEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
-	19, // 35: openshell.sandbox.v1.L7DenyRule.ParamsEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
-	19, // 36: openshell.sandbox.v1.L7Allow.QueryEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
-	19, // 37: openshell.sandbox.v1.L7Allow.ParamsEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
-	24, // 38: openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry.value:type_name -> openshell.sandbox.v1.SettingValue
-	25, // 39: openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry.value:type_name -> openshell.sandbox.v1.EffectiveSetting
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	9,  // 0: openshell.sandbox.v1.SandboxPolicy.filesystem:type_name -> openshell.sandbox.v1.FilesystemPolicy
+	10, // 1: openshell.sandbox.v1.SandboxPolicy.landlock:type_name -> openshell.sandbox.v1.LandlockPolicy
+	11, // 2: openshell.sandbox.v1.SandboxPolicy.process:type_name -> openshell.sandbox.v1.ProcessPolicy
+	33, // 3: openshell.sandbox.v1.SandboxPolicy.network_policies:type_name -> openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry
+	34, // 4: openshell.sandbox.v1.SandboxPolicy.network_middlewares:type_name -> openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry
+	8,  // 5: openshell.sandbox.v1.SandboxPolicy.cedar_policy:type_name -> openshell.sandbox.v1.CedarPolicy
+	35, // 6: openshell.sandbox.v1.SandboxPolicy.provider_credential_rules:type_name -> openshell.sandbox.v1.SandboxPolicy.ProviderCredentialRulesEntry
+	16, // 7: openshell.sandbox.v1.SandboxPolicy.endpoint_settings:type_name -> openshell.sandbox.v1.NetworkEndpoint
+	16, // 8: openshell.sandbox.v1.NetworkPolicyRule.endpoints:type_name -> openshell.sandbox.v1.NetworkEndpoint
+	23, // 9: openshell.sandbox.v1.NetworkPolicyRule.binaries:type_name -> openshell.sandbox.v1.NetworkBinary
+	44, // 10: openshell.sandbox.v1.NetworkMiddlewareConfig.config:type_name -> google.protobuf.Struct
+	14, // 11: openshell.sandbox.v1.NetworkMiddlewareConfig.endpoints:type_name -> openshell.sandbox.v1.MiddlewareEndpointSelector
+	0,  // 12: openshell.sandbox.v1.NetworkEndpoint.tls:type_name -> openshell.sandbox.v1.NetworkTlsMode
+	1,  // 13: openshell.sandbox.v1.NetworkEndpoint.enforcement:type_name -> openshell.sandbox.v1.NetworkEnforcementMode
+	2,  // 14: openshell.sandbox.v1.NetworkEndpoint.access:type_name -> openshell.sandbox.v1.NetworkAccessPreset
+	20, // 15: openshell.sandbox.v1.NetworkEndpoint.rules:type_name -> openshell.sandbox.v1.L7Rule
+	19, // 16: openshell.sandbox.v1.NetworkEndpoint.deny_rules:type_name -> openshell.sandbox.v1.L7DenyRule
+	36, // 17: openshell.sandbox.v1.NetworkEndpoint.graphql_persisted_queries:type_name -> openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry
+	17, // 18: openshell.sandbox.v1.NetworkEndpoint.mcp:type_name -> openshell.sandbox.v1.McpOptions
+	15, // 19: openshell.sandbox.v1.NetworkEndpoint.credential_binding:type_name -> openshell.sandbox.v1.NetworkCredentialBinding
+	37, // 20: openshell.sandbox.v1.L7DenyRule.query:type_name -> openshell.sandbox.v1.L7DenyRule.QueryEntry
+	38, // 21: openshell.sandbox.v1.L7DenyRule.params:type_name -> openshell.sandbox.v1.L7DenyRule.ParamsEntry
+	21, // 22: openshell.sandbox.v1.L7Rule.allow:type_name -> openshell.sandbox.v1.L7Allow
+	39, // 23: openshell.sandbox.v1.L7Allow.query:type_name -> openshell.sandbox.v1.L7Allow.QueryEntry
+	40, // 24: openshell.sandbox.v1.L7Allow.params:type_name -> openshell.sandbox.v1.L7Allow.ParamsEntry
+	45, // 25: openshell.sandbox.v1.GetSandboxConfigRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
+	41, // 26: openshell.sandbox.v1.GetGatewayConfigResponse.settings:type_name -> openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry
+	27, // 27: openshell.sandbox.v1.EffectiveSetting.value:type_name -> openshell.sandbox.v1.SettingValue
+	3,  // 28: openshell.sandbox.v1.EffectiveSetting.scope:type_name -> openshell.sandbox.v1.SettingScope
+	7,  // 29: openshell.sandbox.v1.SandboxConfigSnapshot.policy:type_name -> openshell.sandbox.v1.SandboxPolicy
+	42, // 30: openshell.sandbox.v1.SandboxConfigSnapshot.settings:type_name -> openshell.sandbox.v1.SandboxConfigSnapshot.SettingsEntry
+	4,  // 31: openshell.sandbox.v1.SandboxConfigSnapshot.policy_source:type_name -> openshell.sandbox.v1.PolicySource
+	32, // 32: openshell.sandbox.v1.SandboxConfigSnapshot.supervisor_middleware_services:type_name -> openshell.sandbox.v1.SupervisorMiddlewareService
+	31, // 33: openshell.sandbox.v1.SandboxConfigSnapshot.service_routes:type_name -> openshell.sandbox.v1.SandboxServiceRoute
+	7,  // 34: openshell.sandbox.v1.GetSandboxConfigResponse.policy:type_name -> openshell.sandbox.v1.SandboxPolicy
+	43, // 35: openshell.sandbox.v1.GetSandboxConfigResponse.settings:type_name -> openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry
+	4,  // 36: openshell.sandbox.v1.GetSandboxConfigResponse.policy_source:type_name -> openshell.sandbox.v1.PolicySource
+	32, // 37: openshell.sandbox.v1.GetSandboxConfigResponse.supervisor_middleware_services:type_name -> openshell.sandbox.v1.SupervisorMiddlewareService
+	31, // 38: openshell.sandbox.v1.GetSandboxConfigResponse.service_routes:type_name -> openshell.sandbox.v1.SandboxServiceRoute
+	46, // 39: openshell.sandbox.v1.SupervisorMiddlewareService.request_timeout:type_name -> google.protobuf.Duration
+	5,  // 40: openshell.sandbox.v1.SupervisorMiddlewareService.binding_policy:type_name -> openshell.sandbox.v1.SupervisorMiddlewareBindingPolicy
+	6,  // 41: openshell.sandbox.v1.SupervisorMiddlewareService.bindings:type_name -> openshell.sandbox.v1.SupervisorMiddlewareBinding
+	12, // 42: openshell.sandbox.v1.SandboxPolicy.NetworkPoliciesEntry.value:type_name -> openshell.sandbox.v1.NetworkPolicyRule
+	13, // 43: openshell.sandbox.v1.SandboxPolicy.NetworkMiddlewaresEntry.value:type_name -> openshell.sandbox.v1.NetworkMiddlewareConfig
+	12, // 44: openshell.sandbox.v1.SandboxPolicy.ProviderCredentialRulesEntry.value:type_name -> openshell.sandbox.v1.NetworkPolicyRule
+	18, // 45: openshell.sandbox.v1.NetworkEndpoint.GraphqlPersistedQueriesEntry.value:type_name -> openshell.sandbox.v1.GraphqlOperation
+	22, // 46: openshell.sandbox.v1.L7DenyRule.QueryEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
+	22, // 47: openshell.sandbox.v1.L7DenyRule.ParamsEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
+	22, // 48: openshell.sandbox.v1.L7Allow.QueryEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
+	22, // 49: openshell.sandbox.v1.L7Allow.ParamsEntry.value:type_name -> openshell.sandbox.v1.L7QueryMatcher
+	27, // 50: openshell.sandbox.v1.GetGatewayConfigResponse.SettingsEntry.value:type_name -> openshell.sandbox.v1.SettingValue
+	28, // 51: openshell.sandbox.v1.SandboxConfigSnapshot.SettingsEntry.value:type_name -> openshell.sandbox.v1.EffectiveSetting
+	28, // 52: openshell.sandbox.v1.GetSandboxConfigResponse.SettingsEntry.value:type_name -> openshell.sandbox.v1.EffectiveSetting
+	53, // [53:53] is the sub-list for method output_type
+	53, // [53:53] is the sub-list for method input_type
+	53, // [53:53] is the sub-list for extension type_name
+	53, // [53:53] is the sub-list for extension extendee
+	0,  // [0:53] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_proto_init() }
@@ -2587,8 +3204,8 @@ func file_sandbox_proto_init() {
 	if File_sandbox_proto != nil {
 		return
 	}
-	file_sandbox_proto_msgTypes[9].OneofWrappers = []any{}
-	file_sandbox_proto_msgTypes[19].OneofWrappers = []any{
+	file_sandbox_proto_msgTypes[10].OneofWrappers = []any{}
+	file_sandbox_proto_msgTypes[20].OneofWrappers = []any{
 		(*SettingValue_StringValue)(nil),
 		(*SettingValue_BoolValue)(nil),
 		(*SettingValue_IntValue)(nil),
@@ -2599,8 +3216,8 @@ func file_sandbox_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_proto_rawDesc), len(file_sandbox_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   32,
+			NumEnums:      7,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

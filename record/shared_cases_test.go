@@ -22,8 +22,9 @@ type sharedVectors struct {
 		Request            json.RawMessage
 	} `json:"requests"`
 	Results []struct {
-		Name, SHA256 string
-		Response     json.RawMessage
+		Name, SHA256  string
+		Response      json.RawMessage
+		RecordVersion int
 	} `json:"results"`
 	Records []struct {
 		Name, SHA256 string
@@ -101,7 +102,11 @@ func TestSharedCases(t *testing.T) {
 			if err := protojson.Unmarshal(r.Response, m); err != nil {
 				t.Fatalf("%s%s: %v", prefix, r.Name, err)
 			}
-			say(prefix+"results/"+r.Name, clientcases.PathDigest, record.ResultDigest(m))
+			version := r.RecordVersion
+			if version == 0 { // a file written before version 6: plimsoll.run-result.v1
+				version = 5
+			}
+			say(prefix+"results/"+r.Name, clientcases.PathDigest, record.ResultDigestFor(m, version))
 		}
 		for _, r := range v.Records {
 			m, err := decode(r.Record)
@@ -152,6 +157,10 @@ func TestSharedCases(t *testing.T) {
 	}
 
 	for _, c := range readRecordCases(t) {
+		if len(c.Input.Response) > 0 {
+			sayAnswerCase(t, c, say)
+			continue
+		}
 		m, err := decode(c.Input.Record)
 		if err != nil {
 			t.Fatalf("%s: %v", c.ID, err)
@@ -194,12 +203,52 @@ type recordCase struct {
 		Request       json.RawMessage `json:"request"`
 		RequestSHA256 string          `json:"requestSha256"`
 		Record        json.RawMessage `json:"record"`
+		Response      json.RawMessage `json:"response"` // an answered call's case: the response, its record inside
 		Chain         struct {
 			Session string `json:"session"`
 			Calls   uint64 `json:"calls,string"`
 			Last    string `json:"last"`
 		} `json:"chain"`
 	} `json:"input"`
+}
+
+// sayAnswerCase gives the verdicts on an answered call's case: the response checked
+// against the request sent (answer) and, as an attach's lost answer, against its own record
+// (lost-answer). A response protobuf's JSON form cannot hold, such as a result with two
+// answers of one oneof, is refused before any check, as malformed. The digests the case
+// states were computed by the independent implementation; this one must agree with each
+// it can recompute, so the rule the case names is the only check that can refuse it.
+func sayAnswerCase(t *testing.T, c recordCase, say func(id, path string, says any)) {
+	t.Helper()
+	req := &plimsollv1.SessionRunRequest{}
+	if err := protojson.Unmarshal(c.Input.Request, req); err != nil {
+		t.Fatalf("%s: %v", c.ID, err)
+	}
+	resp := &plimsollv1.RunResponse{}
+	if err := protojson.Unmarshal(c.Input.Response, resp); err != nil {
+		for _, p := range c.Paths {
+			say(c.ID, p, "may_have_run/malformed")
+		}
+		return
+	}
+	rec := record.FromWire(resp.GetRecord())
+	switch {
+	case rec.RequestSHA256 != record.SessionRunRequestDigest(req):
+		t.Fatalf("%s: the request digests to %s here, the case's record states %s", c.ID, record.SessionRunRequestDigest(req), rec.RequestSHA256)
+	case rec.ResultSHA256 != record.ResultDigest(resp):
+		t.Fatalf("%s: the result digests to %s here, the case's record states %s", c.ID, record.ResultDigest(resp), rec.ResultSHA256)
+	case record.Digest(rec) != rec.SHA256:
+		t.Fatalf("%s: the record digests to %s here, the case states %s", c.ID, record.Digest(rec), rec.SHA256)
+	}
+	for _, p := range c.Paths {
+		switch p {
+		case clientcases.PathAnswer:
+			_, err := record.CheckSessionCall(req, resp, c.Input.Chain.Session, c.Input.Chain.Calls, c.Input.Chain.Last)
+			say(c.ID, p, clientcases.SaysOf(err))
+		case clientcases.PathLostAnswer:
+			say(c.ID, p, clientcases.SaysOf(record.CheckLostAnswer(resp, resp.GetRecord())))
+		}
+	}
 }
 
 func readRecordCases(t *testing.T) []recordCase {

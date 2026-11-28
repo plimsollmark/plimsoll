@@ -31,6 +31,7 @@ var guestScriptTests = map[string]string{
 	"openshell/grant.go:relayScript":       "TestDockerRunsTheOpenShellGrantRelay",
 	"e2b.go:vmSmokeProbe":                  "TestDockerRunsTheE2BSmokeScript",
 	"e2b.go:e2bSessionNodeScript":          "TestE2BSessionDockerSmokeTest",
+	"sessiontest/files.go:stopHelpers":     "TestDockerSessionConformance",
 }
 
 // targetGuestScripts are the Node programs of a provider whose sandboxes no docker-suite run
@@ -116,6 +117,11 @@ func TestEveryGuestScriptRunsInTheDockerSuite(t *testing.T) {
 			continue
 		}
 		dir := filepath.Dir(strings.SplitN(key, ":", 2)[0])
+		if dir == "sessiontest" {
+			// The conformance suite has no tests of its own: every session provider's
+			// conformance test runs it, docker's (TestDockerSessionConformance) in ./sandbox.
+			dir = "."
+		}
 		if !testDefined(t, dir, name) {
 			t.Errorf("%s names %s, which no test file in sandbox/%s defines", key, name, dir)
 		}

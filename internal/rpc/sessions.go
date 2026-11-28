@@ -330,7 +330,7 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evic
 		// A warm-only open closes nothing to make room: it may yet be refused for want
 		// of a warm sandbox, and the session it closed would be gone for nothing.
 		if need > 0 && !evict {
-			return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+			return nil, refuseCapacity(sandbox.CapacityOwnerSessions,
 				fmt.Errorf("%w: this owner has %d sessions open, the most one owner keeps, and a warm-only open closes none", sandbox.ErrAtCapacity, c.MaxPerOwner))
 		}
 		if need > 0 {
@@ -349,7 +349,7 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evic
 				for _, e := range victims {
 					e.giveTurn()
 				}
-				return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+				return nil, refuseCapacity(sandbox.CapacityOwnerSessions,
 					fmt.Errorf("%w: this owner has %d sessions open, the most one owner keeps, and none can be closed now (each is running a call, suspending, closing, or already taken by another open)", sandbox.ErrAtCapacity, c.MaxPerOwner))
 			}
 			for _, e := range victims {
@@ -361,10 +361,10 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evic
 	}
 	var err error
 	if r.openLocked("")+r.opening >= c.MaxSessions {
-		err = refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+		err = refuseCapacity(sandbox.CapacitySessions,
 			fmt.Errorf("%w: %d sessions are open, the most this daemon keeps", sandbox.ErrAtCapacity, c.MaxSessions))
 	} else if c.MaxPerCaller > 0 && r.openLocked(principal)+r.openingBy[principal] >= c.MaxPerCaller {
-		err = refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+		err = refuseCapacity(sandbox.CapacityCallerSessions,
 			fmt.Errorf("%w: this caller has %d sessions open, the most one caller keeps", sandbox.ErrAtCapacity, c.MaxPerCaller))
 	}
 	if err != nil {
@@ -509,7 +509,7 @@ func (e *sessionEntry) takeTurn(ctx context.Context) (func(), error) {
 	select {
 	case e.waiting <- struct{}{}:
 	default:
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+		return nil, refuseCapacity(sandbox.CapacityQueue,
 			errors.New("another call is already waiting for this session's turn"))
 	}
 	defer func() { <-e.waiting }()
@@ -802,6 +802,10 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	return connect.NewResponse(e.sessionInfo(1)), nil
 }
 
+// errSessionUnstatedTier refuses an opened session whose provider names no isolation
+// tier for it (checkOpened).
+var errSessionUnstatedTier = errors.New("the opened session names no isolation tier, so no record of its calls could be checked; the provider's fault")
+
 // checkOpened checks what an open got against the request before the open answers, and
 // returns the session's environments, which the entry, the answer and every call's
 // record carry rather than what the provider stated before the open; why is the word an
@@ -818,6 +822,12 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 // of the caller's (OpenSessionRequest has no payload), so nothing but plimsoll's own
 // programs has run in the session when either is made.
 func checkOpened(sess sandbox.Session, env envelope) (sandbox.Environments, string, error) {
+	// A session that names no tier is the provider's bug: every record of its calls, the
+	// unanswered ones included, would name "unknown", which every official client refuses
+	// (release-55). Nothing of the caller's has run, so the refusal is marked.
+	if sess.Isolation().String() == sandbox.IsolationUnknown.String() {
+		return sandbox.Environments{}, "no_tier", sandbox.NotDispatched(sandbox.RefusalEnvironment, errSessionUnstatedTier)
+	}
 	if err := sandbox.CheckMinimumIsolation(sess.Isolation(), env.minimum); err != nil {
 		return sandbox.Environments{}, "below_floor", err
 	}
@@ -936,7 +946,7 @@ func (s *SandboxService) admitOpen(ctx context.Context, principal string, victim
 			default:
 				release()
 			}
-			return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+			return nil, refuseCapacity(sandbox.CapacityOwnerSessions,
 				fmt.Errorf("%w: the owner's least recently used session could not be closed to make room", sandbox.ErrAtCapacity))
 		}
 	}
@@ -1193,8 +1203,21 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		k = &projectKind{p: p.Project}
 	case *plimsollv1.SessionRunRequest_Cell:
 		k = &cellKind{p: p.Cell}
+	case *plimsollv1.SessionRunRequest_Files:
+		// A session whose provider carries no file calls, or none in the call's scope,
+		// refuses one before anything is dispatched, whatever the client believed
+		// (OpenSessionResponse.file_scopes).
+		fr, ok := e.sess.(sandbox.FileRunner)
+		if !ok {
+			return nil, refuse(connect.CodeUnimplemented, sandbox.RefusalUnsupported,
+				fmt.Errorf("%w: provider %s's sessions carry no file calls", sandbox.ErrUnsupported, s.Sandbox.Name()))
+		}
+		if err := sandbox.CheckFilesScope(sandbox.FilesScope(p.Files.GetScope()), fr.FileScopes(), s.Sandbox.Name()); err != nil {
+			return nil, refuse(connect.CodeUnimplemented, sandbox.RefusalUnsupported, err)
+		}
+		k = &filesKind{p: p.Files}
 	default:
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project or cell"))
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project, cell or files"))
 	}
 	// The request must explicitly preserve the open's floor in its signed digest,
 	// even if the daemon also supplies a floor of its own.
@@ -1222,6 +1245,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		js:            e.sess.RunJavaScript,
 		project:       e.sess.RunProject,
 		cell:          e.sess.RunCell,
+		files:         sessionFiles(e.sess),
 		software:      e.software,
 		session:       true,
 		// The session, for a line written before the call has a number (a ship-scan
@@ -1285,6 +1309,9 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	// recovers it as an unmarked error, so the call is chained as unanswered below like
 	// any other that may have run.
 	resp, err := s.run(ctx, env, k, t)
+	if fk, ok := k.(*filesKind); ok {
+		s.fileCalls.observe(fk, err)
+	}
 	if err != nil {
 		// The mark as the client reads it: an admission refusal (the caller's rate, no
 		// slot) is marked by refuse, on the wire only.

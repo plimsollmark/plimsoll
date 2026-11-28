@@ -1,7 +1,9 @@
-"""PlimsollEnvironment on a real docker session, with ADK 2.14.1's real tools, toolset and
+"""PlimsollEnvironment on a real docker session, with ADK 2.15.0's real tools, toolset and
 Runner and a scripted model: what the framework suite's fake session cannot show, that the
-workspace's fixed steps do in a real sandbox what ADK's contract says, and that ADK's own
-LocalEnvironment answers the same command script the same way.
+workspace's commands and file calls (carried out by plimsoll's own helper in the sandbox) do
+in a real sandbox what ADK's contract says, that each error a file call answers reaches ADK's
+tools as the model sees it, and that ADK's own LocalEnvironment answers the same command
+script the same way.
 
 Not a test_*.py, so the framework suite's `unittest discover` never sees it: it needs docker.
 adk_docker_test.go's TestADKEnvironmentDocker serves a docker daemon with sessions on, sets
@@ -80,6 +82,7 @@ class EnvironmentOnDocker(unittest.TestCase):
             await env.initialize()
             try:
                 self.assertEqual(env.working_dir, Path("/work"))
+                self.assertEqual(env.calls, ())  # the open states the work directory: no call
                 floor = _setting("PLIMSOLL_DOCKER_FLOOR")
                 await env.write_file("notes/a.txt", "one\ntwo\n")
                 self.assertEqual(await env.read_file("notes/a.txt"), b"one\ntwo\n")
@@ -114,6 +117,66 @@ class EnvironmentOnDocker(unittest.TestCase):
             finally:
                 await env.close()
             self.assertEqual(env.close_summary.calls, len(env.calls))
+        run(go())
+
+    def test_each_file_error_reaches_adks_tools_as_the_model_sees_it(self) -> None:
+        # Through the real helper: the answer of each failed read and write becomes ADK's tool
+        # answer, the error's words and the model's own path, no text of the sandbox's, each a
+        # single file call with its checked record.
+        from google.adk.tools.environment._edit_file_tool import EditFileTool
+        from google.adk.tools.environment._read_file_tool import ReadFileTool
+        from google.adk.tools.environment._write_file_tool import WriteFileTool
+
+        async def go() -> None:
+            env = environment()
+            await env.initialize()
+            try:
+                out = await env.execute("mkdir -p d sealed && printf x > plain && mkfifo pipe && printf s > locked "
+                                        "&& chmod 000 locked && printf old > sealed/f && chmod 555 sealed && id -u")
+                self.assertEqual(out.exit_code, 0, out.stderr)
+                self.assertNotEqual(out.stdout.strip(), "0", "the guest runs as root, so no read is refused")
+                read, write = ReadFileTool(env), WriteFileTool(env)
+                before = len(env.calls)
+                answers = {
+                    "missing": await read.run_async(args={"path": "missing.txt"}, tool_context=None),
+                    "folder": await read.run_async(args={"path": "d"}, tool_context=None),
+                    "locked": await read.run_async(args={"path": "locked"}, tool_context=None),
+                    "pipe": await read.run_async(args={"path": "pipe"}, tool_context=None),
+                    "shadow": await read.run_async(args={"path": "/etc/shadow"}, tool_context=None),
+                    "write folder": await write.run_async(args={"path": "d", "content": "x"}, tool_context=None),
+                    "write under a file": await write.run_async(args={"path": "plain/x", "content": "x"}, tool_context=None),
+                    "write sealed": await write.run_async(args={"path": "sealed/new", "content": "x"}, tool_context=None),
+                    "write /etc": await write.run_async(args={"path": "/etc/plimsoll-x", "content": "x"}, tool_context=None),
+                }
+                # The image's root is read-only: under runc the write says so first (EROFS), under
+                # gVisor the folder's permission does (EACCES), measured 2026-11-27. Both are the
+                # file call's own answer.
+                self.assertIn(answers.pop("write /etc")["error"], ("[Errno 30] Read-only file system: '/etc/plimsoll-x'",
+                                                                  "[Errno 13] Permission denied: '/etc/plimsoll-x'"))
+                self.assertEqual(answers, {
+                    "missing": {"status": "error", "error": "File not found: missing.txt"},
+                    "folder": {"status": "error", "error": "[Errno 21] Is a directory: 'd'"},
+                    "locked": {"status": "error", "error": "[Errno 13] Permission denied: 'locked'"},
+                    "pipe": {"status": "error", "error": "[Errno 6] Not a regular file or a directory: 'pipe'"},
+                    "shadow": {"status": "error", "error": "[Errno 13] Permission denied: '/etc/shadow'"},
+                    "write folder": {"status": "error", "error": "[Errno 21] Is a directory: 'd'"},
+                    "write under a file": {"status": "error", "error": "[Errno 20] Not a directory: 'plain/x'"},
+                    "write sealed": {"status": "error", "error": "[Errno 13] Permission denied: 'sealed/new'"},
+                })
+                # Each is one answered file call, completed, with its record: nothing else asked why.
+                made = env.calls[before:]
+                self.assertEqual(len(made), len(answers) + 1)
+                for c in made:
+                    self.assertEqual((c.dispatched, c.outcome, c.uncertain), ("yes", "completed", False), c)
+                    self.assertRegex(c.record_sha256, r"^[0-9a-f]{64}$")
+                # EditFileTool lets a write's error rise, with the same plain text.
+                with self.assertRaises(PermissionError) as caught:
+                    await EditFileTool(env).run_async(args={"path": "sealed/f", "old_string": "old", "new_string": "new"},
+                                                      tool_context=None)
+                self.assertEqual(str(caught.exception), "[Errno 13] Permission denied: 'sealed/f'")
+                self.assertEqual(await env.read_file("sealed/f"), b"old")
+            finally:
+                await env.close()
         run(go())
 
     def test_commands_answer_as_on_adks_local_environment(self) -> None:
@@ -179,6 +242,55 @@ class EnvironmentOnDocker(unittest.TestCase):
                 mine = [c.record_sha256 for c in calls if c.function_call_id == sp.attributes["gen_ai.tool.call.id"]]
                 self.assertEqual(list(sp.attributes["plimsoll_record_sha256"]), mine)
                 self.assertEqual(list(sp.attributes["plimsoll_isolation"]), [_setting("PLIMSOLL_DOCKER_FLOOR")])
+        run(go())
+
+    def test_a_wrapped_agent_sharing_a_session_scoped_environment_keeps_its_file(self) -> None:
+        # D12 C's bug on a real shell: an AgentTool's agent shares the environment, and its
+        # nested Runner closes the environment when it finishes. Under the session scope the
+        # caller's next command reads the wrapped agent's file in the same sandbox, and the
+        # next turn of the conversation finds it too.
+        from google.adk.agents import Agent
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.adk.tools.agent_tool import AgentTool
+        from google.adk.tools.environment import EnvironmentToolset
+        from google.genai import types
+
+        from .test_adk_environment import ToolModel
+
+        async def go() -> None:
+            env = environment(scope="session")
+            child = Agent(name="writer", description="Writes the file.",
+                          model=ToolModel(plan=lambda responses, turn: "written" if responses
+                                          else [("WriteFile", {"path": "from-child.txt", "content": "child\n"})]),
+                          tools=[EnvironmentToolset(environment=env)])
+            lead = Agent(name="lead",
+                         model=ToolModel(plan=lambda responses, turn: [("writer", {"request": "write it"})] if turn == 0
+                                         else [("Execute", {"command": "cat from-child.txt"})] if turn == 1 else "done"),
+                         tools=[AgentTool(agent=child), EnvironmentToolset(environment=env)])
+            sessions = InMemorySessionService()
+            session = await sessions.create_session(app_name="adk-docker", user_id="user")
+            try:
+                async with Runner(agent=lead, app_name="adk-docker", session_service=sessions,
+                                  plugins=[PlimsollEnvironmentGuard()]) as runner:
+                    events = [e async for e in runner.run_async(
+                        user_id="user", session_id=session.id,
+                        new_message=types.Content(role="user", parts=[types.Part(text="Go.")]))]
+                    outs = [r.response for r in responses_of(events) if r.name == "Execute"]
+                    self.assertEqual(outs, [{"status": "ok", "stdout": "child\n"}])
+                    self.assertEqual(len(env.sessions), 1)
+                    again = scripted([("Execute", {"command": "cat from-child.txt"})], "done")
+                    worker = Agent(name="worker", model=again, tools=[EnvironmentToolset(environment=env)])
+                    async with Runner(agent=worker, app_name="adk-docker", session_service=sessions,
+                                      plugins=[PlimsollEnvironmentGuard()]) as second:
+                        events = [e async for e in second.run_async(
+                            user_id="user", session_id=session.id,
+                            new_message=types.Content(role="user", parts=[types.Part(text="Again.")]))]
+                    self.assertEqual(responses_of(events)[0].response, {"status": "ok", "stdout": "child\n"})
+                    self.assertEqual(len(env.sessions), 1)
+            finally:
+                await env.end()
+            self.assertEqual(env.sessions, {})
         run(go())
 
 

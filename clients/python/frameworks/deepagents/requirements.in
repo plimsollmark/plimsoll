@@ -8,4 +8,4 @@
 deepagents==0.7.38
 langchain==1.5.0
 langgraph==1.2.22
-langchain-tests==1.1.9
+langchain-tests==1.2.0

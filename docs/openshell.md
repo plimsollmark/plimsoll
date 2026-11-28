@@ -18,8 +18,9 @@ container), the only driver plimsoll has tested. The code is
 ## How it was built and verified
 
 plimsoll's client for the gateway is generated from OpenShell's own API definitions (its
-`.proto` files), copied into this repository at v0.1.2 under
-[third_party/openshell](../third_party/openshell/README.md) (Apache-2.0). It speaks gRPC
+`.proto` files), copied into this repository at v0.1.10 under
+[third_party/openshell](../third_party/openshell/README.md) (Apache-2.0); they were copied at
+v0.1.2 until 2026-11-25, and every change between the two is an addition. It speaks gRPC
 through connect-go, the RPC library plimsoll already uses, so neither grpc-go (Google's
 gRPC library) nor OpenShell's Go SDK is a dependency. It lives in its own package because
 the generated code registers the same <dfn>*protobuf*</dfn> names as OpenShell's Go SDK
@@ -35,7 +36,38 @@ largest plan a project can produce (the plan is the list of files and steps the 
 runner receives), and the deletion of sandboxes a crashed daemon left behind. A daemon
 test serves a snippet and a project over RPC, then requires every sandbox to be deleted
 after the daemon receives SIGTERM. The suite passed on 2026-09-28 against a v0.1.2
-gateway with the docker driver.
+gateway with the docker driver, and on 2026-11-25 against a v0.1.10 gateway with the
+docker driver (110 tests, none skipped, the disk cap's included).
+
+## Which OpenShell releases
+
+plimsoll has been measured against two gateway releases, v0.1.2 and v0.1.10, both with the
+docker driver. It refuses no release by its number: every release is held to the same
+read-back and startup smoke test, and one setting is stricter on an unmeasured release
+(agent policy proposals, below). v0.1.10 is the release to run: v0.1.6 made a gateway
+refuse to start with no authentication configured, and fixed a vulnerability in its SSH
+library (CVE-2026-111061 in russh).
+
+What changed between the two, for this provider:
+
+- **Nothing plimsoll calls changed shape.** OpenShell's v0.1.6 notes say new sandboxes
+  open their control connection from the sandbox to its supervisor, and that older
+  supervisor and sandbox binaries reject the new setup. That connection is inside
+  OpenShell, between two of its own programs; plimsoll talks only to the gateway, and the
+  whole suite passed against v0.1.10. Upgrade the gateway, supervisor and sandbox images
+  together, as OpenShell says.
+- **Settings an operator moves.** `allow_driver_config` is set in the driver's own table
+  (`[openshell.drivers.docker]`). With a client CA configured, mutual TLS authentication is
+  on by default. From v0.1.10 the default supervisor and sandbox images come from
+  `quay.io/ai-openshell`.
+- **Fields the gateway adds.** v0.1.10 stores a restart policy on every sandbox (`NEVER`
+  unless asked otherwise) and can carry application routes into a sandbox; the read-back
+  checks both (step 3 below). Three fields of the configuration were already in v0.1.2's
+  API and were neither compared nor refused before plimsoll's v0.30.0: the policy
+  validation failure mode, the middleware services and whether the gateway can sign in
+  to them. The first two are refused unless they read back as plimsoll needs (step 3). A field newer than plimsoll's copy of the API is refused
+  (step 3), so a future release that adds one to a sandbox's spec or configuration stops
+  this provider, with an error naming the field, until plimsoll's copy is updated.
 
 ## What the operator sets up
 
@@ -58,9 +90,17 @@ gateway with the docker driver.
   plimsoll's native helper, at `/usr/local/libexec/plimsoll-helper`, as `plimsoll/sandbox` does.
   The runner is the program that writes a project's files and runs its steps. It is one static
   x86-64 program with no outside library, so it runs in any Linux image. The startup smoke test
-  reads it from inside a sandbox and refuses the image unless it is a regular file, owned by
-  root, writable by no one else, with no setuid or setgid bit, and byte for byte the helper this plimsolld was built with
-  (its SHA-256 is compiled into plimsolld); the refusal names what is wrong. The runner itself
+  reads it from inside a sandbox, as the sandbox's user, and refuses the image unless it is a
+  regular file, owned by root, writable by no one else, readable by root alone (mode 0711: the
+  sandbox user's read of it is refused, and from the exec of a program its user cannot read the
+  kernel lets no other process of that user open its memory), with no setuid or setgid bit, the size of the helper this plimsolld was built
+  with, and, started with its `identity` command, prints that build's line (`inputs` and the
+  SHA-256 of the build's inputs, compiled in); the refusal names what is wrong. The sandbox's
+  user cannot read the bytes, so this check does not prove them byte for byte; the docker
+  provider's check of `plimsoll/sandbox`, which reads the file as root, does. The identity line
+  is what tells this build from another of the same size (a stale image's, another release's):
+  the builds of two consecutive releases' work were both 586,400 bytes. It is not a defense: a
+  program built to lie could print any line, and the image is yours. The runner itself
   refuses a plan unless a child process running as the same user is denied access to the
   runner's plan descriptor, its report descriptor and its memory (the descriptors are the open
   files it reads the plan from and writes its report to). With
@@ -76,13 +116,14 @@ gateway with the docker driver.
   image's recipe:
 
   ```dockerfile
-  COPY --chown=root:root --chmod=0755 sandbox/internal/nativehelper/program/plimsoll-helper_amd64 /usr/local/libexec/plimsoll-helper
+  COPY --chown=root:root --chmod=0711 sandbox/internal/nativehelper/program/plimsoll-helper_amd64 /usr/local/libexec/plimsoll-helper
   ```
 
   and check it against the checksum file shipped beside it
   (`sandbox/internal/nativehelper/program/plimsoll-helper.sha256`, the line for
   `plimsoll-helper_amd64`). The file must be the one from the same release as plimsolld: a
-  helper from another release has other bytes and is refused. Only an x86-64 build exists, so
+  helper from another release is refused by its size or by its identity line (one from before
+  the line existed prints none). Only an x86-64 build exists, so
   the sandboxes must run on x86-64: the startup test reads the sandbox's machine and refuses
   any other by name ("the sandbox's machine is arm64"). plimsolld's own machine does not
   matter, so a plimsolld on an ARM computer serves an x86-64 gateway.
@@ -92,14 +133,17 @@ gateway with the docker driver.
   the policy. The setting must be provably off: reported as `false`, or reported with no
   value by a gateway release whose default is known to be `false` (below). A gateway that
   does not report `agent_policy_proposals_enabled` at all, or reports anything else, is
-  refused. Measured on v0.1.2: a sandbox nobody configured reports the key with no value,
-  and the release defaults it to `false`. So no value counts as off only on a release
-  measured that way (v0.1.2 so far); on any other release the key must be reported as
-  `false`, which an operator gets by setting it to `false` gateway-wide.
+  refused. Measured on v0.1.2 and on v0.1.10: a sandbox nobody configured reports the key
+  with no value, and the release defaults it to `false` (on v0.1.10, measured from inside a
+  sandbox: no policy advisor skill is installed, and `policy.local`, the proposal API,
+  answers 404 `feature_disabled`). So no value counts as off only on a release measured that
+  way (v0.1.2 and v0.1.10, not the releases between); on any other release the key must be
+  reported as `false`, which an operator gets by setting it to `false` gateway-wide.
 - **`allow_driver_config = true`, only if `SANDBOX_DISK_MB` is set.** The disk cap mounts
   a run's `/tmp` through the sandbox's driver config (settings passed straight to the
   compute driver), which a gateway refuses by default ("administrator must enable
-  allow_driver_config"), so startup fails until it is on. The setting is gateway-wide: any
+  allow_driver_config"), so startup fails until it is on. On v0.1.10 it is set in the
+  driver's table, `[openshell.drivers.docker]`. The setting covers every sandbox: any
   client of the gateway may then send driver settings for its own sandboxes too, such as
   Docker volumes the operator has labelled `openshell.ai/sandbox-attachable` for that
   workspace. Host bind mounts (a directory of the gateway host mounted into a sandbox)
@@ -109,8 +153,12 @@ gateway with the docker driver.
 
 ## What each run does
 
-1. Checks the gateway's compute driver. The tier is evidence from this check, not
-   configuration.
+1. Checks the gateway's compute driver. The tier rests on this check and on the startup
+   smoke test, not on plimsoll's own configuration. The driver's name is the gateway
+   operator's configuration and the driver's own report, not proof: a gateway can be
+   pointed at an external driver's socket under the built-in name `docker`
+   (`--compute-driver docker --compute-driver-socket`, read in the gateway's source at
+   v0.1.10, not tried), and the smoke test, not the name, is what checks the walls.
 2. Creates a sandbox with plimsoll's policy:
    - no network rules, so the gateway's default holds: <dfn>*deny-all*</dfn> for
      <dfn>*egress*</dfn>, meaning every connection out of the sandbox is blocked unless a
@@ -127,9 +175,24 @@ gateway with the docker driver.
    limits, driver config and policy, the policy's hash and source, no credential
    providers attached, and none of the settings plimsoll never makes: an agent socket,
    injected environment variables, a runtime class, remapped user IDs, or platform labels
-   and annotations. Not compared: the terminal the gateway gives the idle main process
-   (v0.1.2 sets one on every sandbox), the log level, and the gateway's own reading of
-   the resources sent.
+   and annotations, a restart policy other than `NEVER` (under which the gateway would
+   start a new runtime after the main process exits), a GPU request, a sandbox made from
+   a stored workload template, an application route into the sandbox, or a supervisor
+   middleware service bound to it (a service of the operator's that sees the traffic a
+   policy sends through it; plimsoll's policy names none). The gateway's policy
+   validation failure mode must be `fail_closed`: under `retain_last_valid`, a sandbox
+   that rejects a new policy keeps enforcing the one it loaded before, so the policy read
+   back would no longer be the one in force, and plimsoll refuses to run on such a
+   gateway. A field that plimsoll's copy of the gateway API does not define, anywhere in
+   the sandbox's spec or its effective configuration, is refused too, naming the message
+   and field number: plimsoll cannot compare a setting it cannot decode, so it does not
+   pass over one. Every field the copy does define has a row in one table
+   (`readBackFields`, sandbox/openshell/readback.go) that says whether it is compared,
+   refused when set or ignored, and why; a test fails on a field with no row, so each
+   update of the copy decides each new field. Not compared, for the reasons in that table:
+   the terminal the gateway gives the idle main process (v0.1.2 and v0.1.10 set one on
+   every sandbox), the log level, whether the gateway can sign in to middleware services
+   (it has none to reach), and the revision numbers the gateway keeps for itself.
 4. Runs the code through the gateway's streamed exec call (one command, its output
    streamed back while it runs), with the plan on stdin for a project. The run's deadline
    is enforced by cancelling the stream, which kills the command and its process group
@@ -198,9 +261,8 @@ Before the provider serves, one throwaway sandbox must prove, from inside:
 - a runner round trip with a plan near the 4 MiB project ceiling works;
 - a hung command's processes are gone after its exec is cancelled, confirmed by a
   second exec;
-- the actual project runner starts with its protection library
-  (`plimsoll-runner-guard.so`) active, and a project step cannot open the runner's plan
-  descriptor, report descriptor or memory.
+- the actual project runner (the native helper) starts, and a project step cannot open
+  the runner's plan descriptor, report descriptor or memory.
 
 ## Grants
 
@@ -230,8 +292,8 @@ round: plimsoll connects in, instead of the sandbox connecting out.
 
 How plimsoll manages those connections:
 
-- **Tokens.** `ForwardTcp` needs a token from `CreateSshSession`, and the v0.1.2 gateway
-  allows three live connections per token and twenty per sandbox. So the provider opens
+- **Tokens.** `ForwardTcp` needs a token from `CreateSshSession`, and the v0.1.2 and
+  v0.1.10 gateways allow three live connections per token and twenty per sandbox. So the provider opens
   a token for every three connections, holds at most eighteen connections, and revokes
   every token when the run ends. A connection's room on its token is given back when its
   stream has ended at the gateway, which counts it until then.
@@ -300,7 +362,7 @@ v0.1.2 gateway with the docker driver:
 - **Each exec is walled off from the others.** A process of one exec could not open the
   input or output of a process another exec started, not even the sandbox's own `sleep`,
   although all run as the same user and the relay stays readable by it (measured on v0.1.2,
-  2026-10-01). So code of the session cannot write into a cell's relay, the interpreter
+  2026-10-01; the session smoke test found the same on v0.1.10, 2026-11-25). So code of the session cannot write into a cell's relay, the interpreter
   launcher or a project's runner, which on docker it can for the moment each starts
   ([sessions.md](sessions.md#interpreters-state-between-calls)). This is OpenShell's
   behavior as measured, not something plimsoll sets: the relay protocol and the cell's two
@@ -321,7 +383,9 @@ v0.1.2 gateway with the docker driver:
   sweep, the interpreters' relays and a grant's relay start under `/usr/bin/env -i` with a
   fixed PATH. A v0.1.2 gateway hands every exec the same few variables of its own (HOME,
   PATH, its CA settings, `OPENSHELL_SANDBOX`, `TERM`, `USER`), never the image's
-  (measured 2026-10-03), so this changes nothing today; it keeps a variable that loads
+  (measured 2026-10-03; read in full on 2026-11-25, v0.1.2 and v0.1.10 hand the same
+  names, the shell's `PWD`, `SHELL` and `SHLVL` among them, and none of the image's). So
+  this changes nothing today; it keeps a variable that loads
   code, such as `NODE_OPTIONS`, out of those programs on a gateway that starts passing
   the image's. A project's runner and the interpreter launcher keep the gateway's
   variables, because the steps and the interpreter they start inherit them.
@@ -338,6 +402,56 @@ of leftover sandboxes removes it only after the lifetime plus 5 minutes.
 
 Measured costs: a session call took 61 to 87 ms end to end (the read-back, the call and
 the sweep) against 550 ms for a snippet that creates its own sandbox.
+
+**File calls: the sandbox scope only.** OpenShell sessions take the file calls docker
+sessions and [E2B](trainers/glossary.html#e2b) sessions take ([session-files.md](session-files.md)),
+in the sandbox scope (an absolute path, resolved as the guest's own shell resolves it) and
+not in the work scope (a path confined to the work folder), and say so: `Describe` states
+`file_scopes` `[FILES_SCOPE_SANDBOX]` on the session environment, the open's answer states
+the same, and a work-scope call is refused before anything runs (marked
+[not dispatched](trainers/glossary.html#dispatch), reason `unsupported`). Each call's record
+names the scope that call used (`FilesRun.scope` is in the request's
+[digest](trainers/glossary.html#digest), the hash the record carries of it), so no record of
+an OpenShell session claims the work scope's confinement. Why the work scope is refused here, both measured on v0.1.2 with the docker
+driver (2026-11-27):
+
+- **The work folder is not a mount of its own.** The native helper keeps the work scope's
+  promise (no call acts outside the work folder, whatever the session's own code does
+  meanwhile) only where a rename out of the work folder is refused by the kernel, which a
+  mount boundary does: a folder the helper holds open could otherwise be moved out from
+  under a call by a process of the session, and the call's write would land where it went.
+  `/tmp/work` is on the container's root filesystem, whose only mounts besides it are
+  `/proc`, `/dev` and its parts, `/sys`, three files of docker's under `/etc`, OpenShell's own
+  channel volume and its supervisor's certificate folder, and the code in the sandbox runs as
+  an ordinary user and cannot make a mount.
+- **OpenShell's Landlock policy does not refuse such a rename either.** The sandbox's
+  Landlock rules (a Linux facility that limits which files a process may reach) grant `/tmp`
+  every right, the reparenting right included, so a process of the session moved a folder
+  from `/tmp/work` to `/tmp`, and the work folder itself to another parent, with no
+  refusal. A Landlock domain the code made for itself without that right did refuse the same
+  move, so the measurement could see a refusal had there been one.
+
+The one mount plimsoll could ask the gateway for at create is an in-memory filesystem in the
+sandbox's driver settings (as `SANDBOX_DISK_MB` does for a run's `/tmp`), which docker
+discards when the container stops, and a session stops its sandbox to suspend it and to
+recover from a failed sweep, so its files would be lost (measured on v0.1.2, 2026-09-29). A
+Docker volume would survive a stop, but the gateway attaches only volumes an operator made and
+labelled beforehand ([setup](#what-the-operator-sets-up)), and no two sessions may share one.
+
+**What the sandbox scope means for a link.** The sandbox scope follows a symbolic link
+wherever it points, as the guest's shell does: a link the session's code made inside the work
+folder that points out of it is followed, out of the work folder, to anything the sandbox's
+user may reach there. The sandbox's walls (its policy, its user's permissions) are the
+boundary, not the work folder. The Python client's `Workspace` on an OpenShell session names
+its paths in the sandbox scope under the work folder and checks them by their names (a `..`
+that leads out, or an absolute path outside the work folder, is refused before any call), so
+it follows such a link too ([the client's README](../clients/python/README.md)). The helper
+is the one every project image carries, checked at startup by its SHA-256, started by the
+gateway's exec as the sandbox's user under plimsoll's empty control environment, in the work
+folder (made by the call if no call has made it yet). The sweep runs after a write, a folder
+made, and any call the helper did not answer: a session's `/tmp` here is not size-capped, so
+the sweep's measurement is what holds the session to `SANDBOX_SESSION_DISK_MB`. A stat, read,
+listing, removal or rename the helper answered starts nothing else, so no sweep follows it.
 
 **A warm pool, when `SANDBOX_SESSION_POOL` is set.** The daemon keeps that many session
 sandboxes ready, each made as an open makes one (the run policy, `sleep` as the main

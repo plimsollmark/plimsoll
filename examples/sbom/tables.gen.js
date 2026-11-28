@@ -12,12 +12,22 @@
     SESSION_END_NAMES: Object.freeze(["open", "closed", "expired", "disk_exceeded", "main_process_ended", "boundary_failed", "sandbox_changed", "shutdown", "replaced", "not_found", "unclaimed"]),
     // plimsoll.v1.NotDispatchedReason's short names, by number.
     REFUSAL_NAMES: Object.freeze(["unknown", "request", "permission", "protocol", "unsupported", "isolation", "capacity", "environment"]),
+    // plimsoll.v1.FilesScope's short names, by number.
+    FILES_SCOPE_NAMES: Object.freeze(["unspecified", "work", "sandbox"]),
+    // plimsoll.v1.FilesWriteMode's short names, by number.
+    FILES_WRITE_MODE_NAMES: Object.freeze(["unspecified", "replace", "create_only", "append"]),
+    // plimsoll.v1.FilesError's short names, by number.
+    FILES_ERROR_NAMES: Object.freeze(["none", "not_found", "is_dir", "not_dir", "exists", "symlink", "not_regular", "permission_denied", "too_large", "no_space", "read_only", "not_empty", "scan_limit", "other"]),
+    // plimsoll.v1.FilesEntryType's short names, by number.
+    FILES_ENTRY_TYPE_NAMES: Object.freeze(["unspecified", "file", "dir", "link", "other", "unreadable"]),
+    // plimsoll.v1.CapacityLimit's short names, by number.
+    CAPACITY_LIMIT_NAMES: Object.freeze(["unknown", "sessions", "caller_sessions", "owner_sessions", "runs", "caller_runs", "rate", "paid_seconds", "queue", "provider", "deadline"]),
     // Isolation tiers, weakest first (sandbox.IsolationClass).
     TIERS: Object.freeze(["none", "process", "container", "kernel", "vm"]),
     // The languages plimsoll keeps an interpreter for (sandbox.Languages).
     LANGUAGES: Object.freeze(["javascript", "python"]),
     // The wire protocol number a client states on every request (protocol.Number).
-    PROTOCOL: 8,
+    PROTOCOL: 9,
     // The header carrying a client's ID for one request, which the daemon echoes (protocol.RequestIDHeader).
     REQUEST_ID_HEADER: "Plimsoll-Request-Id",
     // The daemon's mark on an answer written before any handler ran (protocol.NotDispatchedHeader).
@@ -31,9 +41,13 @@
     // The tiers a request may state as its floor, weakest first: every tier but none.
     FLOORS: Object.freeze(["process", "container", "kernel", "vm"]),
     // The record version a live answer carries (record.Version).
-    RECORD_VERSION: 5,
+    RECORD_VERSION: 6,
     // Each published record version's digest fields, in order (record.PublishedLayouts).
-    RECORD_FIELDS: Object.freeze({1: Object.freeze(["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 2: Object.freeze(["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 3: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 4: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 5: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm", "daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"])}),
+    RECORD_FIELDS: Object.freeze({1: Object.freeze(["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 2: Object.freeze(["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 3: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 4: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy", "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 5: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm", "daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"]), 6: Object.freeze(["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "isolation_qualification", "environment", "policy", "software_identity", "software_rule_id", "instance", "warm", "daemon_version", "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"])}),
+    // Each published record version's result domain, the one its result digests are computed under (record.ResultDomains).
+    RESULT_DOMAINS: Object.freeze({1: "plimsoll.run-result.v1", 2: "plimsoll.run-result.v1", 3: "plimsoll.run-result.v1", 4: "plimsoll.run-result.v1", 5: "plimsoll.run-result.v1", 6: "plimsoll.run-result.v2"}),
+    // Each request domain by the first protocol hashed under it; a request takes the domain of the highest first protocol at or below its own (record.RequestDomains).
+    REQUEST_DOMAINS: Object.freeze({1: "plimsoll.run-request.v1", 2: "plimsoll.run-request.v2", 9: "plimsoll.run-request.v3"}),
     // The last record version whose daemons stamped both times from the wall clock; reading such a record that ends before it starts is retired (record.LastWallClockEndVersion).
     LAST_WALL_CLOCK_END_VERSION: 2,
     // The refusal of a version 1 or 2 record that ends before it starts: a retired reading, not a forgery (record.RetiredEndBeforeStartText).

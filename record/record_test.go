@@ -21,6 +21,16 @@ import (
 // golden is record/testdata/golden.json: the vectors' inputs in the proto3 JSON form a
 // client sends and receives, with the digests they must produce. The Python and
 // TypeScript clients' tests read the same file.
+// resultVectorVersion is the record version a result vector was hashed for: the one it
+// names, or for a vector that names none, written before version 6, version 5, whose
+// results are all plimsoll.run-result.v1.
+func resultVectorVersion(v int) int {
+	if v == 0 {
+		return 5
+	}
+	return v
+}
+
 type golden struct {
 	Requests []struct {
 		Name    string          `json:"name"`
@@ -32,6 +42,9 @@ type golden struct {
 		Name     string          `json:"name"`
 		Response json.RawMessage `json:"response"`
 		SHA256   string          `json:"sha256"`
+		// RecordVersion is the record version whose result domain hashed the result; a
+		// vector without it is from a file written before version 6 (resultVectorVersion).
+		RecordVersion int `json:"recordVersion"`
 	} `json:"results"`
 	Records []struct {
 		Name   string          `json:"name"`
@@ -184,7 +197,7 @@ func TestGoldenVectors(t *testing.T) {
 		n++
 	}
 	for _, r := range g.Results {
-		if got := ResultDigest(fixture(r.Name, &plimsollv1.RunResponse{})); got != r.SHA256 {
+		if got := ResultDigestFor(fixture(r.Name, &plimsollv1.RunResponse{}), resultVectorVersion(r.RecordVersion)); got != r.SHA256 {
 			t.Errorf("%s: got %s, want %s", r.Name, got, r.SHA256)
 		}
 		n++
@@ -302,7 +315,7 @@ func TestSoftwareAdmissionRecordIsBoundToRequestAndResponse(t *testing.T) {
 func TestEarlierVersionsAreRefused(t *testing.T) {
 	req := jsRequest()
 	resp := jsResponse()
-	for _, v := range []int{1, 2, 3, 4, Version + 1} {
+	for _, v := range []int{1, 2, 3, 4, 5, Version + 1} {
 		r := sandbox.RunRecord{Version: v, RequestSHA256: RunRequestDigest(req), ResultSHA256: ResultDigest(resp),
 			Provider: resp.GetSandbox(), Isolation: resp.GetIsolation(), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
 		r.SHA256 = Digest(r)

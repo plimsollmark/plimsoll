@@ -25,6 +25,7 @@ from verifiers.v1.errors import SandboxError
 from verifiers.v1.runtimes import RuntimeConfig, backend_cls, provision_runtime
 from verifiers.v1.utils.compile import resolve_runtime_config
 
+from plimsoll_client import files as fs
 from plimsoll_client import workspace as ws
 from plimsoll_client._record import VERSION, record_digest
 from plimsoll_client.errors import IsolationEvidenceMismatchError
@@ -82,6 +83,8 @@ class FakeSandbox:
         self.runs: List[Tuple[List[str], Dict[str, str], bytes]] = []
         self.cancels: List[Any] = []
         self.flags: Dict[str, Any] = {}
+        self.ops: List[Any] = []  # the file calls, in order
+        self.work_dir = ROOT
         self.calls = 0
         self.last = ""
         self.closed = False
@@ -101,44 +104,14 @@ class FakeSandbox:
         step = steps[0]
         self.steps.append(step)
         code, out, err = 0, b"", b""
-        self.files[STATE + "/root"] = (ROOT + "\n").encode()
         if step == ws._RUN_STEP:
             stdin = base64.b64decode(self.files[STATE + "/in.b64"])
             env, argv = parse_script(self._text(STATE + "/run"))
             self.runs.append((argv, env, stdin))
             code, out, err = self.program(self, argv, env, stdin)
-        elif step == ws._READ_STEP:
-            path = self._path(self._text(STATE + "/a1"))
-            if path in self.files:
-                self.files[STATE + "/out"] = self.files[path][: int(self._text(STATE + "/a2"))]
-            else:
-                code, err = 1, b"head: no such file\n"
-        elif step in (ws._WRITE_B64_STEP, ws._APPEND_B64_STEP):
-            path = self._path(self._text(STATE + "/a1"))
-            before = self.files.get(path, b"") if step == ws._APPEND_B64_STEP else b""
-            self.files[path] = before + base64.b64decode(self.files[STATE + "/in.b64"])
-        elif step not in (ws._ROOT_STEP, ws._TRUE_STEP):
+        elif step != ws._EXEC_STEP:
             raise AssertionError(f"a step this fake does not know: {step[:60]}")
-        self.calls += 1
-        record = RunRecord(
-            version=VERSION,
-            request_sha256="a" * 64,
-            result_sha256="b" * 64,
-            provider=self.provider,
-            isolation=self.isolation,
-            environment=ENVIRONMENT,
-            policy="",
-            software_identity=self.software_identity,
-            software_rule_id="",
-            started_unix_ms=1,
-            ended_unix_ms=2,
-            session=self.fingerprint,
-            sequence=self.calls,
-            previous_sha256=self.last,
-            sha256="",
-        )
-        record = replace(record, sha256=record_digest(record))
-        self.last = record.sha256
+        record = self._record()
         rels = {a: self.files[ROOT + "/" + a] for a in artifacts if ROOT + "/" + a in self.files}
         return ProjectResult(
             provider=self.provider,
@@ -165,6 +138,54 @@ class FakeSandbox:
             artifacts_truncated=False,
             advice=(),
         )
+
+    def run_files(self, op: Any, *, timeout: Optional[float] = None, cancel: Any = None, **kw: Any) -> fs.FilesResult:
+        """A read or a write, as the helper answers them, in the same record chain."""
+        assert not self.closed
+        self.cancels.append(cancel)
+        self.ops.append(op)
+        path = fs.path_bytes(op.path).decode("utf-8", "surrogateescape")
+        assert op.scope == "sandbox" and path.startswith("/"), op  # the runtime's workspace is unconfined
+        error, answer = "none", None
+        if isinstance(op, fs.FilesRead):
+            if path in self.files:
+                data = self.files[path]
+                answer = fs.FilesReadAnswer(content=data[op.offset : op.offset + op.max_bytes], size_at_open=len(data))
+            else:
+                error = "not_found"
+        elif isinstance(op, fs.FilesWrite):
+            before = self.files.get(path, b"") if op.mode == "append" else b""
+            self.files[path] = before + bytes(op.content)
+            answer = fs.FilesWriteAnswer(written=len(op.content))
+        else:
+            raise AssertionError(f"a file call this fake does not know: {op!r}")
+        return fs.FilesResult(provider=self.provider, isolation=self.isolation, environment=ENVIRONMENT,
+                              software_identity=self.software_identity, duration_ms=1, record=self._record(),
+                              outcome="completed", error=error, errno="ENOENT" if error == "not_found" else "",
+                              op="" if answer is None else type(op).__name__[5:].lower(), answer=answer)
+
+    def _record(self) -> RunRecord:
+        self.calls += 1
+        record = RunRecord(
+            version=VERSION,
+            request_sha256="a" * 64,
+            result_sha256="b" * 64,
+            provider=self.provider,
+            isolation=self.isolation,
+            environment=ENVIRONMENT,
+            policy="",
+            software_identity=self.software_identity,
+            software_rule_id="",
+            started_unix_ms=1,
+            ended_unix_ms=2,
+            session=self.fingerprint,
+            sequence=self.calls,
+            previous_sha256=self.last,
+            sha256="",
+        )
+        record = replace(record, sha256=record_digest(record))
+        self.last = record.sha256
+        return record
 
     def close(self) -> SessionSummary:
         self.closed = True
@@ -269,7 +290,7 @@ class LifecycleTests(Reset):
             self.assertEqual(view.info.environment, ENVIRONMENT)
             self.assertEqual(view.config.workdir, ROOT)
             self.assertEqual(view.config.image, ENVIRONMENT)
-            self.assertEqual(sb.steps, [ws._ROOT_STEP])
+            self.assertEqual(sb.steps, [])  # the root is the open's: no call
         self.assertTrue(sb.closed)
 
     async def test_a_floor_the_daemon_does_not_meet_is_refused(self) -> None:
@@ -296,7 +317,7 @@ class LifecycleTests(Reset):
         async with provision_runtime(plugin(workdir="/work/")) as view:
             self.assertEqual(view.config.workdir, ROOT)
         # The same directory needs no call to say so.
-        self.assertEqual(FakeClient.opened[-1][0].steps, [ws._ROOT_STEP])
+        self.assertEqual(FakeClient.opened[-1][0].steps, [])
 
     async def test_a_work_directory_the_image_links_to_the_session_s_is_accepted(self) -> None:
         asked: List[List[str]] = []
@@ -473,7 +494,7 @@ class RecordLogTests(Reset):
             await view.run(["true"], {})
             await view.write("answer.txt", b"6\n")
             self.assertEqual(await view.read("answer.txt"), b"6\n")
-            self.assertEqual(len(view.backend.records), 4)
+            self.assertEqual(len(view.backend.records), 3)
         return FakeClient.opened[-1][0]
 
     def _entries(self) -> List[Dict[str, Any]]:
@@ -487,14 +508,14 @@ class RecordLogTests(Reset):
     async def test_every_call_is_logged_and_the_log_checks(self) -> None:
         sb = await self._one_rollout()
         entries = self._entries()
-        self.assertEqual([e["kind"] for e in entries], ["open", "record", "record", "record", "record", "close"])
-        self.assertEqual([e["op"] for e in entries if e["kind"] == "record"], ["root", "run", "write", "read"])
+        self.assertEqual([e["kind"] for e in entries], ["open", "record", "record", "record", "close"])
+        self.assertEqual([e["op"] for e in entries if e["kind"] == "record"], ["run", "write", "read"])
         self.assertEqual(entries[0]["session"], sb.fingerprint)
-        self.assertEqual(entries[-1]["calls"], 4)
+        self.assertEqual(entries[-1]["calls"], 3)
         # No command text, argument or file content reaches the log: digests only.
         self.assertNotIn("answer.txt", json.dumps(entries))
         summary = check_record_log(self.log, minimum_isolation="kernel")
-        self.assertEqual(summary, {"sessions": 1, "records": 4, "closed": 1, "tiers": {"kernel": 4}, "incomplete": []})
+        self.assertEqual(summary, {"sessions": 1, "records": 3, "closed": 1, "tiers": {"kernel": 3}, "incomplete": []})
         await self._one_rollout()
         self.assertEqual(check_record_log(self.log)["sessions"], 2)
 
@@ -507,9 +528,9 @@ class RecordLogTests(Reset):
                     await view.run(["true"], {})
 
         await asyncio.gather(*(rollout() for _ in range(8)))
-        # Each: the root call, three writes and three runs.
+        # Each: three writes and three runs (the root is the open's, no call).
         summary = check_record_log(self.log, minimum_isolation="kernel")
-        self.assertEqual(summary, {"sessions": 8, "records": 56, "closed": 8, "tiers": {"kernel": 56}, "incomplete": []})
+        self.assertEqual(summary, {"sessions": 8, "records": 48, "closed": 8, "tiers": {"kernel": 48}, "incomplete": []})
         kinds = [e["kind"] for e in self._entries()]
         self.assertEqual((kinds.count("open"), kinds.count("close")), (8, 8))
 
@@ -527,8 +548,8 @@ class RecordLogTests(Reset):
         self._rewrite(original[:2] + original[3:])  # the second record gone
         with self.assertRaisesRegex(RecordLogError, ":3: session .* call 3 follows"):
             check_record_log(self.log)
-        self._rewrite(original[:3] + original[5:])  # the last two gone, the close still counting four
-        with self.assertRaisesRegex(RecordLogError, "closed session .* after 4 calls, the log holds"):
+        self._rewrite(original[:3] + original[4:])  # the last gone, the close still counting three
+        with self.assertRaisesRegex(RecordLogError, "closed session .* after 3 calls, the log holds"):
             check_record_log(self.log)
 
     async def test_a_session_the_log_cannot_show_whole_is_named(self) -> None:
@@ -542,8 +563,8 @@ class RecordLogTests(Reset):
         cut["error"] = "plimsoll: the daemon counts 5 calls ending 'ab', this client saw 4 ending 'cd'"
         self._rewrite(original[:-1] + [cut])
         summary = check_record_log(self.log)
-        self.assertEqual((summary["records"], summary["closed"]), (4, 0))
-        self.assertEqual(summary["incomplete"], [{"session": session[:12], "records": 4, "reason": cut["error"]}])
+        self.assertEqual((summary["records"], summary["closed"]), (3, 0))
+        self.assertEqual(summary["incomplete"], [{"session": session[:12], "records": 3, "reason": cut["error"]}])
         # No close at all: the session may still be open.
         self._rewrite(original[:-1])
         self.assertEqual(check_record_log(self.log)["incomplete"][0]["reason"], "no close in the log")

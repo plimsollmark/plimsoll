@@ -1,6 +1,11 @@
-# The Google ADK version this adapter's suite runs against: 2.14.1, PyPI's latest on
-# 2026-11-17. 2.14.0 made the environment interface PlimsollEnvironment implements
-# (google.adk.environment.BaseEnvironment, read_file_stream included) stable. Lock with:
+# The Google ADK version this adapter's suite runs against: 2.15.0, PyPI's latest on
+# 2026-11-25. 2.14.0 made the environment interface PlimsollEnvironment implements
+# (google.adk.environment.BaseEnvironment, read_file_stream included) stable; 2.15.0 passes
+# its methods the calling tool's context (ctx) and initializes before every tool call. Lock with:
 #   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
 #     --output-file=requirements.txt --strip-extras requirements.in
-google-adk==2.14.1
+google-adk==2.15.0
+# pytest and pytest-asyncio run Google ADK's own unit tests for ADK's PlimsollEnvironment
+# adapter against this client, at the versions the deepagents lock installs.
+pytest==9.2.0
+pytest-asyncio==1.5.0

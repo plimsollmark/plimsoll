@@ -225,7 +225,7 @@ func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
 	held := map[string]int{}
 	errorWriter := connect.NewErrorWriter()
 	refuseFull := func(w http.ResponseWriter, r *http.Request) {
-		_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+		_ = errorWriter.Write(w, r, refuseCapacity(sandbox.CapacityQueue,
 			errors.New("RPC decode capacity exhausted, retry shortly")))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

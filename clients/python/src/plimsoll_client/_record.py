@@ -16,7 +16,8 @@ from typing import Iterable, Optional, Tuple
 # The record's version, layouts and bounds, generated from the Go record and sandbox
 # packages by internal/wiretables. VERSION is the encoding version this client computes and
 # checks: every field, every time, for an answered call and an unanswered session call alike.
-from ._tables import DAEMON_VERSION_PATTERN, INSTANCE_PATTERN, LAST_WALL_CLOCK_END_VERSION, MAX_DAEMON_VERSION_BYTES, MAX_QUALIFICATION_BYTES, QUALIFICATION_FORBIDDEN, RECORD_FIELDS, RETIRED_END_BEFORE_START_TEXT, TIERS, UNANSWERED_CODES
+from ._tables import DAEMON_VERSION_PATTERN, INSTANCE_PATTERN, LAST_WALL_CLOCK_END_VERSION, MAX_DAEMON_VERSION_BYTES, MAX_QUALIFICATION_BYTES, QUALIFICATION_FORBIDDEN, RECORD_FIELDS, REQUEST_DOMAINS, RESULT_DOMAINS, RETIRED_END_BEFORE_START_TEXT, TIERS, UNANSWERED_CODES
+from ._tables import FILES_ENTRY_TYPES, FILES_ERRORS, FILES_SCOPES, FILES_WRITE_MODES
 from ._tables import RECORD_VERSION as VERSION
 from ._wire import INT32, INT64, OUTCOMES, UINT32, UINT64, Msg
 from .errors import IsolationEvidenceMismatchError, MalformedResponseError, NoRecordError, RecordMismatchError, RecordVersionError, ResultKindMismatchError
@@ -114,15 +115,29 @@ class _Encoder:
         return self._h.hexdigest()
 
 
+def request_domain(protocol: int) -> str:
+    """The request domain a request stating ``protocol`` is hashed under: that of the
+    highest first protocol at or below it (REQUEST_DOMAINS: v1 below 2, v2 from 2 to 8, v3,
+    which covers the files kind, from 9)."""
+    firsts = [p for p in REQUEST_DOMAINS if p <= protocol]
+    return REQUEST_DOMAINS[max(firsts) if firsts else min(REQUEST_DOMAINS)]
+
+
+# The request and result domains that cover the files kind.
+_FILES_REQUEST_DOMAIN = "plimsoll.run-request.v3"
+_FILES_RESULT_DOMAIN = "plimsoll.run-result.v2"
+
+
 def request_digest(req: dict) -> str:
     """The request digest of a Run request or a session call, from its JSON form.
     The trace ID and the session ID are left out (record.RunRequestDigest and
     record.SessionRunRequestDigest)."""
     m = Msg(req, "request")
     protocol = m.get_int("protocol", UINT32)
+    domain = request_domain(protocol)
     # A protocol 1 request (the records of version 1) has the first encoding: no software rule.
-    first = protocol < 2
-    e = _Encoder("plimsoll.run-request.v1" if first else "plimsoll.run-request.v2")
+    first = domain == "plimsoll.run-request.v1"
+    e = _Encoder(domain)
     e.int("protocol", protocol)
     e.str("minimum_isolation", m.get_str("minimumIsolation"))
     e.int("timeout_ms", m.get_int("timeoutMs", INT32))
@@ -134,6 +149,7 @@ def request_digest(req: dict) -> str:
         for i in ids:
             e.str("software_identity", i)
     js, project, module, cell = m.get_msg("javascript"), m.get_msg("project"), m.get_msg("module"), m.get_msg("cell")
+    files = m.get_msg("files")
     if js is not None:
         e.str("kind", "javascript")
         e.str("code", js.get_str("code"))
@@ -172,16 +188,77 @@ def request_digest(req: dict) -> str:
         e.int("rows", len(rows))
         for r in rows:
             e.floats("row_values", r.get_floats("values"))
+    elif files is not None and domain == _FILES_REQUEST_DOMAIN:
+        # Only plimsoll.run-request.v3 covers the files kind; under an earlier domain a
+        # files payload is no kind (record.requestDigest).
+        e.str("kind", "files")
+        _files_request(e, files)
     else:
         e.str("kind", "")
     return e.sum()
 
 
-def result_digest(resp: Msg) -> str:
-    """The result digest of a RunResponse as received (record.ResultDigest):
-    durations, advice and the evidence fields are left out."""
-    e = _Encoder("plimsoll.run-result.v1")
+def _files_request(e: _Encoder, f: Msg) -> None:
+    """A file call's request: the scope by its number, the operation by its word, then
+    its fields; paths and contents are bytes (record.filesRequest)."""
+    e.int("scope", f.get_enum("scope", FILES_SCOPES))
+    stat, read, write, listing = f.get_msg("stat"), f.get_msg("read"), f.get_msg("write"), f.get_msg("list")
+    read_many, make_dir, remove, rename = f.get_msg("readMany"), f.get_msg("makeDir"), f.get_msg("remove"), f.get_msg("rename")
+    if stat is not None:
+        e.str("op", "stat")
+        e.bytes("path", stat.get_bytes("path"))
+    elif read is not None:
+        e.str("op", "read")
+        e.bytes("path", read.get_bytes("path"))
+        e.int("offset", read.get_int("offset", UINT64))
+        e.int("max_bytes", read.get_int("maxBytes", UINT32))
+    elif write is not None:
+        e.str("op", "write")
+        e.bytes("path", write.get_bytes("path"))
+        e.bytes("content", write.get_bytes("content"))
+        e.int("write_mode", write.get_enum("mode", FILES_WRITE_MODES))
+        e.bool("make_parents", write.get_bool("makeParents"))
+    elif listing is not None:
+        e.str("op", "list")
+        e.bytes("path", listing.get_bytes("path"))
+        e.bool("recursive", listing.get_bool("recursive"))
+        e.bytes("match", listing.get_bytes("match"))
+        e.bytes("after", listing.get_bytes("after"))
+        e.int("budget_bytes", listing.get_int("budgetBytes", UINT32))
+    elif read_many is not None:
+        e.str("op", "read_many")
+        paths = read_many.get_bytes_list("paths")
+        e.int("paths", len(paths))
+        for p in paths:
+            e.bytes("path", p)
+        e.int("max_bytes_each", read_many.get_int("maxBytesEach", UINT32))
+        e.int("budget_bytes", read_many.get_int("budgetBytes", UINT32))
+    elif make_dir is not None:
+        e.str("op", "make_dir")
+        e.bytes("path", make_dir.get_bytes("path"))
+        e.bool("parents", make_dir.get_bool("parents"))
+    elif remove is not None:
+        e.str("op", "remove")
+        e.bytes("path", remove.get_bytes("path"))
+        e.bool("dir", remove.get_bool("dir"))
+    elif rename is not None:
+        e.str("op", "rename")
+        e.bytes("from_path", rename.get_bytes("fromPath"))
+        e.bytes("to_path", rename.get_bytes("toPath"))
+        e.bool("replace", rename.get_bool("replace"))
+    else:
+        e.str("op", "")
+
+
+def result_digest(resp: Msg, version: int = VERSION) -> str:
+    """The result digest of a RunResponse as received, as a record of ``version`` states
+    it (record.ResultDigestFor): the version fixes the result domain (RESULT_DOMAINS:
+    plimsoll.run-result.v1 to version 5, plimsoll.run-result.v2, which adds the files kind,
+    from 6). Durations, advice and the evidence fields are left out."""
+    domain = RESULT_DOMAINS.get(version, RESULT_DOMAINS[VERSION])
+    e = _Encoder(domain)
     js, project, module, cell = resp.get_msg("javascript"), resp.get_msg("project"), resp.get_msg("module"), resp.get_msg("cell")
+    files = resp.get_msg("files")
     if cell is not None:
         e.str("kind", "cell")
         e.int("exit_code", cell.get_int("exitCode", INT32))
@@ -232,9 +309,72 @@ def result_digest(resp: Msg) -> str:
         for run in runs:
             e.int("run_status", run.get_int("status", INT32))
             e.floats("run_outputs", run.get_floats("outputs"))
+    elif files is not None and domain == _FILES_RESULT_DOMAIN:
+        # plimsoll.run-result.v1 covers four kinds; a files result is none of them there.
+        e.str("kind", "files")
+        _files_result(e, files)
     else:
         e.str("kind", "")
     return e.sum()
+
+
+def _files_result(e: _Encoder, f: Msg) -> None:
+    """A file call's result: the outcome and error by their numbers, the errno name, then
+    the operation the answer names by its word ("" for none) and its fields
+    (record.filesResult)."""
+    answers = files_answers(f)
+    if len(answers) > 1:
+        # A oneof holds one answer: the digest would cover the first and a reader could
+        # read another (finding session-files-1).
+        raise MalformedResponseError(f"plimsoll: the file call's result holds {len(answers)} answers ({', '.join(answers)}); it has one at most")
+    e.int("outcome", f.get_enum("outcome", OUTCOMES))
+    e.int("error", f.get_enum("error", FILES_ERRORS))
+    e.str("errno", f.get_str("errno"))
+    stat, read, write, listing = f.get_msg("stat"), f.get_msg("read"), f.get_msg("write"), f.get_msg("list")
+    read_many = f.get_msg("readMany")
+    if stat is not None:
+        e.str("op", "stat")
+        e.int("type", stat.get_enum("type", FILES_ENTRY_TYPES))
+        e.int("size", stat.get_int("size", UINT64))
+        e.int("mode", stat.get_int("mode", UINT32))
+    elif read is not None:
+        e.str("op", "read")
+        e.bytes("content", read.get_bytes("content"))
+        e.int("size_at_open", read.get_int("sizeAtOpen", UINT64))
+    elif write is not None:
+        e.str("op", "write")
+        e.int("written", write.get_int("written", UINT64))
+    elif listing is not None:
+        e.str("op", "list")
+        entries = listing.get_msgs("entries")
+        e.int("entries", len(entries))
+        for en in entries:
+            e.bytes("entry_path", en.get_bytes("path"))
+            e.int("entry_type", en.get_enum("type", FILES_ENTRY_TYPES))
+            e.int("entry_size", en.get_int("size", UINT64))
+        e.bool("more", listing.get_bool("more"))
+    elif read_many is not None:
+        e.str("op", "read_many")
+        items = read_many.get_msgs("items")
+        e.int("items", len(items))
+        for it in items:
+            e.int("item_error", it.get_enum("error", FILES_ERRORS))
+            e.str("item_errno", it.get_str("errno"))
+            e.bytes("item_content", it.get_bytes("content"))
+            e.int("item_size_at_open", it.get_int("sizeAtOpen", UINT64))
+        e.bool("more", read_many.get_bool("more"))
+    elif f.has("makeDir"):
+        e.str("op", "make_dir")
+    elif f.has("remove"):
+        e.str("op", "remove")
+    elif f.has("rename"):
+        e.str("op", "rename")
+    else:
+        e.str("op", "")
+
+
+# Every result kind a RunResponse can carry, in its oneof's order.
+_RESULT_KINDS = ("javascript", "project", "module", "cell", "files")
 
 
 _RECORD_INTS = frozenset({"started_unix_ms", "ended_unix_ms", "sequence"})
@@ -338,28 +478,93 @@ def record_from_wire(m: Msg) -> RunRecord:
     )
 
 
-def check(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
+def files_op(f: Msg) -> str:
+    """The word of the operation a file call's request (FilesRun) asks, "" for none."""
+    return next((word for name, word in _FILES_OPS if f.has(name)), "")
+
+
+def files_answers(f: Msg) -> Tuple[str, ...]:
+    """The words of the answers a file call's result (FilesResult) carries, in the oneof's
+    order. Each present answer must be a JSON object, an empty one included: any other value
+    (``makeDir: 0``) is MalformedResponseError, as Go's protojson and the TypeScript client
+    refuse it, so no value but an object is ever taken for an answer (finding release-125)."""
+    return tuple(word for name, word in _FILES_OPS if f.get_msg(name) is not None)
+
+
+# A FilesRun's operations and a FilesResult's answers, by their JSON names and their words
+# (the oneof members of each carry the same names).
+_FILES_OPS = (("stat", "stat"), ("read", "read"), ("write", "write"), ("list", "list"), ("readMany", "read_many"),
+              ("makeDir", "make_dir"), ("remove", "remove"), ("rename", "rename"))
+
+
+_COMPLETED = OUTCOMES["PROJECT_OUTCOME_COMPLETED"]
+_ENDED_WITHOUT_ANSWER = frozenset(OUTCOMES[n] for n in ("PROJECT_OUTCOME_TIMED_OUT", "PROJECT_OUTCOME_PROTOCOL_ERROR", "PROJECT_OUTCOME_RUNNER_FAILED"))
+
+
+def _files_answer_problem(f: Msg, asked: Optional[str]) -> str:
+    """What breaks the rule a file call's outcome, error and answer follow
+    (docs/run-records.md, "A file call's answer"; record.filesAnswer), "" for nothing:
+    completed with no error carries exactly one answer, of the operation asked (``asked``,
+    None when the request is not at hand) and no errno name; completed with an error carries
+    none; timed_out, protocol_error and runner_failed carry no answer, error or errno name;
+    no other outcome is a file call's. A read_many item carries its bytes or its error, and
+    no errno name without an error. Two answers are refused by the digest (_files_result)."""
+    answers = files_answers(f)
+    answer = answers[0] if answers else ""
+    outcome, error, errno = f.get_enum("outcome", OUTCOMES), f.get_enum("error", FILES_ERRORS), f.get_str("errno")
+    if outcome == _COMPLETED:
+        if error:
+            return f"the file call's result states the error {error} and carries a {answer} answer" if answer else ""
+        if errno:
+            return "the file call's result states no error and an errno name"
+        if not answer:
+            return "the completed file call's result states no error and carries no answer"
+        if asked is not None and answer != asked:
+            return f"a {asked or 'no operation'} call answered with a {answer} answer"
+        rm = f.get_msg("readMany")
+        for i, it in enumerate(rm.get_msgs("items") if rm is not None else []):
+            item_error = it.get_enum("error", FILES_ERRORS)
+            if item_error and (it.get_bytes("content") or it.get_int("sizeAtOpen", UINT64)):
+                return f"read_many item {i} states the error {item_error} and carries bytes"
+            if not item_error and it.get_str("errno"):
+                return f"read_many item {i} states no error and an errno name"
+        return ""
+    if outcome in _ENDED_WITHOUT_ANSWER:
+        if answer or error or errno:
+            return f"the file call that ended with the outcome {outcome} states an error, an errno name or an answer"
+        return ""
+    return f"the outcome {outcome} is not one a file call has"
+
+
+def check(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg, op: str = "") -> RunRecord:
     """Everything a record states that the caller can recompute (record.check):
     the version, that the result is of the request's kind, both digests, the
     evidence the response repeats, the software rule, the record's own digest and
-    that it ends no earlier than it starts. The rule was validated before sending."""
+    that it ends no earlier than it starts. The rule was validated before sending. For a
+    file call, ``op`` is the word of the operation the request asked (files_op): its answer
+    must be of that operation, and its outcome, error and answer must agree."""
     rec_msg = resp.get_msg("record")
     if rec_msg is None:
         raise NoRecordError("plimsoll: the response carries no run record")
     r = record_from_wire(rec_msg)
-    result = result_digest(resp)
     if r.version != VERSION:
         raise RecordVersionError(_version_problem(r.version))
+    result = result_digest(resp, r.version)
     if r.unanswered:
         raise RecordMismatchError("plimsoll: an answered call's record states an unanswered code")
     # The kind, inside the check as in Go's record.check since 2026-10-26: a result of
     # another kind fails here, before a session's chain moves on, so a daemon caught
     # answering the wrong kind is not used further (review, 2026-10-26).
-    kinds = tuple(k for k in ("javascript", "project", "module", "cell") if resp.has(k))
+    kinds = tuple(k for k in _RESULT_KINDS if resp.has(k))
     if len(kinds) > 1:
         raise MalformedResponseError(f"plimsoll: the answer holds {len(kinds)} results; a run has one")
     if kinds != (kind,):
         raise ResultKindMismatchError(f"plimsoll: the daemon answered a {kind} request with {kinds[0] if kinds else 'no'} result")
+    files = resp.get_msg("files")
+    if kind == "files" and files is not None:
+        problem = _files_answer_problem(files, op)
+        if problem:
+            raise RecordMismatchError(f"plimsoll: {problem}")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
     if r.result_sha256 != result:
@@ -419,7 +624,7 @@ def check_lost_answer(resp: Msg, lost: RunRecord) -> RunRecord:
     checked against that call's record ``lost``, which the caller has already checked
     against its checkpoint and the request digest it named (record.CheckLostAnswer): the
     answer carries exactly that record, a live answered call's, and one result of a
-    session call's kind (javascript, project or cell) whose result digest is the record's,
+    session call's kind (javascript, project, cell or files) whose result digest is the record's,
     stating the evidence the record states. The request is not at hand, only its digest, so
     the record's request digest and software rule stand for it. Raises a DataLossError."""
     rec_msg = resp.get_msg("record")
@@ -432,10 +637,17 @@ def check_lost_answer(resp: Msg, lost: RunRecord) -> RunRecord:
     if lost.unanswered:
         raise RecordMismatchError(f"plimsoll: an answer came for a call whose record states it ended unanswered ({lost.unanswered})")
     _states_only(lost)
-    kinds = tuple(k for k in ("javascript", "project", "module", "cell") if resp.has(k))
+    kinds = tuple(k for k in _RESULT_KINDS if resp.has(k))
     if len(kinds) != 1 or kinds[0] == "module":
         raise RecordMismatchError("plimsoll: the lost call's answer holds no result of a session call's kind")
-    result = result_digest(resp)
+    files = resp.get_msg("files")
+    if kinds[0] == "files" and files is not None:
+        # The request is not at hand, so neither is its operation: every other part of the
+        # rule is checked.
+        problem = _files_answer_problem(files, None)
+        if problem:
+            raise RecordMismatchError(f"plimsoll: the lost call's answer: {problem}")
+    result = result_digest(resp, lost.version)
     if lost.result_sha256 != result:
         raise RecordMismatchError(f"plimsoll: result digest {lost.result_sha256}, the lost call's answer digests to {result}")
     if lost.provider != resp.get_str("sandbox") or lost.isolation != resp.get_str("isolation"):

@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import patch
 
+from plimsoll_client._tables import RECORD_VERSION
 from plimsoll_client._transport import _read_capped
 
 from plimsoll_client import (
@@ -178,28 +179,30 @@ class Transport(unittest.TestCase):
             Client(self.stub.url).describe()
         self.assertEqual(cm.exception.info.protocol, PROTOCOL + 1)
 
-    def test_this_client_speaks_protocol_8_and_a_protocol_7_daemon_refuses_it(self) -> None:
-        # Protocol 8 came with the head on every session call (lost call option 3, 2026-11-24):
-        # a daemon of protocol 7 would ignore the head and run a call made from stale state,
-        # which this client's daemon refuses. Protocol 7 (the provider name's rule,
-        # record.ValidText, hunt-security-39) still holds. A daemon of protocol 7 refuses this
-        # client's run before anything runs, and its Describe is refused here.
-        self.assertEqual(PROTOCOL, 8, "this test pins protocol 8 to the head on every session call")
+    def test_this_client_speaks_protocol_9_and_a_protocol_8_daemon_refuses_it(self) -> None:
+        # Protocol 9 came with record version 6 (results under plimsoll.run-result.v2,
+        # requests under plimsoll.run-request.v3, both with the files kind, 2026-11-26): a
+        # daemon of protocol 8 writes version 5, which this client refuses of a live answer.
+        # Protocol 8 (the head on every session call) and 7 (the provider name's rule,
+        # record.ValidText) still hold. A daemon of protocol 8 refuses this client's run
+        # before anything runs, and its Describe is refused here.
+        self.assertEqual(PROTOCOL, 9, "this test pins protocol 9 to record version 6")
+        self.assertEqual(RECORD_VERSION, 6)
         self.assertFalse(valid_text("docker\x1b[2J"))
         refusal = {
             "code": "unimplemented",
-            "message": "this daemon serves protocol 7 and the request states 8; nothing ran",
+            "message": "this daemon serves protocol 8 and the request states 9; nothing ran",
             "details": [{"type": "plimsoll.v1.NotDispatched", "value": "CAM"}],
         }
         self.stub.reply = lambda h: send(h, 501, json.dumps(refusal).encode())
         with self.assertRaises(ProtocolMismatchError) as cm:
             Client(self.stub.url).run_javascript("1")
         self.assertEqual(cm.exception.not_dispatched, "protocol")
-        self.assertEqual(json.loads(self.stub.seen[0]["body"])["protocol"], 8)
-        self.stub.reply = lambda h: send(h, 200, describe_answer(7))
+        self.assertEqual(json.loads(self.stub.seen[0]["body"])["protocol"], 9)
+        self.stub.reply = lambda h: send(h, 200, describe_answer(8))
         with self.assertRaises(ProtocolMismatchError) as dm:
             Client(self.stub.url).describe()
-        self.assertEqual(dm.exception.info.protocol, 7)
+        self.assertEqual(dm.exception.info.protocol, 8)
 
     def test_a_declared_oversized_answer_is_refused_unread(self) -> None:
         self.stub.reply = lambda h: send(h, 200, b"{}", length=MAX_RESPONSE_BYTES + 1)

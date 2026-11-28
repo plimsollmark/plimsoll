@@ -16,7 +16,7 @@ type Answer = {
   body: string;
   echo: "match" | "missing" | "other";
   mark?: string;
-  expect: { code: string; notDispatched: string; sessionEnded: string; answerNotBound: boolean };
+  expect: { code: string; notDispatched: string; sessionEnded: string; answerNotBound: boolean; capacityLimit: string };
 };
 
 const answers: Answer[] = JSON.parse(readFileSync(new URL("../../../protocol/testdata/answers.json", import.meta.url), "utf8")).answers;
@@ -31,7 +31,13 @@ test("every shared answer reads as the file says", () => {
       body = undefined; // not a Connect error body: a proxy's page
     }
     const e = errorFromWire(a.status, body, { bound: a.echo === "match", mark: a.mark ?? null });
-    const got = { code: e.code, notDispatched: e.notDispatched ?? "", sessionEnded: e.sessionEnded?.reason ?? "", answerNotBound: e.answerNotBound };
+    const got = {
+      code: e.code,
+      notDispatched: e.notDispatched ?? "",
+      sessionEnded: e.sessionEnded?.reason ?? "",
+      answerNotBound: e.answerNotBound,
+      capacityLimit: e.capacityLimit ?? "",
+    };
     verdict(`answers/${a.name}`, "error-answer", got);
     assert.deepEqual(got, a.expect, a.name);
   }

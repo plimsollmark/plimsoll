@@ -192,8 +192,11 @@ func TestDockerProjectGrantCarriesTheCheckersUploads(t *testing.T) {
 	// OVER-ROUTE and the third BUDGET clip are declared uploads refused before their
 	// bodies are read: the client sees the 413 or, cut off while still sending, a closed
 	// connection (the program prints "refused closed"); either way the API never sees
-	// them, which the upstream's counts below assert. WRONG-TYPE's small body is drained
-	// by the server, so its 415 and no-retry mark always reach the client.
+	// them, which the upstream's counts below assert. WRONG-TYPE's small body is read and
+	// discarded by the broker's server before it answers (drainSmallBody), so its 415 and
+	// no-retry mark reach the client; net/http alone does not drain a body when the request
+	// says Connection: close, as urllib's do, and under gVisor 32 of 600 loaded runs saw a
+	// closed connection here before that drain (2026-11-27).
 	for _, want := range []string{"FILES 200 ", " file-1", "TRANSCRIBE 200 ", "RESPONSES 200 completed", "STREAM 200 text/event-stream", "OVER-ROUTE refused", "WRONG-TYPE refused 415 false", "BUDGET ok 200|ok 200|refused"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s\n%s", want, out, res.Steps[0].Stderr)

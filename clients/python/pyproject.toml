@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plimsoll-client"
-version = "0.29.0"
+version = "0.30.0"
 description = "Client for plimsolld, the plimsoll sandbox daemon, that checks every run record it receives"
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ classifiers = [
 # each extra pins exactly the version its suite's lock file installs (clients/python/frameworks/<extra>/requirements.txt),
 # held by TestAdaptersPinTheVersionTheirLockInstalls.
 [project.optional-dependencies]
-adk = ["google-adk==2.14.1"]
+adk = ["google-adk==2.15.0"]
 agno = ["agno==3.1.1"]
 crewai = ["crewai==1.15.23"]
 langchain = ["langchain-core==1.8.0"]

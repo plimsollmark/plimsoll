@@ -100,14 +100,15 @@ func TestRunRefusesWrongProtocolBeforeReadingPayload(t *testing.T) {
 	}
 }
 
-// This daemon serves protocol 8: every session call states the head it expects and runs
-// only on it, and a client of protocol 7 sent the generation alone, so a protocol 7 request
-// is refused before its payload is read, marked not dispatched for the protocol, and so is
-// one of every earlier number (7 was the provider name's rule, record.ValidText, finding
-// hunt-security-39, 2026-11-21; 8 the head, 2026-11-24).
-func TestRunRefusesAProtocol7ClientBeforeReadingPayload(t *testing.T) {
-	if protocol.Number != 8 {
-		t.Fatalf("protocol.Number = %d; this test pins 8, the session head's rule", protocol.Number)
+// This daemon serves protocol 9: it writes record version 6, whose results are hashed under
+// plimsoll.run-result.v2, and a client of protocol 8 requires version 5 of a live answer, so
+// a protocol 8 request is refused before its payload is read, marked not dispatched for the
+// protocol, and so is one of every earlier number (7 was the provider name's rule,
+// record.ValidText, finding hunt-security-39, 2026-11-21; 8 the session head, 2026-11-24;
+// 9 record version 6 and the files kind, 2026-11-26).
+func TestRunRefusesAProtocol8ClientBeforeReadingPayload(t *testing.T) {
+	if protocol.Number != 9 {
+		t.Fatalf("protocol.Number = %d; this test pins 9, record version 6", protocol.Number)
 	}
 	for n := uint32(1); n < protocol.Number; n++ {
 		fake := &fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake"}}

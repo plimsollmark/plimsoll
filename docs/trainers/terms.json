@@ -872,12 +872,6 @@
       "definition": "The full record of a simulation run: every state at every tick, in order."
     },
     {
-      "term": "Trigger.dev",
-      "anchor": "trigger-dev",
-      "variants": [],
-      "definition": "A hosted job runner for TypeScript whose durable chat agents can sleep between messages; the trigger-chat example gives one an executeCode tool backed by plimsoll."
-    },
-    {
       "term": "truth label",
       "anchor": "truth-label",
       "variants": ["truth labels"],

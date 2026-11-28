@@ -58,12 +58,27 @@ FAKES: List[Tuple[str, str, type]] = [
     ("frameworks/agent_framework/test_agent_framework.py", "FakeClient", Client),
 ]
 
+# Fakes in suites that are not published (the upstream copy under frameworks/adk/core is the text of a pull request to
+# Google's ADK and stays private until it is merged there): checked where the file exists, the working copy, and left
+# out of the public tree, which does not have it. Only a path under one of these folders may be missing; a missing file
+# anywhere else is a FAKES entry with no such class, and fails.
+UNPUBLISHED_DIRS = ("frameworks/adk/core/",)
+UNPUBLISHED: List[Tuple[str, str, type]] = [
+    # The upstream copy's AgentTool tests, through ADK's real Runner, against the workspace the copy calls.
+    ("frameworks/adk/core/test_upstream_agent_tool.py", "FakeWorkspace", Workspace),
+]
+for _entry in UNPUBLISHED:
+    assert _entry[0].startswith(UNPUBLISHED_DIRS), f"an unpublished fake outside {UNPUBLISHED_DIRS}: {_entry}"
+    if os.path.exists(os.path.join(HERE, _entry[0])):
+        FAKES.append(_entry)
+
 # A fake's members with no counterpart in the real class, each with why it may have one:
 # (file, class, member) -> reason.
 TEST_ONLY: Dict[Tuple[str, str, str], str] = {
     ("frameworks/adk/test_adk_environment.py", "FakeSession", "runs"): "a test helper: the calls of one kind it was handed",
     ("frameworks/adk/test_adk_environment.py", "FakeSession", "commands"): "a test helper: the commands it was handed",
     ("tests/test_workspace.py", "FakeSession", "last"): "a test helper: the last call it was handed",
+    ("tests/test_workspace.py", "FakeSession", "ops"): "a test helper: the file calls it was handed",
     # The PydanticAI suite's own list of these (test_pydantic_ai.py, ShapeTests.TEST_ONLY), which its check also
     # requires the real Session to lack.
     ("frameworks/pydantic_ai/_fake.py", "FakeSession", "answer"): "a test helper: answers one fixed step",

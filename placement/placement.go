@@ -353,9 +353,9 @@ func (p *Pool) candidates(ctx context.Context, k kind, req Requirement) ([]Backe
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		// The caller gave up while the backends were described: that is its own context
-		// error, not a refusal by any backend. Nothing was sent, so it is marked, reason
-		// capacity, as sandbox.RefuseGaveUp marks a session call that gave up waiting.
-		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity,
+		// error, not a refusal by any backend. Nothing was sent, so it is marked, limit
+		// deadline, as sandbox.RefuseGaveUp marks a session call that gave up waiting.
+		return nil, sandbox.RefuseDeadline(ctx,
 			fmt.Errorf("placement: the caller gave up while the backends were described: %w", err))
 	}
 	var kept []Backend

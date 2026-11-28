@@ -58,7 +58,7 @@ func TestPublishedVectorsStillHold(t *testing.T) {
 		for _, r := range g.Results {
 			m := &plimsollv1.RunResponse{}
 			mustDecode(t, path, r.Name, r.Response, m)
-			if got := ResultDigest(m); got != r.SHA256 {
+			if got := ResultDigestFor(m, resultVectorVersion(r.RecordVersion)); got != r.SHA256 {
 				t.Errorf("%s: %s: result digest %s, the release computed %s", path, r.Name, got, r.SHA256)
 			}
 		}

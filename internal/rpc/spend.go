@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -211,14 +209,14 @@ func (c *SpendCap) take(principal string, perCaller int64, want float64, why ref
 	day := c.today()
 	if perCaller > 0 && c.caller[principal]+want > float64(perCaller) {
 		c.refusedCaller.Add(1)
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf(
+		return nil, refuseCapacity(sandbox.CapacityPaidSeconds, fmt.Errorf(
 			"paid budget: this caller has %d of its %d paid seconds left on this daemon until 00:00 UTC, and %s reserves %d (%s); %s",
 			left(perCaller, c.caller[principal]), perCaller, why.subject, int64(math.Ceil(want)), why.parts, why.shorter))
 	}
 	if c.Total > 0 && c.total+want > float64(c.Total) {
 		// No numbers: they would tell one caller what the others spent.
 		c.refusedDaemon.Add(1)
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf(
+		return nil, refuseCapacity(sandbox.CapacityPaidSeconds, fmt.Errorf(
 			"paid budget: the daemon's allowance for today cannot cover %s until 00:00 UTC; %s", why.subject, why.shorter))
 	}
 	return c.book(principal, want, day), nil

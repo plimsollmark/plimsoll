@@ -14,7 +14,7 @@
 // order, into a fresh session.
 //
 // The request file is a plimsoll.v1.RunRequest in protobuf JSON, for example
-// {"protocol": 8, "javascript": {"code": "console.log(1)"}}. The daemon's
+// {"protocol": 9, "javascript": {"code": "console.log(1)"}}. The daemon's
 // bearer token is read from PLIMSOLL_CALLER_TOKEN, and the signing key from
 // -key or, when that is absent, from PLIMSOLL_ATTEST_KEY (the PEM itself), so
 // neither appears in a process listing. The key never goes to the daemon.
@@ -498,6 +498,8 @@ func summary(resp *plimsollv1.RunResponse) string {
 		return fmt.Sprintf("%s, %d rows", r.Module.GetOutcome(), len(r.Module.GetRuns()))
 	case *plimsollv1.RunResponse_Cell:
 		return fmt.Sprintf("cell, exit %d", r.Cell.GetExitCode())
+	case *plimsollv1.RunResponse_Files:
+		return fmt.Sprintf("files, %s, %s", r.Files.GetOutcome(), r.Files.GetError())
 	}
 	return "no result"
 }

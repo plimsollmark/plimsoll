@@ -138,7 +138,7 @@ pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; paddi
 </div>
 <div class="hero"><div>
 <p class="lede">Vercel&#x27;s <span class="term" data-term="AI SDK">AI SDK</span> lets a model request tools with typed arguments. <span class="term" data-term="plimsollCodeTools">plimsollCodeTools</span> supplies <span class="term" data-term="executeCode">executeCode</span> through the checked TypeScript client. Keep calls fresh, or bind a <span class="term" data-term="tool">tool</span> to an authenticated user and conversation when the <span class="term" data-term="daemon">daemon</span> supports sessions.</p>
-<p><b>Vercel AI SDK</b>: A TypeScript library for calling models, streaming responses and letting models request tools. This integration does not require Trigger.dev or a Vercel deployment. <a href="https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling">Vercel AI SDK (EXTERNAL · official docs ↗)</a></p>
+<p><b>Vercel AI SDK</b>: A TypeScript library for calling models, streaming responses and letting models request tools. This integration does not require a Vercel deployment. <a href="https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling">Vercel AI SDK (EXTERNAL · official docs ↗)</a></p>
 </div><div><div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p aria-live="polite">The model gets a calculator; the application keeps the keys. Even a very clever guest should not choose the locks.</p></div><div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “I had a principle when selecting graduate students: &#x27;If they&#x27;re not smarter than me, what&#x27;s the point?&#x27; And I&#x27;ve had quite a number of graduate students who were smarter than me.”</p><p class="src">University of Toronto celebration of his Nobel Prize, reported by U of T News, 17 October 2024. <a href="https://www.utoronto.ca/news/one-great-minds-21st-century-u-t-celebrates-geoffrey-hinton-s-nobel-prize">U of T News (EXTERNAL · article ↗)</a></p></div></div></div>
 
 <h2>Wire it up</h2>
@@ -296,14 +296,13 @@ this page replays, each with how and when it was recorded.</footer>
     step();
   }
 
-  // A recorded step says where it happened when it knows: its own label, or the turn and hook
-  // (Trigger.dev), or the user and thread (Mastra). A one-step scenario needs no label.
+  // A recorded step says where it happened when it knows: its own label, its turn, or the
+  // user and thread (Mastra). A one-step scenario needs no label.
   function stepLabel(x, n) {
     if (n < 2) return "";
     const parts = [];
     if (x.label) parts.push(x.label);
     if (x.turn != null) parts.push("turn " + x.turn);
-    if (x.hook) parts.push(x.hook);
     if (x.context && typeof x.context === "object") {
       const c = x.context;
       if (c.resourceId || c.threadId) parts.push(`user ${c.resourceId ?? "none"}, thread ${c.threadId ?? "none"}`);

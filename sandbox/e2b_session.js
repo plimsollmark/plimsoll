@@ -2,14 +2,21 @@
 // in / under sessionkit.ControlArgvClosed, so nothing of the machine's environment
 // reaches it, and takes its mode as its first argument:
 //
-//   open <guest> <work> <stage>   as root, before any of the session's code: makes the
-//     machine one where the guest uid cannot become root again (closing /usr/local to
-//     it among the rest: closeUsrLocal), creates the work and staging directories,
-//     proves the drop, finds the programs every later start names by path (pin), and
-//     prints {"envd": <pid>, "bins": {name: path}, "usrLocal": {entries, changed, ms}}:
-//     the parent every process envd starts has, those paths, and what closing /usr/local
-//     did. Exit 2 with the reason on stderr refuses the session; exit 24
-//     (usrLocalExit) refuses it because /usr/local could not be closed.
+//   open <guest> <work> <stage> <helper>   as root, before any of the session's code:
+//     makes the machine one where the guest uid cannot become root again (closing
+//     /usr/local to it among the rest: closeUsrLocal), creates the work and staging
+//     directories, makes the work directory a mount of its own (ownMount), proves the
+//     drop, finds the programs every later start names by path (pin), checks what is at
+//     the native helper's path (helperAt), and prints {"envd": <pid>, "bins": {name:
+//     path}, "usrLocal": {entries, changed, ms}, "helper": "absent" | "present", "arch":
+//     process.arch}: the parent every process envd starts has, those paths, what closing
+//     /usr/local did, and whether the template holds a file at the helper's path. Exit 2
+//     with the reason on stderr refuses the session; exit 24 (usrLocalExit) refuses it
+//     because /usr/local could not be closed.
+//   install <staged> <helper> <size>   as root, before any of the session's code: puts the
+//     native helper the daemon uploaded to <staged> (in the root-only staging directory)
+//     at <helper>, where nothing was (installHelper). Exit 2 with the reason on stderr
+//     refuses the session.
 //   stage <file> <guest> <work> <dir>   as root: reads a call's files from <file>, in the
 //     root-only staging directory, deletes it, becomes the guest (non-dumpable, so the
 //     session's code cannot attach to it), and writes them: "work" files under <work>,
@@ -175,7 +182,7 @@ function untrusted(p, guest, want) {
 // /usr/bin/env is the first program of every control command (sessionkit.ControlArgv)
 // and /bin/sh is what envd starts every process through, so both are checked by those
 // paths; python3 is pinned only where the machine has it.
-const pinRequired = ["node", "sh", "setpriv"];
+const pinRequired = ["node", "sh", "setpriv", "mount"];
 const pinOptional = ["python3"];
 const pinFixed = ["/usr/bin/env", "/bin/sh"];
 
@@ -327,7 +334,168 @@ process.stdout.write(JSON.stringify({ open: open.slice(0, 3), count: open.length
   return { entries: entries.length, changed, ms: Number(process.hrtime.bigint() - start) / 1e6 };
 }
 
-function open([guestArg, work, stage]) {
+// mountedAt says whether p is a mount point: a line of /proc/self/mountinfo whose fifth
+// field, the mount point (with space, tab, newline and backslash written as octal escapes),
+// is p.
+function mountedAt(p) {
+  const esc = mountEscape(p);
+  return fs.readFileSync("/proc/self/mountinfo", "latin1").split("\n").some((line) => line.split(" ")[4] === esc);
+}
+
+// mountEscape writes p as /proc/self/mountinfo writes a path: space, tab, newline and
+// backslash as octal escapes.
+function mountEscape(p) {
+  return p.replace(/[\\ \t\n]/g, (c) => "\\" + c.charCodeAt(0).toString(8).padStart(3, "0"));
+}
+
+// workAlias returns the mount point (as mountinfo writes it) of a mount through which the
+// work folder's files can be reached other than through the work folder's own mount, or ""
+// when there is none: a mount of the work mount's device whose root is the work mount's root
+// or a folder above it, which shows the work folder at a path the work mount does not cover.
+// Through such a mount a rename(2) of a folder the helper holds crosses no mount edge, so a
+// process of the guest's could move it out of the work folder and a write would land outside
+// it (review finding session-files-15). The mounts under the work mount (the one it sits on,
+// and any earlier mount at the same path) show the folder at the work folder's own path,
+// which the work mount covers, and are kept; so is a mount of a folder below the work mount's
+// root, which shows only what is inside the work folder.
+function workAlias(mountinfo, work) {
+  const lines = mountinfo.split("\n").filter((l) => l !== "").map((l) => l.split(" "));
+  const esc = mountEscape(work);
+  const mine = lines.filter((f) => f[4] === esc).pop();
+  if (!mine) return "";
+  const [, , dev, root] = mine;
+  const under = new Set();
+  for (let at = mine; at && !under.has(at[0]); at = lines.find((f) => f[0] === at[1])) under.add(at[0]);
+  const alias = lines.find((f) => {
+    const [id, , d, r, point] = f;
+    if (d !== dev || !(r === "/" || r === root || root.startsWith(r + "/"))) return false;
+    const rel = r === "/" ? root : root.slice(r.length);
+    const shown = point === "/" ? rel || "/" : point + (rel === "/" ? "" : rel);
+    return !(under.has(id) && shown === esc);
+  });
+  return alias ? alias[4] : "";
+}
+
+// ownMount makes the work directory a mount of its own, a bind mount of itself, unless it
+// is one already: the native helper's work scope refuses a work folder that is not one,
+// since a folder of a call's path could otherwise be moved out of the work folder while
+// the call holds it (docs/session-files.md, "The work folder must be a mount of its own");
+// a rename out of a mount is refused by the kernel (EXDEV). The guest, with no capability,
+// cannot unmount it. Measured 2026-11-27 on the stand-in's containers: /work a plain folder
+// of the root file system, a rename out of it allowed; after the bind, refused with EXDEV.
+// A mount edge proves nothing when the work folder's files are also under another mount of
+// the same device (workAlias), so such a machine is refused too; on the stand-in there is
+// none (TestE2BSessionDockerInstallsTheHelper), and on E2B's own templates it is not measured.
+//
+// The bind mount's 15 s: the mount is one system call, measured 2026-11-27 at 3 to 4 ms
+// under runc and 10 to 20 ms under gVisor, as root in a container (on E2B's own machines it
+// is not measured). One that has not returned by then is stuck, and the open refuses the
+// machine instead of waiting out the session open's own deadline; it is the bound the open
+// gives systemctl below.
+function ownMount(work, bins) {
+  if (!mountedAt(work)) {
+    const r = cp.spawnSync(bins.mount, ["--bind", work, work], { encoding: "latin1", timeout: 15000, env: { PATH: process.env.PATH }, stdio: ["ignore", "pipe", "pipe"] });
+    if (r.error || r.status !== 0) refuse("the work directory could not be made a mount of its own: " + (r.error ? r.error.message : (r.stderr || "").trim()));
+    if (!mountedAt(work)) refuse("the work directory is not a mount of its own after its bind mount");
+  }
+  const alias = workAlias(fs.readFileSync("/proc/self/mountinfo", "latin1"), work);
+  if (alias) refuse("the work directory's files are also under the mount at " + alias + ", where a folder a file call holds could be moved out of the work directory");
+}
+
+// helperFolder checks the folder that holds the native helper's path, making it (root's,
+// mode 0755) when it is not there: a directory, not a link, the root's, not writable by
+// its group or every user, and nothing on the way to it the guest's to change.
+function helperFolder(helper, guest) {
+  const parent = path.dirname(helper);
+  try {
+    fs.mkdirSync(parent, { mode: 0o755 });
+  } catch (e) {
+    if (e.code !== "EEXIST") refuse("the native helper's folder " + parent + " could not be made: " + e.code);
+  }
+  const st = fs.lstatSync(parent);
+  if (!st.isDirectory()) refuse("the native helper's folder " + parent + " is not a directory");
+  if (st.uid !== 0 || st.mode & 0o022) refuse("the native helper's folder " + parent + " is not the root's alone (uid " + st.uid + ", mode " + (st.mode & 0o7777).toString(8) + ")");
+  const why = untrusted(parent, guest, "dir");
+  if (why) refuse("the native helper's folder " + parent + " is not the root's own: " + why);
+  return parent;
+}
+
+// helperAt says what is at the native helper's path: "absent", or "present" for a regular
+// file of the root's that the guest may run, that no one but the root may read or change
+// (mode 0711: its bytes are the daemon's to check, and a program its user cannot read is
+// non-dumpable from its exec, review finding session-files-14). Anything else there (a
+// link, a folder, a device, a file of another owner, that its group or every user may read
+// or write, or a setuid one) refuses the session: the open never writes through or over what
+// it did not put there.
+function helperAt(helper, guest) {
+  helperFolder(helper, guest);
+  let st;
+  try {
+    st = fs.lstatSync(helper);
+  } catch (e) {
+    if (e.code === "ENOENT") return "absent";
+    refuse("the native helper's path " + helper + " could not be read: " + e.code);
+  }
+  if (!st.isFile()) refuse("something other than a regular file is at the native helper's path " + helper);
+  if (st.uid !== 0 || st.gid !== 0 || st.mode & 0o6066 || (st.mode & 0o001) !== 0o001) {
+    refuse("the file at the native helper's path " + helper + " is not the root's alone, runnable by every user and readable by the root alone (uid " + st.uid + ", gid " + st.gid + ", mode " + (st.mode & 0o7777).toString(8) + ")");
+  }
+  const why = untrusted(helper, guest, "file");
+  if (why) refuse("the native helper at " + helper + " is not the root's own: " + why);
+  return "present";
+}
+
+// installHelper puts the native helper the daemon uploaded to staged (a file envd wrote
+// as root in the root-only staging directory) at helper, where nothing may be: it checks
+// the staged file (a regular file of the root's, of size bytes), copies it into a file of
+// its own in the helper's folder (made with O_EXCL and O_NOFOLLOW, synced, mode 0711,
+// the root's: the guest may run it and not read it, so it is non-dumpable from its exec), publishes that by a hard link, which refuses a name already there, removes
+// both staged names, and checks the result's type, owner, mode and size. The daemon reads
+// the bytes back through envd and checks their SHA-256 itself (e2b_session.go,
+// installHelper), so nothing here is trusted for them.
+function installHelper([staged, helper, sizeArg]) {
+  if (process.getuid() !== 0) refuse("install runs as root");
+  const size = Number(sizeArg);
+  if (!Number.isInteger(size) || size <= 0) refuse("the helper's size is not a positive integer");
+  const parent = path.dirname(helper);
+  let st = fs.lstatSync(staged);
+  if (!st.isFile() || st.uid !== 0 || st.size !== size) refuse("the uploaded native helper is not a regular file of the root's of " + size + " bytes");
+  const bytes = fs.readFileSync(staged);
+  fs.unlinkSync(staged);
+  if (bytes.length !== size) refuse("the uploaded native helper changed while it was read");
+  st = fs.lstatSync(parent);
+  if (!st.isDirectory() || st.uid !== 0 || st.mode & 0o022) refuse("the native helper's folder " + parent + " is not the root's alone");
+  try {
+    fs.lstatSync(helper);
+    refuse("something is at the native helper's path " + helper + " already");
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+  const temp = parent + "/.plimsoll-helper-" + process.pid + "-" + Date.now().toString(16);
+  const fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o500);
+  try {
+    for (let off = 0; off < bytes.length; ) off += fs.writeSync(fd, bytes, off, bytes.length - off);
+    fs.fchownSync(fd, 0, 0);
+    fs.fchmodSync(fd, 0o711);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.linkSync(temp, helper);
+  } catch (e) {
+    fs.unlinkSync(temp);
+    refuse("the native helper could not be published at " + helper + ": " + e.code);
+  }
+  fs.unlinkSync(temp);
+  st = fs.lstatSync(helper);
+  if (!st.isFile() || st.uid !== 0 || st.gid !== 0 || (st.mode & 0o7777) !== 0o711 || st.size !== size || st.nlink !== 1) {
+    refuse("the native helper at " + helper + " is not what was installed");
+  }
+  process.stdout.write(JSON.stringify({ installed: helper }));
+}
+
+function open([guestArg, work, stage, helper]) {
   const guest = Number(guestArg);
   if (!Number.isInteger(guest) || guest <= 0) refuse("the guest uid is not a positive integer");
   if (process.getuid() !== 0) refuse("open runs as root");
@@ -364,7 +532,10 @@ function open([guestArg, work, stage]) {
   }
   if (listening22()) refuse("something still listens on port 22 after sshd was stopped");
   dir(work, guest, guest, 0o700);
+  ownMount(work, bins);
   dir(stage, 0, 0, 0o700);
+  if (!helper || !helper.startsWith("/")) refuse("the native helper's path is not absolute");
+  const helperState = helperAt(helper, guest);
   // Prove the drop the session's code will run under, and that the known ways back to
   // root all fail from it: sudo and su (setuid, so no-new-privs leaves them powerless)
   // and an ssh login to root (nothing listens any more).
@@ -425,7 +596,7 @@ const post = (host, path, body) => new Promise((resolve) => {
       if (!/^[45]\d\d$/.test(code)) refuse("envd at " + host + " answered " + code + " to the guest's token " + what + "; a refusal is the proof");
     }
   }
-  process.stdout.write(JSON.stringify({ envd: process.ppid, bins, usrLocal }));
+  process.stdout.write(JSON.stringify({ envd: process.ppid, bins, usrLocal, helper: helperState, arch: process.arch }));
 }
 
 // writeInside writes content to rel under work as the guest, following no link out of
@@ -557,6 +728,9 @@ switch (mode) {
     break;
   case "stage":
     stage(args);
+    break;
+  case "install":
+    installHelper(args);
     break;
   case "artifacts":
     artifacts(args);

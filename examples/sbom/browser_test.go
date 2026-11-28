@@ -19,9 +19,10 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 		t.Fatalf("Node 22 or later is required, no skip: %v", err)
 	}
 	// Go supplies additional vectors covering non-ASCII path order, arbitrary
-	// output bytes, flags, ordered software rules and both request domains.
+	// output bytes, flags, ordered software rules and the three request domains (protocol 1,
+	// protocols 2 to 8, protocol 9 and later).
 	var vectors []object
-	for _, protocol := range []uint32{1, 2, 3, 4} {
+	for _, protocol := range []uint32{1, 2, 3, 4, 9} {
 		q := &plimsollv1.RunRequest{Protocol: protocol, MinimumIsolation: "kernel", TimeoutMs: 30000,
 			Payload: &plimsollv1.RunRequest_Project{Project: &plimsollv1.ProjectRun{
 				Files: []*plimsollv1.ProjectFile{{Path: "😀.js", Content: "print('é')"}, {Path: "\ue000.js", Content: "zero\x00\n"}},
@@ -34,7 +35,7 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 		// The current protocol's vector carries the newest outcome, so a checker whose
 		// outcome table lags the protocol fails here (review, 2026-10-24).
 		outcome := plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT
-		if protocol == 4 {
+		if protocol == 9 {
 			outcome = plimsollv1.ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED
 		}
 		a := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel", Environment: "index", SoftwareIdentity: "selected",
@@ -44,15 +45,15 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 				Artifacts: []*plimsollv1.Artifact{{Path: "z", Content: []byte{128, 0}}},
 			}},
 		}
-		if protocol == 4 {
-			// A version 5 record with a sentence beside its tier, bytes past ASCII in it,
-			// and a daemon version: check.js must digest each as the Go record package does.
+		if protocol == 9 {
+			// A current record with a sentence beside its tier, bytes past ASCII in it, and a
+			// daemon version: check.js must digest each as the Go record package does.
 			a.IsolationQualification, a.DaemonVersion = "Microsoft states that WSL is not a security sandbox (caf\u00e9).", "v0.28.0"
 		}
 		r := sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(q), Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000123)}
 		a.Record = record.Stamp(r, a)
-		if a.Record.GetVersion() != 5 {
-			t.Fatalf("the stamped vector is version %d, want 5", a.Record.GetVersion())
+		if a.Record.GetVersion() != record.Version {
+			t.Fatalf("the stamped vector is version %d, want %d", a.Record.GetVersion(), record.Version)
 		}
 		s := source{Request: q, Response: a, Record: record.FromWire(a.Record)}
 		x, err := exchangeBytes(s)

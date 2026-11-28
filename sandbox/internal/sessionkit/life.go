@@ -385,6 +385,22 @@ func (l *Life) Suspend(ctx context.Context) (holdsMemory bool, err error) {
 // hides. A session the sweep ends is therefore reported to the next call. Nothing has
 // run when Call fails.
 func (l *Life) Call(ctx context.Context, timeout time.Duration) (runCtx context.Context, done func(), err error) {
+	runCtx, end, err := l.CallSweepIf(ctx, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runCtx, func() { end(true) }, nil
+}
+
+// CallSweepIf is Call for a call that may need no sweep after it: done(false) gives the turn
+// back without one. Only a file call does that, after its helper answered: the helper is the
+// one process such a call starts, and it has exited, so nothing of the call is left to kill.
+// Anything else (a deadline, an exec that delivered no exit status, a helper with no answer)
+// calls done(true), since a helper whose docker exec client went away can still be running.
+// The disk budget is measured by the sweep, so after done(false) it is measured at the next
+// call that sweeps; a provider's writable mounts are sized (docker's tmpfs), which bounds a
+// session of file calls alone until then.
+func (l *Life) CallSweepIf(ctx context.Context, timeout time.Duration) (runCtx context.Context, done func(sweep bool), err error) {
 	if err := l.acquire(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -405,9 +421,13 @@ func (l *Life) Call(ctx context.Context, timeout time.Duration) (runCtx context.
 	if l.ctx.Err() != nil {
 		cancel()
 	}
-	return runCtx, func() {
+	return runCtx, func(sweep bool) {
 		stop()
 		cancel()
+		if !sweep {
+			l.release()
+			return
+		}
 		go func() {
 			l.boundary()
 			l.release()

@@ -50,7 +50,7 @@ const (
 // value, which means something different in each enum.
 type enum struct {
 	desc  protoreflect.EnumDescriptor
-	short string // the clients' constant prefix: OUTCOME, SESSION_END, REFUSAL
+	short string // the clients' constant prefix: OUTCOME, SESSION_END, REFUSAL, CAPACITY_LIMIT
 	zero  string
 }
 
@@ -61,6 +61,15 @@ func enums() []enum {
 		{plimsollv1.SessionEnd(0).Descriptor(), "SESSION_END", "open"},
 		// Unspecified is a refusal whose reason this client cannot name.
 		{plimsollv1.NotDispatchedReason(0).Descriptor(), "REFUSAL", "unknown"},
+		// A file call's enums, which its request and result digests cover by number.
+		{plimsollv1.FilesScope(0).Descriptor(), "FILES_SCOPE", "unspecified"},
+		{plimsollv1.FilesWriteMode(0).Descriptor(), "FILES_WRITE_MODE", "unspecified"},
+		// Unspecified is no error.
+		{plimsollv1.FilesError(0).Descriptor(), "FILES_ERROR", "none"},
+		{plimsollv1.FilesEntryType(0).Descriptor(), "FILES_ENTRY_TYPE", "unspecified"},
+		// Unspecified is a capacity refusal whose limit was not stated, or one this client
+		// cannot name.
+		{plimsollv1.CapacityLimit(0).Descriptor(), "CAPACITY_LIMIT", "unknown"},
 	}
 }
 
@@ -133,6 +142,8 @@ func constants() []constant {
 		{"FLOORS", "The tiers a request may state as its floor, weakest first: every tier but none.", floors},
 		{"RECORD_VERSION", "The record version a live answer carries (record.Version).", record.Version},
 		{"RECORD_FIELDS", "Each published record version's digest fields, in order (record.PublishedLayouts).", record.PublishedLayouts()},
+		{"RESULT_DOMAINS", "Each published record version's result domain, the one its result digests are computed under (record.ResultDomains).", record.ResultDomains()},
+		{"REQUEST_DOMAINS", "Each request domain by the first protocol hashed under it; a request takes the domain of the highest first protocol at or below its own (record.RequestDomains).", record.RequestDomains()},
 		{"LAST_WALL_CLOCK_END_VERSION", "The last record version whose daemons stamped both times from the wall clock; reading such a record that ends before it starts is retired (record.LastWallClockEndVersion).", record.LastWallClockEndVersion},
 		{"RETIRED_END_BEFORE_START_TEXT", "The refusal of a version 1 or 2 record that ends before it starts: a retired reading, not a forgery (record.RetiredEndBeforeStartText).", record.RetiredEndBeforeStartText},
 		{"UNANSWERED_CODES", "The codes an unanswered call's record may name (record.UnansweredCodes).", record.UnansweredCodes()},
@@ -263,6 +274,12 @@ func pythonValue(v any) (literal, annotation string, err error) {
 			parts = append(parts, fmt.Sprintf("    %d: (%s),\n", k, quoted(v[k], true)))
 		}
 		return "{\n" + strings.Join(parts, "") + "}", "Dict[int, Tuple[str, ...]]", nil
+	case map[int]string:
+		var parts []string
+		for _, k := range slices.Sorted(maps.Keys(v)) {
+			parts = append(parts, fmt.Sprintf("    %d: %q,\n", k, v[k]))
+		}
+		return "{\n" + strings.Join(parts, "") + "}", "Dict[int, str]", nil
 	case [][2]rune:
 		var parts []string
 		for _, r := range v {
@@ -295,6 +312,12 @@ func typescriptValue(v any) (literal, typ string) {
 			parts = append(parts, fmt.Sprintf("  %d: [%s],\n", k, quoted(v[k], false)))
 		}
 		return "{\n" + strings.Join(parts, "") + "}", "Readonly<Record<number, readonly string[]>>"
+	case map[int]string:
+		var parts []string
+		for _, k := range slices.Sorted(maps.Keys(v)) {
+			parts = append(parts, fmt.Sprintf("  %d: %q,\n", k, v[k]))
+		}
+		return "{\n" + strings.Join(parts, "") + "}", "Readonly<Record<number, string>>"
 	case [][2]rune:
 		return javascriptValue(v), "readonly (readonly [number, number])[]"
 	case []string:
@@ -316,6 +339,12 @@ func javascriptValue(v any) string {
 		var parts []string
 		for _, k := range slices.Sorted(maps.Keys(v)) {
 			parts = append(parts, fmt.Sprintf("%d: Object.freeze([%s])", k, quoted(v[k], false)))
+		}
+		return "Object.freeze({" + strings.Join(parts, ", ") + "})"
+	case map[int]string:
+		var parts []string
+		for _, k := range slices.Sorted(maps.Keys(v)) {
+			parts = append(parts, fmt.Sprintf("%d: %s", k, javascriptString(v[k])))
 		}
 		return "Object.freeze({" + strings.Join(parts, ", ") + "})"
 	case [][2]rune:

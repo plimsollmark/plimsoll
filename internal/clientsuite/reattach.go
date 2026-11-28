@@ -548,6 +548,8 @@ func changeOutput(a *plimsollv1.RunResponse) bool {
 		r.Javascript.Stdout = append(r.Javascript.Stdout, '!')
 	case *plimsollv1.RunResponse_Project:
 		r.Project.OutcomeDetail += "!"
+	case *plimsollv1.RunResponse_Files:
+		r.Files.Errno += "!"
 	default:
 		return false
 	}

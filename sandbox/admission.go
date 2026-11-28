@@ -102,7 +102,7 @@ func (a *admissionSandbox) acquire() (func(), error) {
 		select {
 		case a.sem <- struct{}{}:
 		default:
-			return nil, refused(ErrAtCapacity)
+			return nil, AtCapacity(CapacityRuns, ErrAtCapacity)
 		}
 	}
 	if a.memCap > 0 {
@@ -112,7 +112,7 @@ func (a *admissionSandbox) acquire() (func(), error) {
 			if a.sem != nil {
 				<-a.sem
 			}
-			return nil, refused(ErrAtCapacity)
+			return nil, AtCapacity(CapacityRuns, ErrAtCapacity)
 		}
 		a.memInUse += a.perRun
 		a.mu.Unlock()

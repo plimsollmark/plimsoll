@@ -193,6 +193,9 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 		if !resp.FromBroker {
 			w.Header().Del(brokerNoRetryHeader)
 		}
+		if raw {
+			drainSmallBody(w, r) // a refusal before the body reaches a Connection: close client too
+		}
 		writeBrokerResponse(w, brokerResponse{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body, FromBroker: resp.FromBroker})
 	}))
 }

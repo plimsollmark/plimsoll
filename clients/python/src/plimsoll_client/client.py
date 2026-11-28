@@ -24,6 +24,8 @@ from ._record import VERSION as RECORD_VERSION_LIVE
 from ._record import (
     _states_only,
     check,
+    files_answers,
+    files_op,
     check_lost_answer,
     check_single,
     check_unanswered,
@@ -33,6 +35,7 @@ from ._record import (
     session_fingerprint,
 )
 from ._tables import CHECKPOINT_VERSION, DAEMON_NAME_PATTERN, RECOVERING_TEXT
+from ._tables import FILES_ENTRY_TYPE_NAMES, FILES_ENTRY_TYPES, FILES_ERROR_NAMES, FILES_ERRORS, FILES_SCOPE_NAMES, FILES_SCOPES
 from ._transport import CancelHandle, Transport
 from .checkpoint import (
     CheckpointConflictError,
@@ -52,7 +55,9 @@ from ._wire import (
     UINT32,
     UINT64,
     Msg,
+    b64encode,
 )
+from . import files as fs
 from .errors import (
     ChainError,
     DataLossError,
@@ -204,16 +209,140 @@ def _cell_result(resp: Msg, c: Msg) -> CellResult:
     )
 
 
+def _name(names: Tuple[str, ...], n: int) -> str:
+    return names[n] if 0 <= n < len(names) else "unknown"
+
+
+def _files_result(resp: Msg, f: Msg) -> fs.FilesResult:
+    """A file call's result; paths and contents stay bytes."""
+    answer: Optional[fs.FilesAnswer] = None
+    op = ""
+    stat, read, write, listing, read_many = f.get_msg("stat"), f.get_msg("read"), f.get_msg("write"), f.get_msg("list"), f.get_msg("readMany")
+    if stat is not None:
+        op = "stat"
+        answer = fs.FilesStatAnswer(
+            type=_name(FILES_ENTRY_TYPE_NAMES, stat.get_enum("type", FILES_ENTRY_TYPES)), size=stat.get_int("size", UINT64), mode=stat.get_int("mode", UINT32)
+        )
+    elif read is not None:
+        op = "read"
+        answer = fs.FilesReadAnswer(content=read.get_bytes("content"), size_at_open=read.get_int("sizeAtOpen", UINT64))
+    elif write is not None:
+        op = "write"
+        answer = fs.FilesWriteAnswer(written=write.get_int("written", UINT64))
+    elif listing is not None:
+        op = "list"
+        answer = fs.FilesListAnswer(
+            entries=tuple(
+                fs.FilesEntry(path=e.get_bytes("path"), type=_name(FILES_ENTRY_TYPE_NAMES, e.get_enum("type", FILES_ENTRY_TYPES)), size=e.get_int("size", UINT64))
+                for e in listing.get_msgs("entries")
+            ),
+            more=listing.get_bool("more"),
+        )
+    elif read_many is not None:
+        op = "read_many"
+        answer = fs.FilesReadManyAnswer(
+            items=tuple(
+                fs.FilesItem(
+                    error=_name(FILES_ERROR_NAMES, it.get_enum("error", FILES_ERRORS)),
+                    errno=it.get_str("errno"),
+                    content=it.get_bytes("content"),
+                    size_at_open=it.get_int("sizeAtOpen", UINT64),
+                )
+                for it in read_many.get_msgs("items")
+            ),
+            more=read_many.get_bool("more"),
+        )
+    else:
+        op = next(iter(files_answers(f)), "")  # make_dir, remove or rename: an empty answer, a JSON object
+    return fs.FilesResult(
+        outcome=_outcome(f.get_enum("outcome", OUTCOMES)),
+        error=_name(FILES_ERROR_NAMES, f.get_enum("error", FILES_ERRORS)),
+        errno=f.get_str("errno"),
+        op=op,
+        answer=answer,
+        **_evidence(resp),
+    )
+
+
 _MAPPERS: Dict[str, Callable[[Msg, Msg], Any]] = {
     "javascript": _javascript_result,
     "project": _project_result,
     "module": _module_result,
     "cell": _cell_result,
+    "files": _files_result,
 }
 
 
 def _kinds(resp: Msg) -> Tuple[str, ...]:
-    return tuple(k for k in ("javascript", "project", "module", "cell") if resp.has(k))
+    return tuple(k for k in ("javascript", "project", "module", "cell", "files") if resp.has(k))
+
+
+_FILES_SCOPES = {"work": "FILES_SCOPE_WORK", "sandbox": "FILES_SCOPE_SANDBOX"}
+_FILES_WRITE_MODES = {"replace": "FILES_WRITE_MODE_REPLACE", "create_only": "FILES_WRITE_MODE_CREATE_ONLY", "append": "FILES_WRITE_MODE_APPEND"}
+
+
+def _files_payload(op: Any) -> Dict[str, Any]:
+    """A file operation's wire form (FilesRun): paths and contents as bytes, base64 in the
+    JSON, never decoded or normalized. A malformed operation is refused before anything is
+    sent; the daemon checks the paths themselves (their scope, their parts, their length)."""
+
+    def path(p: Any, what: str) -> str:
+        try:
+            return b64encode(fs.path_bytes(p))
+        except TypeError:
+            raise v.invalid(f"the file call's {what} is bytes or str") from None
+
+    def flag(b: Any, what: str) -> bool:
+        if not isinstance(b, bool):
+            raise v.invalid(f"the file call's {what} is a bool")
+        return b
+
+    def number(n: Any, what: str, top: int) -> int:
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= top:
+            raise v.invalid(f"the file call's {what} is an integer from 0 to {top}")
+        return n
+
+    if not isinstance(op, (fs.FilesStat, fs.FilesRead, fs.FilesWrite, fs.FilesList, fs.FilesReadMany, fs.FilesMakeDir, fs.FilesRemove, fs.FilesRename)):
+        raise v.invalid(f"a file call's operation is one of plimsoll_client.files' operations, not {type(op).__name__}")
+    scope = _FILES_SCOPES.get(op.scope) if isinstance(op.scope, str) else None
+    if scope is None:
+        raise v.invalid("the file call's scope is work or sandbox")
+    out: Dict[str, Any] = {"scope": scope}
+    u32, u64 = UINT32[1], UINT64[1]
+    if isinstance(op, fs.FilesStat):
+        out["stat"] = {"path": path(op.path, "path")}
+    elif isinstance(op, fs.FilesRead):
+        out["read"] = {"path": path(op.path, "path"), "offset": str(number(op.offset, "offset", u64)), "maxBytes": number(op.max_bytes, "max_bytes", u32)}
+    elif isinstance(op, fs.FilesWrite):
+        mode = _FILES_WRITE_MODES.get(op.mode) if isinstance(op.mode, str) else None
+        if mode is None:
+            raise v.invalid("the file call's write mode is replace, create_only or append")
+        if not isinstance(op.content, (bytes, bytearray, memoryview)):
+            raise v.invalid("the file call's content is bytes")
+        out["write"] = {"path": path(op.path, "path"), "content": b64encode(bytes(op.content)), "mode": mode, "makeParents": flag(op.make_parents, "make_parents")}
+    elif isinstance(op, fs.FilesList):
+        out["list"] = {
+            "path": path(op.path, "path"),
+            "recursive": flag(op.recursive, "recursive"),
+            "match": path(op.match, "match"),
+            "after": path(op.after, "after"),
+            "budgetBytes": number(op.budget_bytes, "budget_bytes", u32),
+        }
+    elif isinstance(op, fs.FilesReadMany):
+        if not isinstance(op.paths, (list, tuple)):
+            raise v.invalid("the file call's paths are a list or tuple of paths")
+        out["readMany"] = {
+            "paths": [path(p, "paths") for p in op.paths],
+            "maxBytesEach": number(op.max_bytes_each, "max_bytes_each", u32),
+            "budgetBytes": number(op.budget_bytes, "budget_bytes", u32),
+        }
+    elif isinstance(op, fs.FilesMakeDir):
+        out["makeDir"] = {"path": path(op.path, "path"), "parents": flag(op.parents, "parents")}
+    elif isinstance(op, fs.FilesRemove):
+        out["remove"] = {"path": path(op.path, "path"), "dir": flag(op.dir, "dir")}
+    else:
+        out["rename"] = {"fromPath": path(op.from_path, "from_path"), "toPath": path(op.to_path, "to_path"), "replace": flag(op.replace, "replace")}
+    return out
 
 
 def _finish(
@@ -933,6 +1062,16 @@ class Session:
         self.software_identity: str = m.get_str("softwareIdentity")
         self.expires_unix_ms: int = m.get_int("expiresUnixMs", INT64)
         self.idle_timeout_ms: int = m.get_int("idleTimeoutMs", UINT32)
+        self.file_scopes: Tuple[str, ...] = m.get_enum_set("fileScopes", FILES_SCOPES, FILES_SCOPE_NAMES)
+        """The scopes the open stated the session takes file calls in (``run_files``), of
+        ``"work"`` and ``"sandbox"``, in that order; empty when it takes none. An OpenShell
+        session states ``("sandbox",)`` alone: its work folder is not a mount of its own, so
+        the work scope's confinement is not offered there (docs/openshell.md). Informational:
+        the daemon refuses a file call in a scope it does not take, not dispatched, whatever
+        this says."""
+        self.work_dir: str = m.get_str("workDir")
+        """The absolute path of the session's work folder as the open stated it, the folder a
+        ``work`` path resolves from; "" when it stated none."""
         self._lock = threading.Lock()
         self._calls = 0
         self._last = ""
@@ -1158,6 +1297,29 @@ class Session:
         req["cell"] = v.cell(language, code, files)
         return self._call("cell", req, rule, cancel)
 
+    def run_files(
+        self,
+        op: "fs.FilesOperation",
+        *,
+        timeout: Optional[float] = None,
+        minimum_isolation: Optional[str] = None,
+        software: Optional[SoftwareRule] = None,
+        trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
+    ) -> "fs.FilesResult":
+        """Carries out one operation on the session's files (``plimsoll_client.files``),
+        inside its sandbox, as the guest's own user: a session call like any other, in the
+        chain, its record checked against the request sent, the operation included. Paths
+        are bytes end to end (a ``str`` is encoded as ``os.fsencode`` encodes it). A file
+        that is not there is an answered result (``error`` ``not_found``), not an
+        exception. A session whose provider carries no file calls refuses the call, not
+        dispatched (UnsupportedError), and so does one in a scope the session does not take;
+        ``file_scopes`` says which scopes the open stated."""
+        rule = v.merge_rules(self._rule, v.software_rule(software))
+        req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
+        req["files"] = _files_payload(op)
+        return self._call("files", req, rule, cancel)
+
     def _call(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], cancel: Optional[CancelHandle]) -> Any:
         req["sessionId"] = self._id
         digest = request_digest(req)  # neither the session ID nor the head is part of it
@@ -1319,20 +1481,22 @@ class Session:
             # A number this client has no name for is an end all the same: "unknown".
             name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "unknown"
             self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
-        return _finish(kind, run, lambda: self._checked_chain(kind, digest, rule, run, floor), floor)
+        # A file call's answer must be of the operation the request asked (its record's rule).
+        op = files_op(Msg(req["files"], "files")) if kind == "files" else ""
+        return _finish(kind, run, lambda: self._checked_chain(kind, digest, rule, run, floor, op), floor)
 
-    def _checked_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+    def _checked_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str, op: str = "") -> RunRecord:
         try:
-            return self._check_chain(kind, digest, rule, run, floor)
+            return self._check_chain(kind, digest, rule, run, floor, op)
         except PlimsollError as e:
             self._unanswered = e.message
             raise
 
-    def _check_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+    def _check_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str, op: str = "") -> RunRecord:
         # record.CheckSessionCall, then the chain this client tracks moves on. A tier
         # below the call's floor, or a result of another kind, fails it before the chain
         # moves, as in Go's record.check, so the session sends nothing more.
-        r = check(digest, kind, rule, run)
+        r = check(digest, kind, rule, run, op)
         if floor and not meets(r.isolation, floor):
             raise IsolationEvidenceMismatchError(
                 f"plimsoll: result isolation {r.isolation or 'unknown'} is below the requested minimum {floor}; execution may have occurred"

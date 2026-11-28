@@ -8,6 +8,7 @@ export {
   type CellResult,
   type ClientOptions,
   type Evidence,
+  type FilesResult,
   type Info,
   type Isolation,
   type JavaScriptResult,
@@ -38,6 +39,20 @@ export {
 } from "./errors.ts";
 export { checkpointProblem, checkpointToJSON, parseCheckpoint, validateCheckpoint, type SessionCheckpoint } from "./checkpoint.ts";
 export type { RunRecord } from "./record.ts";
+export {
+  pathBytes,
+  pathText,
+  type FilesAnswer,
+  type FilesEntry,
+  type FilesEntryType,
+  type FilesError,
+  type FilesItem,
+  type FilesOp,
+  type FilesOperation,
+  type FilesOutcome,
+  type FilesPath,
+  type FilesScope,
+} from "./files.ts";
 export {
   CodeSandboxes,
   DEFAULT_LANGUAGES,

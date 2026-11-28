@@ -61,6 +61,17 @@ const usage = `Usage:
       bounds (the daemon refuses such a call when the set has a refuse entry). Exit
       status 1 when anything was found or a bound was reached.
 
+  plimsoll-withheld check -set FILE PATH ...
+      Scan the files and values files a set was made from, and list each entry
+      none of them holds: an entry the daemon could never find, such as a value's
+      digest taken with echo, whose newline is part of the digest, or of the value
+      in capitals; and each file entry that is a file's digest as written (taken
+      with sha256sum), which finds only that copy byte for byte, not the file with
+      other line endings, trailing whitespace or no final newline. Run it on any set
+      written or edited by hand, with every file and values file its entries came
+      from. Exit status 1 when an entry is never found or is taken as written, or a
+      file was not read whole, 0 when every entry is found as the builder writes it.
+
   plimsoll-withheld scan-image -set FILE [-format text|sarif] IMAGE
   plimsoll-withheld scan-image -set FILE [-format text|sarif] -archive PATH
       Scan a container image against a set, as docker save writes it (from the
@@ -135,6 +146,8 @@ func run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, build(args[1:], stdout, stderr)
 	case "scan":
 		return scan(args[1:], stdout, stderr)
+	case "check":
+		return check(args[1:], stdout, stderr)
 	case "known-unreadable":
 		code, err := knownUnreadable(args[1:], stdout, stderr)
 		if err != nil {
@@ -333,27 +346,9 @@ func scan(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	var (
-		parts []withheld.Part
-		files []scannedFile
-	)
-	for _, root := range fl.Args() {
-		err := eachFile(root, stderr, func(path, _ string, content []byte) error {
-			// For SARIF a part is named by its file's index, which no name can make
-			// ambiguous; the text output names it by its path.
-			where := path
-			if *format == "sarif" {
-				where = "f" + strconv.Itoa(len(files))
-			}
-			files = append(files, scannedFile{path: path, content: content})
-			parts = append(parts,
-				withheld.Part{Where: where + " (path)", Data: []byte(path)},
-				withheld.Part{Where: where, Data: content, Whole: true})
-			return nil
-		})
-		if err != nil {
-			return 2, err
-		}
+	parts, files, err := partsOf(fl.Args(), *format == "sarif", stderr)
+	if err != nil {
+		return 2, err
 	}
 	ctx := context.Background()
 	res, err := set.Scan(ctx, parts)
@@ -382,6 +377,90 @@ func scan(args []string, stdout, stderr io.Writer) (int, error) {
 		return code, nil
 	}
 	fmt.Fprintf(stdout, "clean: %d files against set %s\n", len(parts)/2, printable.Text(set.Digest()))
+	return 0, nil
+}
+
+// partsOf reads the files under roots as the parts of one call: each file's path, and its
+// content whole. For SARIF a part is named by its file's index, which no name can make
+// ambiguous; otherwise by its path.
+func partsOf(roots []string, byIndex bool, stderr io.Writer) ([]withheld.Part, []scannedFile, error) {
+	var (
+		parts []withheld.Part
+		files []scannedFile
+	)
+	for _, root := range roots {
+		err := eachFile(root, stderr, func(path, _ string, content []byte) error {
+			where := path
+			if byIndex {
+				where = "f" + strconv.Itoa(len(files))
+			}
+			files = append(files, scannedFile{path: path, content: content})
+			parts = append(parts,
+				withheld.Part{Where: where + " (path)", Data: []byte(path)},
+				withheld.Part{Where: where, Data: content, Whole: true})
+			return nil
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return parts, files, nil
+}
+
+// check scans the material a set was made from and lists each entry it never finds. The
+// daemon cannot tell from a digest whether it was taken of what the scan hashes, so an
+// entry written by hand that never matches (a value hashed with its newline, or in
+// capitals) loads without a word and scans for nothing; this is where that is caught.
+func check(args []string, stdout, stderr io.Writer) (int, error) {
+	fl := flag.NewFlagSet("check", flag.ContinueOnError)
+	setPath := fl.String("set", "", "the withheld set file")
+	if err := fl.Parse(args); err != nil {
+		return 2, err
+	}
+	if *setPath == "" || fl.NArg() == 0 {
+		return 2, errors.New("check needs -set FILE and at least one PATH: the files and values files the set was made from")
+	}
+	set, err := withheld.Load(*setPath)
+	if err != nil {
+		return 2, err
+	}
+	parts, files, err := partsOf(fl.Args(), false, stderr)
+	if err != nil {
+		return 2, err
+	}
+	res, err := set.Scan(context.Background(), parts)
+	if err != nil {
+		return 2, err
+	}
+	found := map[withheld.Entry]bool{}
+	for _, f := range res.Found {
+		found[withheld.Entry{Label: f.Label, Mode: f.Mode}] = true
+	}
+	code := 0
+	for _, e := range set.Entries() {
+		if !found[e] {
+			code = 1
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("never found: %s (%s)", e.Label, e.Mode)))
+		}
+	}
+	// A file entry hashed by hand finds its file, so the scan above passes it, but only
+	// byte for byte: a copy with other line endings, trailing whitespace or no final
+	// newline passes it in a call. The daemon cannot see that; the file is here.
+	for _, f := range files {
+		if e, ok := set.AsWrittenOnly(f.content); ok {
+			code = 1
+			fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("as written: %s (%s) is the digest of %s as written, so it finds only that copy byte for byte; a copy with other line endings, trailing whitespace or no final newline passes it", e.Label, e.Mode, f.path)))
+		}
+	}
+	for _, in := range res.Incomplete {
+		code = 1
+		fmt.Fprintln(stdout, printable.Text(fmt.Sprintf("incomplete: %s: %s", in.Where, in.Bound.Text())))
+	}
+	if code != 0 {
+		fmt.Fprintln(stdout, "an entry these files do not hold is never found in a call either, and one taken as written misses every other copy: rebuild them with plimsoll-withheld build")
+		return code, nil
+	}
+	fmt.Fprintf(stdout, "every entry found: %d entries in %d files, set %s\n", len(set.Entries()), len(parts)/2, printable.Text(set.Digest()))
 	return 0, nil
 }
 

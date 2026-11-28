@@ -113,6 +113,27 @@ var command = map[string][]string{
 	"python":     {"python3", "-I", "-c", kernelPy},
 }
 
+// Program is the program lang's interpreter runs as (python3, node), "" for a language
+// with none: what a refusal names when the image lacks it.
+func Program(lang string) string {
+	if argv, ok := command[lang]; ok {
+		return argv[0]
+	}
+	return ""
+}
+
+// NoInterpreter is the refusal's sentence for a cell in lang where image (the session's
+// image, the project image) is stated to run only stated, a comma-separated list. Every
+// word is plimsoll's: lang passed the known-language check, and stated holds known names
+// only (a startup probe's, or a provider's own), never a probe's output. It says what the
+// cell needs and that the startup check did not show it, which is true both where a probe
+// looked and found nothing (docker) and where a provider states its languages without one
+// (wslc states JavaScript alone): "found no python3" would be false on the second.
+func NoInterpreter(image, lang, stated string) string {
+	return fmt.Sprintf("%s is stated to run %s, not %s: a %s cell needs %s in the image, which plimsoll's startup check did not show there",
+		image, stated, lang, lang, Program(lang))
+}
+
 // LaunchLanguages are the languages a session can start an interpreter for, sorted.
 func LaunchLanguages() []string {
 	out := make([]string, 0, len(command))

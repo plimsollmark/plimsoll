@@ -61,6 +61,8 @@ from .errors import (
     RETRY_REASONS,
     retry_on,
 )
+from . import files
+from .files import FilesResult
 from .types import (
     CellResult,
     AdviceFinding,
@@ -84,6 +86,8 @@ from .types import (
 
 __all__ = [
     "CellResult",
+    "files",
+    "FilesResult",
     "__version__",
     "PROTOCOL",
     "RECORD_VERSION",

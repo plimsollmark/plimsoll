@@ -308,7 +308,7 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 //
 // Every provider calls it before any of the run's code is dispatched, so its errors
 // are marked not dispatched here, at the source: reason permission (the run's
-// authority could not be issued), or capacity when the run's context ended first.
+// authority could not be issued), or RefuseDeadline when the run's context ended first.
 // routes is the session's route budget for a call in a session, nil for a run, which
 // gets a fresh one.
 func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout time.Duration, routes *RouteBudget) (*brokerSession, error) {
@@ -317,7 +317,7 @@ func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout tim
 	}
 	refuse := func(err error) error {
 		if ctx.Err() != nil {
-			return NotDispatched(RefusalCapacity, err)
+			return RefuseDeadline(ctx, err)
 		}
 		return NotDispatched(RefusalPermission, err)
 	}

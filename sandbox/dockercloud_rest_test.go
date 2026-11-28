@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // The REST half of dcFake: the same server, state and knobs, speaking the REST API on
@@ -628,6 +630,7 @@ func TestDockerCloudRESTCreateAndCredentials(t *testing.T) {
 	if err != nil || res.Outcome != ProjectOutcomeCompleted || len(res.Artifacts) != 1 {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
+	tiercheck.Stated(t, "project", res.Isolation, d.IsolationClass())
 	body := f.creates[0]["rest"].(map[string]any)
 	name := f.creates[0]["name"].(string)
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(name) || f.creates[0]["requestId"] != name {
@@ -816,7 +819,9 @@ func TestDockerCloudRESTGrantsAreRefusedBeforeAnyCall(t *testing.T) {
 	if _, marked := NotDispatchedReason(err); err == nil || !marked {
 		t.Fatalf("err = %v, want a refusal marked not dispatched", err)
 	}
+	// Under the refusal of every dockercloud grant, REST's own refusal still stands.
 	d.GuardURL = ""
+	d.grantsUnrefused = true
 	_, err = d.RunJavaScript(context.Background(), Request{Code: "1", Grant: grant})
 	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "REST") {
 		t.Fatalf("err = %v, want ErrUnsupported naming the REST API", err)

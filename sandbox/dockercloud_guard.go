@@ -39,9 +39,23 @@ func (d *DockerCloud) guardConfig() *guardEndpoint {
 	return g
 }
 
+// errDCGrantsRefused is why every host-API grant is refused on dockercloud, before
+// any sandbox is created. A grant run's one network rule is the guard's host:443,
+// and Docker documents that its network rules match the hostname attributed to the
+// connection, such as its TLS Server Name Indication (SNI), a name the guest
+// chooses (https://docs.docker.com/ai/governance/local/network-rules/). So the rule
+// cannot hold a granted run to the guard. The refusal stays until Docker offers a
+// rule it enforces on the server a connection reaches and a startup check under it
+// proves a granted run reaches the guard and nothing else.
+var errDCGrantsRefused = fmt.Errorf("%w: dockercloud refuses host-API grants: its network rules match the host name a connection announces (its TLS SNI, as Docker documents), so no rule holds a run to the guard; run granted code on docker, e2b or openshell", ErrUnsupported)
+
 // EgressGuardPath, EgressGuardKnownToken and EgressGuardCall make dockercloud an
-// EgressGuardCapable provider; plimsolld mounts the shared handler at the path.
+// EgressGuardCapable provider; plimsolld mounts the shared handler at the path, and
+// mounts none while grants are refused.
 func (d *DockerCloud) EgressGuardPath() string {
+	if !d.grantsServed() {
+		return ""
+	}
 	if g := d.guardConfig(); g != nil {
 		return g.Path
 	}
@@ -76,11 +90,28 @@ func endDCGuard(guard *dcGuard) *CallTrace {
 // on 443, nothing else.
 func (g *dcGuard) allowRule() string { return g.endpoint.Host + ":443" }
 
+// refuseGrant is the refusal of every host-API grant (errDCGrantsRefused), marked
+// not dispatched with the reason unsupported: another provider may take the run. Each
+// run calls it right after the request's own validation and before its configuration
+// check, so a well-formed granted run is refused for the grant whatever else is wrong
+// (a malformed one is refused as a request); openGuard calls it again.
+func (d *DockerCloud) refuseGrant(grant *HostAPIGrant) error {
+	if grant == nil || d.grantsUnrefused {
+		return nil
+	}
+	return refused(errDCGrantsRefused)
+}
+
 // openGuard registers a per-run guard credential for a grant. A nil grant returns a
-// nil guard (a deny-all run). Without a configured guard URL a grant is refused.
+// nil guard (a deny-all run). Every grant is refused, marked not dispatched with the
+// reason unsupported, while errDCGrantsRefused stands; without a configured guard
+// URL, or on REST, it would be refused too.
 func (d *DockerCloud) openGuard(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (*dcGuard, func(), error) {
 	if grant == nil {
 		return nil, func() {}, nil
+	}
+	if err := d.refuseGrant(grant); err != nil {
+		return nil, func() {}, err
 	}
 	if d.rest() {
 		// The guard's rule goes on through an undocumented call (putNetworkPolicy).

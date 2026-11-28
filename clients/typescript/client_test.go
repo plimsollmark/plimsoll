@@ -4,10 +4,8 @@
 package typescript
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -16,19 +14,16 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/plimsollmark/plimsoll/internal/clientcases"
 	"github.com/plimsollmark/plimsoll/internal/clientsuite"
 )
 
 // TestTypeScript serves every daemon of internal/clientsuite's table (honest and hostile:
-// its Daemons list says what each one tests) and runs three suites against them: the
-// client's own, which needs nothing but node; the add-ons', which need the client's dev
-// dependencies (npm install in clients/typescript); and the Trigger.dev example's, which
-// needs the example's (npm install in examples/trigger-chat) and finds its daemon, the
-// session one, as PLIMSOLL_URL. A suite whose dependencies are absent is skipped unless
-// PLIMSOLL_REQUIRE_CLIENTS=1, which makes missing prerequisites fail.
+// its Daemons list says what each one tests) and runs two suites against them: the
+// client's own, which needs nothing but node, and the add-ons', which need the client's dev
+// dependencies (npm install in clients/typescript). A suite whose dependencies are absent
+// is skipped unless PLIMSOLL_REQUIRE_CLIENTS=1, which makes missing prerequisites fail.
 // Files run one at a time because the end-sessions endpoint reaches every session.
 func TestTypeScript(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -41,16 +36,10 @@ func TestTypeScript(t *testing.T) {
 
 	daemons := clientsuite.Env(t)
 	env := append(os.Environ(), daemons...)
-	for _, kv := range daemons {
-		if url, ok := strings.CutPrefix(kv, "PLIMSOLL_SESSIONS_URL="); ok {
-			env = append(env, "PLIMSOLL_URL="+url) // the Trigger.dev example's own name for its daemon
-		}
-	}
 
 	suites := []struct{ name, dir, glob, needs string }{
 		{"client", ".", "test/*.test.ts", ""},
 		{"addons", ".", "test/addons/*.test.ts", "node_modules/@mastra/core"},
-		{"trigger-example", "../../examples/trigger-chat", "src/trigger/*.test.ts", "node_modules/@trigger.dev/sdk"},
 	}
 	for _, s := range suites {
 		t.Run(s.name, func(t *testing.T) {
@@ -83,7 +72,7 @@ func TestTypeScript(t *testing.T) {
 				judgeVerdicts(t, "typescript", verdicts)
 			}
 			if err != nil {
-				t.Fatalf("node --test: %v%s", err, staleClientHint(s.dir, "."))
+				t.Fatalf("node --test: %v", err)
 			}
 		})
 	}
@@ -133,8 +122,7 @@ var typescriptDeclined = map[string]string{
 }
 
 func TestTypeScriptUsesOrDeclinesEveryDaemon(t *testing.T) {
-	clientsuite.CheckDeclined(t, typescriptDeclined, filepath.Join("test", "*.ts"), filepath.Join("test", "addons", "*.ts"),
-		filepath.Join("..", "..", "examples", "trigger-chat", "src", "trigger", "*.ts"))
+	clientsuite.CheckDeclined(t, typescriptDeclined, filepath.Join("test", "*.ts"), filepath.Join("test", "addons", "*.ts"))
 }
 
 // Both client packages carry the version of the plimsoll release they ship in, so a
@@ -195,7 +183,7 @@ func TestClientVersionsAgree(t *testing.T) {
 }
 
 // TestPeerFloorsAreTheLockedVersions: each optional peer of the add-ons (package.json's
-// peerDependencies: @mastra/core, @trigger.dev/sdk, ai, zod) declares a range whose floor is
+// peerDependencies: @mastra/core, ai, zod) declares a range whose floor is
 // exactly the version package-lock.json installs, the version every suite runs it at, and
 // keeps an upper bound; the lock's own copy of the ranges is the same; and the README says
 // each range and "tested at exactly" that version, beside every add-on that needs it. A
@@ -227,8 +215,8 @@ func TestPeerFloorsAreTheLockedVersions(t *testing.T) {
 			t.Fatalf("%s: %v", f.path, err)
 		}
 	}
-	if len(pkg.Peers) < 4 {
-		t.Fatalf("package.json declares %d peers, fewer than the four there were: is the scan reading its peerDependencies?", len(pkg.Peers))
+	if len(pkg.Peers) < 3 {
+		t.Fatalf("package.json declares %d peers, fewer than the three there were: is the scan reading its peerDependencies?", len(pkg.Peers))
 	}
 	if root := lock.Packages[""].Peers; !maps.Equal(root, pkg.Peers) {
 		t.Errorf("package-lock.json's root entry declares the peers %v; package.json declares %v", root, pkg.Peers)
@@ -268,109 +256,4 @@ func TestPeerFloorsAreTheLockedVersions(t *testing.T) {
 			t.Errorf("README.md never says %s's range and the version it is tested at exactly (\"`%s` (%s, tested at exactly %s)\")", name, name, pkg.Peers[name], locked[name])
 		}
 	}
-}
-
-// staleClientHint says why a suite's failure may have nothing to do with the code under
-// test. The Trigger.dev example runs against the client copy npm put under its
-// node_modules (install-links), never clients/typescript itself, and a copy older than
-// the source fails with only the SDK's "An error occurred." It returns "" when dir holds
-// no copy, or the copy matches the client's build and no source is newer than that build.
-func staleClientHint(dir, client string) string {
-	installed := filepath.Join(dir, "node_modules", "@plimsollmark", "client", "dist")
-	if _, err := os.Stat(installed); err != nil {
-		return ""
-	}
-	sources, err := filepath.Glob(filepath.Join(client, "src", "*.ts"))
-	if err != nil {
-		return ""
-	}
-	hint := func(why string) string {
-		return fmt.Sprintf("\n%s: this suite ran on the client copy in %s, not the source; run make clients-suite", why, installed)
-	}
-	for _, source := range sources {
-		name := strings.TrimSuffix(filepath.Base(source), ".ts") + ".js"
-		copied, err := os.ReadFile(filepath.Join(installed, name))
-		if err != nil {
-			return hint(name + " is missing from the copy")
-		}
-		built, err := os.ReadFile(filepath.Join(client, "dist", name))
-		if err != nil || !bytes.Equal(built, copied) {
-			return hint(name + " differs from clients/typescript/dist")
-		}
-		sourceInfo, err := os.Stat(source)
-		if err != nil {
-			continue
-		}
-		if builtInfo, err := os.Stat(filepath.Join(client, "dist", name)); err == nil && sourceInfo.ModTime().After(builtInfo.ModTime()) {
-			// A timestamp only: a generator rewriting identical bytes trips this too, so
-			// it says may, and it is read only after a suite has failed.
-			return hint(filepath.Base(source) + " is newer than its build, so the build may be stale")
-		}
-	}
-	return ""
-}
-
-func TestStaleClientHint(t *testing.T) {
-	write := func(t *testing.T, path, text string, at time.Time) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(path, at, at); err != nil {
-			t.Fatal(err)
-		}
-	}
-	old := time.Now().Add(-time.Hour)
-	setup := func(t *testing.T) (dir, client, copied string) {
-		t.Helper()
-		root := t.TempDir()
-		dir, client = filepath.Join(root, "example"), filepath.Join(root, "client")
-		copied = filepath.Join(dir, "node_modules", "@plimsollmark", "client", "dist", "client.js")
-		write(t, filepath.Join(client, "src", "client.ts"), "source", old)
-		write(t, filepath.Join(client, "dist", "client.js"), "built", time.Now())
-		write(t, copied, "built", time.Now())
-		return dir, client, copied
-	}
-
-	t.Run("current", func(t *testing.T) {
-		dir, client, _ := setup(t)
-		if got := staleClientHint(dir, client); got != "" {
-			t.Fatalf("a current copy got a hint: %s", got)
-		}
-	})
-	t.Run("no copy", func(t *testing.T) {
-		_, client, _ := setup(t)
-		if got := staleClientHint(t.TempDir(), client); got != "" {
-			t.Fatalf("a suite with no copy got a hint: %s", got)
-		}
-	})
-	t.Run("copy differs from the build", func(t *testing.T) {
-		dir, client, copied := setup(t)
-		write(t, copied, "older build", time.Now())
-		if got := staleClientHint(dir, client); !strings.Contains(got, "make clients-suite") || !strings.Contains(got, "client.js") {
-			t.Fatalf("got %q", got)
-		}
-	})
-	t.Run("build older than its source", func(t *testing.T) {
-		dir, client, _ := setup(t)
-		write(t, filepath.Join(client, "src", "client.ts"), "edited", time.Now().Add(time.Hour))
-		if got := staleClientHint(dir, client); !strings.Contains(got, "make clients-suite") || !strings.Contains(got, "client.ts") {
-			t.Fatalf("got %q", got)
-		}
-	})
-	t.Run("a source file never copied", func(t *testing.T) {
-		dir, client, copied := setup(t)
-		if err := os.Remove(copied); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(copied+".keep", nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if got := staleClientHint(dir, client); !strings.Contains(got, "missing") {
-			t.Fatalf("got %q", got)
-		}
-	})
 }

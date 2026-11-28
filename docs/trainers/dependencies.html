@@ -133,8 +133,8 @@
   a convenience: anything that parses input or runs code has to earn its place.</p>
   <p>The clients outside Go keep the same discipline. The Python client uses Python's
   standard library only. The TypeScript client has no runtime dependencies; its two
-  add-ons import the agent framework they plug into (the SDK of <dfn>Trigger.dev</dfn>, a
-  hosted job runner for TypeScript, with the <code>ai</code> package, or Mastra's core),
+  add-ons import the agent framework they plug into (the Vercel AI SDK's <code>ai</code>
+  package, or Mastra's core),
   and the input schema of their <dfn>tool</dfn>, the named action each add-on offers an
   agent's model, imports <code>zod</code>; all of these are optional peer
   dependencies the application installs itself.</p>
@@ -236,12 +236,13 @@
       platform's image, not of the multi-platform index that lists several, because the
       cloud reports the manifest it booted. With
       <code>SANDBOX_CPUS</code> and <code>SANDBOX_MEMORY_MB</code> unset, each sandbox is
-      the Micro size (1 CPU, 2 GiB). Host-API grants need
-      <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>: the grant run's one network rule, to the
-      host of the <dfn>guard</dfn> (the one plimsoll address a run with a grant may reach)
-      on port 443, is applied through a Docker call outside its published API and read
-      back through the published one, and the guest holds its own run's short-lived guard
-      credential. There are no module runs.
+      the Micro size (1 CPU, 2 GiB). Host-API grants are refused: Docker's allow rules match
+      the host name a connection announces, as Docker's own page on network rules says
+      (<a href="https://docs.docker.com/ai/governance/local/network-rules/">EXTERNAL · official docs ↗</a>),
+      so the one network rule a granted run would get, to the host of the <dfn>guard</dfn>
+      (the plimsoll address a granted run calls) on port 443, cannot hold the code to the
+      guard, and a set <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>
+      fails startup. There are no module runs.
       Docker bills each sandbox per second, so, like E2B, no automated run touches it.</dd>
     </dl>
   </div>

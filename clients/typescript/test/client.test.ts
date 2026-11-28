@@ -9,6 +9,7 @@ import { before, test } from "node:test";
 import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
 import { errorFromWire, sessionEndFromWire } from "../src/errors.ts";
 import { recordDigest, recordFromWire, validText } from "../src/record.ts";
+import { statedScopes } from "../src/files.ts";
 import { RECORD_VERSION } from "../src/tables.gen.ts";
 
 // The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
@@ -321,13 +322,14 @@ function describing(extra: Record<string, unknown>): PlimsollClient {
   });
 }
 
-// Protocol 8 came with the head on every session call (SessionRunRequest.head, lost-call
-// option 3): a protocol 7 daemon would ignore the head and run a call made from stale state.
-// Protocol 7 had come with the provider name's rule (record.ValidText), which still holds. A
-// daemon of protocol 7 refuses this client's run before anything runs, and the refusal is
-// marked not dispatched.
-test("this client speaks protocol 8, and a protocol 7 daemon refuses it before anything runs", async () => {
-  assert.equal(PROTOCOL, 8, "this test pins protocol 8 to the head on every session call");
+// Protocol 9 came with record version 6 (results under plimsoll.run-result.v2, requests under
+// plimsoll.run-request.v3, both with the files kind): a protocol 8 daemon writes version 5,
+// which this client refuses of a live answer. Protocol 8 (the head on every session call) and
+// 7 (the provider name's rule, record.ValidText) still hold. A daemon of protocol 8 refuses
+// this client's run before anything runs, and the refusal is marked not dispatched.
+test("this client speaks protocol 9, and a protocol 8 daemon refuses it before anything runs", async () => {
+  assert.equal(PROTOCOL, 9, "this test pins protocol 9 to record version 6");
+  assert.equal(RECORD_VERSION, 6);
   assert.equal(validText("docker\u001b[2J"), false);
   const stated: unknown[] = [];
   const client = new PlimsollClient({
@@ -335,13 +337,13 @@ test("this client speaks protocol 8, and a protocol 7 daemon refuses it before a
     fetch: async (_input, init) => {
       stated.push(JSON.parse(String(init?.body)).protocol);
       const rid = new Headers(init?.headers).get("Plimsoll-Request-Id") ?? "";
-      const body = { code: "unimplemented", message: "this daemon serves protocol 7 and the request states 8; nothing ran",
+      const body = { code: "unimplemented", message: "this daemon serves protocol 8 and the request states 9; nothing ran",
         details: [{ type: "plimsoll.v1.NotDispatched", value: "CAM" }] };
       return new Response(JSON.stringify(body), { status: 501, headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": rid } });
     },
   });
   await assert.rejects(client.runJavaScript("1"), (e: unknown) => e instanceof PlimsollError && e.code === "unimplemented" && e.notDispatched === "protocol");
-  assert.deepEqual(stated, [8]);
+  assert.deepEqual(stated, [9]);
 });
 
 test("describe reads the isolation qualification whole, and an answer without it as empty", async () => {
@@ -831,4 +833,14 @@ test("a session refuses text that is not well-formed and goes on", { skip }, asy
   await s.runJavaScript("1");
   assert.equal(s.chain.calls, 1n);
   await s.close();
+});
+
+// The scopes a session's open states: names or numbers, each once, in the enum's order; a
+// value this client does not know is left out, and a statement that is not a list states none.
+test("a session's stated file scopes", () => {
+  assert.deepEqual(statedScopes(undefined), []);
+  assert.deepEqual(statedScopes(["FILES_SCOPE_SANDBOX"]), ["sandbox"]);
+  assert.deepEqual(statedScopes(["FILES_SCOPE_SANDBOX", "FILES_SCOPE_WORK", 2]), ["work", "sandbox"]);
+  assert.deepEqual(statedScopes(["FILES_SCOPE_UNSPECIFIED", "FILES_SCOPE_LATER", 7, 0]), []);
+  assert.deepEqual(statedScopes("FILES_SCOPE_WORK"), []);
 });

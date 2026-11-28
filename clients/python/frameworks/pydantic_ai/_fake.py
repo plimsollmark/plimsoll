@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import plimsoll_client.pydantic_ai as pa
 import plimsoll_client.workspace as pw
+from plimsoll_client import files as fs
 from plimsoll_client import Client, PlimsollError, RecoveringError, Session, SessionEndedError
 from plimsoll_client._tables import RECOVERING_TEXT
 from plimsoll_client._wire import Msg
@@ -105,6 +106,8 @@ class FakeSession:
         self.isolation = isolation
         self.isolation_qualification = ""
         self.software_identity = ""
+        self.work_dir = ROOT
+        self.file_scopes = ("work", "sandbox")
         self.tree = tree if tree is not None else Tree()
         self.plan: List[Planned] = []
         self.commands: List[str] = []
@@ -151,12 +154,46 @@ class FakeSession:
     def run_project(self, files: Any, steps: Sequence[str], artifacts: Sequence[str] = (), *, timeout: Optional[float] = None,
                     minimum_isolation: Optional[str] = None, software: Any = None, grant_profile: Optional[str] = None,
                     trace_id: Optional[str] = None, cancel: Any = None) -> ProjectResult:
+        planned = self._admit(timeout)
+        files = dict(files)
+        if planned is not None:
+            return planned(self, files, list(steps))
+        return self.answer(files, list(steps))
+
+    def run_files(self, op: Any, *, timeout: Optional[float] = None, minimum_isolation: Optional[str] = None, software: Any = None,
+                  trace_id: Optional[str] = None, cancel: Any = None) -> fs.FilesResult:
+        """A file call: a read, answered from the tree as the helper answers it (the backend's own file code runs
+        scripts; the workspace's whole read is a file call)."""
+        planned = self._admit(timeout)
+        if planned is not None:
+            return planned(self, op, ["files"])
+        assert isinstance(op, fs.FilesRead) and op.scope == "sandbox", op
+        path = fs.path_bytes(op.path).decode("utf-8", "surrogateescape")
+        t = self.tree
+        if path in t.dirs:
+            return self._files_result(error="is_dir")
+        if path not in t.files:
+            return self._files_result(error="not_found")
+        if path in t.unreadable:
+            return self._files_result(error="permission_denied")
+        data = t.files[path]
+        return self._files_result(fs.FilesReadAnswer(content=data[op.offset : op.offset + op.max_bytes], size_at_open=len(data)))
+
+    def _files_result(self, answer: Any = None, *, error: str = "none", outcome: str = "completed") -> fs.FilesResult:
+        self._calls += 1
+        rec = record(self._calls, self._last, isolation=self.isolation)
+        self._last = rec.sha256
+        return fs.FilesResult(provider="fake", isolation=self.isolation, environment="", software_identity="", duration_ms=1,
+                              record=rec, outcome=outcome, error=error, errno="", op="read" if answer is not None else "",
+                              answer=answer)
+
+    def _admit(self, timeout: Optional[float]) -> Optional[Callable[..., Any]]:
+        """Refuses a call as the real session would, raises a planned error, or hands back a planned answer."""
         if self._ended is not None:
             raise SessionEndedError(f"plimsoll: the session has ended ({self._ended.reason})", reason=self._ended.reason,
                                     not_dispatched="request")
         if self._stopped is not None:
             raise PlimsollError("plimsoll: an earlier call ... sends nothing more", code="failed_precondition", not_dispatched="request")
-        files = dict(files)
         if self.lost_call is not None:
             self.refused_recovering += 1
             raise RecoveringError(f"plimsoll: {RECOVERING_TEXT}; nothing was sent", not_dispatched="request")
@@ -172,8 +209,8 @@ class FakeSession:
                     else:
                         self._stopped = planned.message
                 raise planned
-            return planned(self, files, list(steps))
-        return self.answer(files, list(steps))
+            return planned
+        return None
 
     # ---- answering as a sandbox would ----
 
@@ -189,24 +226,15 @@ class FakeSession:
                           stdout_truncated=stdout_truncated, stderr_truncated=False)
         return ProjectResult(provider="fake", isolation=self.isolation, environment="", software_identity="", duration_ms=1,
                              record=rec, outcome=outcome, detail="", steps=(step,) if steps else (),
-                             artifacts=(Artifact(pw._ROOT, (ROOT + "\n").encode()),) + artifacts, artifacts_truncated=False,
+                             artifacts=artifacts, artifacts_truncated=False,
                              advice=())
 
     def answer(self, files: Dict[str, str], steps: List[str]) -> ProjectResult:
         step = steps[0]
-        if step == pw._ROOT_STEP:
-            return self.result()
         if step == pw._EXEC_STEP:
             command = files[pw._CMD]
             self.commands.append(command)
             return self.result(f"ran {command}\n".encode(), artifacts=(Artifact(pw._CWD, (ROOT + "\n").encode()),))
-        if step in (pw._READ_STEP, pw._READ_AT_STEP):
-            rel, n = files[pw._A1], int(files[pw._A2])
-            start = int(files.get(pw._A3, "1")) - 1
-            path = rel if rel.startswith("/") else posixpath.join(ROOT, rel)
-            if path not in self.tree.files:
-                return self.result(b"", b"cannot read", 1)
-            return self.result(artifacts=(Artifact(pw._OUT, self.tree.files[path][start : start + n]),))
         if step == pw._RUN_STEP:
             argv = shlex.split(files[pw._RUN].strip().splitlines()[-1])[1:]
             stdin = base64.b64decode(files[pw._IN_B64])

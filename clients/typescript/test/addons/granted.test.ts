@@ -14,7 +14,6 @@ import { GRANTED_CELL, HOST_MODULE_PATH, HOST_MODULE_SOURCE } from "../../src/gr
 import { PlimsollClient, PlimsollError } from "../../src/index.ts";
 import { plimsollExecuteCode, plimsollGrantedExecuteCode } from "../../src/mastra.ts";
 import { GRANT_PERMISSION_NOTE, GRANTED_MAY_HAVE_RUN } from "../../src/sandboxes.ts";
-import { plimsollCodeSandbox } from "../../src/trigger.ts";
 
 const grantURL = process.env.PLIMSOLL_GRANT_ECHO_URL;
 const grantToken = process.env.PLIMSOLL_GRANT_ECHO_TOKEN;
@@ -53,7 +52,6 @@ test("a granted tool tells the model what its code can call, and that kept state
   assert.doesNotMatch(plain.executeCode.description!, /web API|plimsoll_host/);
   assert.throws(() => plimsollCodeTools({ client: docker(), grant } as never), /build a granted tool with plimsollGrantedCodeTool/);
   assert.throws(() => plimsollExecuteCode({ client: docker(), grant } as never), /plimsollGrantedExecuteCode/);
-  assert.throws(() => plimsollCodeSandbox({ client: docker(), grant } as never), /plimsollGrantedCodeTool/);
   // Kept state asked for with a grant is refused when the tool is built.
   await assert.rejects(plimsollGrantedCodeTool({ client: docker(), grant, sessions: "always" }), (e: PlimsollError) => e.notDispatched === "request");
 });

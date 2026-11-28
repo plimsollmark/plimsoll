@@ -28,7 +28,7 @@ export type WireEnvelope = {
 /** A session's call to its interpreter (sessions.md, "Interpreters"). */
 export type WireCellRun = { language: string; code: string; files?: { path: string; content: string }[] };
 
-export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun; cell?: WireCellRun };
+export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun; cell?: WireCellRun; files?: WireFilesRun };
 
 /**
  * A session call: the run request with the session ID and the head the call expects to run
@@ -115,6 +115,34 @@ export type WireCellResult = {
   interpreterEnded?: boolean;
 };
 
+/** A file call's request (FilesRun), in its JSON form: paths and contents are base64. */
+export type WireFilesRun = {
+  scope?: string | number;
+  stat?: { path?: string };
+  read?: { path?: string; offset?: string | number; maxBytes?: number };
+  write?: { path?: string; content?: string; mode?: string | number; makeParents?: boolean };
+  list?: { path?: string; recursive?: boolean; match?: string; after?: string; budgetBytes?: number };
+  readMany?: { paths?: string[]; maxBytesEach?: number; budgetBytes?: number };
+  makeDir?: { path?: string; parents?: boolean };
+  remove?: { path?: string; dir?: boolean };
+  rename?: { fromPath?: string; toPath?: string; replace?: boolean };
+};
+
+/** A file call's result (FilesResult), in its JSON form. */
+export type WireFilesResult = {
+  outcome?: string | number;
+  error?: string | number;
+  errno?: string;
+  stat?: { type?: string | number; size?: string | number; mode?: number };
+  read?: { content?: string; sizeAtOpen?: string | number };
+  write?: { written?: string | number };
+  list?: { entries?: { path?: string; type?: string | number; size?: string | number }[]; more?: boolean };
+  readMany?: { items?: { error?: string | number; errno?: string; content?: string; sizeAtOpen?: string | number }[]; more?: boolean };
+  makeDir?: Record<string, never>;
+  remove?: Record<string, never>;
+  rename?: Record<string, never>;
+};
+
 export type WireRunResponse = {
   sandbox?: string;
   isolation?: string;
@@ -130,6 +158,7 @@ export type WireRunResponse = {
   project?: WireProjectResult;
   module?: unknown;
   cell?: WireCellResult;
+  files?: WireFilesResult;
 };
 
 export type WireSessionRunResponse = { run?: WireRunResponse; ended?: string | number; endDetail?: string };
@@ -186,6 +215,10 @@ export type WireOpenSessionResponse = {
   idleTimeoutMs?: number;
   softwareIdentity?: string;
   isolationQualification?: string;
+  /** The scopes the session takes file calls in (protocol 9), as enum names; informational. */
+  fileScopes?: unknown[];
+  /** The session's work folder, the folder a WORK path resolves from. */
+  workDir?: string;
 };
 
 export type WireCloseSessionRequest = { protocol: number; sessionId: string; generation: string };

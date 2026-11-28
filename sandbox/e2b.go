@@ -838,7 +838,12 @@ func remainingBudget(ctx context.Context, fallback time.Duration) time.Duration 
 // it, so a caller knows a file past its limit without reading all of it. found=false is
 // reserved for a 404; transport/auth/server failures remain infrastructure errors.
 func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string, limit int64) ([]byte, bool, error) {
-	q := url.Values{"path": {path}, "username": {"user"}}.Encode()
+	return e.readFileAs(ctx, vm, "user", path, limit)
+}
+
+// readFileAs is readFile as user, whose permissions envd reads the file with.
+func (e *E2B) readFileAs(ctx context.Context, vm e2bVM, user, path string, limit int64) ([]byte, bool, error) {
+	q := url.Values{"path": {path}, "username": {user}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.envdHost(vm.id)+"/files?"+q, nil)
 	if err != nil {
 		return nil, false, err

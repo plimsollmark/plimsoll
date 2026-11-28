@@ -129,7 +129,7 @@ func (d *DockerCloud) createLabeled(ctx context.Context, budget time.Duration, l
 					// gets ResourceExhausted in plimsoll's words and the daemon does not count
 					// a fault; the service's own text stays in this log line.
 					slog.Warn("dockercloud: create refused for capacity", "sandbox", vm.name, "error", err.Error())
-					return dcVM{}, NotDispatched(RefusalCapacity, dcQuotaFull{})
+					return dcVM{}, AtCapacity(CapacityProvider, dcQuotaFull{})
 				}
 				return dcVM{}, NotDispatched(RefusalEnvironment, err)
 			}

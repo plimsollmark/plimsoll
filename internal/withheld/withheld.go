@@ -42,7 +42,9 @@ func (m Mode) valid() bool { return m == ModeRefuse || m == ModeAudit }
 type Kind string
 
 const (
-	// KindFile matches a whole file, or a snippet's or cell's code, after Normalize.
+	// KindFile matches a whole file, or a snippet's or cell's code: its digest is of the
+	// file's normalized form (Normalize), as the builder writes it, or of its bytes as
+	// written, as sha256sum gives it (fileEntry).
 	KindFile Kind = "file"
 	// KindValue matches a string where it occupies whole runs of ASCII letters and
 	// digits (Runs): its first byte starts a run and its last byte ends one. It is
@@ -106,7 +108,7 @@ type Set struct {
 	digest    string
 	lines     int // entries in the file
 	entries   []entry
-	files     map[[sha256.Size]byte]int // normalized file digest -> entry
+	files     map[[sha256.Size]byte]int // file digest, normalized or as written -> entry
 	values    map[[sha256.Size]byte]int // value digest -> entry
 	lengths   [MaxValueBytes + 1]bool   // the value lengths declared
 	maxLength int
@@ -253,8 +255,8 @@ func Parse(raw []byte) (*Set, error) {
 			if e.Length != 0 {
 				return nil, fmt.Errorf("entry %d (%s): a file entry states no length", i, e.Label)
 			}
-			if d == emptyFile {
-				return nil, fmt.Errorf("entry %d (%s): a file entry for empty content would match every empty file a caller ships", i, e.Label)
+			if blankFile[d] {
+				return nil, fmt.Errorf("entry %d (%s): a file entry for empty or blank content would match every such file a caller ships", i, e.Label)
 			}
 			table = s.files
 		case KindValue:
@@ -286,9 +288,32 @@ func digestOf(h string) (d [sha256.Size]byte, err error) {
 	return d, nil
 }
 
-// emptyFile is the file digest of empty content, and of content that normalizes to
-// none (blank lines): an entry holding it would match every empty file.
-var emptyFile = FileDigest(nil)
+// blankFile holds the digests of content made of whitespace alone: normalized (one
+// digest, of empty content, whatever the length) and as written, every string of spaces,
+// tabs, carriage returns and newlines up to blankBytes long, as sha256sum gives a blank
+// file's digest ("\n", "\r\n", "\n\n"). An entry holding one would match every such file
+// a caller ships, such as an __init__.py of one newline. A blank file longer than that,
+// hashed by hand, is not refused: its entry finds files of exactly those bytes, which a
+// caller rarely ships, and the refusal names the entry.
+var blankFile = func() map[[sha256.Size]byte]bool {
+	m := map[[sha256.Size]byte]bool{FileDigest(nil): true}
+	var add func(prefix []byte)
+	add = func(prefix []byte) {
+		m[sha256.Sum256(prefix)] = true
+		if len(prefix) == blankBytes {
+			return
+		}
+		for _, c := range []byte(" \t\r\n") {
+			add(append(prefix, c))
+		}
+	}
+	add(make([]byte, 0, blankBytes))
+	return m
+}()
+
+// blankBytes is the longest blank content blankFile holds as written: 4 covers two
+// Windows line endings, 341 digests.
+const blankBytes = 4
 
 // CheckLabel validates an entry's label: [A-Za-z0-9._:/-], 1 to MaxLabelBytes bytes.
 // Every report names entries by label, so a label is a token a log line can carry
@@ -310,6 +335,22 @@ func (s *Set) Digest() string { return s.digest }
 
 // Len is the number of entries in the set file.
 func (s *Set) Len() int { return s.lines }
+
+// Entry is one entry as a scan reports it: its label and mode. Entries of the set file
+// with the same label and mode (a value and its forms) are one Entry.
+type Entry struct {
+	Label string
+	Mode  Mode
+}
+
+// Entries lists the set's entries as a scan reports them, in the set's order.
+func (s *Set) Entries() []Entry {
+	out := make([]Entry, len(s.entries))
+	for i, e := range s.entries {
+		out[i] = Entry{Label: e.label, Mode: e.mode}
+	}
+	return out
+}
 
 // Refuses reports whether any entry is in refuse mode. Such a set refuses a call whose
 // scan is incomplete, since what the scan could not read may hold a refuse-mode entry.
@@ -446,8 +487,9 @@ func (s *Set) scanViews(data []byte, found func(int), view func(v []byte, k view
 	}
 	base64Blobs(data, func(blob []byte) {
 		if len(s.files) > 0 {
-			hashes++
-			if i, ok := s.files[FileDigest(blob)]; ok {
+			i, ok, n := s.fileEntry(blob)
+			hashes += n
+			if ok {
 				found(i)
 			}
 		}
@@ -535,8 +577,48 @@ func Normalize(b []byte) []byte {
 	return bytes.TrimRight(out, "\n")
 }
 
-// FileDigest is the digest a file entry holds for content: the SHA-256 of Normalize.
+// FileDigest is the digest the builder writes in a file entry for content: the SHA-256 of
+// Normalize.
 func FileDigest(content []byte) [sha256.Size]byte { return sha256.Sum256(Normalize(content)) }
+
+// fileEntry is the file entry content matches, by the digest of its normalized form or of
+// its bytes as written, and the hashes it computed (1 or 2). The bytes as written are
+// matched because an operator who writes an entry by hand takes a file's digest with
+// sha256sum, and nearly every text file ends in a newline Normalize drops: matched on its
+// normalized form alone, such an entry loaded without a word and found nothing, not even
+// the file it was taken of, shipped byte for byte (the no-leak demo, 2026-11-26). The
+// second match adds nothing to an entry the builder wrote: content's own digest equals a
+// normalized digest only when content is that normalized form, which Normalize leaves as
+// it is, so the first match found it already. When Normalize removed nothing the two
+// digests are one, and it is computed once.
+func (s *Set) fileEntry(content []byte) (entry int, ok bool, hashes int) {
+	n := Normalize(content)
+	if entry, ok = s.files[sha256.Sum256(n)]; ok || len(n) == len(content) {
+		return entry, ok, 1
+	}
+	entry, ok = s.files[sha256.Sum256(content)]
+	return entry, ok, 2
+}
+
+// AsWrittenOnly reports the file entry content matches by its bytes as written and not by
+// its normalized form: an entry hashed by hand (sha256sum) rather than by the builder. It
+// finds only that copy byte for byte; the same file with other line endings, trailing
+// whitespace or no final newline passes it. Nothing in a digest says which form was
+// hashed, so only a reader holding the file can tell (plimsoll-withheld check).
+func (s *Set) AsWrittenOnly(content []byte) (Entry, bool) {
+	n := Normalize(content)
+	if len(n) == len(content) {
+		return Entry{}, false // one form: the builder's digest and sha256sum's are the same
+	}
+	if _, ok := s.files[sha256.Sum256(n)]; ok {
+		return Entry{}, false
+	}
+	i, ok := s.files[sha256.Sum256(content)]
+	if !ok {
+		return Entry{}, false
+	}
+	return Entry{Label: s.entries[i].label, Mode: s.entries[i].mode}, true
+}
 
 // Runs counts the runs of ASCII letters and digits in v.
 func Runs(v []byte) int {

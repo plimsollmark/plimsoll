@@ -82,7 +82,7 @@ func (d *DockerSandbox) waitForPreflight(ctx context.Context) (ready bool, err e
 		case <-giveUp.C:
 			// Nothing was dispatched and the daemon is busy, not broken: capacity, so a
 			// caller knows asking again is safe.
-			return false, NotDispatched(RefusalCapacity, errors.New("docker preflight is already in progress"))
+			return false, AtCapacity(CapacityProvider, errors.New("docker preflight is already in progress"))
 		case <-tick.C:
 			// Cache first: the holder publishes its result before releasing, so a
 			// successful refresh is visible without taking the lock at all.
@@ -852,14 +852,14 @@ func (d *DockerSandbox) configuredImages() []string {
 // notReady marks a refusal from the provider's own checks before dispatch (an image
 // reference it cannot use, a daemon or image Preflight cannot verify, an execution
 // state not proven): no container was started, so it is not dispatched, reason
-// environment, and placement may send the call elsewhere; reason capacity when the
+// environment, and placement may send the call elsewhere; RefuseDeadline when the
 // caller gave up while the checks ran. A mark it already carries stays.
 func notReady(ctx context.Context, err error) error {
 	if _, marked := NotDispatchedReason(err); marked {
 		return err
 	}
 	if ctx.Err() != nil {
-		return NotDispatched(RefusalCapacity, err)
+		return RefuseDeadline(ctx, err)
 	}
 	return NotDispatched(RefusalEnvironment, err)
 }

@@ -31,6 +31,7 @@ func TestEveryClientReadsTheSharedAnswersAlike(t *testing.T) {
 			Expect                              struct {
 				Code, NotDispatched, SessionEnded string
 				AnswerNotBound                    bool
+				CapacityLimit                     string
 			}
 		}
 	}
@@ -73,9 +74,19 @@ func TestEveryClientReadsTheSharedAnswersAlike(t *testing.T) {
 		got := struct {
 			Code, NotDispatched, SessionEnded string
 			AnswerNotBound                    bool
-		}{connect.CodeOf(err).String(), nd, end, errors.Is(err, ErrAnswerNotBound)}
+			CapacityLimit                     string
+		}{connect.CodeOf(err).String(), nd, end, errors.Is(err, ErrAnswerNotBound), capacityLimitName(err)}
 		if got != a.Expect {
 			t.Errorf("%s: read as %+v, want %+v (%v)", a.Name, got, a.Expect, err)
 		}
 	}
+}
+
+// capacityLimitName is the limit a capacity refusal states, as the shared answers name
+// it; empty for any other error.
+func capacityLimitName(err error) string {
+	if reason, marked := sandbox.NotDispatchedReason(err); !marked || reason != sandbox.RefusalCapacity {
+		return ""
+	}
+	return sandbox.CapacityLimitOf(err).String()
 }

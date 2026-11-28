@@ -3,7 +3,7 @@
 Vercel's AI SDK (software development kit) can call plimsoll as an ordinary
 `executeCode` tool. It executes Python or JavaScript on the configured daemon,
 checks the execution record and isolation evidence, and reports whether interpreter
-state and files can persist. It needs no Trigger.dev or Mastra runtime.
+state and files can persist. It needs no Mastra runtime.
 
 Recorded calls through this tool, from a fresh run to a refused floor, replay on its
 integration page: [see a run, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/integrations/vercel-ai-sdk/index.html).

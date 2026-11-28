@@ -49,7 +49,27 @@ MUTATIONS = [
     ("the description says BusyBox sh on every provider (release-29)", AF,
      "The shell is the sandbox image's sh (BusyBox sh on plimsoll's docker images).", "The shell is BusyBox sh."),
     ("a retry of a failed command", AF, "                result = await self.run(command)\n            except Exception as e:",
-     "                try:\n                    result = await self.run(command)\n                except PlimsollError:\n                    result = await self.run(command)\n            except Exception as e:"),
+     "                try:\n                    result = await self.run(command)\n                except PlimsollError:\n                    result = await self.run(command)\n            except Exception as e:"),    # The file store's refusals (test_file_store.py): each one dropped must fail the suite.
+    ("the file store follows a symbolic link", AF, '            if st.type == "link":\n                raise _link_error(rel)', '            if False:\n                raise _link_error(rel)'),
+    ("the file store's search reads a listed link", AF, '                if e.type != "file":\n                    continue\n                try:', '                if e.type not in ("file", "link"):\n                    continue\n                try:'),
+    ("the file store reads a file past the cap", AF, "            if st.size > self._max:\n", "            if False:\n"),
+    ("the file store's search reads a file past the cap", AF, "            if size > self._max:\n", "            if False:\n"),
+    ("the file store sends a write past the cap", AF, "        if len(data) > self._max:\n", "        if False:\n"),
+    ("the file store takes an absolute path", AF, '    if path.startswith("/"):\n        raise ValueError(f"Invalid path: {path!r}. Paths must be relative',
+     '    if False:\n        raise ValueError(f"Invalid path: {path!r}. Paths must be relative'),
+    ("the file store takes a dot-dot segment", AF, '    if any(seg in (".", "..") for seg in segments):', "    if False:"),
+    ("the file store reaches the workspace's state", AF, "    if segments and segments[0] == STATE_DIR:", "    if False:"),
+    ("the file store's search ignores the bytes of a batch's paths", AF, "\n                          or named + length + room > _BATCH_PATH_BYTES):", "):"),
+    ("the file store works on a session that takes no file calls", AF, '            if not getattr(session, "file_scopes", ()):', "            if False:"),
+    ("a file operation that may have run does not stop the run", AF,
+     "            if may_have_run(e):\n                raise self._stopped(e) from e", "            if False:\n                raise self._stopped(e) from e"),
+    ("an unanswered file call does not stop the run", AF, "        except Exception as e:\n            # WorkspaceCallError among them", "        except WorkspaceCallError:\n            raise\n        except Exception as e:\n            # WorkspaceCallError among them"),
+    ("harness_options drops the shell's approval mode", AF, '    unasked = (file_approval or shell._approval_mode) == "never_require"',
+     '    unasked = (file_approval or "never_require") == "never_require"'),
+    ("harness_options ignores file_approval", AF, '    unasked = (file_approval or shell._approval_mode) == "never_require"',
+     '    unasked = shell._approval_mode == "never_require"'),
+    ("harness_options takes any file_approval", AF, "    if file_approval is not None and file_approval not in _APPROVAL_MODES:", "    if False:"),
+    ("overwrite=False replaces a file there", AF, '"replace" if overwrite else "create_only"', '"replace"'),
 ]
 
 

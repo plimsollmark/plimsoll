@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -99,7 +97,7 @@ func (l *CodeLimiter) Charge(key string) error {
 	defer l.mu.Unlock()
 	if !l.takeTokenLocked(key, time.Now()) {
 		l.rateLimited.Add(1)
-		return refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
+		return refuseCapacity(sandbox.CapacityRate, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
 	}
 	return nil
 }
@@ -110,7 +108,7 @@ func (l *CodeLimiter) acquire(key string, charge bool) (func(), error) {
 	case l.sem <- struct{}{}:
 	default:
 		l.atCapacity.Add(1)
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, errors.New("sandbox is at capacity, retry shortly"))
+		return nil, refuseCapacity(sandbox.CapacityRuns, errors.New("sandbox is at capacity, retry shortly"))
 	}
 
 	// 2+3) Per-principal concurrency and rate, under one lock so the decision is
@@ -120,13 +118,13 @@ func (l *CodeLimiter) acquire(key string, charge bool) (func(), error) {
 		l.mu.Unlock()
 		<-l.sem
 		l.perKeyFull.Add(1)
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("per-caller concurrency limit reached (%d in flight)", l.perKey))
+		return nil, refuseCapacity(sandbox.CapacityCallerRuns, fmt.Errorf("per-caller concurrency limit reached (%d in flight)", l.perKey))
 	}
 	if charge && l.perMin > 0 && !l.takeTokenLocked(key, time.Now()) {
 		l.mu.Unlock()
 		<-l.sem
 		l.rateLimited.Add(1)
-		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
+		return nil, refuseCapacity(sandbox.CapacityRate, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
 	}
 	l.inflight[key]++
 	l.mu.Unlock()

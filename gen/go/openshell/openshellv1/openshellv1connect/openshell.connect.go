@@ -27,6 +27,10 @@ const _ = connect.IsAtLeastVersion1_13_0
 const (
 	// OpenShellName is the fully-qualified name of the OpenShell service.
 	OpenShellName = "openshell.v1.OpenShell"
+	// ServiceDiscoveryName is the fully-qualified name of the ServiceDiscovery service.
+	ServiceDiscoveryName = "openshell.v1.ServiceDiscovery"
+	// SandboxUpdatesName is the fully-qualified name of the SandboxUpdates service.
+	SandboxUpdatesName = "openshell.v1.SandboxUpdates"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -84,6 +88,11 @@ const (
 	OpenShellStopSandboxProcedure = "/openshell.v1.OpenShell/StopSandbox"
 	// OpenShellStartSandboxProcedure is the fully-qualified name of the OpenShell's StartSandbox RPC.
 	OpenShellStartSandboxProcedure = "/openshell.v1.OpenShell/StartSandbox"
+	// OpenShellSuspendSandboxProcedure is the fully-qualified name of the OpenShell's SuspendSandbox
+	// RPC.
+	OpenShellSuspendSandboxProcedure = "/openshell.v1.OpenShell/SuspendSandbox"
+	// OpenShellResumeSandboxProcedure is the fully-qualified name of the OpenShell's ResumeSandbox RPC.
+	OpenShellResumeSandboxProcedure = "/openshell.v1.OpenShell/ResumeSandbox"
 	// OpenShellCreateSshSessionProcedure is the fully-qualified name of the OpenShell's
 	// CreateSshSession RPC.
 	OpenShellCreateSshSessionProcedure = "/openshell.v1.OpenShell/CreateSshSession"
@@ -110,6 +119,9 @@ const (
 	OpenShellCreateProviderProcedure = "/openshell.v1.OpenShell/CreateProvider"
 	// OpenShellGetProviderProcedure is the fully-qualified name of the OpenShell's GetProvider RPC.
 	OpenShellGetProviderProcedure = "/openshell.v1.OpenShell/GetProvider"
+	// OpenShellGetProviderCredentialsProcedure is the fully-qualified name of the OpenShell's
+	// GetProviderCredentials RPC.
+	OpenShellGetProviderCredentialsProcedure = "/openshell.v1.OpenShell/GetProviderCredentials"
 	// OpenShellListProvidersProcedure is the fully-qualified name of the OpenShell's ListProviders RPC.
 	OpenShellListProvidersProcedure = "/openshell.v1.OpenShell/ListProviders"
 	// OpenShellListProviderProfilesProcedure is the fully-qualified name of the OpenShell's
@@ -139,6 +151,9 @@ const (
 	// OpenShellRotateProviderCredentialProcedure is the fully-qualified name of the OpenShell's
 	// RotateProviderCredential RPC.
 	OpenShellRotateProviderCredentialProcedure = "/openshell.v1.OpenShell/RotateProviderCredential"
+	// OpenShellInlineProviderRefreshSecretsProcedure is the fully-qualified name of the OpenShell's
+	// InlineProviderRefreshSecrets RPC.
+	OpenShellInlineProviderRefreshSecretsProcedure = "/openshell.v1.OpenShell/InlineProviderRefreshSecrets"
 	// OpenShellDeleteProviderRefreshProcedure is the fully-qualified name of the OpenShell's
 	// DeleteProviderRefresh RPC.
 	OpenShellDeleteProviderRefreshProcedure = "/openshell.v1.OpenShell/DeleteProviderRefresh"
@@ -148,6 +163,18 @@ const (
 	// OpenShellDeleteProviderProfileProcedure is the fully-qualified name of the OpenShell's
 	// DeleteProviderProfile RPC.
 	OpenShellDeleteProviderProfileProcedure = "/openshell.v1.OpenShell/DeleteProviderProfile"
+	// OpenShellCreateSecretProcedure is the fully-qualified name of the OpenShell's CreateSecret RPC.
+	OpenShellCreateSecretProcedure = "/openshell.v1.OpenShell/CreateSecret"
+	// OpenShellGetSecretProcedure is the fully-qualified name of the OpenShell's GetSecret RPC.
+	OpenShellGetSecretProcedure = "/openshell.v1.OpenShell/GetSecret"
+	// OpenShellListSecretsProcedure is the fully-qualified name of the OpenShell's ListSecrets RPC.
+	OpenShellListSecretsProcedure = "/openshell.v1.OpenShell/ListSecrets"
+	// OpenShellUpdateSecretProcedure is the fully-qualified name of the OpenShell's UpdateSecret RPC.
+	OpenShellUpdateSecretProcedure = "/openshell.v1.OpenShell/UpdateSecret"
+	// OpenShellDeleteSecretProcedure is the fully-qualified name of the OpenShell's DeleteSecret RPC.
+	OpenShellDeleteSecretProcedure = "/openshell.v1.OpenShell/DeleteSecret"
+	// OpenShellRevealSecretProcedure is the fully-qualified name of the OpenShell's RevealSecret RPC.
+	OpenShellRevealSecretProcedure = "/openshell.v1.OpenShell/RevealSecret"
 	// OpenShellGetSandboxConfigProcedure is the fully-qualified name of the OpenShell's
 	// GetSandboxConfig RPC.
 	OpenShellGetSandboxConfigProcedure = "/openshell.v1.OpenShell/GetSandboxConfig"
@@ -180,6 +207,9 @@ const (
 	// OpenShellExchangeProviderSubjectTokenProcedure is the fully-qualified name of the OpenShell's
 	// ExchangeProviderSubjectToken RPC.
 	OpenShellExchangeProviderSubjectTokenProcedure = "/openshell.v1.OpenShell/ExchangeProviderSubjectToken"
+	// OpenShellGetSandboxProviderAccessTokenProcedure is the fully-qualified name of the OpenShell's
+	// GetSandboxProviderAccessToken RPC.
+	OpenShellGetSandboxProviderAccessTokenProcedure = "/openshell.v1.OpenShell/GetSandboxProviderAccessToken"
 	// OpenShellGetSandboxLogsProcedure is the fully-qualified name of the OpenShell's GetSandboxLogs
 	// RPC.
 	OpenShellGetSandboxLogsProcedure = "/openshell.v1.OpenShell/GetSandboxLogs"
@@ -208,6 +238,9 @@ const (
 	// OpenShellPeerGetSandboxProviderStatusProcedure is the fully-qualified name of the OpenShell's
 	// PeerGetSandboxProviderStatus RPC.
 	OpenShellPeerGetSandboxProviderStatusProcedure = "/openshell.v1.OpenShell/PeerGetSandboxProviderStatus"
+	// OpenShellPeerNotifyConfigUpdateProcedure is the fully-qualified name of the OpenShell's
+	// PeerNotifyConfigUpdate RPC.
+	OpenShellPeerNotifyConfigUpdateProcedure = "/openshell.v1.OpenShell/PeerNotifyConfigUpdate"
 	// OpenShellWatchSandboxProcedure is the fully-qualified name of the OpenShell's WatchSandbox RPC.
 	OpenShellWatchSandboxProcedure = "/openshell.v1.OpenShell/WatchSandbox"
 	// OpenShellSubmitPolicyAnalysisProcedure is the fully-qualified name of the OpenShell's
@@ -263,6 +296,15 @@ const (
 	// OpenShellListWorkspaceMembersProcedure is the fully-qualified name of the OpenShell's
 	// ListWorkspaceMembers RPC.
 	OpenShellListWorkspaceMembersProcedure = "/openshell.v1.OpenShell/ListWorkspaceMembers"
+	// ServiceDiscoveryGetServiceRouteSnapshotProcedure is the fully-qualified name of the
+	// ServiceDiscovery's GetServiceRouteSnapshot RPC.
+	ServiceDiscoveryGetServiceRouteSnapshotProcedure = "/openshell.v1.ServiceDiscovery/GetServiceRouteSnapshot"
+	// ServiceDiscoveryWatchServiceRoutesProcedure is the fully-qualified name of the ServiceDiscovery's
+	// WatchServiceRoutes RPC.
+	ServiceDiscoveryWatchServiceRoutesProcedure = "/openshell.v1.ServiceDiscovery/WatchServiceRoutes"
+	// SandboxUpdatesUpdateSandboxProcedure is the fully-qualified name of the SandboxUpdates's
+	// UpdateSandbox RPC.
+	SandboxUpdatesUpdateSandboxProcedure = "/openshell.v1.SandboxUpdates/UpdateSandbox"
 )
 
 // OpenShellClient is a client for the openshell.v1.OpenShell service.
@@ -310,6 +352,12 @@ type OpenShellClient interface {
 	StopSandbox(context.Context, *connect.Request[openshellv1.StopSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
 	// Start a previously stopped sandbox.
 	StartSandbox(context.Context, *connect.Request[openshellv1.StartSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+	// Freeze a ready sandbox and retain its memory state for a later resume.
+	// Requires a compute driver and isolation backend that support state
+	// retention.
+	SuspendSandbox(context.Context, *connect.Request[openshellv1.SuspendSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+	// Restore a suspended sandbox in a new runtime generation.
+	ResumeSandbox(context.Context, *connect.Request[openshellv1.ResumeSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
 	// Create a short-lived SSH session for a sandbox.
 	CreateSshSession(context.Context, *connect.Request[openshellv1.CreateSshSessionRequest]) (*connect.Response[openshellv1.CreateSshSessionResponse], error)
 	// Create or update a sandbox HTTP service endpoint for local routing.
@@ -334,6 +382,9 @@ type OpenShellClient interface {
 	CreateProvider(context.Context, *connect.Request[openshellv1.CreateProviderRequest]) (*connect.Response[openshellv1.ProviderResponse], error)
 	// Fetch a provider by name.
 	GetProvider(context.Context, *connect.Request[openshellv1.GetProviderRequest]) (*connect.Response[openshellv1.ProviderResponse], error)
+	// Export selected usable runtime credentials. Only directly authenticated
+	// mTLS operators may call this method; refresh material is never returned.
+	GetProviderCredentials(context.Context, *connect.Request[openshellv1.GetProviderCredentialsRequest]) (*connect.Response[openshellv1.GetProviderCredentialsResponse], error)
 	// List providers.
 	ListProviders(context.Context, *connect.Request[openshellv1.ListProvidersRequest]) (*connect.Response[openshellv1.ListProvidersResponse], error)
 	// List available provider type profiles.
@@ -354,13 +405,35 @@ type OpenShellClient interface {
 	ConfigureProviderRefresh(context.Context, *connect.Request[openshellv1.ConfigureProviderRefreshRequest]) (*connect.Response[openshellv1.ConfigureProviderRefreshResponse], error)
 	// Record a gateway-owned refresh request for one provider credential.
 	RotateProviderCredential(context.Context, *connect.Request[openshellv1.RotateProviderCredentialRequest]) (*connect.Response[openshellv1.RotateProviderCredentialResponse], error)
+	// Copy each workspace secret referenced by one credential's refresh
+	// configuration into provider-owned refresh material and remove the
+	// references. Other material, including a rotated refresh token, is kept.
+	InlineProviderRefreshSecrets(context.Context, *connect.Request[openshellv1.InlineProviderRefreshSecretsRequest]) (*connect.Response[openshellv1.InlineProviderRefreshSecretsResponse], error)
 	// Delete gateway-owned refresh configuration for one provider credential.
 	DeleteProviderRefresh(context.Context, *connect.Request[openshellv1.DeleteProviderRefreshRequest]) (*connect.Response[openshellv1.DeleteProviderRefreshResponse], error)
 	// Delete a provider by name.
 	DeleteProvider(context.Context, *connect.Request[openshellv1.DeleteProviderRequest]) (*connect.Response[openshellv1.DeleteProviderResponse], error)
 	// Delete a custom provider type profile by id.
 	DeleteProviderProfile(context.Context, *connect.Request[openshellv1.DeleteProviderProfileRequest]) (*connect.Response[openshellv1.DeleteProviderProfileResponse], error)
-	// Get sandbox settings by id (called by sandbox entrypoint and poll loop).
+	// Create a workspace secret. Secrets are credential minting material only:
+	// OpenShell never injects them into sandboxes, and Get and List never
+	// return their values.
+	CreateSecret(context.Context, *connect.Request[openshellv1.CreateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// Fetch workspace secret metadata by name. The value is never returned.
+	GetSecret(context.Context, *connect.Request[openshellv1.GetSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// List workspace secret metadata. Values are never returned.
+	ListSecrets(context.Context, *connect.Request[openshellv1.ListSecretsRequest]) (*connect.Response[openshellv1.ListSecretsResponse], error)
+	// Replace a workspace secret's value, description, or labels.
+	UpdateSecret(context.Context, *connect.Request[openshellv1.UpdateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// Delete a workspace secret by name.
+	DeleteSecret(context.Context, *connect.Request[openshellv1.DeleteSecretRequest]) (*connect.Response[openshellv1.DeleteSecretResponse], error)
+	// Return a workspace secret's plaintext value to a control-plane caller.
+	// Disabled unless the gateway sets enable_secret_reveal. Only directly
+	// authenticated mTLS operators may call this method. Every call is audited.
+	RevealSecret(context.Context, *connect.Request[openshellv1.RevealSecretRequest]) (*connect.Response[openshellv1.RevealSecretResponse], error)
+	// Get sandbox settings by id (called by users, and by supervisors at startup
+	// and in their poll loop). A supervisor whose session pushes configuration
+	// receives later updates over ConnectSupervisor and stops polling.
 	GetSandboxConfig(context.Context, *connect.Request[sandboxv1.GetSandboxConfigRequest]) (*connect.Response[sandboxv1.GetSandboxConfigResponse], error)
 	// Get gateway-global settings (read-only runtime configuration; any
 	// authenticated user may read these without requiring Platform Admin).
@@ -385,11 +458,16 @@ type OpenShellClient interface {
 	ReportProviderReadiness(context.Context, *connect.Request[openshellv1.ReportProviderReadinessRequest]) (*connect.Response[openshellv1.ReportProviderReadinessResponse], error)
 	// Register startup and acknowledge an exact validated runtime configuration.
 	ReportSandboxConfiguration(context.Context, *connect.Request[openshellv1.ReportSandboxConfigurationRequest]) (*connect.Response[openshellv1.ReportSandboxConfigurationResponse], error)
-	// Get provider environment for a sandbox (called by sandbox supervisor at startup).
+	// Get provider environment for a sandbox (called by the sandbox supervisor at
+	// startup and by its poll loop). Polling projection of the provider
+	// environment delivered over ConnectSupervisor; removed with the polling RPCs.
 	GetSandboxProviderEnvironment(context.Context, *connect.Request[openshellv1.GetSandboxProviderEnvironmentRequest]) (*connect.Response[openshellv1.GetSandboxProviderEnvironmentResponse], error)
 	// Exchange a stored provider subject token for an intermediate token scoped
 	// to the calling supervisor's SPIFFE identity.
 	ExchangeProviderSubjectToken(context.Context, *connect.Request[openshellv1.ExchangeProviderSubjectTokenRequest]) (*connect.Response[openshellv1.ExchangeProviderSubjectTokenResponse], error)
+	// Obtain the final provider token for the authenticated sandbox session.
+	// SPIFFE assertions and intermediate credentials remain in the gateway.
+	GetSandboxProviderAccessToken(context.Context, *connect.Request[openshellv1.GetSandboxProviderAccessTokenRequest]) (*connect.Response[openshellv1.GetSandboxProviderAccessTokenResponse], error)
 	// Fetch recent sandbox logs (one-shot).
 	GetSandboxLogs(context.Context, *connect.Request[openshellv1.GetSandboxLogsRequest]) (*connect.Response[openshellv1.GetSandboxLogsResponse], error)
 	// Push sandbox supervisor logs to the server (client-streaming).
@@ -398,9 +476,11 @@ type OpenShellClient interface {
 	//
 	// The supervisor opens this stream at startup and keeps it alive for the
 	// sandbox lifetime. The gateway uses it to coordinate relay channels for
-	// SSH connect, ExecSandbox, and targetable sandbox services. Raw service
-	// bytes flow over RelayStream calls (separate HTTP/2 streams on the same
-	// connection), not over this stream.
+	// SSH connect, ExecSandbox, targetable sandbox services, and configuration
+	// delivery. Supervisors advertise optional stream features in
+	// SupervisorHello, and the gateway sends only payloads the supervisor
+	// advertises. Raw service bytes flow over RelayStream calls (separate HTTP/2
+	// streams on the same connection), not over this stream.
 	ConnectSupervisor(context.Context) *connect.BidiStreamForClient[openshellv1.SupervisorMessage, openshellv1.GatewayMessage]
 	// Persist the canonical main process result before the supervisor exits.
 	ReportMainProcessExit(context.Context, *connect.Request[openshellv1.ReportMainProcessExitRequest]) (*connect.Response[openshellv1.ReportMainProcessExitResponse], error)
@@ -430,6 +510,9 @@ type OpenShellClient interface {
 	PeerReportProviderReadiness(context.Context, *connect.Request[openshellv1.ReportProviderReadinessRequest]) (*connect.Response[openshellv1.ReportProviderReadinessResponse], error)
 	PeerReportEndpointStatus(context.Context, *connect.Request[openshellv1.ReportEndpointStatusRequest]) (*connect.Response[openshellv1.ReportEndpointStatusResponse], error)
 	PeerGetSandboxProviderStatus(context.Context, *connect.Request[openshellv1.GetSandboxProviderStatusRequest]) (*connect.Response[openshellv1.GetSandboxProviderStatusResponse], error)
+	// Best-effort notification to the replica that owns a supervisor session.
+	// The receiver rebuilds snapshots from authoritative state.
+	PeerNotifyConfigUpdate(context.Context, *connect.Request[openshellv1.PeerNotifyConfigUpdateRequest]) (*connect.Response[openshellv1.PeerNotifyConfigUpdateResponse], error)
 	// Watch a sandbox and stream updates.
 	//
 	// This stream can include:
@@ -603,6 +686,18 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(openShellMethods.ByName("StartSandbox")),
 			connect.WithClientOptions(opts...),
 		),
+		suspendSandbox: connect.NewClient[openshellv1.SuspendSandboxRequest, openshellv1.SandboxResponse](
+			httpClient,
+			baseURL+OpenShellSuspendSandboxProcedure,
+			connect.WithSchema(openShellMethods.ByName("SuspendSandbox")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeSandbox: connect.NewClient[openshellv1.ResumeSandboxRequest, openshellv1.SandboxResponse](
+			httpClient,
+			baseURL+OpenShellResumeSandboxProcedure,
+			connect.WithSchema(openShellMethods.ByName("ResumeSandbox")),
+			connect.WithClientOptions(opts...),
+		),
 		createSshSession: connect.NewClient[openshellv1.CreateSshSessionRequest, openshellv1.CreateSshSessionResponse](
 			httpClient,
 			baseURL+OpenShellCreateSshSessionProcedure,
@@ -669,6 +764,12 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(openShellMethods.ByName("GetProvider")),
 			connect.WithClientOptions(opts...),
 		),
+		getProviderCredentials: connect.NewClient[openshellv1.GetProviderCredentialsRequest, openshellv1.GetProviderCredentialsResponse](
+			httpClient,
+			baseURL+OpenShellGetProviderCredentialsProcedure,
+			connect.WithSchema(openShellMethods.ByName("GetProviderCredentials")),
+			connect.WithClientOptions(opts...),
+		),
 		listProviders: connect.NewClient[openshellv1.ListProvidersRequest, openshellv1.ListProvidersResponse](
 			httpClient,
 			baseURL+OpenShellListProvidersProcedure,
@@ -729,6 +830,12 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(openShellMethods.ByName("RotateProviderCredential")),
 			connect.WithClientOptions(opts...),
 		),
+		inlineProviderRefreshSecrets: connect.NewClient[openshellv1.InlineProviderRefreshSecretsRequest, openshellv1.InlineProviderRefreshSecretsResponse](
+			httpClient,
+			baseURL+OpenShellInlineProviderRefreshSecretsProcedure,
+			connect.WithSchema(openShellMethods.ByName("InlineProviderRefreshSecrets")),
+			connect.WithClientOptions(opts...),
+		),
 		deleteProviderRefresh: connect.NewClient[openshellv1.DeleteProviderRefreshRequest, openshellv1.DeleteProviderRefreshResponse](
 			httpClient,
 			baseURL+OpenShellDeleteProviderRefreshProcedure,
@@ -745,6 +852,42 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			httpClient,
 			baseURL+OpenShellDeleteProviderProfileProcedure,
 			connect.WithSchema(openShellMethods.ByName("DeleteProviderProfile")),
+			connect.WithClientOptions(opts...),
+		),
+		createSecret: connect.NewClient[openshellv1.CreateSecretRequest, openshellv1.SecretResponse](
+			httpClient,
+			baseURL+OpenShellCreateSecretProcedure,
+			connect.WithSchema(openShellMethods.ByName("CreateSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		getSecret: connect.NewClient[openshellv1.GetSecretRequest, openshellv1.SecretResponse](
+			httpClient,
+			baseURL+OpenShellGetSecretProcedure,
+			connect.WithSchema(openShellMethods.ByName("GetSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		listSecrets: connect.NewClient[openshellv1.ListSecretsRequest, openshellv1.ListSecretsResponse](
+			httpClient,
+			baseURL+OpenShellListSecretsProcedure,
+			connect.WithSchema(openShellMethods.ByName("ListSecrets")),
+			connect.WithClientOptions(opts...),
+		),
+		updateSecret: connect.NewClient[openshellv1.UpdateSecretRequest, openshellv1.SecretResponse](
+			httpClient,
+			baseURL+OpenShellUpdateSecretProcedure,
+			connect.WithSchema(openShellMethods.ByName("UpdateSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteSecret: connect.NewClient[openshellv1.DeleteSecretRequest, openshellv1.DeleteSecretResponse](
+			httpClient,
+			baseURL+OpenShellDeleteSecretProcedure,
+			connect.WithSchema(openShellMethods.ByName("DeleteSecret")),
+			connect.WithClientOptions(opts...),
+		),
+		revealSecret: connect.NewClient[openshellv1.RevealSecretRequest, openshellv1.RevealSecretResponse](
+			httpClient,
+			baseURL+OpenShellRevealSecretProcedure,
+			connect.WithSchema(openShellMethods.ByName("RevealSecret")),
 			connect.WithClientOptions(opts...),
 		),
 		getSandboxConfig: connect.NewClient[sandboxv1.GetSandboxConfigRequest, sandboxv1.GetSandboxConfigResponse](
@@ -813,6 +956,12 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(openShellMethods.ByName("ExchangeProviderSubjectToken")),
 			connect.WithClientOptions(opts...),
 		),
+		getSandboxProviderAccessToken: connect.NewClient[openshellv1.GetSandboxProviderAccessTokenRequest, openshellv1.GetSandboxProviderAccessTokenResponse](
+			httpClient,
+			baseURL+OpenShellGetSandboxProviderAccessTokenProcedure,
+			connect.WithSchema(openShellMethods.ByName("GetSandboxProviderAccessToken")),
+			connect.WithClientOptions(opts...),
+		),
 		getSandboxLogs: connect.NewClient[openshellv1.GetSandboxLogsRequest, openshellv1.GetSandboxLogsResponse](
 			httpClient,
 			baseURL+OpenShellGetSandboxLogsProcedure,
@@ -871,6 +1020,12 @@ func NewOpenShellClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			httpClient,
 			baseURL+OpenShellPeerGetSandboxProviderStatusProcedure,
 			connect.WithSchema(openShellMethods.ByName("PeerGetSandboxProviderStatus")),
+			connect.WithClientOptions(opts...),
+		),
+		peerNotifyConfigUpdate: connect.NewClient[openshellv1.PeerNotifyConfigUpdateRequest, openshellv1.PeerNotifyConfigUpdateResponse](
+			httpClient,
+			baseURL+OpenShellPeerNotifyConfigUpdateProcedure,
+			connect.WithSchema(openShellMethods.ByName("PeerNotifyConfigUpdate")),
 			connect.WithClientOptions(opts...),
 		),
 		watchSandbox: connect.NewClient[openshellv1.WatchSandboxRequest, openshellv1.SandboxStreamEvent](
@@ -1010,6 +1165,8 @@ type openShellClient struct {
 	deleteSandbox                 *connect.Client[openshellv1.DeleteSandboxRequest, openshellv1.DeleteSandboxResponse]
 	stopSandbox                   *connect.Client[openshellv1.StopSandboxRequest, openshellv1.SandboxResponse]
 	startSandbox                  *connect.Client[openshellv1.StartSandboxRequest, openshellv1.SandboxResponse]
+	suspendSandbox                *connect.Client[openshellv1.SuspendSandboxRequest, openshellv1.SandboxResponse]
+	resumeSandbox                 *connect.Client[openshellv1.ResumeSandboxRequest, openshellv1.SandboxResponse]
 	createSshSession              *connect.Client[openshellv1.CreateSshSessionRequest, openshellv1.CreateSshSessionResponse]
 	exposeService                 *connect.Client[openshellv1.ExposeServiceRequest, openshellv1.ServiceEndpointResponse]
 	getService                    *connect.Client[openshellv1.GetServiceRequest, openshellv1.ServiceEndpointResponse]
@@ -1021,6 +1178,7 @@ type openShellClient struct {
 	execSandboxInteractive        *connect.Client[openshellv1.ExecSandboxInput, openshellv1.ExecSandboxEvent]
 	createProvider                *connect.Client[openshellv1.CreateProviderRequest, openshellv1.ProviderResponse]
 	getProvider                   *connect.Client[openshellv1.GetProviderRequest, openshellv1.ProviderResponse]
+	getProviderCredentials        *connect.Client[openshellv1.GetProviderCredentialsRequest, openshellv1.GetProviderCredentialsResponse]
 	listProviders                 *connect.Client[openshellv1.ListProvidersRequest, openshellv1.ListProvidersResponse]
 	listProviderProfiles          *connect.Client[openshellv1.ListProviderProfilesRequest, openshellv1.ListProviderProfilesResponse]
 	getProviderProfile            *connect.Client[openshellv1.GetProviderProfileRequest, openshellv1.ProviderProfileResponse]
@@ -1031,9 +1189,16 @@ type openShellClient struct {
 	getProviderRefreshStatus      *connect.Client[openshellv1.GetProviderRefreshStatusRequest, openshellv1.GetProviderRefreshStatusResponse]
 	configureProviderRefresh      *connect.Client[openshellv1.ConfigureProviderRefreshRequest, openshellv1.ConfigureProviderRefreshResponse]
 	rotateProviderCredential      *connect.Client[openshellv1.RotateProviderCredentialRequest, openshellv1.RotateProviderCredentialResponse]
+	inlineProviderRefreshSecrets  *connect.Client[openshellv1.InlineProviderRefreshSecretsRequest, openshellv1.InlineProviderRefreshSecretsResponse]
 	deleteProviderRefresh         *connect.Client[openshellv1.DeleteProviderRefreshRequest, openshellv1.DeleteProviderRefreshResponse]
 	deleteProvider                *connect.Client[openshellv1.DeleteProviderRequest, openshellv1.DeleteProviderResponse]
 	deleteProviderProfile         *connect.Client[openshellv1.DeleteProviderProfileRequest, openshellv1.DeleteProviderProfileResponse]
+	createSecret                  *connect.Client[openshellv1.CreateSecretRequest, openshellv1.SecretResponse]
+	getSecret                     *connect.Client[openshellv1.GetSecretRequest, openshellv1.SecretResponse]
+	listSecrets                   *connect.Client[openshellv1.ListSecretsRequest, openshellv1.ListSecretsResponse]
+	updateSecret                  *connect.Client[openshellv1.UpdateSecretRequest, openshellv1.SecretResponse]
+	deleteSecret                  *connect.Client[openshellv1.DeleteSecretRequest, openshellv1.DeleteSecretResponse]
+	revealSecret                  *connect.Client[openshellv1.RevealSecretRequest, openshellv1.RevealSecretResponse]
 	getSandboxConfig              *connect.Client[sandboxv1.GetSandboxConfigRequest, sandboxv1.GetSandboxConfigResponse]
 	getGatewayConfig              *connect.Client[sandboxv1.GetGatewayConfigRequest, sandboxv1.GetGatewayConfigResponse]
 	updateConfig                  *connect.Client[openshellv1.UpdateConfigRequest, openshellv1.UpdateConfigResponse]
@@ -1045,6 +1210,7 @@ type openShellClient struct {
 	reportSandboxConfiguration    *connect.Client[openshellv1.ReportSandboxConfigurationRequest, openshellv1.ReportSandboxConfigurationResponse]
 	getSandboxProviderEnvironment *connect.Client[openshellv1.GetSandboxProviderEnvironmentRequest, openshellv1.GetSandboxProviderEnvironmentResponse]
 	exchangeProviderSubjectToken  *connect.Client[openshellv1.ExchangeProviderSubjectTokenRequest, openshellv1.ExchangeProviderSubjectTokenResponse]
+	getSandboxProviderAccessToken *connect.Client[openshellv1.GetSandboxProviderAccessTokenRequest, openshellv1.GetSandboxProviderAccessTokenResponse]
 	getSandboxLogs                *connect.Client[openshellv1.GetSandboxLogsRequest, openshellv1.GetSandboxLogsResponse]
 	pushSandboxLogs               *connect.Client[openshellv1.PushSandboxLogsRequest, openshellv1.PushSandboxLogsResponse]
 	connectSupervisor             *connect.Client[openshellv1.SupervisorMessage, openshellv1.GatewayMessage]
@@ -1055,6 +1221,7 @@ type openShellClient struct {
 	peerReportProviderReadiness   *connect.Client[openshellv1.ReportProviderReadinessRequest, openshellv1.ReportProviderReadinessResponse]
 	peerReportEndpointStatus      *connect.Client[openshellv1.ReportEndpointStatusRequest, openshellv1.ReportEndpointStatusResponse]
 	peerGetSandboxProviderStatus  *connect.Client[openshellv1.GetSandboxProviderStatusRequest, openshellv1.GetSandboxProviderStatusResponse]
+	peerNotifyConfigUpdate        *connect.Client[openshellv1.PeerNotifyConfigUpdateRequest, openshellv1.PeerNotifyConfigUpdateResponse]
 	watchSandbox                  *connect.Client[openshellv1.WatchSandboxRequest, openshellv1.SandboxStreamEvent]
 	submitPolicyAnalysis          *connect.Client[openshellv1.SubmitPolicyAnalysisRequest, openshellv1.SubmitPolicyAnalysisResponse]
 	getDraftPolicy                *connect.Client[openshellv1.GetDraftPolicyRequest, openshellv1.GetDraftPolicyResponse]
@@ -1166,6 +1333,16 @@ func (c *openShellClient) StartSandbox(ctx context.Context, req *connect.Request
 	return c.startSandbox.CallUnary(ctx, req)
 }
 
+// SuspendSandbox calls openshell.v1.OpenShell.SuspendSandbox.
+func (c *openShellClient) SuspendSandbox(ctx context.Context, req *connect.Request[openshellv1.SuspendSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return c.suspendSandbox.CallUnary(ctx, req)
+}
+
+// ResumeSandbox calls openshell.v1.OpenShell.ResumeSandbox.
+func (c *openShellClient) ResumeSandbox(ctx context.Context, req *connect.Request[openshellv1.ResumeSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return c.resumeSandbox.CallUnary(ctx, req)
+}
+
 // CreateSshSession calls openshell.v1.OpenShell.CreateSshSession.
 func (c *openShellClient) CreateSshSession(ctx context.Context, req *connect.Request[openshellv1.CreateSshSessionRequest]) (*connect.Response[openshellv1.CreateSshSessionResponse], error) {
 	return c.createSshSession.CallUnary(ctx, req)
@@ -1221,6 +1398,11 @@ func (c *openShellClient) GetProvider(ctx context.Context, req *connect.Request[
 	return c.getProvider.CallUnary(ctx, req)
 }
 
+// GetProviderCredentials calls openshell.v1.OpenShell.GetProviderCredentials.
+func (c *openShellClient) GetProviderCredentials(ctx context.Context, req *connect.Request[openshellv1.GetProviderCredentialsRequest]) (*connect.Response[openshellv1.GetProviderCredentialsResponse], error) {
+	return c.getProviderCredentials.CallUnary(ctx, req)
+}
+
 // ListProviders calls openshell.v1.OpenShell.ListProviders.
 func (c *openShellClient) ListProviders(ctx context.Context, req *connect.Request[openshellv1.ListProvidersRequest]) (*connect.Response[openshellv1.ListProvidersResponse], error) {
 	return c.listProviders.CallUnary(ctx, req)
@@ -1271,6 +1453,11 @@ func (c *openShellClient) RotateProviderCredential(ctx context.Context, req *con
 	return c.rotateProviderCredential.CallUnary(ctx, req)
 }
 
+// InlineProviderRefreshSecrets calls openshell.v1.OpenShell.InlineProviderRefreshSecrets.
+func (c *openShellClient) InlineProviderRefreshSecrets(ctx context.Context, req *connect.Request[openshellv1.InlineProviderRefreshSecretsRequest]) (*connect.Response[openshellv1.InlineProviderRefreshSecretsResponse], error) {
+	return c.inlineProviderRefreshSecrets.CallUnary(ctx, req)
+}
+
 // DeleteProviderRefresh calls openshell.v1.OpenShell.DeleteProviderRefresh.
 func (c *openShellClient) DeleteProviderRefresh(ctx context.Context, req *connect.Request[openshellv1.DeleteProviderRefreshRequest]) (*connect.Response[openshellv1.DeleteProviderRefreshResponse], error) {
 	return c.deleteProviderRefresh.CallUnary(ctx, req)
@@ -1284,6 +1471,36 @@ func (c *openShellClient) DeleteProvider(ctx context.Context, req *connect.Reque
 // DeleteProviderProfile calls openshell.v1.OpenShell.DeleteProviderProfile.
 func (c *openShellClient) DeleteProviderProfile(ctx context.Context, req *connect.Request[openshellv1.DeleteProviderProfileRequest]) (*connect.Response[openshellv1.DeleteProviderProfileResponse], error) {
 	return c.deleteProviderProfile.CallUnary(ctx, req)
+}
+
+// CreateSecret calls openshell.v1.OpenShell.CreateSecret.
+func (c *openShellClient) CreateSecret(ctx context.Context, req *connect.Request[openshellv1.CreateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return c.createSecret.CallUnary(ctx, req)
+}
+
+// GetSecret calls openshell.v1.OpenShell.GetSecret.
+func (c *openShellClient) GetSecret(ctx context.Context, req *connect.Request[openshellv1.GetSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return c.getSecret.CallUnary(ctx, req)
+}
+
+// ListSecrets calls openshell.v1.OpenShell.ListSecrets.
+func (c *openShellClient) ListSecrets(ctx context.Context, req *connect.Request[openshellv1.ListSecretsRequest]) (*connect.Response[openshellv1.ListSecretsResponse], error) {
+	return c.listSecrets.CallUnary(ctx, req)
+}
+
+// UpdateSecret calls openshell.v1.OpenShell.UpdateSecret.
+func (c *openShellClient) UpdateSecret(ctx context.Context, req *connect.Request[openshellv1.UpdateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return c.updateSecret.CallUnary(ctx, req)
+}
+
+// DeleteSecret calls openshell.v1.OpenShell.DeleteSecret.
+func (c *openShellClient) DeleteSecret(ctx context.Context, req *connect.Request[openshellv1.DeleteSecretRequest]) (*connect.Response[openshellv1.DeleteSecretResponse], error) {
+	return c.deleteSecret.CallUnary(ctx, req)
+}
+
+// RevealSecret calls openshell.v1.OpenShell.RevealSecret.
+func (c *openShellClient) RevealSecret(ctx context.Context, req *connect.Request[openshellv1.RevealSecretRequest]) (*connect.Response[openshellv1.RevealSecretResponse], error) {
+	return c.revealSecret.CallUnary(ctx, req)
 }
 
 // GetSandboxConfig calls openshell.v1.OpenShell.GetSandboxConfig.
@@ -1341,6 +1558,11 @@ func (c *openShellClient) ExchangeProviderSubjectToken(ctx context.Context, req 
 	return c.exchangeProviderSubjectToken.CallUnary(ctx, req)
 }
 
+// GetSandboxProviderAccessToken calls openshell.v1.OpenShell.GetSandboxProviderAccessToken.
+func (c *openShellClient) GetSandboxProviderAccessToken(ctx context.Context, req *connect.Request[openshellv1.GetSandboxProviderAccessTokenRequest]) (*connect.Response[openshellv1.GetSandboxProviderAccessTokenResponse], error) {
+	return c.getSandboxProviderAccessToken.CallUnary(ctx, req)
+}
+
 // GetSandboxLogs calls openshell.v1.OpenShell.GetSandboxLogs.
 func (c *openShellClient) GetSandboxLogs(ctx context.Context, req *connect.Request[openshellv1.GetSandboxLogsRequest]) (*connect.Response[openshellv1.GetSandboxLogsResponse], error) {
 	return c.getSandboxLogs.CallUnary(ctx, req)
@@ -1389,6 +1611,11 @@ func (c *openShellClient) PeerReportEndpointStatus(ctx context.Context, req *con
 // PeerGetSandboxProviderStatus calls openshell.v1.OpenShell.PeerGetSandboxProviderStatus.
 func (c *openShellClient) PeerGetSandboxProviderStatus(ctx context.Context, req *connect.Request[openshellv1.GetSandboxProviderStatusRequest]) (*connect.Response[openshellv1.GetSandboxProviderStatusResponse], error) {
 	return c.peerGetSandboxProviderStatus.CallUnary(ctx, req)
+}
+
+// PeerNotifyConfigUpdate calls openshell.v1.OpenShell.PeerNotifyConfigUpdate.
+func (c *openShellClient) PeerNotifyConfigUpdate(ctx context.Context, req *connect.Request[openshellv1.PeerNotifyConfigUpdateRequest]) (*connect.Response[openshellv1.PeerNotifyConfigUpdateResponse], error) {
+	return c.peerNotifyConfigUpdate.CallUnary(ctx, req)
 }
 
 // WatchSandbox calls openshell.v1.OpenShell.WatchSandbox.
@@ -1531,6 +1758,12 @@ type OpenShellHandler interface {
 	StopSandbox(context.Context, *connect.Request[openshellv1.StopSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
 	// Start a previously stopped sandbox.
 	StartSandbox(context.Context, *connect.Request[openshellv1.StartSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+	// Freeze a ready sandbox and retain its memory state for a later resume.
+	// Requires a compute driver and isolation backend that support state
+	// retention.
+	SuspendSandbox(context.Context, *connect.Request[openshellv1.SuspendSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+	// Restore a suspended sandbox in a new runtime generation.
+	ResumeSandbox(context.Context, *connect.Request[openshellv1.ResumeSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
 	// Create a short-lived SSH session for a sandbox.
 	CreateSshSession(context.Context, *connect.Request[openshellv1.CreateSshSessionRequest]) (*connect.Response[openshellv1.CreateSshSessionResponse], error)
 	// Create or update a sandbox HTTP service endpoint for local routing.
@@ -1555,6 +1788,9 @@ type OpenShellHandler interface {
 	CreateProvider(context.Context, *connect.Request[openshellv1.CreateProviderRequest]) (*connect.Response[openshellv1.ProviderResponse], error)
 	// Fetch a provider by name.
 	GetProvider(context.Context, *connect.Request[openshellv1.GetProviderRequest]) (*connect.Response[openshellv1.ProviderResponse], error)
+	// Export selected usable runtime credentials. Only directly authenticated
+	// mTLS operators may call this method; refresh material is never returned.
+	GetProviderCredentials(context.Context, *connect.Request[openshellv1.GetProviderCredentialsRequest]) (*connect.Response[openshellv1.GetProviderCredentialsResponse], error)
 	// List providers.
 	ListProviders(context.Context, *connect.Request[openshellv1.ListProvidersRequest]) (*connect.Response[openshellv1.ListProvidersResponse], error)
 	// List available provider type profiles.
@@ -1575,13 +1811,35 @@ type OpenShellHandler interface {
 	ConfigureProviderRefresh(context.Context, *connect.Request[openshellv1.ConfigureProviderRefreshRequest]) (*connect.Response[openshellv1.ConfigureProviderRefreshResponse], error)
 	// Record a gateway-owned refresh request for one provider credential.
 	RotateProviderCredential(context.Context, *connect.Request[openshellv1.RotateProviderCredentialRequest]) (*connect.Response[openshellv1.RotateProviderCredentialResponse], error)
+	// Copy each workspace secret referenced by one credential's refresh
+	// configuration into provider-owned refresh material and remove the
+	// references. Other material, including a rotated refresh token, is kept.
+	InlineProviderRefreshSecrets(context.Context, *connect.Request[openshellv1.InlineProviderRefreshSecretsRequest]) (*connect.Response[openshellv1.InlineProviderRefreshSecretsResponse], error)
 	// Delete gateway-owned refresh configuration for one provider credential.
 	DeleteProviderRefresh(context.Context, *connect.Request[openshellv1.DeleteProviderRefreshRequest]) (*connect.Response[openshellv1.DeleteProviderRefreshResponse], error)
 	// Delete a provider by name.
 	DeleteProvider(context.Context, *connect.Request[openshellv1.DeleteProviderRequest]) (*connect.Response[openshellv1.DeleteProviderResponse], error)
 	// Delete a custom provider type profile by id.
 	DeleteProviderProfile(context.Context, *connect.Request[openshellv1.DeleteProviderProfileRequest]) (*connect.Response[openshellv1.DeleteProviderProfileResponse], error)
-	// Get sandbox settings by id (called by sandbox entrypoint and poll loop).
+	// Create a workspace secret. Secrets are credential minting material only:
+	// OpenShell never injects them into sandboxes, and Get and List never
+	// return their values.
+	CreateSecret(context.Context, *connect.Request[openshellv1.CreateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// Fetch workspace secret metadata by name. The value is never returned.
+	GetSecret(context.Context, *connect.Request[openshellv1.GetSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// List workspace secret metadata. Values are never returned.
+	ListSecrets(context.Context, *connect.Request[openshellv1.ListSecretsRequest]) (*connect.Response[openshellv1.ListSecretsResponse], error)
+	// Replace a workspace secret's value, description, or labels.
+	UpdateSecret(context.Context, *connect.Request[openshellv1.UpdateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error)
+	// Delete a workspace secret by name.
+	DeleteSecret(context.Context, *connect.Request[openshellv1.DeleteSecretRequest]) (*connect.Response[openshellv1.DeleteSecretResponse], error)
+	// Return a workspace secret's plaintext value to a control-plane caller.
+	// Disabled unless the gateway sets enable_secret_reveal. Only directly
+	// authenticated mTLS operators may call this method. Every call is audited.
+	RevealSecret(context.Context, *connect.Request[openshellv1.RevealSecretRequest]) (*connect.Response[openshellv1.RevealSecretResponse], error)
+	// Get sandbox settings by id (called by users, and by supervisors at startup
+	// and in their poll loop). A supervisor whose session pushes configuration
+	// receives later updates over ConnectSupervisor and stops polling.
 	GetSandboxConfig(context.Context, *connect.Request[sandboxv1.GetSandboxConfigRequest]) (*connect.Response[sandboxv1.GetSandboxConfigResponse], error)
 	// Get gateway-global settings (read-only runtime configuration; any
 	// authenticated user may read these without requiring Platform Admin).
@@ -1606,11 +1864,16 @@ type OpenShellHandler interface {
 	ReportProviderReadiness(context.Context, *connect.Request[openshellv1.ReportProviderReadinessRequest]) (*connect.Response[openshellv1.ReportProviderReadinessResponse], error)
 	// Register startup and acknowledge an exact validated runtime configuration.
 	ReportSandboxConfiguration(context.Context, *connect.Request[openshellv1.ReportSandboxConfigurationRequest]) (*connect.Response[openshellv1.ReportSandboxConfigurationResponse], error)
-	// Get provider environment for a sandbox (called by sandbox supervisor at startup).
+	// Get provider environment for a sandbox (called by the sandbox supervisor at
+	// startup and by its poll loop). Polling projection of the provider
+	// environment delivered over ConnectSupervisor; removed with the polling RPCs.
 	GetSandboxProviderEnvironment(context.Context, *connect.Request[openshellv1.GetSandboxProviderEnvironmentRequest]) (*connect.Response[openshellv1.GetSandboxProviderEnvironmentResponse], error)
 	// Exchange a stored provider subject token for an intermediate token scoped
 	// to the calling supervisor's SPIFFE identity.
 	ExchangeProviderSubjectToken(context.Context, *connect.Request[openshellv1.ExchangeProviderSubjectTokenRequest]) (*connect.Response[openshellv1.ExchangeProviderSubjectTokenResponse], error)
+	// Obtain the final provider token for the authenticated sandbox session.
+	// SPIFFE assertions and intermediate credentials remain in the gateway.
+	GetSandboxProviderAccessToken(context.Context, *connect.Request[openshellv1.GetSandboxProviderAccessTokenRequest]) (*connect.Response[openshellv1.GetSandboxProviderAccessTokenResponse], error)
 	// Fetch recent sandbox logs (one-shot).
 	GetSandboxLogs(context.Context, *connect.Request[openshellv1.GetSandboxLogsRequest]) (*connect.Response[openshellv1.GetSandboxLogsResponse], error)
 	// Push sandbox supervisor logs to the server (client-streaming).
@@ -1619,9 +1882,11 @@ type OpenShellHandler interface {
 	//
 	// The supervisor opens this stream at startup and keeps it alive for the
 	// sandbox lifetime. The gateway uses it to coordinate relay channels for
-	// SSH connect, ExecSandbox, and targetable sandbox services. Raw service
-	// bytes flow over RelayStream calls (separate HTTP/2 streams on the same
-	// connection), not over this stream.
+	// SSH connect, ExecSandbox, targetable sandbox services, and configuration
+	// delivery. Supervisors advertise optional stream features in
+	// SupervisorHello, and the gateway sends only payloads the supervisor
+	// advertises. Raw service bytes flow over RelayStream calls (separate HTTP/2
+	// streams on the same connection), not over this stream.
 	ConnectSupervisor(context.Context, *connect.BidiStream[openshellv1.SupervisorMessage, openshellv1.GatewayMessage]) error
 	// Persist the canonical main process result before the supervisor exits.
 	ReportMainProcessExit(context.Context, *connect.Request[openshellv1.ReportMainProcessExitRequest]) (*connect.Response[openshellv1.ReportMainProcessExitResponse], error)
@@ -1651,6 +1916,9 @@ type OpenShellHandler interface {
 	PeerReportProviderReadiness(context.Context, *connect.Request[openshellv1.ReportProviderReadinessRequest]) (*connect.Response[openshellv1.ReportProviderReadinessResponse], error)
 	PeerReportEndpointStatus(context.Context, *connect.Request[openshellv1.ReportEndpointStatusRequest]) (*connect.Response[openshellv1.ReportEndpointStatusResponse], error)
 	PeerGetSandboxProviderStatus(context.Context, *connect.Request[openshellv1.GetSandboxProviderStatusRequest]) (*connect.Response[openshellv1.GetSandboxProviderStatusResponse], error)
+	// Best-effort notification to the replica that owns a supervisor session.
+	// The receiver rebuilds snapshots from authoritative state.
+	PeerNotifyConfigUpdate(context.Context, *connect.Request[openshellv1.PeerNotifyConfigUpdateRequest]) (*connect.Response[openshellv1.PeerNotifyConfigUpdateResponse], error)
 	// Watch a sandbox and stream updates.
 	//
 	// This stream can include:
@@ -1820,6 +2088,18 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(openShellMethods.ByName("StartSandbox")),
 		connect.WithHandlerOptions(opts...),
 	)
+	openShellSuspendSandboxHandler := connect.NewUnaryHandler(
+		OpenShellSuspendSandboxProcedure,
+		svc.SuspendSandbox,
+		connect.WithSchema(openShellMethods.ByName("SuspendSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellResumeSandboxHandler := connect.NewUnaryHandler(
+		OpenShellResumeSandboxProcedure,
+		svc.ResumeSandbox,
+		connect.WithSchema(openShellMethods.ByName("ResumeSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
 	openShellCreateSshSessionHandler := connect.NewUnaryHandler(
 		OpenShellCreateSshSessionProcedure,
 		svc.CreateSshSession,
@@ -1886,6 +2166,12 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(openShellMethods.ByName("GetProvider")),
 		connect.WithHandlerOptions(opts...),
 	)
+	openShellGetProviderCredentialsHandler := connect.NewUnaryHandler(
+		OpenShellGetProviderCredentialsProcedure,
+		svc.GetProviderCredentials,
+		connect.WithSchema(openShellMethods.ByName("GetProviderCredentials")),
+		connect.WithHandlerOptions(opts...),
+	)
 	openShellListProvidersHandler := connect.NewUnaryHandler(
 		OpenShellListProvidersProcedure,
 		svc.ListProviders,
@@ -1946,6 +2232,12 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(openShellMethods.ByName("RotateProviderCredential")),
 		connect.WithHandlerOptions(opts...),
 	)
+	openShellInlineProviderRefreshSecretsHandler := connect.NewUnaryHandler(
+		OpenShellInlineProviderRefreshSecretsProcedure,
+		svc.InlineProviderRefreshSecrets,
+		connect.WithSchema(openShellMethods.ByName("InlineProviderRefreshSecrets")),
+		connect.WithHandlerOptions(opts...),
+	)
 	openShellDeleteProviderRefreshHandler := connect.NewUnaryHandler(
 		OpenShellDeleteProviderRefreshProcedure,
 		svc.DeleteProviderRefresh,
@@ -1962,6 +2254,42 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		OpenShellDeleteProviderProfileProcedure,
 		svc.DeleteProviderProfile,
 		connect.WithSchema(openShellMethods.ByName("DeleteProviderProfile")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellCreateSecretHandler := connect.NewUnaryHandler(
+		OpenShellCreateSecretProcedure,
+		svc.CreateSecret,
+		connect.WithSchema(openShellMethods.ByName("CreateSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellGetSecretHandler := connect.NewUnaryHandler(
+		OpenShellGetSecretProcedure,
+		svc.GetSecret,
+		connect.WithSchema(openShellMethods.ByName("GetSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellListSecretsHandler := connect.NewUnaryHandler(
+		OpenShellListSecretsProcedure,
+		svc.ListSecrets,
+		connect.WithSchema(openShellMethods.ByName("ListSecrets")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellUpdateSecretHandler := connect.NewUnaryHandler(
+		OpenShellUpdateSecretProcedure,
+		svc.UpdateSecret,
+		connect.WithSchema(openShellMethods.ByName("UpdateSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellDeleteSecretHandler := connect.NewUnaryHandler(
+		OpenShellDeleteSecretProcedure,
+		svc.DeleteSecret,
+		connect.WithSchema(openShellMethods.ByName("DeleteSecret")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellRevealSecretHandler := connect.NewUnaryHandler(
+		OpenShellRevealSecretProcedure,
+		svc.RevealSecret,
+		connect.WithSchema(openShellMethods.ByName("RevealSecret")),
 		connect.WithHandlerOptions(opts...),
 	)
 	openShellGetSandboxConfigHandler := connect.NewUnaryHandler(
@@ -2030,6 +2358,12 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(openShellMethods.ByName("ExchangeProviderSubjectToken")),
 		connect.WithHandlerOptions(opts...),
 	)
+	openShellGetSandboxProviderAccessTokenHandler := connect.NewUnaryHandler(
+		OpenShellGetSandboxProviderAccessTokenProcedure,
+		svc.GetSandboxProviderAccessToken,
+		connect.WithSchema(openShellMethods.ByName("GetSandboxProviderAccessToken")),
+		connect.WithHandlerOptions(opts...),
+	)
 	openShellGetSandboxLogsHandler := connect.NewUnaryHandler(
 		OpenShellGetSandboxLogsProcedure,
 		svc.GetSandboxLogs,
@@ -2088,6 +2422,12 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 		OpenShellPeerGetSandboxProviderStatusProcedure,
 		svc.PeerGetSandboxProviderStatus,
 		connect.WithSchema(openShellMethods.ByName("PeerGetSandboxProviderStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
+	openShellPeerNotifyConfigUpdateHandler := connect.NewUnaryHandler(
+		OpenShellPeerNotifyConfigUpdateProcedure,
+		svc.PeerNotifyConfigUpdate,
+		connect.WithSchema(openShellMethods.ByName("PeerNotifyConfigUpdate")),
 		connect.WithHandlerOptions(opts...),
 	)
 	openShellWatchSandboxHandler := connect.NewServerStreamHandler(
@@ -2242,6 +2582,10 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 			openShellStopSandboxHandler.ServeHTTP(w, r)
 		case OpenShellStartSandboxProcedure:
 			openShellStartSandboxHandler.ServeHTTP(w, r)
+		case OpenShellSuspendSandboxProcedure:
+			openShellSuspendSandboxHandler.ServeHTTP(w, r)
+		case OpenShellResumeSandboxProcedure:
+			openShellResumeSandboxHandler.ServeHTTP(w, r)
 		case OpenShellCreateSshSessionProcedure:
 			openShellCreateSshSessionHandler.ServeHTTP(w, r)
 		case OpenShellExposeServiceProcedure:
@@ -2264,6 +2608,8 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 			openShellCreateProviderHandler.ServeHTTP(w, r)
 		case OpenShellGetProviderProcedure:
 			openShellGetProviderHandler.ServeHTTP(w, r)
+		case OpenShellGetProviderCredentialsProcedure:
+			openShellGetProviderCredentialsHandler.ServeHTTP(w, r)
 		case OpenShellListProvidersProcedure:
 			openShellListProvidersHandler.ServeHTTP(w, r)
 		case OpenShellListProviderProfilesProcedure:
@@ -2284,12 +2630,26 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 			openShellConfigureProviderRefreshHandler.ServeHTTP(w, r)
 		case OpenShellRotateProviderCredentialProcedure:
 			openShellRotateProviderCredentialHandler.ServeHTTP(w, r)
+		case OpenShellInlineProviderRefreshSecretsProcedure:
+			openShellInlineProviderRefreshSecretsHandler.ServeHTTP(w, r)
 		case OpenShellDeleteProviderRefreshProcedure:
 			openShellDeleteProviderRefreshHandler.ServeHTTP(w, r)
 		case OpenShellDeleteProviderProcedure:
 			openShellDeleteProviderHandler.ServeHTTP(w, r)
 		case OpenShellDeleteProviderProfileProcedure:
 			openShellDeleteProviderProfileHandler.ServeHTTP(w, r)
+		case OpenShellCreateSecretProcedure:
+			openShellCreateSecretHandler.ServeHTTP(w, r)
+		case OpenShellGetSecretProcedure:
+			openShellGetSecretHandler.ServeHTTP(w, r)
+		case OpenShellListSecretsProcedure:
+			openShellListSecretsHandler.ServeHTTP(w, r)
+		case OpenShellUpdateSecretProcedure:
+			openShellUpdateSecretHandler.ServeHTTP(w, r)
+		case OpenShellDeleteSecretProcedure:
+			openShellDeleteSecretHandler.ServeHTTP(w, r)
+		case OpenShellRevealSecretProcedure:
+			openShellRevealSecretHandler.ServeHTTP(w, r)
 		case OpenShellGetSandboxConfigProcedure:
 			openShellGetSandboxConfigHandler.ServeHTTP(w, r)
 		case OpenShellGetGatewayConfigProcedure:
@@ -2312,6 +2672,8 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 			openShellGetSandboxProviderEnvironmentHandler.ServeHTTP(w, r)
 		case OpenShellExchangeProviderSubjectTokenProcedure:
 			openShellExchangeProviderSubjectTokenHandler.ServeHTTP(w, r)
+		case OpenShellGetSandboxProviderAccessTokenProcedure:
+			openShellGetSandboxProviderAccessTokenHandler.ServeHTTP(w, r)
 		case OpenShellGetSandboxLogsProcedure:
 			openShellGetSandboxLogsHandler.ServeHTTP(w, r)
 		case OpenShellPushSandboxLogsProcedure:
@@ -2332,6 +2694,8 @@ func NewOpenShellHandler(svc OpenShellHandler, opts ...connect.HandlerOption) (s
 			openShellPeerReportEndpointStatusHandler.ServeHTTP(w, r)
 		case OpenShellPeerGetSandboxProviderStatusProcedure:
 			openShellPeerGetSandboxProviderStatusHandler.ServeHTTP(w, r)
+		case OpenShellPeerNotifyConfigUpdateProcedure:
+			openShellPeerNotifyConfigUpdateHandler.ServeHTTP(w, r)
 		case OpenShellWatchSandboxProcedure:
 			openShellWatchSandboxHandler.ServeHTTP(w, r)
 		case OpenShellSubmitPolicyAnalysisProcedure:
@@ -2451,6 +2815,14 @@ func (UnimplementedOpenShellHandler) StartSandbox(context.Context, *connect.Requ
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.StartSandbox is not implemented"))
 }
 
+func (UnimplementedOpenShellHandler) SuspendSandbox(context.Context, *connect.Request[openshellv1.SuspendSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.SuspendSandbox is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) ResumeSandbox(context.Context, *connect.Request[openshellv1.ResumeSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.ResumeSandbox is not implemented"))
+}
+
 func (UnimplementedOpenShellHandler) CreateSshSession(context.Context, *connect.Request[openshellv1.CreateSshSessionRequest]) (*connect.Response[openshellv1.CreateSshSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.CreateSshSession is not implemented"))
 }
@@ -2495,6 +2867,10 @@ func (UnimplementedOpenShellHandler) GetProvider(context.Context, *connect.Reque
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.GetProvider is not implemented"))
 }
 
+func (UnimplementedOpenShellHandler) GetProviderCredentials(context.Context, *connect.Request[openshellv1.GetProviderCredentialsRequest]) (*connect.Response[openshellv1.GetProviderCredentialsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.GetProviderCredentials is not implemented"))
+}
+
 func (UnimplementedOpenShellHandler) ListProviders(context.Context, *connect.Request[openshellv1.ListProvidersRequest]) (*connect.Response[openshellv1.ListProvidersResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.ListProviders is not implemented"))
 }
@@ -2535,6 +2911,10 @@ func (UnimplementedOpenShellHandler) RotateProviderCredential(context.Context, *
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.RotateProviderCredential is not implemented"))
 }
 
+func (UnimplementedOpenShellHandler) InlineProviderRefreshSecrets(context.Context, *connect.Request[openshellv1.InlineProviderRefreshSecretsRequest]) (*connect.Response[openshellv1.InlineProviderRefreshSecretsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.InlineProviderRefreshSecrets is not implemented"))
+}
+
 func (UnimplementedOpenShellHandler) DeleteProviderRefresh(context.Context, *connect.Request[openshellv1.DeleteProviderRefreshRequest]) (*connect.Response[openshellv1.DeleteProviderRefreshResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.DeleteProviderRefresh is not implemented"))
 }
@@ -2545,6 +2925,30 @@ func (UnimplementedOpenShellHandler) DeleteProvider(context.Context, *connect.Re
 
 func (UnimplementedOpenShellHandler) DeleteProviderProfile(context.Context, *connect.Request[openshellv1.DeleteProviderProfileRequest]) (*connect.Response[openshellv1.DeleteProviderProfileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.DeleteProviderProfile is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) CreateSecret(context.Context, *connect.Request[openshellv1.CreateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.CreateSecret is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) GetSecret(context.Context, *connect.Request[openshellv1.GetSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.GetSecret is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) ListSecrets(context.Context, *connect.Request[openshellv1.ListSecretsRequest]) (*connect.Response[openshellv1.ListSecretsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.ListSecrets is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) UpdateSecret(context.Context, *connect.Request[openshellv1.UpdateSecretRequest]) (*connect.Response[openshellv1.SecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.UpdateSecret is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) DeleteSecret(context.Context, *connect.Request[openshellv1.DeleteSecretRequest]) (*connect.Response[openshellv1.DeleteSecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.DeleteSecret is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) RevealSecret(context.Context, *connect.Request[openshellv1.RevealSecretRequest]) (*connect.Response[openshellv1.RevealSecretResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.RevealSecret is not implemented"))
 }
 
 func (UnimplementedOpenShellHandler) GetSandboxConfig(context.Context, *connect.Request[sandboxv1.GetSandboxConfigRequest]) (*connect.Response[sandboxv1.GetSandboxConfigResponse], error) {
@@ -2591,6 +2995,10 @@ func (UnimplementedOpenShellHandler) ExchangeProviderSubjectToken(context.Contex
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.ExchangeProviderSubjectToken is not implemented"))
 }
 
+func (UnimplementedOpenShellHandler) GetSandboxProviderAccessToken(context.Context, *connect.Request[openshellv1.GetSandboxProviderAccessTokenRequest]) (*connect.Response[openshellv1.GetSandboxProviderAccessTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.GetSandboxProviderAccessToken is not implemented"))
+}
+
 func (UnimplementedOpenShellHandler) GetSandboxLogs(context.Context, *connect.Request[openshellv1.GetSandboxLogsRequest]) (*connect.Response[openshellv1.GetSandboxLogsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.GetSandboxLogs is not implemented"))
 }
@@ -2629,6 +3037,10 @@ func (UnimplementedOpenShellHandler) PeerReportEndpointStatus(context.Context, *
 
 func (UnimplementedOpenShellHandler) PeerGetSandboxProviderStatus(context.Context, *connect.Request[openshellv1.GetSandboxProviderStatusRequest]) (*connect.Response[openshellv1.GetSandboxProviderStatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.PeerGetSandboxProviderStatus is not implemented"))
+}
+
+func (UnimplementedOpenShellHandler) PeerNotifyConfigUpdate(context.Context, *connect.Request[openshellv1.PeerNotifyConfigUpdateRequest]) (*connect.Response[openshellv1.PeerNotifyConfigUpdateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.PeerNotifyConfigUpdate is not implemented"))
 }
 
 func (UnimplementedOpenShellHandler) WatchSandbox(context.Context, *connect.Request[openshellv1.WatchSandboxRequest], *connect.ServerStream[openshellv1.SandboxStreamEvent]) error {
@@ -2705,4 +3117,182 @@ func (UnimplementedOpenShellHandler) RemoveWorkspaceMember(context.Context, *con
 
 func (UnimplementedOpenShellHandler) ListWorkspaceMembers(context.Context, *connect.Request[openshellv1.ListWorkspaceMembersRequest]) (*connect.Response[openshellv1.ListWorkspaceMembersResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.OpenShell.ListWorkspaceMembers is not implemented"))
+}
+
+// ServiceDiscoveryClient is a client for the openshell.v1.ServiceDiscovery service.
+type ServiceDiscoveryClient interface {
+	// Read installed, unexpired application routes in one explicit workspace.
+	GetServiceRouteSnapshot(context.Context, *connect.Request[openshellv1.GetServiceRouteSnapshotRequest]) (*connect.Response[openshellv1.GetServiceRouteSnapshotResponse], error)
+	// Full replacement views; reauthorize during the bounded watch lifetime.
+	WatchServiceRoutes(context.Context, *connect.Request[openshellv1.WatchServiceRoutesRequest]) (*connect.ServerStreamForClient[openshellv1.WatchServiceRoutesResponse], error)
+}
+
+// NewServiceDiscoveryClient constructs a client for the openshell.v1.ServiceDiscovery service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewServiceDiscoveryClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ServiceDiscoveryClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	serviceDiscoveryMethods := openshellv1.File_openshell_proto.Services().ByName("ServiceDiscovery").Methods()
+	return &serviceDiscoveryClient{
+		getServiceRouteSnapshot: connect.NewClient[openshellv1.GetServiceRouteSnapshotRequest, openshellv1.GetServiceRouteSnapshotResponse](
+			httpClient,
+			baseURL+ServiceDiscoveryGetServiceRouteSnapshotProcedure,
+			connect.WithSchema(serviceDiscoveryMethods.ByName("GetServiceRouteSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		watchServiceRoutes: connect.NewClient[openshellv1.WatchServiceRoutesRequest, openshellv1.WatchServiceRoutesResponse](
+			httpClient,
+			baseURL+ServiceDiscoveryWatchServiceRoutesProcedure,
+			connect.WithSchema(serviceDiscoveryMethods.ByName("WatchServiceRoutes")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// serviceDiscoveryClient implements ServiceDiscoveryClient.
+type serviceDiscoveryClient struct {
+	getServiceRouteSnapshot *connect.Client[openshellv1.GetServiceRouteSnapshotRequest, openshellv1.GetServiceRouteSnapshotResponse]
+	watchServiceRoutes      *connect.Client[openshellv1.WatchServiceRoutesRequest, openshellv1.WatchServiceRoutesResponse]
+}
+
+// GetServiceRouteSnapshot calls openshell.v1.ServiceDiscovery.GetServiceRouteSnapshot.
+func (c *serviceDiscoveryClient) GetServiceRouteSnapshot(ctx context.Context, req *connect.Request[openshellv1.GetServiceRouteSnapshotRequest]) (*connect.Response[openshellv1.GetServiceRouteSnapshotResponse], error) {
+	return c.getServiceRouteSnapshot.CallUnary(ctx, req)
+}
+
+// WatchServiceRoutes calls openshell.v1.ServiceDiscovery.WatchServiceRoutes.
+func (c *serviceDiscoveryClient) WatchServiceRoutes(ctx context.Context, req *connect.Request[openshellv1.WatchServiceRoutesRequest]) (*connect.ServerStreamForClient[openshellv1.WatchServiceRoutesResponse], error) {
+	return c.watchServiceRoutes.CallServerStream(ctx, req)
+}
+
+// ServiceDiscoveryHandler is an implementation of the openshell.v1.ServiceDiscovery service.
+type ServiceDiscoveryHandler interface {
+	// Read installed, unexpired application routes in one explicit workspace.
+	GetServiceRouteSnapshot(context.Context, *connect.Request[openshellv1.GetServiceRouteSnapshotRequest]) (*connect.Response[openshellv1.GetServiceRouteSnapshotResponse], error)
+	// Full replacement views; reauthorize during the bounded watch lifetime.
+	WatchServiceRoutes(context.Context, *connect.Request[openshellv1.WatchServiceRoutesRequest], *connect.ServerStream[openshellv1.WatchServiceRoutesResponse]) error
+}
+
+// NewServiceDiscoveryHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewServiceDiscoveryHandler(svc ServiceDiscoveryHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	serviceDiscoveryMethods := openshellv1.File_openshell_proto.Services().ByName("ServiceDiscovery").Methods()
+	serviceDiscoveryGetServiceRouteSnapshotHandler := connect.NewUnaryHandler(
+		ServiceDiscoveryGetServiceRouteSnapshotProcedure,
+		svc.GetServiceRouteSnapshot,
+		connect.WithSchema(serviceDiscoveryMethods.ByName("GetServiceRouteSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serviceDiscoveryWatchServiceRoutesHandler := connect.NewServerStreamHandler(
+		ServiceDiscoveryWatchServiceRoutesProcedure,
+		svc.WatchServiceRoutes,
+		connect.WithSchema(serviceDiscoveryMethods.ByName("WatchServiceRoutes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/openshell.v1.ServiceDiscovery/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ServiceDiscoveryGetServiceRouteSnapshotProcedure:
+			serviceDiscoveryGetServiceRouteSnapshotHandler.ServeHTTP(w, r)
+		case ServiceDiscoveryWatchServiceRoutesProcedure:
+			serviceDiscoveryWatchServiceRoutesHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedServiceDiscoveryHandler returns CodeUnimplemented from all methods.
+type UnimplementedServiceDiscoveryHandler struct{}
+
+func (UnimplementedServiceDiscoveryHandler) GetServiceRouteSnapshot(context.Context, *connect.Request[openshellv1.GetServiceRouteSnapshotRequest]) (*connect.Response[openshellv1.GetServiceRouteSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.ServiceDiscovery.GetServiceRouteSnapshot is not implemented"))
+}
+
+func (UnimplementedServiceDiscoveryHandler) WatchServiceRoutes(context.Context, *connect.Request[openshellv1.WatchServiceRoutesRequest], *connect.ServerStream[openshellv1.WatchServiceRoutesResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.ServiceDiscovery.WatchServiceRoutes is not implemented"))
+}
+
+// SandboxUpdatesClient is a client for the openshell.v1.SandboxUpdates service.
+type SandboxUpdatesClient interface {
+	// Update the workload image, command, environment, labels, or annotations of a
+	// stopped sandbox while preserving its identity and retained storage. Requires
+	// compute-driver support for the selected changes and explicit gateway activation
+	// of sandbox updates.
+	UpdateSandbox(context.Context, *connect.Request[openshellv1.UpdateSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+}
+
+// NewSandboxUpdatesClient constructs a client for the openshell.v1.SandboxUpdates service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewSandboxUpdatesClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) SandboxUpdatesClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	sandboxUpdatesMethods := openshellv1.File_openshell_proto.Services().ByName("SandboxUpdates").Methods()
+	return &sandboxUpdatesClient{
+		updateSandbox: connect.NewClient[openshellv1.UpdateSandboxRequest, openshellv1.SandboxResponse](
+			httpClient,
+			baseURL+SandboxUpdatesUpdateSandboxProcedure,
+			connect.WithSchema(sandboxUpdatesMethods.ByName("UpdateSandbox")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// sandboxUpdatesClient implements SandboxUpdatesClient.
+type sandboxUpdatesClient struct {
+	updateSandbox *connect.Client[openshellv1.UpdateSandboxRequest, openshellv1.SandboxResponse]
+}
+
+// UpdateSandbox calls openshell.v1.SandboxUpdates.UpdateSandbox.
+func (c *sandboxUpdatesClient) UpdateSandbox(ctx context.Context, req *connect.Request[openshellv1.UpdateSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return c.updateSandbox.CallUnary(ctx, req)
+}
+
+// SandboxUpdatesHandler is an implementation of the openshell.v1.SandboxUpdates service.
+type SandboxUpdatesHandler interface {
+	// Update the workload image, command, environment, labels, or annotations of a
+	// stopped sandbox while preserving its identity and retained storage. Requires
+	// compute-driver support for the selected changes and explicit gateway activation
+	// of sandbox updates.
+	UpdateSandbox(context.Context, *connect.Request[openshellv1.UpdateSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error)
+}
+
+// NewSandboxUpdatesHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewSandboxUpdatesHandler(svc SandboxUpdatesHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	sandboxUpdatesMethods := openshellv1.File_openshell_proto.Services().ByName("SandboxUpdates").Methods()
+	sandboxUpdatesUpdateSandboxHandler := connect.NewUnaryHandler(
+		SandboxUpdatesUpdateSandboxProcedure,
+		svc.UpdateSandbox,
+		connect.WithSchema(sandboxUpdatesMethods.ByName("UpdateSandbox")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/openshell.v1.SandboxUpdates/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case SandboxUpdatesUpdateSandboxProcedure:
+			sandboxUpdatesUpdateSandboxHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedSandboxUpdatesHandler returns CodeUnimplemented from all methods.
+type UnimplementedSandboxUpdatesHandler struct{}
+
+func (UnimplementedSandboxUpdatesHandler) UpdateSandbox(context.Context, *connect.Request[openshellv1.UpdateSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openshell.v1.SandboxUpdates.UpdateSandbox is not implemented"))
 }

@@ -72,8 +72,19 @@ caller ships, such as an `__init__.py`; the daemon refuses a set holding one:
 ```sh
 plimsoll-withheld build -mode refuse -values-mode audit -exempt judge \
   -file harness/ -source harness/ -values seeds.txt -values answers.txt > withheld.json
+plimsoll-withheld check -set withheld.json harness/ seeds.txt answers.txt   # exit 1: an entry never found
 plimsoll-withheld scan -set withheld.json task/   # the same scan, offline; exit 1 on a find
 ```
+
+**A set written or edited by hand is checked with `plimsoll-withheld check`.** A digest
+cannot say what it was taken of, so the daemon cannot tell an entry that will never match
+from one that will, and loads both. `check` scans the files and values files the set was
+made from as the daemon scans a call, and lists each entry none of them holds, such as a
+value hashed with `echo`, whose newline is part of the digest, or in capitals. Such an entry
+is never found in a call either. It also lists each file entry that is a file's digest as
+written, as `sha256sum` takes it (`as written:`): that entry finds the file shipped byte for
+byte, but not the same file with other line endings, trailing whitespace or no final
+newline, which the builder's entry finds. Exit status 1 when one is listed.
 
 There are three kinds of entry.
 
@@ -81,7 +92,16 @@ There are three kinds of entry.
   spaces, tabs and carriage returns at the end of each line, and the newlines at the end
   of the file, are dropped first. A copy with Windows line endings or trailing
   whitespace still matches. It is found as any file of a call, under any name, and as a
-  snippet's or cell's code.
+  snippet's or cell's code. The scan also matches each file's digest as written, so an
+  entry written by hand with `sha256sum`, which hashes the file as it is, finds that file
+  shipped byte for byte. Earlier releases matched the normalized digest alone: nearly
+  every text file ends in a newline that normalization drops, so such an entry loaded
+  without a word and found nothing, not even its own file. A hand-written digest still
+  finds only the copy it was taken of; a copy with other line endings or trailing
+  whitespace is found by the builder's entry. The second match adds no find to a
+  builder's entry: a file's digest as written equals a normalized digest only when the
+  file is already in normalized form, which the first match finds. A digest of blank
+  content as written, up to 4 bytes (`\n`, `\r\n`), is refused as the empty file is.
 - A **value** entry is the SHA-256 of a short string (a seed, an answer, a key) with its
   ASCII letters lowercased, and its length in bytes. It is found in any letter case
   (`KESTREL-42`, `Kestrel-42`, `kEsTrEl-42`), and in the encodings described under
@@ -278,7 +298,7 @@ more. So the scan reads archives within four bounds per call, shared by all its 
 | Bound, per call | Value | Why this number |
 |---|---|---|
 | Bytes decompressed, in all | 8 MiB | Twice the 4 MiB of files a call may carry. Each such byte gets the full scan, so this bound sets the scan's worst cost (below). The bytes a zlib false start reads count too: input that inflates slowly costs about what scanning does. |
-| Bytes of stored members checked against file and source entries, in all | 64 MiB | A member costs its line endings normalized and one SHA-256 pass, about 3 ms a megabyte, and with source entries a pass over its lines, about 2 ms a megabyte against 20 entries (measured 2026-10-30), so 64 MiB is at most 0.35 s; the bound stops headers that claim overlapping contents from making the work grow with the square of the call. The CRC-32 computed to find where a stored zip member ends counts against it too, and so do the bytes a zlib false start writes, which are inflated and never scanned: output past what a try read comes from deflate's back-references, which inflate at about 2 GB/s. |
+| Bytes of stored members checked against file and source entries, in all | 64 MiB | A member costs its line endings normalized and one SHA-256 pass, about 3 ms a megabyte, and with source entries a pass over its lines, about 2 ms a megabyte against 20 entries (measured 2026-10-30), so 64 MiB is at most 0.35 s. The second SHA-256, of a member's bytes as written when normalization changed them, adds about 0.3 ms a megabyte (`BenchmarkFileEntry` against `BenchmarkFileDigest`, 2026-11-25, load average 8), at most 0.02 s over the bound, and left the costliest archive cases where they were (2.6 s and 1.9 s); the bound stops headers that claim overlapping contents from making the work grow with the square of the call. The CRC-32 computed to find where a stored zip member ends counts against it too, and so do the bytes a zlib false start writes, which are inflated and never scanned: output past what a try read comes from deflate's back-references, which inflate at about 2 GB/s. |
 | Archives and members, in all | 65,536 | Each costs a header's parse, and a zlib try a reader's reset and a few bytes inflated. A real archive within the byte bound holds fewer (8 MiB of tar is at most 16,384 headers), so a call that reaches this one is a call of little but headers. |
 | Decompressions nested | 4 | A `.tar.gz` is one, since the tar is read in place; a `.tar.gz` of `.tar.gz` files inside a zip is three, and four leaves one level to spare. |
 
@@ -507,9 +527,13 @@ it holds: `seeds.txt:3`, never `seed-731904`.
 
 The scan reads everything a call carries into its sandbox: a snippet's code; a project's
 file paths, file contents, steps and artifact paths; a session cell's code, file paths
-and contents; and the archives any of them hold ("Archives" above). Session calls are
-scanned one by one like runs, and a refused one is not chained into the session's
-records.
+and contents; a session's [file call](sessions.md#files) (one operation on the session's
+files): every path it names (each of a `read_many`'s paths, a `rename`'s target too), a
+listing's glob and cursor, and a write's content, the content as a whole file; and the
+archives any of them hold ("Archives" above). A file call's parts are named `path`,
+`paths[3]`, `from_path`, `to_path`, `match`, `after` and `content` in a refusal. Session
+calls are scanned one by one like runs, and a refused one is not chained into the
+session's records.
 
 A module run carries parameter rows into a compiled simulator and no file; its scan is
 stated as `not_scanned`, not as clean. A caller listed in `exempt_callers` (by its ID in
@@ -527,7 +551,8 @@ the scan, at constant cost (`ResourceExhausted`, reason `capacity`). A call the 
 refuses has spent its token and taken nothing else: no slot, no session turn and no paid
 time. Admission takes no second token, so a call that runs costs one, as without a set.
 Its work is bounded by the request and the archive bounds, not by the set:
-one SHA-256 per file and per decoded base64 blob, and for values at most 8 per run of
+two SHA-256 per file and per decoded base64 blob (one when normalization leaves it as it
+is), and for values at most 8 per run of
 letters and digits in each view. A part of L bytes has at most L/2 runs as written and L/2 with its escapes decoded, and
 its base64 blobs in both alphabets decode to at most 1.5 L bytes, so 0.75 L runs: about
 14 hashes per byte at the very most, against 4 before the decoded views. The most a call
@@ -610,6 +635,18 @@ set states nothing.
 - A PNG image's pixels are not read ("Archives"): a value drawn into an image, or packed
   into its pixel data, passes even a `refuse` entry, and the call is not stated
   `incomplete`.
+- A file entry written by hand with `sha256sum` finds only the bytes it was taken of; a
+  copy with other line endings or trailing whitespace passes it. A value entry written by
+  hand finds nothing unless its digest is of the value in lowercase with no newline
+  (`printf '%s' 731904 | sha256sum`, not `echo`). The daemon loads both without a word, since
+  a digest does not say what was hashed; `plimsoll-withheld check`, run with the files the set
+  was made from, lists a value entry that can never match and a file entry taken as written.
+- A write split across several file calls is scanned one piece at a time, each piece as
+  a whole file of its own. A file call carries at most 4 MiB, so `Workspace.write` of a
+  larger file writes it in pieces, and a client can split a smaller one too: a file entry
+  for the whole file then matches no piece, so a withheld file shipped that way, even by
+  mistake, is not found by it. A source entry still finds a piece that holds enough of the
+  file's distinctive lines, and a value entry a value that lies whole inside one piece.
 - A file entry matches the whole file: an edited copy, or the harness's code pasted into
   a larger file, is not found by it. A source entry finds those when a third of the
   file's distinctive lines are there; it misses a few copied lines and code rewritten

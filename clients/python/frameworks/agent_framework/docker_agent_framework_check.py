@@ -3,7 +3,13 @@ TestAgentFrameworkDocker in make docker-suite once for each of plimsoll's projec
 (plimsoll/sandbox and plimsoll/sandbox-python): the harness's ShellEnvironmentProvider (agent_framework_tools/shell/_environment.py)
 runs its probe commands through the tool in BusyBox sh and builds its snapshot, and a harness
 agent driven by a scripted chat client (no model is called) writes a file with one command and
-reads it with the next.
+reads it with the next. PlimsollFileStore, through harness_options, gives the same agent the
+framework's file tools on the same session: what the file tools write the shell reads, and the
+reverse; and each of the store's refusals holds against what a guest can make in BusyBox (a link to
+/etc, a link to a file outside the work directory, a sparse file past the cap), against a folder
+swapped for a link out by the guest's own kept interpreter while the store reads through it, and a
+search of 5,000 files and a listing and search of 60,000 names end inside the framework's bound.
+Every store operation is a file call carried out by plimsoll's helper in the sandbox.
 
 What each probe printed is written to standard output, which the Go test logs. A CLI the image
 does not have is reported as the provider reports it (a None version, then "Not installed" in
@@ -15,12 +21,15 @@ collects it."""
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import re
 import sys
+import time
 import unittest
 from typing import Any, List, Optional, Sequence, Tuple
 
-from agent_framework import Message
+from agent_framework import FileAccessProvider, Message
 from agent_framework_tools.shell import (
     ShellEnvironmentProvider,
     ShellEnvironmentProviderOptions,
@@ -31,8 +40,9 @@ from agent_framework_tools.shell import (
 )
 
 from frameworks.agent_framework.test_agent_framework import Scripted, harness
+from frameworks.agent_framework.test_file_store import harness as files_harness
 from plimsoll_client import Client
-from plimsoll_client.agent_framework import PlimsollShellResult, PlimsollShellTool
+from plimsoll_client.agent_framework import PlimsollFileStore, PlimsollShellResult, PlimsollShellTool
 from plimsoll_client.types import meets
 
 URL = os.environ.get("PLIMSOLL_DOCKER_SESSIONS_URL", "")
@@ -201,6 +211,208 @@ class FilesPersist(unittest.TestCase):
             print(f"  {command!r}: record {r.record_sha256}, tier {r.isolation}, outcome {r.outcome}, sequence {r.record.sequence}")
         self.assertEqual(records[1].previous_sha256, records[0].sha256)
         self.assertEqual(records[1].session, records[0].session)
+
+
+class FileStoreShares(unittest.TestCase):
+    def test_the_file_tools_and_the_shell_see_one_tree(self) -> None:
+        shell = tool()
+        client = Instructed(
+            (FileAccessProvider.WRITE_TOOL_NAME, {"file_name": "notes/plan.md", "content": "step one\n"}),
+            ("run_shell", {"command": "cat notes/plan.md && echo step two >> notes/plan.md"}),
+            (FileAccessProvider.READ_TOOL_NAME, {"file_name": "notes/plan.md"}),
+            (FileAccessProvider.GREP_TOOL_NAME, {"regex_pattern": "TWO"}),
+            (FileAccessProvider.LS_TOOL_NAME, {"directory": ""}),
+        )
+
+        async def main() -> str:
+            async with shell:
+                agent = files_harness(client, shell)
+                await agent.run("go", session=agent.create_session())
+                return shell.isolation
+
+        isolation = asyncio.run(main())
+        self.assertTrue(meets(isolation, FLOOR), isolation)
+        wrote, cat, read, grep, ls = client.results()
+        for name, r in (("write", wrote), ("cat", cat), ("read", read), ("grep", grep), ("ls", ls)):
+            print(f"  {name}: {r.result!r}")
+            self.assertIsNone(r.exception, r.exception)
+        self.assertIn("written", str(wrote.result))
+        self.assertEqual(cat.result, "exit code: 0\nstep one")
+        self.assertEqual(read.result, "step one\nstep two\n")
+        self.assertIn("notes/plan.md", str(grep.result))
+        self.assertIn("notes", str(ls.result))
+        self.assertNotIn(".plimsoll-shell", str(ls.result))
+
+
+class FileStoreRefusesOnBusyBox(unittest.TestCase):
+    def test_each_refusal_holds_against_what_a_guest_can_make(self) -> None:
+        shell = tool()
+        store = PlimsollFileStore(shell, max_file_bytes=4096)
+
+        async def main() -> List[str]:
+            seen: List[str] = []
+            async with shell:
+                made = await PlimsollShellTool.run(shell, (
+                    "ln -s /etc out && ln -s /etc/passwd leaf && mkdir -p a/b && ln -s / a/b/root && "
+                    "ln -s /tmp/planted dangling && head -c 5000 /dev/zero > big && "
+                    "dd if=/dev/zero of=sparse bs=1 count=0 seek=104857600 2>/dev/null && "
+                    "printf 'needle here\\n' > hay.txt && printf 'caf\\351\\n' > latin1"))
+                self.assertEqual(made.exit_code, 0, made.stderr)
+
+                async def refused(what: str, op: Any, error: type = ValueError, code: Optional[int] = None) -> None:
+                    try:
+                        await op()
+                    except error as e:
+                        if code is not None:
+                            self.assertEqual(getattr(e, "errno", None), code, what)
+                        seen.append(f"{what}: {type(e).__name__}: {e}")
+                        return
+                    self.fail(f"{what}: not refused")
+
+                for path in ("out/passwd", "leaf", "a/b/root/etc/passwd"):
+                    await refused(f"read {path}", lambda p=path: store.read(p))
+                    await refused(f"write {path}", lambda p=path: store.write(p, "x"))
+                    await refused(f"delete {path}", lambda p=path: store.delete(p))
+                await refused("write out/planted", lambda: store.write("out/planted", "x"))
+                await refused("write through a dangling link", lambda: store.write("dangling", "x", overwrite=False))
+                await refused("list out", lambda: store.list_children("out"))
+                await refused("search out", lambda: store.search("out", "root", recursive=True))
+                await refused("read ../etc/passwd", lambda: store.read("../etc/passwd"))
+                await refused("read /etc/passwd", lambda: store.read("/etc/passwd"))
+                await refused("write .plimsoll-shell/env", lambda: store.write(".plimsoll-shell/env", "export X=1"))
+                await refused("write past the cap", lambda: store.write("w.txt", "x" * 4097), OSError, errno.EFBIG)
+                await refused("read past the cap", lambda: store.read("big"), OSError, errno.EFBIG)
+                await refused("read a sparse file past the cap", lambda: store.read("sparse"), OSError, errno.EFBIG)
+                await refused("read a file that is not UTF-8", lambda: store.read("latin1"))
+                await store.write("once.txt", "first", overwrite=False)
+                await refused("create a file already there", lambda: store.write("once.txt", "second", overwrite=False), FileExistsError)
+
+                after = await PlimsollShellTool.run(shell, "test ! -e /etc/planted && test ! -e /tmp/planted && head -1 /etc/passwd && cat once.txt")
+                self.assertEqual(after.exit_code, 0, after.stderr)
+                self.assertTrue(after.stdout.endswith("first"), after.stdout)
+                names = [e.name for e in await store.list_children()]
+                self.assertEqual(sorted(names), sorted(["a", "big", "hay.txt", "latin1", "once.txt", "sparse"]), names)
+                found = await store.search("", "needle", recursive=True)
+                self.assertEqual([(r.file_name, [m.line_number for m in r.matching_lines]) for r in found], [("hay.txt", [1])])
+            return seen
+
+        seen = asyncio.run(main())
+        print("\nPlimsollFileStore's refusals on a real session:")
+        for line in seen:
+            print("  " + line)
+
+
+class FileStoreSearchesATreeInTime(unittest.TestCase):
+    def test_a_search_of_5000_files_ends_inside_the_frameworks_bound(self) -> None:
+        # The framework ends a search at 10 seconds (ValueError). Under gVisor, the old scripts'
+        # programs started per file took 8.0 s to list 5,000 small files and 16.8 s to read them
+        # (2026-11-26, finding release-116); the helper's list and readmany answer them in a few
+        # file calls. A name the store does not take as a path (a newline in it) is left out.
+        shell = tool()
+        store = PlimsollFileStore(shell)
+
+        async def main() -> Tuple[float, List[str], List[str]]:
+            async with shell:
+                made = await PlimsollShellTool.run(shell, (
+                    "mkdir many odd && cd many && for d in $(seq 1 50); do mkdir d$d; for f in $(seq 1 100); do "
+                    "printf 'line\\nneedle %s %s\\n' $d $f > d$d/f$f.txt; done; done && cd ../odd && "
+                    "printf 'needle split\\n' > \"$(printf 'two\\nlines')\" && printf 'needle plain\\n' > plain"), timeout=120)
+                self.assertEqual(made.exit_code, 0, made.stderr)
+                start = time.monotonic()
+                many = await store.search("many", "needle", recursive=True)
+                spent = time.monotonic() - start
+                odd = await store.search("odd", "needle")
+                start = time.monotonic()
+                for _ in range(10):
+                    await store.read("many/d1/f1.txt")  # three stats (one per part) and the read
+                self.read_ms = (time.monotonic() - start) * 100
+                return spent, [r.file_name for r in many], sorted(r.file_name for r in odd)
+
+        spent, many, odd = asyncio.run(main())
+        print(f"\n  a recursive search of 5,000 files: {spent:.2f} s, {len(many)} found; a read three parts deep: {self.read_ms:.0f} ms")
+        self.assertEqual(len(many), 5000)
+        self.assertIn("d50/f100.txt", many)
+        self.assertEqual(odd, ["plain"])
+
+    def test_sixty_thousand_names_are_listed_inside_the_frameworks_bound_and_searched(self) -> None:
+        # One listing of 60,000 short names was past one step's output for the old scripts (OSError
+        # EFBIG, 2026-11-26); the helper pages a listing, and readmany takes 1,024 files a call, so a
+        # search of them is 59 readmany calls. Measured 2026-11-27: 7.4 to 8.5 s under runc and 9.3
+        # to 10 s under gVisor, at the framework's 10-second bound (under gVisor its pattern's own
+        # deadline cut one run), so the search's time is printed, not held to the bound (it runs
+        # through the store's search with a plain pattern, without the framework's deadline); the
+        # listing is held to it.
+        shell = tool()
+        store = PlimsollFileStore(shell)
+
+        async def main() -> Tuple[float, float, int, List[str]]:
+            async with shell:
+                made = await PlimsollShellTool.run(shell, (
+                    "mkdir big && cd big && for d in $(seq 10 69); do mkdir d$d && (cd d$d && seq 1000 1999 | sed 's/.*/file&.txt/' | xargs touch) "
+                    "|| exit 1; done && echo 'the needle' > d69/file1999.txt"), timeout=300)
+                self.assertEqual(made.exit_code, 0, made.stderr)
+                start = time.monotonic()
+                names = await store.find_matching_files("big", "", recursive=True)
+                listed = time.monotonic() - start
+                start = time.monotonic()
+                # A plain pattern: the framework's compiled one carries the 10-second deadline too.
+                found = await store._search("big", re.compile("needle", re.IGNORECASE), None, True)
+                searched = time.monotonic() - start
+                return listed, searched, len(names), [r.file_name for r in found]
+
+        listed, searched, count, found = asyncio.run(main())
+        print(f"\n  60,000 names: listed in {listed:.2f} s, searched in {searched:.2f} s")
+        self.assertEqual(count, 60_000)  # the listing is whole
+        self.assertEqual(found, ["d69/file1999.txt"])
+        self.assertLess(listed, 10.0)
+
+
+class FileStoreNeverFollowsASwappedLinkOut(unittest.TestCase):
+    def test_a_folder_swapped_for_a_link_out_mid_read_is_never_followed(self) -> None:
+        # The race the old scripts lost (a link checked by one program, the path opened by another):
+        # a process of the guest's own, the session's kept interpreter, swaps a folder on the path
+        # for a link to /etc over and over while the store reads through it. The helper resolves the
+        # read's path beneath the work folder in one openat2 call, so no read reaches /etc/passwd.
+        shell = tool()
+        store = PlimsollFileStore(shell)
+
+        async def main() -> Tuple[int, set]:
+            seen: set = set()
+            reads = 0
+            async with shell:
+                made = await PlimsollShellTool.run(shell, "mkdir real && echo inside > real/passwd && command -v python3 >/dev/null; echo $?")
+                python = made.stdout.strip().endswith("0")
+                session = shell.session
+                if python:
+                    cell = session.run_cell(
+                        "import os, threading\n_stop = threading.Event()\n"
+                        "def _flip():\n    while not _stop.is_set():\n        try:\n"
+                        "            os.rename('real', 'd'); os.rename('d', 'real'); os.symlink('/etc', 'd'); os.unlink('d')\n"
+                        "        except OSError:\n            pass\n"
+                        "threading.Thread(target=_flip, daemon=True).start()\n", "python")
+                else:
+                    cell = session.run_cell(
+                        "const fs = process.getBuiltinModule ? process.getBuiltinModule('node:fs') : process.mainModule.require('node:fs');\n"
+                        "globalThis.stopFlip = false;\n"
+                        "(function flip() { if (globalThis.stopFlip) return; try { fs.renameSync('real', 'd'); fs.renameSync('d', 'real'); "
+                        "fs.symlinkSync('/etc', 'd'); fs.unlinkSync('d'); } catch (e) {} setImmediate(flip); })();\n", "javascript")
+                self.assertEqual((cell.exit_code, cell.timed_out), (0, False), cell.stderr_text)
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline:
+                    reads += 1
+                    try:
+                        seen.add(await store.read("d/passwd"))
+                    except (ValueError, OSError) as e:
+                        seen.add(type(e).__name__)
+                stop = session.run_cell("_stop.set()\n" if python else "globalThis.stopFlip = true;\n", "python" if python else "javascript")
+                self.assertEqual((stop.exit_code, stop.timed_out), (0, False), stop.stderr_text)
+            return reads, seen
+
+        reads, seen = asyncio.run(main())
+        print(f"\n  {reads} reads through a folder swapped for a link to /etc: {sorted(map(str, seen))}")
+        self.assertFalse(any(isinstance(x, str) and "root:" in x for x in seen), "a read followed the link out")
+        self.assertTrue(seen <= {"inside\n", None, "ValueError", "FileNotFoundError"}, seen)
+        self.assertIn("ValueError", seen, "the swap never showed: the race was not run")
 
 
 if __name__ == "__main__":

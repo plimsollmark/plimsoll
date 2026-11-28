@@ -255,9 +255,9 @@ langchain-protocol==0.0.21 \
     --hash=sha256:04b3e80852233a8db39b39d3ad2438d892531dc0ecd41459e857a139ee0e601c \
     --hash=sha256:7f42f9eae7c08bb9d74850057da50b5483970a3df91b7a8a5aadec6a3dfa4d12
     # via langchain-core
-langchain-tests==1.1.9 \
-    --hash=sha256:a977a0c8f9a42ba2021a5ae59d468e4023f98a83818a3cb30e12c1dfab830203 \
-    --hash=sha256:f33e36e2015da437df2001ec6949b443de09dd37d021dea6160cf85912ccf05f
+langchain-tests==1.2.0 \
+    --hash=sha256:1a9c44a1a58e1b826d01294c4cf69e6ad2d3a5da13ffc0aa5a8f755608f042af \
+    --hash=sha256:690d1f45f407ed66d8c855d28659effa55e1bb77f25e7964e724fb6e5ec5fe06
     # via -r requirements.in
 langsmith==0.14.17 \
     --hash=sha256:0aa2c79936c93c7cea9c55656f05e21cc5da715fecbdbda439d084adc08429be \

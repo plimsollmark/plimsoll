@@ -20,6 +20,9 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (res Resul
 	if err := ValidateRequest(req); err != nil {
 		return fail, err
 	}
+	if err := d.refuseGrant(req.Grant); err != nil {
+		return fail, err
+	}
 	if err := d.admit(req.MinimumIsolation, req.Software); err != nil {
 		return fail, err
 	}
@@ -105,6 +108,9 @@ func (d *DockerCloud) RunModule(_ context.Context, req ModuleRequest) (ModuleRes
 func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (res ProjectResult, err error) {
 	fail := ProjectResult{Sandbox: d.Name(), Isolation: IsolationVM}
 	if err := ValidateProjectRequest(req); err != nil {
+		return fail, err
+	}
+	if err := d.refuseGrant(req.Grant); err != nil {
 		return fail, err
 	}
 	if err := d.admit(req.MinimumIsolation, req.Software); err != nil {

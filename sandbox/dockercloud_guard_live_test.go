@@ -13,8 +13,11 @@ import (
 	"time"
 )
 
-// TestDockerCloudGuardLive is the end-to-end proof of a Docker Cloud host-API grant,
-// as TestE2BGuardLive is for E2B: one Micro sandbox on the Connect API runs a snippet
+// TestDockerCloudGuardLive is the end-to-end check of the Docker Cloud guard path,
+// which the provider refuses to serve (errDCGrantsRefused: the guard's one network
+// rule does not hold a run to the guard), so the test lifts the refusal; it proves
+// the guard's own refusals, not that a granted run can reach nothing else. As
+// TestE2BGuardLive is for E2B: one Micro sandbox on the Connect API runs a snippet
 // whose granted route reaches the upstream through this process's guard, a second
 // whose ungranted route is refused, and then a captured guard credential is refused
 // after its run closed. It spends (two sandboxes for a few seconds each, well under a
@@ -50,6 +53,7 @@ func TestDockerCloudGuardLive(t *testing.T) {
 	allowed := envOr("DOCKERCLOUD_LIVE_GRANT_ALLOWED_PATH", "/healthz")
 	denied := envOr("DOCKERCLOUD_LIVE_GRANT_DENIED_PATH", "/not-allowed")
 	d.GuardURL = guardURL
+	d.grantsUnrefused = true // the refused guard path, kept tested for a re-enable
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

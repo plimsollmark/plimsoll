@@ -63,8 +63,14 @@ const _ = uint64(sandbox.SuspendBound - stopBudget)
 // SupportsSessions is true: sessions need nothing beyond what runs need.
 func (*Provider) SupportsSessions() bool { return true }
 
-// SessionEnvironments is the runs' environments: one image runs every payload kind.
-func (p *Provider) SessionEnvironments() sandbox.Environments { return p.Environments() }
+// SessionEnvironments is the runs' environments, with file calls in the sandbox scope alone:
+// one image runs every payload kind, and the work scope is refused where the work folder is
+// not a mount of its own, as a session's is not (session_files.go says why).
+func (p *Provider) SessionEnvironments() sandbox.Environments {
+	env := p.Environments()
+	env.JavaScript.FileScopes, env.Project.FileScopes = sandbox.FilesScopesSandboxOnly(), sandbox.FilesScopesSandboxOnly()
+	return env
+}
 
 // session is one open session.
 type session struct {
@@ -130,7 +136,7 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if !s.life.Activate(&p.sessions, expires, opts.DiskBytes) {
 		s.life.Abandon()
 		p.deleteLater(ctx, s.b)
-		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
+		return nil, sandbox.AtCapacity(sandbox.CapacityProvider, errDraining)
 	}
 	return s, nil
 }
@@ -191,9 +197,9 @@ func (s *session) hooks() sessionkit.Hooks {
 
 func (s *session) Isolation() sandbox.IsolationClass { return s.tier }
 
-// Environments is the provider's: an OpenShell sandbox runs the configured image,
-// which states no software identity.
-func (s *session) Environments() sandbox.Environments { return s.p.Environments() }
+// Environments is the provider's sessions': an OpenShell sandbox runs the configured
+// image, which states no software identity.
+func (s *session) Environments() sandbox.Environments { return s.p.SessionEnvironments() }
 func (s *session) ExpiresAt() time.Time               { return s.life.ExpiresAt() }
 func (s *session) Done() <-chan struct{}              { return s.life.Done() }
 func (s *session) Err() error                         { return s.life.Err() }

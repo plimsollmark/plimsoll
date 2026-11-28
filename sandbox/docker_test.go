@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/tiercheck"
 )
 
 // dockerRequired reports whether the caller asked for docker coverage to be
@@ -788,6 +789,7 @@ func TestDockerRunCapturesStdoutAndExitZero(t *testing.T) {
 	if res.Sandbox != "docker" {
 		t.Fatalf("sandbox = %q, want docker", res.Sandbox)
 	}
+	tiercheck.Stated(t, "snippet", res.Isolation, d.IsolationClass())
 }
 
 func TestDockerNonZeroExitIsResultNotError(t *testing.T) {

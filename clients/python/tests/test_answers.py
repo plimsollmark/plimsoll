@@ -9,7 +9,7 @@ import json
 import pathlib
 import unittest
 
-from plimsoll_client import CheckpointMismatchError, HeadMismatchError, SessionEndedError
+from plimsoll_client import AtCapacityError, CheckpointMismatchError, HeadMismatchError, SessionEndedError
 from plimsoll_client._wire import error_from_wire
 
 from ._cases import verdict
@@ -24,8 +24,14 @@ class SharedAnswers(unittest.TestCase):
             with self.subTest(a["name"]):
                 e = error_from_wire(a["status"], a["body"].encode(), bound=a["echo"] == "match", mark=a.get("mark") or None)
                 end = e.reason if isinstance(e, SessionEndedError) else ""
+                # The limit a capacity refusal states, on every error that carries one
+                # (finding release-115; release-122: a deadline's is not AtCapacityError),
+                # and on AtCapacityError as its limit too.
+                limit = e.capacity_limit or ""
+                if isinstance(e, AtCapacityError):
+                    self.assertEqual(e.limit, e.capacity_limit)
                 got = {"code": e.code, "notDispatched": e.not_dispatched or "", "sessionEnded": end,
-                       "answerNotBound": e.answer_not_bound}
+                       "answerNotBound": e.answer_not_bound, "capacityLimit": limit}
                 verdict("answers/" + a["name"], "error-answer", got)
                 self.assertEqual(got, a["expect"])
 

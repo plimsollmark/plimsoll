@@ -118,6 +118,8 @@ var Daemons = []Daemon{
 		"the in-memory session provider behind the bearer token the second variable holds, for attach (open development mode refuses it): a SessionRun whose trace ID is drop-answer runs and its connection is cut before the answer; GET /test/calls answers {\"calls\": n}, the snippets and cells the provider ran; GET /test/checkpoint-vectors answers with the shared checkpoint vectors (reattach.go)", serveReattach},
 	{"attach-liar", []string{"PLIMSOLL_ATTACH_LIAR_URL"},
 		"the reattach daemon, behind the same token, whose answer to an attach with trace ID forge-<name> is the honest one with one thing forged and the session left as it was (GET /test/forgeries lists the names; forge-none is the honest answer), and whose answer to an attach one call behind that names the lost call, with trace ID forge-lost-<name>, is the honest explained-gap answer with one thing forged (GET /test/lost-forgeries; forge-lost-none is honest); GET /test/closes?session=<fingerprint> answers {\"closes\": n}", serveAttachLiar},
+	{"files", []string{"PLIMSOLL_FILES_URL"},
+		"sessions whose file calls an in-memory work folder answers, for the shared file-call cases (internal/clientcases/testdata/files-calls.json): a call whose path is cut fails unmarked after it reached the provider, and a SessionRun with trace ID forge-files-<name> gets the honest answer with one thing forged (files.go, FilesForgeries)", serveFiles},
 	{"tls", []string{"PLIMSOLL_TLS_URL", "PLIMSOLL_TLS_CA"},
 		"the wasm provider over TLS; its self-signed certificate (for 127.0.0.1, ::1 and example.com) is in the PEM file the second variable names, the only authority a client must trust to reach it", serveTLSDaemon},
 }

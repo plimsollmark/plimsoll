@@ -11,39 +11,238 @@
    "name": "at capacity",
    "status": 429,
    "contentType": "application/json",
-   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBA\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_RUNS\"}}]}",
    "echo": "match",
    "expect": {
     "code": "resource_exhausted",
     "notDispatched": "capacity",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": "runs"
    }
   },
   {
    "name": "at capacity, but the echo is missing",
    "status": 429,
    "contentType": "application/json",
-   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBA\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_RUNS\"}}]}",
    "echo": "missing",
    "expect": {
     "code": "resource_exhausted",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": true
+    "answerNotBound": true,
+    "capacityLimit": ""
    }
   },
   {
    "name": "at capacity, but the echo names another request",
    "status": 429,
    "contentType": "application/json",
-   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBA\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_RUNS\"}}]}",
    "echo": "other",
    "expect": {
     "code": "resource_exhausted",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": true
+    "answerNotBound": true,
+    "capacityLimit": ""
+   }
+  },
+  {
+   "name": "at capacity: the caller's runs per minute",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"rate limit: 1 runs/min per caller\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBg\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_RATE\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "rate"
+   }
+  },
+  {
+   "name": "at capacity: the daemon's runs in flight",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBA\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_RUNS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "runs"
+   }
+  },
+  {
+   "name": "at capacity: the caller's runs in flight",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"per-caller concurrency limit reached (1 in flight)\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBQ\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_CALLER_RUNS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "caller_runs"
+   }
+  },
+  {
+   "name": "at capacity: the daemon's session places",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox admission: at capacity, retry shortly: 0 sessions are open, the most this daemon keeps\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYAQ\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_SESSIONS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "sessions"
+   }
+  },
+  {
+   "name": "at capacity: the caller's session places",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox admission: at capacity, retry shortly: this caller has 1 sessions open, the most one caller keeps\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYAg\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_CALLER_SESSIONS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "caller_sessions"
+   }
+  },
+  {
+   "name": "at capacity: the owner's session places, none of which can be closed",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox admission: at capacity, retry shortly: this owner has 1 sessions open, the most one owner keeps, and none can be closed now (each is running a call, suspending, closing, or already taken by another open)\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYAw\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_OWNER_SESSIONS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "owner_sessions"
+   }
+  },
+  {
+   "name": "at capacity: the caller's paid seconds",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"paid budget: this caller has 10 of its 10 paid seconds left on this daemon until 00:00 UTC, and this run reserves 60 (its timeout plus the provider's teardown); a shorter timeout reserves less\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBw\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_PAID_SECONDS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "paid_seconds"
+   }
+  },
+  {
+   "name": "at capacity: the daemon's paid seconds",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"paid budget: the daemon's allowance for today cannot cover this run until 00:00 UTC; a shorter timeout reserves less\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYBw\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_PAID_SECONDS\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "paid_seconds"
+   }
+  },
+  {
+   "name": "at capacity: a call already waiting for its session's turn",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"another call is already waiting for this session's turn\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYCA\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_QUEUE\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "queue"
+   }
+  },
+  {
+   "name": "at capacity: the provider's own capacity",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox admission: at capacity, retry shortly: no warm sandbox is waiting, and a warm-only open makes none\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYCQ\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_PROVIDER\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "provider"
+   }
+  },
+  {
+   "name": "the call's own time ran out before any of it was sent",
+   "status": 504,
+   "contentType": "application/json",
+   "body": "{\"code\":\"deadline_exceeded\",\"message\":\"the deadline passed before the call finished\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYCg\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\",\"limit\":\"CAPACITY_LIMIT_DEADLINE\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "deadline_exceeded",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "deadline"
+   }
+  },
+  {
+   "name": "at capacity, from a daemon that states no limit",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\"}],\"message\":\"sandbox is at capacity, retry shortly\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "unknown"
+   }
+  },
+  {
+   "name": "at capacity, for a limit this client cannot name",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYYYw\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": "unknown"
+   }
+  },
+  {
+   "name": "a limit on a refusal that is not for capacity",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAEYBg\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "request",
+    "sessionEnded": "",
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -56,7 +255,8 @@
     "code": "resource_exhausted",
     "notDispatched": "request",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -69,7 +269,8 @@
     "code": "failed_precondition",
     "notDispatched": "isolation",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -82,7 +283,8 @@
     "code": "unimplemented",
     "notDispatched": "protocol",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -95,7 +297,8 @@
     "code": "unauthenticated",
     "notDispatched": "permission",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -108,7 +311,8 @@
     "code": "failed_precondition",
     "notDispatched": "request",
     "sessionEnded": "expired",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -121,7 +325,8 @@
     "code": "failed_precondition",
     "notDispatched": "request",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -134,7 +339,8 @@
     "code": "internal",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -147,7 +353,8 @@
     "code": "deadline_exceeded",
     "notDispatched": "",
     "sessionEnded": "main_process_ended",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -160,7 +367,8 @@
     "code": "canceled",
     "notDispatched": "",
     "sessionEnded": "main_process_ended",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -173,20 +381,22 @@
     "code": "resource_exhausted",
     "notDispatched": "unknown",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
    "name": "a refusal with fields a newer daemon added",
    "status": 429,
    "contentType": "application/json",
-   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYpAQIDBAUGBwgYBw\"}],\"message\":\"refused\"}",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYpAQIDBAUGBwggBw\"}],\"message\":\"refused\"}",
    "echo": "match",
    "expect": {
     "code": "resource_exhausted",
     "notDispatched": "capacity",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": "unknown"
    }
   },
   {
@@ -199,7 +409,8 @@
     "code": "failed_precondition",
     "notDispatched": "",
     "sessionEnded": "unknown",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -212,7 +423,8 @@
     "code": "resource_exhausted",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -225,7 +437,8 @@
     "code": "unavailable",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -239,7 +452,8 @@
     "code": "invalid_argument",
     "notDispatched": "request",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -252,7 +466,8 @@
     "code": "unavailable",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": true
+    "answerNotBound": true,
+    "capacityLimit": ""
    }
   },
   {
@@ -265,7 +480,8 @@
     "code": "unknown",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -279,7 +495,8 @@
     "code": "unavailable",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -292,7 +509,8 @@
     "code": "internal",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   },
   {
@@ -305,7 +523,8 @@
     "code": "unavailable",
     "notDispatched": "",
     "sessionEnded": "",
-    "answerNotBound": false
+    "answerNotBound": false,
+    "capacityLimit": ""
    }
   }
  ]

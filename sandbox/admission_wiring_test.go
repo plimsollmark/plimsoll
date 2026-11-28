@@ -81,8 +81,8 @@ func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 	// Interfaces of the package that are not optional provider capabilities. A
 	// BillsUntiler is a session's, not a provider's, and admission does not wrap sessions;
 	// a StreamSink is an HTTP adapter's, handed to the broker inside a call. A
-	// ListenerCounter is a session's too.
-	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true, "BillsUntiler": true, "StreamSink": true, "ListenerCounter": true}
+	// ListenerCounter and a FileRunner are a session's too.
+	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true, "BillsUntiler": true, "StreamSink": true, "ListenerCounter": true, "FileRunner": true}
 	ctx := context.Background()
 	calls := map[string]func(Sandbox) bool{
 		"ProjectCapable": func(s Sandbox) bool { c, ok := s.(ProjectCapable); return ok && c.SupportsProjects() },
